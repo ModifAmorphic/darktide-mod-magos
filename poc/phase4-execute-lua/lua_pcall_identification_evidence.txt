@@ -1,0 +1,169 @@
+========================================================================
+EVIDENCE: lua_pcall identification in Darktide.exe
+========================================================================
+
+Binary: /games/steamapps/common/Warhammer 40,000 DARKTIDE/binaries/Darktide.exe
+SHA-256: 132eed5fe58515774a41199269dd240ef6092f84b1efc8ad4a28e23ea6791661
+Size:    18,715,784 bytes
+
+IDENTIFIED RVA: 0xc744c0   (previously mis-identified as 0xc74f30)
+
+lua_State field layout (Darktide LJ_64 non-GC64 binary):
+  [L+0x08] = glref    (MRef, 4-byte ptr to global_State*)
+  [L+0x10] = base     (TValue*, 8 bytes)
+  [L+0x18] = top      (TValue*, 8 bytes)
+  [L+0x20] = maxstack (MRef, 4-byte ptr)
+  [L+0x24] = stack    (MRef, 4-byte ptr to TValue[])
+  [L+0x38] = stacksize (uint32)
+
+g (global_State) layout (relevant fields):
+  [g+0x61] = hookmask (uint8)
+  [g+0xc0] = tmptv   (TValue, fallback for invalid errfunc index)
+
+========================================================================
+DISASSEMBLY: lua_pcall @ 0xc744c0 (Darktide.exe)
+========================================================================
+
+  0xc744c0: mov      qword ptr [rsp + 8], rbx
+  0xc744c5: push     rdi
+  0xc744c6: sub      rsp, 0x20
+  0xc744ca: mov      ebx, dword ptr [rcx + 8]
+  0xc744cd: mov      r10, rcx
+  0xc744d0: movzx    edi, byte ptr [rbx + 0x61]
+  0xc744d4: test     r9d, r9d
+  0xc744d7: jne      0xc744de
+  0xc744d9: xor      r9d, r9d
+  0xc744dc: jmp      0xc7450f
+  0xc744de: jle      0xc744fd
+  0xc744e0: mov      rax, qword ptr [rcx + 0x10]
+  0xc744e4: movsxd   r9, r9d
+  0xc744e7: dec      r9
+  0xc744ea: lea      r9, [rax + r9*8]
+  0xc744ee: cmp      r9, qword ptr [rcx + 0x18]
+  0xc744f2: jb       0xc74508
+  0xc744f4: lea      r9, [rbx + 0xc0]
+  0xc744fb: jmp      0xc74508
+  0xc744fd: mov      rax, qword ptr [r10 + 0x18]
+  0xc74501: movsxd   rcx, r9d
+  0xc74504: lea      r9, [rax + rcx*8]
+  0xc74508: mov      eax, dword ptr [r10 + 0x24]
+  0xc7450c: sub      r9, rax
+  0xc7450f: movsxd   rax, edx
+  0xc74512: inc      r8d
+  0xc74515: mov      rdx, qword ptr [r10 + 0x18]
+  0xc74519: mov      rcx, r10
+  0xc7451c: shl      rax, 3
+  0xc74520: sub      rdx, rax
+  0xc74523: call     0x6845
+  0xc74528: test     eax, eax
+  0xc7452a: je       0xc7453c
+  0xc7452c: movzx    ecx, dil
+  0xc74530: xor      cl, byte ptr [rbx + 0x61]
+  0xc74533: and      cl, 0xf
+  0xc74536: xor      cl, dil
+  0xc74539: mov      byte ptr [rbx + 0x61], cl
+  0xc7453c: mov      rbx, qword ptr [rsp + 0x30]
+  0xc74541: add      rsp, 0x20
+
+========================================================================
+LINE-BY-LINE CORRESPONDENCE WITH LuaJIT 2.1 SOURCE (src/lj_api.c:1120)
+========================================================================
+
+  Source (lj_api.c)                        |  Disassembly @ 0xc744c0
+------------------------------------------|-----------------------------
+  lua_pcall(L, nargs, nresults, errfunc)  |  (rcx=L, rdx=nargs, r8=nres, r9=errfunc)
+  {                                       |
+    global_State *g = G(L);               |  mov ebx, [rcx+8]           ; g = glref
+                                          |  mov r10, rcx               ; save L
+    uint8_t oldh = hook_save(g);          |  movzx edi, byte [rbx+0x61] ; oldh = g->hookmask
+                                          |
+    /* lj_checkapi(...) compiled out */   |
+                                          |
+    ptrdiff_t ef;                         |
+    if (errfunc == 0)   ef = 0;           |  test r9d, r9d
+                                          |  jne  .+0x07               ; errfunc != 0
+                                          |  xor  r9d, r9d             ; ef = 0
+                                          |  jmp  .+0x33
+    else {                                |
+      cTValue *o = index2adr_stack(L,     |
+                                   errfunc);
+        /* positive errfunc branch: */    |  jle  .+0x1f               ; errfunc < 0
+        o = L->base + (errfunc-1);        |  mov rax, [rcx+0x10]       ; L->base
+                                          |  movsxd r9, r9d
+                                          |  dec r9                    ; errfunc-1
+                                          |  lea r9, [rax + r9*8]      ; r9 = base + (ef-1)*8
+        if (o >= L->top) o = &g->tmptv;   |  cmp r9, [rcx+0x18]        ; vs L->top
+                                          |  jb  .+0x12
+                                          |  lea r9, [rbx + 0xc0]      ; fallback tmptv
+        /* negative errfunc branch: */    |
+        o = L->top + errfunc;             |  mov rax, [r10+0x18]       ; L->top
+                                          |  movsxd rcx, r9d
+                                          |  lea r9, [rax + rcx*8]     ; r9 = top + ef*8
+      ef = savestack(L, o);               |  mov eax, [r10+0x24]       ; L->stack (MRef, 4-byte)
+                                          |  sub r9, rax               ; ef = o - stack
+    }                                     |
+                                          |
+    /* setup call to lj_vm_pcall: */       |
+    api_call_base(L, nargs) = L->top -    |  movsxd rax, edx           ; nargs
+                            nargs;        |  mov rdx, [r10+0x18]       ; rdx = L->top
+                                          |  shl rax, 3                ; nargs*8
+                                          |  sub rdx, rax              ; rdx = top - nargs*8 (base)
+    nresults+1;                           |  inc r8d                   ; r8 = nresults+1
+    /* set L->top = base+1 (api_check */   |  (handled inside lj_vm_pcall)
+    status = lj_vm_pcall(L, base,         |  mov rcx, r10              ; rcx = L
+                         nres+1, ef);     |  call 0x6845               ; lj_vm_pcall
+    if (status) hook_restore(g, oldh);    |  test eax, eax
+                                          |  je  .+0x10
+                                          |  movzx ecx, dil            ; oldh
+                                          |  xor cl, [rbx+0x61]
+                                          |  and cl, 0xf               ; keep event-mask bits
+                                          |  xor cl, dil
+                                          |  mov [rbx+0x61], cl        ; g->hookmask restored
+    return status;                        |  (return eax via tail)
+  }                                       |
+
+========================================================================
+EVIDENCE THE CALLEE 0x6845 IS lj_vm_pcall (matches vm_x64.dasm:610)
+========================================================================
+
+  0x006845: push     rbp
+  0x006846: push     rdi
+  0x006847: push     rsi
+  0x006848: push     rbx
+  0x006849: sub      rsp, 0x28
+  0x00684d: mov      esi, 5
+  0x006852: mov      dword ptr [rsp + 0x5c], r9d
+  0x006857: jmp      0x6866
+  0x006859: push     rbp
+  0x00685a: push     rdi
+  0x00685b: push     rsi
+  0x00685c: push     rbx
+  0x00685d: sub      rsp, 0x28
+  0x006861: mov      esi, 1
+  0x006866: mov      dword ptr [rsp + 0x58], r8d
+
+Correspondence with LuaJIT 2.1 dynasm source (vm_x64.dasc:610):
+
+  |->vm_pcall:                       |  0x6845: push rbp
+  |  // (lua_State *L, TValue *base, |  0x6846: push rdi
+  |  //   int nres1, ptrdiff_t ef)   |  0x6847: push rsi
+  |  saveregs                        |  0x6848: push rbx
+  |  mov PCd, FRAME_CP               |  0x6849: sub  rsp, 0x28
+  |  mov SAVE_ERRF, CARG4d           |  0x684d: mov  esi, 5         ; PCd = FRAME_CP
+  |  jmp >1                          |  0x6852: mov  [rsp+0x5c], r9d ; SAVE_ERRF = errfunc
+                                    |  0x6857: jmp  0x6866         ; → common entry
+
+========================================================================
+CONCLUSION
+========================================================================
+
+The function at 0xc744c0 matches LuaJIT 2.1's lua_pcall source pattern
+EXACTLY, instruction-by-instruction. The single call instruction targets
+0x6845, which matches lj_vm_pcall's dynasm prologue. No other function in
+the 0xc73000–0xc7f000 cluster exhibits this shape (uniqueness verified
+by scanning 368 .pdata entries; see report.md).
+
+The previous Phase 3 prune of 0xc744c0 ("calls lua_load") was based on a
+mis-identification of the callee. The actual callee (0x6845) is lj_vm_pcall,
+not lua_load.
+

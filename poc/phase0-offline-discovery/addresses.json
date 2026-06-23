@@ -1,0 +1,1542 @@
+{
+  "binary": {
+    "path": "/games/steamapps/common/Warhammer 40,000 DARKTIDE/binaries/Darktide.exe",
+    "size_bytes": 18715784,
+    "sha256": "132eed5fe58515774a41199269dd240ef6092f84b1efc8ad4a28e23ea6791661"
+  },
+  "pe_sections": {
+    ".text": {
+      "rva": "0x1000",
+      "file_offset": "0x600",
+      "raw_size": 15090176,
+      "virtual_size": 15090047
+    },
+    ".rdata": {
+      "rva": "0xe68000",
+      "file_offset": "0xe65600",
+      "raw_size": 1882112,
+      "virtual_size": 1881906
+    },
+    ".pdata": {
+      "rva": "0x26d5000",
+      "file_offset": "0x10d3600",
+      "raw_size": 523264,
+      "virtual_size": 522756
+    }
+  },
+  "rdata_delta": 10752,
+  "rdata_delta_matches_doc": true,
+  "anchor_sanity": [
+    {
+      "label": "LuaJIT version",
+      "string": "LuaJIT 2.1.1771479498",
+      "documented_file_offset": "0xe8b108",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xe8db08",
+      "doc_correction": null
+    },
+    {
+      "label": "lua_panic",
+      "string": "stingray::LuaEnvironment::Internal::lua_panic",
+      "documented_file_offset": "0xf1f698",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf22098",
+      "doc_correction": null
+    },
+    {
+      "label": "default_error_callback",
+      "string": "stingray::LuaEnvironment::Internal::default_error_callback",
+      "documented_file_offset": "0xf1f910",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf22310",
+      "doc_correction": null
+    },
+    {
+      "label": "clear_temp_variables",
+      "string": "stingray::LuaEnvironment::clear_temp_variables",
+      "documented_file_offset": "0xf1fa48",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf22448",
+      "doc_correction": null
+    },
+    {
+      "label": "dump_state",
+      "string": "LuaEnvironment::dump_state",
+      "documented_file_offset": "0xf1fc98",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf22698",
+      "doc_correction": null
+    },
+    {
+      "label": "lua_resource::bytecode",
+      "string": "stingray::lua_resource::bytecode",
+      "documented_file_offset": "0xf1d9d0",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf203d0",
+      "doc_correction": null
+    },
+    {
+      "label": "copy_lua_variable_to_c",
+      "string": "stingray::script_interface::copy_lua_variable_to_c",
+      "documented_file_offset": "0xf266c8",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf290c8",
+      "doc_correction": null
+    },
+    {
+      "label": "push_c_variable_to_lua",
+      "string": "stingray::script_interface::push_c_variable_to_lua",
+      "documented_file_offset": "0xf267f8",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf291f8",
+      "doc_correction": null
+    },
+    {
+      "label": "Bundle::open",
+      "string": "stingray::Bundle::open",
+      "documented_file_offset": "0xf50bc0",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf535c0",
+      "doc_correction": null
+    },
+    {
+      "label": "Lua->update",
+      "string": "Lua->update",
+      "documented_file_offset": "0xf520b8",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf54ab8",
+      "doc_correction": null
+    },
+    {
+      "label": "load_script_data",
+      "string": "load_script_data",
+      "documented_file_offset": "0xf51ef8",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf548f8",
+      "doc_correction": null
+    },
+    {
+      "label": "bundle_database.data",
+      "string": "bundle_database.data",
+      "documented_file_offset": "0xf4e298",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf50c98",
+      "doc_correction": null
+    },
+    {
+      "label": "lua_environment_api",
+      "string": "lua_environment_api",
+      "documented_file_offset": "0xf1f4f8",
+      "actual_at_offset": "yes",
+      "computed_rva": "0xf21ef8",
+      "doc_correction": null
+    }
+  ],
+  "category_a_functions": [
+    {
+      "anchor": "LuaJIT version",
+      "anchor_string": "LuaJIT 2.1.1771479498",
+      "anchor_rva": "0xe8db08",
+      "xref_count": 1,
+      "xref_sites": [
+        "0xc80c3a"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0xc80bf5",
+          "end_rva": "0xc80cee",
+          "size_bytes": 249
+        }
+      ]
+    },
+    {
+      "anchor": "lua_panic",
+      "anchor_string": "stingray::LuaEnvironment::Internal::lua_panic",
+      "anchor_rva": "0xf22098",
+      "xref_count": 2,
+      "xref_sites": [
+        "0x328269",
+        "0x3282a2"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x328220",
+          "end_rva": "0x3282c0",
+          "size_bytes": 160
+        }
+      ]
+    },
+    {
+      "anchor": "default_error_callback",
+      "anchor_string": "stingray::LuaEnvironment::Internal::default_error_callback",
+      "anchor_rva": "0xf22310",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x32a64a"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x32a630",
+          "end_rva": "0x32a660",
+          "size_bytes": 48
+        }
+      ]
+    },
+    {
+      "anchor": "clear_temp_variables",
+      "anchor_string": "stingray::LuaEnvironment::clear_temp_variables",
+      "anchor_rva": "0xf22448",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x32bc7c"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x32bc03",
+          "end_rva": "0x32bd0a",
+          "size_bytes": 263
+        }
+      ]
+    },
+    {
+      "anchor": "dump_state",
+      "anchor_string": "LuaEnvironment::dump_state",
+      "anchor_rva": "0xf22698",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x32c5c4"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x32c58b",
+          "end_rva": "0x32c978",
+          "size_bytes": 1005
+        }
+      ]
+    },
+    {
+      "anchor": "lua_resource::bytecode",
+      "anchor_string": "stingray::lua_resource::bytecode",
+      "anchor_rva": "0xf203d0",
+      "xref_count": 2,
+      "xref_sites": [
+        "0x32a135",
+        "0x32b2a0"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x3298b0",
+          "end_rva": "0x32a299",
+          "size_bytes": 2537
+        },
+        {
+          "begin_rva": "0x32ab30",
+          "end_rva": "0x32b516",
+          "size_bytes": 2534
+        }
+      ]
+    },
+    {
+      "anchor": "copy_lua_variable_to_c",
+      "anchor_string": "stingray::script_interface::copy_lua_variable_to_c",
+      "anchor_rva": "0xf290c8",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x39dab4"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x39d870",
+          "end_rva": "0x39db1c",
+          "size_bytes": 684
+        }
+      ]
+    },
+    {
+      "anchor": "push_c_variable_to_lua",
+      "anchor_string": "stingray::script_interface::push_c_variable_to_lua",
+      "anchor_rva": "0xf291f8",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x39d7f9"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x39d6f0",
+          "end_rva": "0x39d864",
+          "size_bytes": 372
+        }
+      ]
+    },
+    {
+      "anchor": "Bundle::open",
+      "anchor_string": "stingray::Bundle::open",
+      "anchor_rva": "0xf535c0",
+      "xref_count": 2,
+      "xref_sites": [
+        "0x7076aa",
+        "0x70770a"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x707430",
+          "end_rva": "0x707cde",
+          "size_bytes": 2222
+        }
+      ]
+    },
+    {
+      "anchor": "Lua->update",
+      "anchor_string": "Lua->update",
+      "anchor_rva": "0xf54ab8",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x70f0ea"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x70ef50",
+          "end_rva": "0x70f22a",
+          "size_bytes": 730
+        }
+      ]
+    },
+    {
+      "anchor": "load_script_data",
+      "anchor_string": "load_script_data",
+      "anchor_rva": "0xf548f8",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x70e63d"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x70e590",
+          "end_rva": "0x70ef4a",
+          "size_bytes": 2490
+        }
+      ]
+    },
+    {
+      "anchor": "bundle_database.data",
+      "anchor_string": "bundle_database.data",
+      "anchor_rva": "0xf50c98",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x6eefd9"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x6eefa0",
+          "end_rva": "0x6ef0ce",
+          "size_bytes": 302
+        }
+      ]
+    },
+    {
+      "anchor": "lua_environment_api",
+      "anchor_string": "lua_environment_api",
+      "anchor_rva": "0xf21ef8",
+      "xref_count": 1,
+      "xref_sites": [
+        "0x323db0"
+      ],
+      "containing_functions": [
+        {
+          "begin_rva": "0x323810",
+          "end_rva": "0x32407a",
+          "size_bytes": 2154
+        }
+      ]
+    }
+  ],
+  "init_candidate": {
+    "begin_rva": "0x32a660",
+    "end_rva": "0x32aa2f",
+    "size_bytes": 975,
+    "reasoning": "Selected as LuaEnvironment init: it takes &lua_panic (at 0x328220) via LEA at ['0x32a86b'] \u2014 the lua_atpanic(L, &lua_panic) setup shape. Size 975 bytes (largest candidate). 'lua_environment' string ref present in body: True.",
+    "lua_environment_marker_found": true,
+    "lua_panic_body_rva": "0x328220",
+    "lea_of_lua_panic_sites": [
+      "0x32a86b"
+    ]
+  },
+  "category_b_candidates": [
+    {
+      "name": "lua_newstate",
+      "candidate_rvas": [
+        "0xc7c000",
+        "0xc7eea0"
+      ],
+      "confidence": "high",
+      "evidence": "Backward dataflow trace from the lua_atpanic call at 0x32a872: rcx <- `qword ptr [r14]` (loaded at 0x32a868), traced the L slot `[r14]` to a `mov [r14], rax` store at 0x32a83a, whose nearest preceding direct call is at 0x32a835. Entry via CFG thunk 0xc7c000->0xc7eea0; real body at 0xc7eea0. Arg setup at the call site: rcx<-(?), rdx<-(mov rdx, r14) \u2014 matches lua_newstate(lua_Alloc f, void* ud). Real body 0xc7eea0 (170B) contains indirect calls through the allocator pointer \u2014 consistent with lua_newstate's allocate-state + allocate-stack pattern. This trace correctly skips the two intervening lua_gc calls between newstate and atpanic.",
+      "discovery_method": "direct-call-trace",
+      "thunk_entry_rva": "0xc7c000",
+      "real_body_rva": "0xc7eea0",
+      "body_size_bytes": 170,
+      "trace": {
+        "atpanic_call_rva": "0x32a872",
+        "rcx_load_rva": "0x32a868",
+        "rcx_source": "qword ptr [r14]",
+        "l_slot": "[r14]",
+        "store_rva": "0x32a83a",
+        "newstate_call_rva": "0x32a835"
+      }
+    },
+    {
+      "name": "lua_atpanic",
+      "candidate_rvas": [
+        "0xc77f40"
+      ],
+      "confidence": "high",
+      "evidence": "leaf function: reads [rcx+8] (global_State* g), swaps rdx into [g+0x118] (panic fn slot), returns previous \u2014 matches lua_atpanic(L, fn)",
+      "discovery_method": "direct-call-trace"
+    },
+    {
+      "name": "lua_gettop",
+      "candidate_rvas": [
+        "0xc74050"
+      ],
+      "confidence": "high",
+      "evidence": "leaf function computing (top-base)>>3 from [rcx+X]/[rcx+Y], returning in rax \u2014 textbook lua_gettop(L)",
+      "discovery_method": "direct-call-trace"
+    },
+    {
+      "name": "luaL_loadbuffer",
+      "candidate_rvas": [
+        "0xc7ad80"
+      ],
+      "confidence": "high",
+      "evidence": "small wrapper (161B) calling a 14379B internal function (likely lua_load) \u2014 shape matches a luaL_load* wrapper, but call-site arg context needed to confirm which one (loadbuffer vs loadfilex vs loadstring) Elevated to luaL_loadbuffer by tracing from the lua_resource::bytecode anchor (2 containing engine functions, 2 call site(s): ['0x32a163', '0x32b2cf']) with call-site arg context: site 0x32a163: rcx<-mov rcx, r14, rdx<-mov rdx, qword ptr [rax + rdx*8 + 0x10], r9<-mov r9, qword ptr [rsp + 0x38]; site 0x32b2cf: rcx<-mov rcx, qword ptr [r15], rdx<-mov rdx, qword ptr [rax + rcx*8 + 0x10], r9<-mov r9, qword ptr [rsp + 0x38]. The 4-arg (L,buf,size,name) shape plus lua_load callee confirms luaL_loadbuffer over the other luaL_load* wrappers.",
+      "discovery_method": "direct-call-trace",
+      "internal_lua_load_rva": "0x68d2"
+    },
+    {
+      "name": "lua_pcall",
+      "candidate_rvas": [],
+      "confidence": "none",
+      "evidence": "Not conclusively identified in Phase 0. lua_pcall has no string anchor and the engine's bytecode path (0x3298b0/0x32ab30) does not exhibit a clean (L,int,int,int) call site that resolves to a thin wrapper around lj_docall. The LuaJIT API cluster around 0xc7xxxx contains many candidates; runtime confirmation needed. See Recommendations for Phase 2.",
+      "discovery_method": "direct-call-trace"
+    }
+  ],
+  "init_candidate_call_graph": [
+    {
+      "call_site_rva": "0x32a6a9",
+      "kind": "direct",
+      "target_rva": "0x6b5c80",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x6b5c80"
+      ],
+      "real_target_rva": "0x6b5c80",
+      "has_pdata": true,
+      "func_begin": "0x6b5c80",
+      "func_end": "0x6b5cae",
+      "func_size": 46,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, r15",
+        "rdx": "lea rdx, [rip + 0xbf7cb7]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a6e7",
+      "kind": "direct",
+      "target_rva": "0x271e70",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x271e70"
+      ],
+      "real_target_rva": "0x271e70",
+      "has_pdata": true,
+      "func_begin": "0x271e70",
+      "func_end": "0x271e97",
+      "func_size": 39,
+      "import": null,
+      "arg_hints": {
+        "r8": "mov r8, r15"
+      }
+    },
+    {
+      "call_site_rva": "0x32a7cb",
+      "kind": "direct",
+      "target_rva": "0x271e70",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x271e70"
+      ],
+      "real_target_rva": "0x271e70",
+      "has_pdata": true,
+      "func_begin": "0x271e70",
+      "func_end": "0x271e97",
+      "func_size": 39,
+      "import": null,
+      "arg_hints": {
+        "rcx": "lea rcx, [r14 + 0x120]",
+        "r8": "mov r8, r15"
+      }
+    },
+    {
+      "call_site_rva": "0x32a7e1",
+      "kind": "direct",
+      "target_rva": "0xdf593c",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xdf593c"
+      ],
+      "real_target_rva": "0xdf593c",
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": "VCRUNTIME140.dll!memmove",
+      "arg_hints": {
+        "rcx": "mov rcx, qword ptr [r14 + 0x128]",
+        "rdx": "mov rdx, rdi",
+        "r8": "mov r8, r15"
+      }
+    },
+    {
+      "call_site_rva": "0x32a835",
+      "kind": "direct",
+      "target_rva": "0xc7c000",
+      "is_thunk": true,
+      "thunk_chain": [
+        "0xc7c000",
+        "0xc7eea0"
+      ],
+      "real_target_rva": "0xc7eea0",
+      "has_pdata": true,
+      "func_begin": "0xc7eea0",
+      "func_end": "0xc7ef4a",
+      "func_size": 170,
+      "import": null,
+      "arg_hints": {}
+    },
+    {
+      "call_site_rva": "0x32a850",
+      "kind": "direct",
+      "target_rva": "0xc73c50",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc73c50"
+      ],
+      "real_target_rva": "0xc73c50",
+      "has_pdata": true,
+      "func_begin": "0xc73c50",
+      "func_end": "0xc73e1c",
+      "func_size": 460,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, qword ptr [r14]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a863",
+      "kind": "direct",
+      "target_rva": "0xc73c50",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc73c50"
+      ],
+      "real_target_rva": "0xc73c50",
+      "has_pdata": true,
+      "func_begin": "0xc73c50",
+      "func_end": "0xc73e1c",
+      "func_size": 460,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, qword ptr [r14]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a872",
+      "kind": "direct",
+      "target_rva": "0xc77f40",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc77f40"
+      ],
+      "real_target_rva": "0xc77f40",
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, qword ptr [r14]",
+        "rdx": "lea rdx, [rip - 0x2652]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a880",
+      "kind": "direct",
+      "target_rva": "0xc746b0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc746b0"
+      ],
+      "real_target_rva": "0xc746b0",
+      "has_pdata": true,
+      "func_begin": "0xc746b0",
+      "func_end": "0xc746f3",
+      "func_size": 67,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbx",
+        "rdx": "mov rdx, r14"
+      }
+    },
+    {
+      "call_site_rva": "0x32a88d",
+      "kind": "direct",
+      "target_rva": "0xc7cb50",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc7cb50"
+      ],
+      "real_target_rva": "0xc7cb50",
+      "has_pdata": true,
+      "func_begin": "0xc7cb50",
+      "func_end": "0xc7cc16",
+      "func_size": 198,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, qword ptr [r14]",
+        "rdx": "mov rdx, r14"
+      }
+    },
+    {
+      "call_site_rva": "0x32a898",
+      "kind": "direct",
+      "target_rva": "0xc746b0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc746b0"
+      ],
+      "real_target_rva": "0xc746b0",
+      "has_pdata": true,
+      "func_begin": "0xc746b0",
+      "func_end": "0xc746f3",
+      "func_size": 67,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbx",
+        "rdx": "mov rdx, r14"
+      }
+    },
+    {
+      "call_site_rva": "0x32a8ad",
+      "kind": "direct",
+      "target_rva": "0xc74580",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74580"
+      ],
+      "real_target_rva": "0xc74580",
+      "has_pdata": true,
+      "func_begin": "0xc74580",
+      "func_end": "0xc7462e",
+      "func_size": 174,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, qword ptr [r14]",
+        "rdx": "lea rdx, [rip - 0x25e7]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a8ba",
+      "kind": "direct",
+      "target_rva": "0xc7cb50",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc7cb50"
+      ],
+      "real_target_rva": "0xc7cb50",
+      "has_pdata": true,
+      "func_begin": "0xc7cb50",
+      "func_end": "0xc7cc16",
+      "func_size": 198,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, qword ptr [r14]",
+        "rdx": "lea rdx, [rip - 0x25e7]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a8d0",
+      "kind": "direct",
+      "target_rva": "0x32a2a0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x32a2a0"
+      ],
+      "real_target_rva": "0x32a2a0",
+      "has_pdata": true,
+      "func_begin": "0x32a2a0",
+      "func_end": "0x32a492",
+      "func_size": 498,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, r14"
+      }
+    },
+    {
+      "call_site_rva": "0x32a8db",
+      "kind": "direct",
+      "target_rva": "0xc74050",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74050"
+      ],
+      "real_target_rva": "0xc74050",
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp"
+      }
+    },
+    {
+      "call_site_rva": "0x32a8e8",
+      "kind": "direct",
+      "target_rva": "0xc746b0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc746b0"
+      ],
+      "real_target_rva": "0xc746b0",
+      "has_pdata": true,
+      "func_begin": "0xc746b0",
+      "func_end": "0xc746f3",
+      "func_size": 67,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp",
+        "rdx": "mov rdx, r14"
+      }
+    },
+    {
+      "call_site_rva": "0x32a8fd",
+      "kind": "direct",
+      "target_rva": "0xc74580",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74580"
+      ],
+      "real_target_rva": "0xc74580",
+      "has_pdata": true,
+      "func_begin": "0xc74580",
+      "func_end": "0xc7462e",
+      "func_size": 174,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp",
+        "rdx": "lea rdx, [rip - 0x104a]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a905",
+      "kind": "direct",
+      "target_rva": "0xc74050",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74050"
+      ],
+      "real_target_rva": "0xc74050",
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp",
+        "rdx": "lea rdx, [rip - 0x104a]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a916",
+      "kind": "direct",
+      "target_rva": "0xc747d0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc747d0"
+      ],
+      "real_target_rva": "0xc747d0",
+      "has_pdata": true,
+      "func_begin": "0xc747d0",
+      "func_end": "0xc74849",
+      "func_size": 121,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp",
+        "rdx": "lea rdx, [rip + 0xbf05d7]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a923",
+      "kind": "direct",
+      "target_rva": "0xc74970",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74970"
+      ],
+      "real_target_rva": "0xc74970",
+      "has_pdata": true,
+      "func_begin": "0xc74970",
+      "func_end": "0xc749a1",
+      "func_size": 49,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp",
+        "rdx": "lea rdx, [rip + 0xbf05d7]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a92b",
+      "kind": "direct",
+      "target_rva": "0xc74050",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74050"
+      ],
+      "real_target_rva": "0xc74050",
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp",
+        "rdx": "lea rdx, [rip + 0xbf05d7]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a93c",
+      "kind": "direct",
+      "target_rva": "0xc73ea0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc73ea0"
+      ],
+      "real_target_rva": "0xc73ea0",
+      "has_pdata": true,
+      "func_begin": "0xc73ea0",
+      "func_end": "0xc73f4b",
+      "func_size": 171,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp",
+        "r8": "lea r8, [rip + 0xbf78e1]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a944",
+      "kind": "direct",
+      "target_rva": "0xc74050",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74050"
+      ],
+      "real_target_rva": "0xc74050",
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp",
+        "r8": "lea r8, [rip + 0xbf78e1]"
+      }
+    },
+    {
+      "call_site_rva": "0x32a950",
+      "kind": "direct",
+      "target_rva": "0xc74890",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74890"
+      ],
+      "real_target_rva": "0xc74890",
+      "has_pdata": true,
+      "func_begin": "0xc74890",
+      "func_end": "0xc748c6",
+      "func_size": 54,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp"
+      }
+    },
+    {
+      "call_site_rva": "0x32a960",
+      "kind": "direct",
+      "target_rva": "0xc74a90",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74a90"
+      ],
+      "real_target_rva": "0xc74a90",
+      "has_pdata": true,
+      "func_begin": "0xc74a90",
+      "func_end": "0xc74b11",
+      "func_size": 129,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp"
+      }
+    },
+    {
+      "call_site_rva": "0x32a968",
+      "kind": "direct",
+      "target_rva": "0xc74770",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74770"
+      ],
+      "real_target_rva": "0xc74770",
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp"
+      }
+    },
+    {
+      "call_site_rva": "0x32a978",
+      "kind": "direct",
+      "target_rva": "0xc74a90",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74a90"
+      ],
+      "real_target_rva": "0xc74a90",
+      "has_pdata": true,
+      "func_begin": "0xc74a90",
+      "func_end": "0xc74b11",
+      "func_size": 129,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp"
+      }
+    },
+    {
+      "call_site_rva": "0x32a980",
+      "kind": "direct",
+      "target_rva": "0xc74770",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74770"
+      ],
+      "real_target_rva": "0xc74770",
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp"
+      }
+    },
+    {
+      "call_site_rva": "0x32a990",
+      "kind": "direct",
+      "target_rva": "0xc74a90",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74a90"
+      ],
+      "real_target_rva": "0xc74a90",
+      "has_pdata": true,
+      "func_begin": "0xc74a90",
+      "func_end": "0xc74b11",
+      "func_size": 129,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp"
+      }
+    },
+    {
+      "call_site_rva": "0x32a99a",
+      "kind": "direct",
+      "target_rva": "0xc74f30",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74f30"
+      ],
+      "real_target_rva": "0xc74f30",
+      "has_pdata": true,
+      "func_begin": "0xc74f30",
+      "func_end": "0xc74fcd",
+      "func_size": 157,
+      "import": null,
+      "arg_hints": {
+        "rcx": "mov rcx, rbp"
+      }
+    },
+    {
+      "call_site_rva": "0x32a9ed",
+      "kind": "direct",
+      "target_rva": "0x6a2cc0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x6a2cc0"
+      ],
+      "real_target_rva": "0x6a2cc0",
+      "has_pdata": true,
+      "func_begin": "0x6a2cc0",
+      "func_end": "0x6a2d34",
+      "func_size": 116,
+      "import": null,
+      "arg_hints": {
+        "rcx": "lea rcx, [rip + 0xbf7a16]",
+        "rdx": "shr rdx, 4"
+      }
+    },
+    {
+      "call_site_rva": "0x32aa01",
+      "kind": "direct",
+      "target_rva": "0x6a79b0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x6a79b0"
+      ],
+      "real_target_rva": "0x6a79b0",
+      "has_pdata": true,
+      "func_begin": "0x6a79b0",
+      "func_end": "0x6a7a1a",
+      "func_size": 106,
+      "import": null,
+      "arg_hints": {
+        "rcx": "lea rcx, [rip + 0xbf7a16]",
+        "rdx": "mov rdx, qword ptr [rip + 0xbf7d27]",
+        "r8": "mov r8, rax"
+      }
+    }
+  ],
+  "classified_call_targets": [
+    {
+      "target_rva": "0x6b5c80",
+      "real_target_rva": "0x6b5c80",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x6b5c80"
+      ],
+      "has_pdata": true,
+      "func_begin": "0x6b5c80",
+      "func_end": "0x6b5cae",
+      "func_size": 46,
+      "import": null,
+      "call_sites": [
+        "0x32a6a9"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, r15",
+        "rdx": "lea rdx, [rip + 0xbf7cb7]"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 46B; head=48895c2418574883ec2033ff44894108; no signature matched"
+    },
+    {
+      "target_rva": "0x271e70",
+      "real_target_rva": "0x271e70",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x271e70"
+      ],
+      "has_pdata": true,
+      "func_begin": "0x271e70",
+      "func_end": "0x271e97",
+      "func_size": 39,
+      "import": null,
+      "call_sites": [
+        "0x32a6e7",
+        "0x32a7cb"
+      ],
+      "arg_hints_sample": {
+        "r8": "mov r8, r15"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 39B; head=48895c2418574883ec3033c04c894110; no signature matched"
+    },
+    {
+      "target_rva": "0xdf593c",
+      "real_target_rva": "0xdf593c",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xdf593c"
+      ],
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": "VCRUNTIME140.dll!memmove",
+      "call_sites": [
+        "0x32a7e1"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, qword ptr [r14 + 0x128]",
+        "rdx": "mov rdx, rdi",
+        "r8": "mov r8, r15"
+      },
+      "classification": "import",
+      "confidence": "high",
+      "evidence": "import thunk -> VCRUNTIME140.dll!memmove"
+    },
+    {
+      "target_rva": "0xc7c000",
+      "real_target_rva": "0xc7eea0",
+      "is_thunk": true,
+      "thunk_chain": [
+        "0xc7c000",
+        "0xc7eea0"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc7eea0",
+      "func_end": "0xc7ef4a",
+      "func_size": 170,
+      "import": null,
+      "call_sites": [
+        "0x32a835"
+      ],
+      "arg_hints_sample": {},
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 170B; head=48895c2420555641564883ec50488b05; no signature matched"
+    },
+    {
+      "target_rva": "0xc73c50",
+      "real_target_rva": "0xc73c50",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc73c50"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc73c50",
+      "func_end": "0xc73e1c",
+      "func_size": 460,
+      "import": null,
+      "call_sites": [
+        "0x32a850",
+        "0x32a863"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, qword ptr [r14]"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 460B; head=48895c24084889742410574883ec208b; no signature matched"
+    },
+    {
+      "target_rva": "0xc77f40",
+      "real_target_rva": "0xc77f40",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc77f40"
+      ],
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "call_sites": [
+        "0x32a872"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, qword ptr [r14]",
+        "rdx": "lea rdx, [rip - 0x2652]"
+      },
+      "classification": "lua_atpanic",
+      "confidence": "high",
+      "evidence": "leaf function: reads [rcx+8] (global_State* g), swaps rdx into [g+0x118] (panic fn slot), returns previous \u2014 matches lua_atpanic(L, fn)"
+    },
+    {
+      "target_rva": "0xc746b0",
+      "real_target_rva": "0xc746b0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc746b0"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc746b0",
+      "func_end": "0xc746f3",
+      "func_size": 67,
+      "import": null,
+      "call_sites": [
+        "0x32a880",
+        "0x32a898",
+        "0x32a8e8"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbx",
+        "rdx": "mov rdx, r14"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 67B; head=40534883ec20488bd9e8e2100100488b; no signature matched"
+    },
+    {
+      "target_rva": "0xc7cb50",
+      "real_target_rva": "0xc7cb50",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc7cb50"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc7cb50",
+      "func_end": "0xc7cc16",
+      "func_size": 198,
+      "import": null,
+      "call_sites": [
+        "0x32a88d",
+        "0x32a8ba"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, qword ptr [r14]",
+        "rdx": "mov rdx, r14"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 198B; head=48895c2410574883ec208d820f270000; no signature matched"
+    },
+    {
+      "target_rva": "0xc74580",
+      "real_target_rva": "0xc74580",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74580"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc74580",
+      "func_end": "0xc7462e",
+      "func_size": 174,
+      "import": null,
+      "call_sites": [
+        "0x32a8ad",
+        "0x32a8fd"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, qword ptr [r14]",
+        "rdx": "lea rdx, [rip - 0x25e7]"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 174B; head=48895c24084889742410574883ec2048; no signature matched"
+    },
+    {
+      "target_rva": "0x32a2a0",
+      "real_target_rva": "0x32a2a0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x32a2a0"
+      ],
+      "has_pdata": true,
+      "func_begin": "0x32a2a0",
+      "func_end": "0x32a492",
+      "func_size": 498,
+      "import": null,
+      "call_sites": [
+        "0x32a8d0"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, r14"
+      },
+      "classification": "lua_gc_candidate",
+      "confidence": "low",
+      "evidence": "medium body (498B) with 3-arg (L,int,int) shape and multiple internal calls \u2014 plausibly lua_gc or another multi-arg API; needs runtime confirmation"
+    },
+    {
+      "target_rva": "0xc74050",
+      "real_target_rva": "0xc74050",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74050"
+      ],
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "call_sites": [
+        "0x32a8db",
+        "0x32a905",
+        "0x32a92b",
+        "0x32a944"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbp"
+      },
+      "classification": "lua_gettop",
+      "confidence": "high",
+      "evidence": "leaf function computing (top-base)>>3 from [rcx+X]/[rcx+Y], returning in rax \u2014 textbook lua_gettop(L)"
+    },
+    {
+      "target_rva": "0xc747d0",
+      "real_target_rva": "0xc747d0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc747d0"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc747d0",
+      "func_end": "0xc74849",
+      "func_size": 121,
+      "import": null,
+      "call_sites": [
+        "0x32a916"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbp",
+        "rdx": "lea rdx, [rip + 0xbf05d7]"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 121B; head=48895c2408574883ec20488bfa488bd9; no signature matched"
+    },
+    {
+      "target_rva": "0xc74970",
+      "real_target_rva": "0xc74970",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74970"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc74970",
+      "func_end": "0xc749a1",
+      "func_size": 49,
+      "import": null,
+      "call_sites": [
+        "0x32a923"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbp",
+        "rdx": "lea rdx, [rip + 0xbf05d7]"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 49B; head=40534883ec20488bd9e862e2ffff4c8b; no signature matched"
+    },
+    {
+      "target_rva": "0xc73ea0",
+      "real_target_rva": "0xc73ea0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc73ea0"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc73ea0",
+      "func_end": "0xc73f4b",
+      "func_size": 171,
+      "import": null,
+      "call_sites": [
+        "0x32a93c"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbp",
+        "r8": "lea r8, [rip + 0xbf78e1]"
+      },
+      "classification": "lua_load_wrapper_candidate",
+      "confidence": "medium",
+      "evidence": "small wrapper (171B) calling a 14379B internal function (likely lua_load) \u2014 shape matches a luaL_load* wrapper, but call-site arg context needed to confirm which one (loadbuffer vs loadfilex vs loadstring)",
+      "internal_lua_load_rva": "0x6859"
+    },
+    {
+      "target_rva": "0xc74890",
+      "real_target_rva": "0xc74890",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74890"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc74890",
+      "func_end": "0xc748c6",
+      "func_size": 54,
+      "import": null,
+      "call_sites": [
+        "0x32a950"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbp"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 54B; head=4883ec284c8bd1e844e3ffff498b5218; no signature matched"
+    },
+    {
+      "target_rva": "0xc74a90",
+      "real_target_rva": "0xc74a90",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74a90"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc74a90",
+      "func_end": "0xc74b11",
+      "func_size": 129,
+      "import": null,
+      "call_sites": [
+        "0x32a960",
+        "0x32a978",
+        "0x32a990"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbp"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 129B; head=48895c2408574883ec204d63d0488bd9; no signature matched"
+    },
+    {
+      "target_rva": "0xc74770",
+      "real_target_rva": "0xc74770",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74770"
+      ],
+      "has_pdata": false,
+      "func_begin": null,
+      "func_end": null,
+      "func_size": 0,
+      "import": null,
+      "call_sites": [
+        "0x32a968",
+        "0x32a980"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbp"
+      },
+      "classification": "lua_push_family",
+      "confidence": "medium",
+      "evidence": "leaf function writing a tag and bumping L->top ([rcx+0x18]) with overflow check \u2014 shape matches a lua_push* primitive"
+    },
+    {
+      "target_rva": "0xc74f30",
+      "real_target_rva": "0xc74f30",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0xc74f30"
+      ],
+      "has_pdata": true,
+      "func_begin": "0xc74f30",
+      "func_end": "0xc74fcd",
+      "func_size": 157,
+      "import": null,
+      "call_sites": [
+        "0x32a99a"
+      ],
+      "arg_hints_sample": {
+        "rcx": "mov rcx, rbp"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 157B; head=48895c2408574883ec204863fa488bd9; no signature matched"
+    },
+    {
+      "target_rva": "0x6a2cc0",
+      "real_target_rva": "0x6a2cc0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x6a2cc0"
+      ],
+      "has_pdata": true,
+      "func_begin": "0x6a2cc0",
+      "func_end": "0x6a2d34",
+      "func_size": 116,
+      "import": null,
+      "call_sites": [
+        "0x32a9ed"
+      ],
+      "arg_hints_sample": {
+        "rcx": "lea rcx, [rip + 0xbf7a16]",
+        "rdx": "shr rdx, 4"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 116B; head=48894c240848895424104c894424184c; no signature matched"
+    },
+    {
+      "target_rva": "0x6a79b0",
+      "real_target_rva": "0x6a79b0",
+      "is_thunk": false,
+      "thunk_chain": [
+        "0x6a79b0"
+      ],
+      "has_pdata": true,
+      "func_begin": "0x6a79b0",
+      "func_end": "0x6a7a1a",
+      "func_size": 106,
+      "import": null,
+      "call_sites": [
+        "0x32aa01"
+      ],
+      "arg_hints_sample": {
+        "rcx": "lea rcx, [rip + 0xbf7a16]",
+        "rdx": "mov rdx, qword ptr [rip + 0xbf7d27]",
+        "r8": "mov r8, rax"
+      },
+      "classification": "unknown",
+      "confidence": "none",
+      "evidence": "body of 106B; head=48895c2408488974241057b850200000; no signature matched"
+    }
+  ],
+  "luajit_error_string_crosscheck": {
+    "error_string_results": [
+      {
+        "label": "attempt_to_call",
+        "string": "attempt to call a %s value",
+        "documented_file_offset": "0xe89b86",
+        "computed_rva": "0xe8c586",
+        "string_at_offset": true,
+        "lea_xref_count": 0,
+        "lea_xref_sites": [],
+        "pointer_table_hits": 0
+      },
+      {
+        "label": "bad_argument",
+        "string": "bad argument #%d to '%s'",
+        "documented_file_offset": "0xe89c97",
+        "computed_rva": "0xe8c697",
+        "string_at_offset": true,
+        "lea_xref_count": 0,
+        "lea_xref_sites": [],
+        "pointer_table_hits": 0
+      },
+      {
+        "label": "loop_in_gettable",
+        "string": "loop in gettable",
+        "documented_file_offset": "0xe89c1c",
+        "computed_rva": "0xe8c61c",
+        "string_at_offset": true,
+        "lea_xref_count": 0,
+        "lea_xref_sites": [],
+        "pointer_table_hits": 0
+      },
+      {
+        "label": "invalid_key_next",
+        "string": "invalid key to 'next'",
+        "documented_file_offset": "0xe89b70",
+        "computed_rva": "0xe8c570",
+        "string_at_offset": true,
+        "lea_xref_count": 0,
+        "lea_xref_sites": [],
+        "pointer_table_hits": 0
+      }
+    ],
+    "any_xref_found": false,
+    "methodology_note": "Phase D as documented does NOT work: 0 LEA xrefs and 0 pointer-table hits for every \u00a75 error string. The strings are entries in a contiguous lj_err_msg[] block in .rdata and are interned into LuaJIT's string hash table at VM init via lj_str_new(); the code thereafter references them by GCstr* handle, never by raw .rdata address. Phase 2 must find the lj_str_new interning loop or use a different anchor (e.g. a known LuaJIT function body signature), not LEA-xref on individual error strings."
+  },
+  "doc_corrections": [],
+  "methodology_gaps": [
+    "CFG/hot-patch thunks (5-byte E9 rel32 + cc padding) have NO .pdata entry of their own \u2014 they sit in gaps between RUNTIME_FUNCTION entries. Discovery MUST follow the thunk to the real body. Observed: lua_newstate is invoked at the thunk 0xc7c000 whose real body is at 0xc7eea0.",
+    "Leaf functions (no prologue, SP unchanged, ret-only epilogue) are ALSO missing .pdata entries \u2014 MSVC omits them. lua_gettop (0xc74050), lua_atpanic (0xc77f40), and the lua_push* primitives (e.g. 0xc74770) all fall in .pdata gaps. .pdata is NOT a complete function map; Phase 2 must handle addresses outside .pdata by disasming bytes directly and trimming at the first ret.",
+    "Import thunks (FF 25 disp32 = jmp [rip+disp32]) are a third category of call target in .pdata gaps. They must be resolved through the IAT, not treated as function bodies. Example: 0xdf593c -> VCRUNTIME140.dll!memmove.",
+    "Phase D as documented does not work. The \u00a75 LuaJIT error strings (attempt_to_call, bad_argument, loop_in_gettable, invalid_key_next) have ZERO LEA xrefs and ZERO pointer-table references anywhere in the binary. They are entries in a contiguous lj_err_msg[] block and are interned via lj_str_new() at VM init; thereafter referenced by GCstr* handle. Phase 2 must use a different LuaJIT-internal anchor (e.g. the lj_str_new interning loop, or a known function-body signature). Do NOT LEA-xref individual error strings.",
+    "lua_pcall could not be conclusively identified offline. It has no string anchor and the engine's bytecode path does not exhibit a clean (L,int,int,int) call site resolving to a thin lj_docall wrapper. Phase 2 must locate it by clustering near the other confirmed LuaJIT API functions in the 0xc7xxxx region or by structural pattern.",
+    "The lua_panic string anchor's containing function is lua_panic ITSELF (it logs its own name), NOT the init code. The reliable path to init is: find the lua_panic body, then find LEA references to that body's address (the &lua_panic taken for lua_atpanic). The anchors doc \u00a77 implies the string xref lands directly in init code; it does not."
+  ]
+}
