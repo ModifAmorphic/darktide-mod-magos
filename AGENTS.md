@@ -15,7 +15,27 @@ A POC has been completed and validated on both Linux/Proton and
 Windows native. The project is transitioning from POC to production
 development.
 
+> **Baseline (read before planning).** The POC is a capability proof
+> and reference — *not* a pre-release of production code. Production
+> is built from the ground up, with testability, review, and
+> production-readiness as first-class goals. The POC carries forward
+> two things only: (1) proof that the approach is feasible, and
+> (2) validated technical constraints that are properties of the
+> Darktide binary (LuaJIT addresses/struct layouts, the sandboxed
+> `_G`, retry-on-error timing, the C-function bootstrap mechanism).
+> It does not carry forward code. Phrases like "reusable" elsewhere
+> in the docs are statements of code quality, not prescriptions to
+> adopt POC code. Requirements, architecture, and technology choices
+> for production are made fresh — the implementation language is
+> decided by the architecture, not the other way around.
+
 ## Directory Structure
+
+> The tree below depicts the **POC repository**, preserved on the
+> `poc` branch as historical reference. The `main` branch contains
+> only this orientation doc plus production planning/reference docs
+> under `docs/`. The production source layout is an open decision
+> (part of architecture work), not yet established.
 
 ```
 darktide-mod-magos/

@@ -176,8 +176,13 @@ foundation. If CreateRemoteThread works on both platforms, the core
 architecture is validated and the rest is product development.
 
 The POC's DLL code (discovery engine, hooks, C-function bootstrap) is
-reusable as-is. The proxy DLL delivery is replaced by CreateRemoteThread
-delivery. The mod manager app is new development.
+  of high enough quality that production *may* consult it as reference —
+  but it is not being adopted as-is. Production is built from the ground
+  up, with its own testability and review bar; the POC is reference, not
+  a pre-release. The proxy DLL delivery is replaced by CreateRemoteThread
+  delivery. The mod manager is new ground — not because it is harder than
+  what the POC covered, but because it did not need proving. That is not
+  a claim that the POC code is finished or production-ready.
 
 ---
 
