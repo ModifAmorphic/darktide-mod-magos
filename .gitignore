@@ -77,3 +77,7 @@ Testing/
 
 # Local files
 _local/
+
+# Rust / cargo build artifacts
+/target/
+**/*.rs.bk
