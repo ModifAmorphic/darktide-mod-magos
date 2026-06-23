@@ -81,3 +81,9 @@ _local/
 # Rust / cargo build artifacts
 /target/
 **/*.rs.bk
+
+# Mixed-DLL build outputs (shell + launcher)
+/magos_shell.dll
+/magos_shell.lib
+/magos_launcher.exe
+*.obj

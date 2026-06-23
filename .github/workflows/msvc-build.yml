@@ -1,0 +1,81 @@
+# Spike 001 step 1 (MSVC native) — builds the mixed DLL on a Windows runner.
+#
+# Mirrors the MinGW path with the MSVC toolchain: the Rust staticlib targets
+# x86_64-pc-windows-msvc, and the C shell/MinHook are compiled with cl.exe and
+# linked with the staticlib + the MSVC C runtime. (Cannot run MSVC on the Linux
+# dev box; this workflow is the authoritative MSVC validation.)
+name: msvc-build
+
+on:
+  push:
+    branches: [spike/001-component-a]
+  pull_request:
+    branches: [spike/001-component-a]
+  workflow_dispatch:
+
+jobs:
+  msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (rustup, MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: msvc-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build Rust staticlib (x86_64-pc-windows-msvc)
+        run: cargo build --release -p magos-discovery --target x86_64-pc-windows-msvc
+
+      - name: Set up MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build mixed DLL + launcher (cl/link)
+        shell: cmd
+        run: |
+          set REL=target\x86_64-pc-windows-msvc\release
+          :: Compile the C shell + MinHook to objects.
+          cl /nologo /O2 /c /I shell\include /I shell\vendor\minhook\include ^
+             shell\src\dllmain.c ^
+             shell\vendor\minhook\src\buffer.c ^
+             shell\vendor\minhook\src\hook.c ^
+             shell\vendor\minhook\src\trampoline.c ^
+             shell\vendor\minhook\src\hde\hde64.c
+          :: Link the DLL against the Rust staticlib + system libs.
+          :: (Rust MSVC staticlib needs: kernel32 user32 ws2_32 userenv bcrypt ntdll
+          ::  + the MSVC runtime + compiler-rt equivs supplied by libgcc's MSVC
+          ::  counterpart via the staticlib itself.)
+          link /nologo /DLL /OUT:magos_shell.dll ^
+             dllmain.obj buffer.obj hook.obj trampoline.obj hde64.obj ^
+             %REL%\magos_discovery.lib ^
+             psapi.lib kernel32.lib user32.lib ws2_32.lib userenv.lib bcrypt.lib ntdll.lib ^
+             /NODEFAULTLIB:libgcc.lib
+          :: Launcher.
+          cl /nologo /O2 /Fe:magos_launcher.exe launcher\src\launcher.c /link kernel32.lib
+
+      - name: Verify valid PE with DllMain
+        shell: pwsh
+        run: |
+          $pe = [System.IO.BinaryReader]::new([System.IO.File]::OpenRead("magos_shell.dll"))
+          $mz = $pe.ReadBytes(2); if (($mz[0] -ne 0x4D) -or ($mz[1] -ne 0x5A)) { throw "not MZ" }
+          Write-Host "magos_shell.dll is a valid PE (MZ header)"
+          $pe.Close()
+          & dumpbin /exports magos_shell.dll | Select-String "DllMain|magos_discover"
+          if ($LASTEXITCODE -ne 0) { throw "dumpbin failed" }
+
+      - name: Upload PE artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: magos-shell-msvc
+          path: |
+            magos_shell.dll
+            magos_launcher.exe

@@ -1,0 +1,58 @@
+# Spike 001 step 1 (MinGW cross-compile) — builds the mixed DLL from Linux.
+name: mingw-build
+
+on:
+  push:
+    branches: [spike/001-component-a]
+  pull_request:
+    branches: [spike/001-component-a]
+  workflow_dispatch:
+
+jobs:
+  mingw:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (rustup)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install MinGW-w64 cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: mingw-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build Rust staticlib (x86_64-pc-windows-gnu)
+        run: cargo build --release -p magos-discovery --target x86_64-pc-windows-gnu
+
+      - name: Build mixed DLL + launcher
+        run: make build
+
+      - name: Verify valid PE with DllMain
+        run: make check
+
+      - name: Run host-side discovery tests (cargo test)
+        env:
+          # The oracle test resolves Darktide.exe via _local/DARKTIDE.env; in CI
+          # (no game install) it skips cleanly rather than failing.
+          MAGOS_CI: "1"
+        run: cargo test -p magos-discovery
+
+      - name: Upload PE artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: magos-shell-mingw
+          path: |
+            magos_shell.dll
+            magos_launcher.exe

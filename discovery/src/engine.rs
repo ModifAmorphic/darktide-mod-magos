@@ -290,30 +290,6 @@ fn containing_function_of_anchor(pe: &Pe, image: &[u8], needle: &[u8]) -> Option
     pe.find_runtime_function(site).map(|rf| rf.begin)
 }
 
-/// Find an `E9 rel32` CFG thunk whose target == `body_rva`. Returns the thunk
-/// RVA (the address callers actually invoke).
-fn find_thunk_to(pe: &Pe, image: &[u8], body_rva: u32) -> Option<u32> {
-    let t = pe.text();
-    let lo = t.rva as usize;
-    let len = core::cmp::min(t.raw_size, t.virtual_size) as usize;
-    if lo + len > image.len() {
-        return None;
-    }
-    let blob = &image[lo..lo + len];
-    let mut i = 0usize;
-    while i + 5 <= len {
-        if blob[i] == 0xE9 {
-            let rel = i32::from_le_bytes([blob[i + 1], blob[i + 2], blob[i + 3], blob[i + 4]]);
-            let tgt = ((lo + i) as i64 + 5 + rel as i64) as u32;
-            if tgt == body_rva {
-                return Some((lo + i) as u32);
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
 /// `luaL_loadbuffer` via the `lua_resource::bytecode` anchor (the POC's
 /// reliable Method-A trace). The `luaL_load*` wrappers share a body shape, so
 /// a cluster scan is ambiguous; instead we find the engine functions that

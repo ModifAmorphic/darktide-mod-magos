@@ -21,8 +21,10 @@ publish.workspace = true
 
 [lib]
 name = "magos_discovery"
-# rlib for host tests + downstream Rust; staticlib/cdylib for the C shell link.
-crate-type = ["rlib", "staticlib", "cdylib"]
+# rlib for host tests + downstream Rust; staticlib for the C shell link. (No
+# cdylib: the spike's single PE DLL is the C shell with the Rust staticlib
+# linked in, not a standalone Rust DLL.)
+crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 # capstone is the one external dependency: the source-pattern matchers compare
