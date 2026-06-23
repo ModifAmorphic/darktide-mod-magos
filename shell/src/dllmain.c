@@ -22,6 +22,11 @@
 #include "magos_discovery.h"
 #include "MinHook.h"
 
+/* Named event for the launcher<->shell hook-ready handshake. The launcher
+ * creates this (session-local; no Global\ prefix) before injecting the DLL
+ * and waits on it before resuming the main thread. Must match launcher.c. */
+#define MAGOS_HOOK_READY_EVENT "magos_hook_ready"
+
 /* ---- minimal LuaJIT type stubs (only what the slice touches) ---- */
 typedef struct lua_State lua_State;
 typedef void *(*lua_Alloc)(void *ud, void *ptr, size_t osize, size_t nsize);
@@ -139,6 +144,22 @@ static DWORD WINAPI worker(LPVOID arg) {
     if (mh != MH_OK) { magos_log("[magos] MH_EnableHook(newstate) failed: %d\n", mh); return 1; }
     magos_log("[magos] step4: lua_newstate hook installed at %p (detour %p)\n",
          target, (void *)&detour_newstate);
+
+    /* Production hook-ready handshake: signal the launcher that the hook is
+     * enabled so it can resume the main thread. The launcher creates the
+     * named event before injection and waits on it before ResumeThread;
+     * resuming earlier loses the hook (the engine calls lua_newstate during
+     * startup). If the event can't be opened (e.g. launcher didn't create
+     * it), log and continue — the hook itself is still armed. */
+    HANDLE ready = OpenEventA(EVENT_MODIFY_STATE, FALSE, MAGOS_HOOK_READY_EVENT);
+    if (ready) {
+        SetEvent(ready);
+        CloseHandle(ready);
+        magos_log("[magos] hook-ready signaled (%s)\n", MAGOS_HOOK_READY_EVENT);
+    } else {
+        magos_log("[magos] warning: OpenEvent(%s) failed (lu=%lu); hook armed, not signaled\n",
+             MAGOS_HOOK_READY_EVENT, GetLastError());
+    }
 
     magos_log("[magos] worker complete; waiting for the engine to call lua_newstate...\n");
     return 0;
