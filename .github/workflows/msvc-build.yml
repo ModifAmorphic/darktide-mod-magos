@@ -51,9 +51,6 @@ jobs:
              shell\vendor\minhook\src\trampoline.c ^
              shell\vendor\minhook\src\hde\hde64.c
           :: Link the DLL against the Rust staticlib + system libs.
-          :: (Rust MSVC staticlib needs: kernel32 user32 ws2_32 userenv bcrypt ntdll
-          ::  + the MSVC runtime + compiler-rt equivs supplied by libgcc's MSVC
-          ::  counterpart via the staticlib itself.)
           link /nologo /DLL /OUT:magos_shell.dll ^
              dllmain.obj buffer.obj hook.obj trampoline.obj hde64.obj ^
              %REL%\magos_discovery.lib ^
@@ -61,6 +58,33 @@ jobs:
              /NODEFAULTLIB:libgcc.lib
           :: Launcher.
           cl /nologo /O2 /Fe:magos_launcher.exe launcher\src\launcher.c /link kernel32.lib
+
+      - name: Build C tests (cl/link)
+        shell: cmd
+        run: |
+          set REL=target\x86_64-pc-windows-msvc\release
+          :: Test runner object.
+          cl /nologo /O2 /c tests\test_runner.c
+          :: Launcher object (for test linking).
+          cl /nologo /O2 /I launcher\src /c launcher\src\launcher.c
+          :: Stub target — minimal GUI exe.
+          cl /nologo /O2 /SUBSYSTEM:WINDOWS /Fe:stub_target.exe tests\stub_target.c
+          :: Stub shell — minimal DLL.
+          cl /nologo /O2 /c tests\stub_shell.c
+          link /nologo /DLL /OUT:stub_shell.dll stub_shell.obj kernel32.lib
+          :: test_steam_env.exe
+          cl /nologo /O2 /I launcher\src /Fe:tests\test_steam_env.exe ^
+             tests\test_steam_env.c test_runner.obj launcher.obj kernel32.lib
+          :: test_injection.exe
+          cl /nologo /O2 /I launcher\src /Fe:tests\test_injection.exe ^
+             tests\test_injection.c test_runner.obj launcher.obj kernel32.lib
+
+      - name: Run C unit tests (native)
+        shell: cmd
+        run: |
+          echo === C unit tests ===
+          tests\test_steam_env.exe
+          tests\test_injection.exe
 
       - name: Verify valid PE with DllMain
         shell: pwsh
@@ -71,6 +95,11 @@ jobs:
           $pe.Close()
           & dumpbin /exports magos_shell.dll | Select-String "DllMain|magos_discover"
           if ($LASTEXITCODE -ne 0) { throw "dumpbin failed" }
+
+      - name: Run host-side discovery tests (cargo test)
+        env:
+          MAGOS_CI: "1"
+        run: cargo test -p magos-discovery
 
       - name: Upload PE artifacts
         uses: actions/upload-artifact@v4

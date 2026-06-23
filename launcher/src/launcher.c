@@ -25,7 +25,7 @@
  * Proton: build the launcher for Windows (mingw) and run it under Wine inside
  * the Steam Proton prefix (see runbook.md).
  */
-#include <windows.h>
+#include "launcher.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -42,64 +42,74 @@
  * after MH_EnableHook succeeds. Must match shell/src/dllmain.c. */
 #define MAGOS_HOOK_READY_EVENT "magos_hook_ready"
 
-static int fail(const char *msg, DWORD gle) {
-    fprintf(stderr, "[launcher] error: %s (GetLastError=%lu)\n", msg, gle);
-    return 1;
-}
+/* ---- testable seams (extracted for unit testing) ---- */
 
-int main(int argc, char **argv) {
-    if (argc < 3) {
-        fprintf(stderr, "usage: %s <game_exe> <dll_path>\n", argv[0]);
-        return 2;
-    }
-    const char *game_exe = argv[1];
-    const char *dll_path = argv[2];
-    HANDLE hook_ready = NULL;
-
-    /* 0. Set Darktide's Steam appID in our env so the child inherits it
-     *    (CreateProcessA below passes NULL for lpEnvironment → the child
-     *    inherits our environment block). SteamAppId is what steamclient
-     *    reads; SteamGameId is the companion Steam sets natively — set both. */
+void set_steam_env(void) {
     SetEnvironmentVariableA("SteamAppId", DARKTIDE_STEAM_APPID);
     SetEnvironmentVariableA("SteamGameId", DARKTIDE_STEAM_APPID);
+}
 
-    /* 1. CreateProcess(SUSPENDED). The hook (lua_newstate) must be installed
-     *    before the engine's main() runs; SUSPENDED + inject + wait-hook-ready
-     *    + resume gives that timing guarantee (the proxy-DLL POC used DllMain
-     *    for the same). */
+int inject_and_resume(const char *game_exe, const char *dll_path,
+                      DWORD hook_timeout) {
+    HANDLE hook_ready = NULL;
     STARTUPINFOA si = { .cb = sizeof(si) };
     PROCESS_INFORMATION pi = {0};
     char cmdline[1024];
+
+    /* 1. CreateProcess(SUSPENDED). The hook (lua_newstate) must be installed
+     *    before the engine's main() runs; SUSPENDED + inject + wait-hook-ready
+     *    + resume gives that timing guarantee. */
     snprintf(cmdline, sizeof(cmdline), "\"%s\"", game_exe);
     if (!CreateProcessA(game_exe, cmdline, NULL, NULL, FALSE,
                         CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
-        return fail("CreateProcess(SUSPENDED)", GetLastError());
+        fprintf(stderr, "[launcher] error: CreateProcess(SUSPENDED) "
+                "(GetLastError=%lu)\n", GetLastError());
+        return 1;
     }
-    printf("[launcher] created %s pid=%lu (suspended)\n", game_exe, pi.dwProcessId);
+    printf("[launcher] created %s pid=%lu (suspended)\n",
+           game_exe, pi.dwProcessId);
 
     /* 2. Allocate + write the DLL path into the target process. */
     size_t path_len = strlen(dll_path) + 1;
     LPVOID remote = VirtualAllocEx(pi.hProcess, NULL, path_len,
                                    MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!remote) { fail("VirtualAllocEx", GetLastError()); goto kill; }
+    if (!remote) {
+        fprintf(stderr, "[launcher] error: VirtualAllocEx "
+                "(GetLastError=%lu)\n", GetLastError());
+        goto kill;
+    }
     if (!WriteProcessMemory(pi.hProcess, remote, dll_path, path_len, NULL)) {
-        fail("WriteProcessMemory", GetLastError()); goto kill;
+        fprintf(stderr, "[launcher] error: WriteProcessMemory "
+                "(GetLastError=%lu)\n", GetLastError());
+        goto kill;
     }
 
     /* 3. Create the hook-ready event before CreateRemoteThread, so it exists
      *    before the DLL's worker can OpenEvent it (manual-reset, initially
      *    non-signaled; session-local name). */
     hook_ready = CreateEventA(NULL, TRUE, FALSE, MAGOS_HOOK_READY_EVENT);
-    if (!hook_ready) { fail("CreateEvent(hook_ready)", GetLastError()); goto kill; }
+    if (!hook_ready) {
+        fprintf(stderr, "[launcher] error: CreateEvent(hook_ready) "
+                "(GetLastError=%lu)\n", GetLastError());
+        goto kill;
+    }
 
     /* 4. CreateRemoteThread(LoadLibraryA, remote_dll_path). */
     HMODULE k32 = GetModuleHandleA("kernel32.dll");
     FARPROC load_lib = GetProcAddress(k32, "LoadLibraryA");
-    if (!load_lib) { fail("GetProcAddress LoadLibraryA", GetLastError()); goto kill; }
+    if (!load_lib) {
+        fprintf(stderr, "[launcher] error: GetProcAddress LoadLibraryA "
+                "(GetLastError=%lu)\n", GetLastError());
+        goto kill;
+    }
     HANDLE th = CreateRemoteThread(pi.hProcess, NULL, 0,
                                    (LPTHREAD_START_ROUTINE)load_lib, remote,
                                    0, NULL);
-    if (!th) { fail("CreateRemoteThread", GetLastError()); goto kill; }
+    if (!th) {
+        fprintf(stderr, "[launcher] error: CreateRemoteThread "
+                "(GetLastError=%lu)\n", GetLastError());
+        goto kill;
+    }
     printf("[launcher] injected %s via CreateRemoteThread\n", dll_path);
 
     /* 5. Wait for LoadLibraryA to return (DllMain ran). DllMain returns
@@ -112,22 +122,26 @@ int main(int argc, char **argv) {
     /* 6. Wait for the worker to install + enable the lua_newstate hook before
      *    letting the engine's main() run. The worker signals hook_ready after
      *    MH_EnableHook succeeds. On timeout/failure we terminate rather than
-     *    resume with an unready hook (the engine would call lua_newstate
-     *    before the hook is armed → hook never fires). */
-    DWORD w = WaitForSingleObject(hook_ready, 60000);
+     *    resume with an unready hook. */
+    DWORD w = WaitForSingleObject(hook_ready, hook_timeout);
     if (w != WAIT_OBJECT_0) {
-        fail(w == WAIT_TIMEOUT ? "hook-ready timeout (60s)"
-                               : "hook-ready wait failed",
-             GetLastError());
-        goto kill;  /* do NOT resume with an unready hook */
+        fprintf(stderr, "[launcher] error: %s (GetLastError=%lu)\n",
+                w == WAIT_TIMEOUT ? "hook-ready timeout"
+                                   : "hook-ready wait failed",
+                GetLastError());
+        goto kill;
     }
     printf("[launcher] hook ready; resuming\n");
 
     /* 7. Resume the engine's main thread — the lua_newstate hook is armed. */
     if (ResumeThread(pi.hThread) == (DWORD)-1) {
-        fail("ResumeThread", GetLastError()); goto kill;
+        fprintf(stderr, "[launcher] error: ResumeThread "
+                "(GetLastError=%lu)\n", GetLastError());
+        goto kill;
     }
-    printf("[launcher] resumed; game should reach main menu. Logs -> magos_spike.log\n");
+
+    printf("[launcher] resumed; game should reach main menu. "
+           "Logs -> magos_spike.log\n");
     CloseHandle(hook_ready);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -140,3 +154,16 @@ kill:
     CloseHandle(pi.hProcess);
     return 1;
 }
+
+/* ---- entry point (excluded when building test objects) ---- */
+
+#ifndef MAGOS_TEST_BUILD
+int main(int argc, char **argv) {
+    if (argc < 3) {
+        fprintf(stderr, "usage: %s <game_exe> <dll_path>\n", argv[0]);
+        return 2;
+    }
+    set_steam_env();
+    return inject_and_resume(argv[1], argv[2], 60000);
+}
+#endif /* MAGOS_TEST_BUILD */

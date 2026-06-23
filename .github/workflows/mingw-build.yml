@@ -19,10 +19,10 @@ jobs:
         with:
           targets: x86_64-pc-windows-gnu
 
-      - name: Install MinGW-w64 cross-compiler
+      - name: Install MinGW-w64 cross-compiler + wine
         run: |
           sudo apt-get update
-          sudo apt-get install -y mingw-w64
+          sudo apt-get install -y mingw-w64 wine64
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -41,6 +41,9 @@ jobs:
 
       - name: Verify valid PE with DllMain
         run: make check
+
+      - name: Run C unit tests (via wine)
+        run: make c-tests
 
       - name: Run host-side discovery tests (cargo test)
         env:
