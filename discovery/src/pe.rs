@@ -349,11 +349,7 @@ fn parse_imports(image: &[u8], dir_rva: u32, dir_size: u32) -> Vec<ImportEntry> 
         }
         let mut int = original_first_thunk as usize;
         let mut iat = first_thunk as usize;
-        loop {
-            let v = match u64le(image, int) {
-                Some(v) => v,
-                None => break,
-            };
+        while let Some(v) = u64le(image, int) {
             if v == 0 {
                 break;
             }

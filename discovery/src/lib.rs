@@ -10,6 +10,7 @@
 //!   1. [`disasm`] — the capstone C-FFI wrapper.
 //!   2. this module's C-ABI seam ([`ffi`]) — which must dereference
 //!      caller-provided pointers.
+//!
 //! Every `extern "C"` entry is wrapped in [`std::panic::catch_unwind`] so a
 //! panic anywhere in the pure-library can never unwind across the C-ABI
 //! boundary (which would be UB). See the *Panic boundary* notes below.
@@ -104,7 +105,7 @@ pub const MAGOS_ERR_PANIC: i32 = -100; // a panic was caught at the boundary
 /// the call; `out` must point to a writable `MagosAddressTable`. Both may be
 /// null (returns [`MAGOS_ERR_NULL_ARG`]).
 #[no_mangle]
-pub extern "C" fn magos_discover(
+pub unsafe extern "C" fn magos_discover(
     image: *const u8,
     len: usize,
     out: *mut MagosAddressTable,
@@ -147,7 +148,7 @@ pub extern "C" fn magos_discover(
 /// Same as [`magos_discover`] plus: if `detail` is non-null, it must point to
 /// at least `detail_cap` writable bytes.
 #[no_mangle]
-pub extern "C" fn magos_discover_detail(
+pub unsafe extern "C" fn magos_discover_detail(
     image: *const u8,
     len: usize,
     out: *mut MagosAddressTable,
@@ -277,9 +278,13 @@ mod tests {
     #[test]
     fn seam_rejects_null_args() {
         let mut out = MagosAddressTable::default();
-        let code = magos_discover(core::ptr::null(), 0, &mut out);
+        // SAFETY: a null `image` is the explicit error path the seam validates
+        // before any deref; `out` is a valid local.
+        let code = unsafe { magos_discover(core::ptr::null(), 0, &mut out) };
         assert_eq!(code, MAGOS_ERR_NULL_ARG);
-        let code = magos_discover(b"x".as_ptr(), 1, core::ptr::null_mut());
+        // SAFETY: `image` points at a valid 1-byte slice; a null `out` is the
+        // explicit error path the seam validates before any deref.
+        let code = unsafe { magos_discover(b"x".as_ptr(), 1, core::ptr::null_mut()) };
         assert_eq!(code, MAGOS_ERR_NULL_ARG);
     }
 }

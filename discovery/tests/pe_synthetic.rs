@@ -1,7 +1,7 @@
 //! Unit test: PE-parsing machinery against a small synthetic PE built in
 //! memory. Validates section discovery, `.pdata` `RUNTIME_FUNCTION` parsing
-//! + sorting, and `.pdata` gap binary-search — all without the multi-MB game
-//! binary, so the parsing layer has its own fast, hermetic coverage.
+//! and sorting, and `.pdata` gap binary-search — all without the multi-MB
+//! game binary, so the parsing layer has its own fast, hermetic coverage.
 
 use magos_discovery::pe::{map_from_file, Pe, PeError};
 

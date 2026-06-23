@@ -48,8 +48,8 @@ fn direct_call_targets(insns: &[DecodedInsn]) -> Vec<u64> {
         .filter(|i| i.id == X86_INS_CALL)
         .filter_map(|i| {
             let o = i.op_str.trim();
-            if o.starts_with("0x") {
-                u64::from_str_radix(&o[2..], 16).ok()
+            if let Some(h) = o.strip_prefix("0x") {
+                u64::from_str_radix(h, 16).ok()
             } else if !o.is_empty() && o.starts_with(|c: char| c.is_ascii_digit()) {
                 u64::from_str_radix(o, 16).ok()
             } else {

@@ -166,7 +166,7 @@ pub fn discover_with(
         find_unique(dis, image, pe, &candidates, |i| patterns::match_lual_openlibs(i, cluster))
             .map_err(|e| DiscoverError::Match("luaL_openlibs", e))?;
     let lual_loadbuffer = find_loadbuffer_via_bytecode(dis, image, pe, cluster)
-        .ok_or_else(|| DiscoverError::Match("luaL_loadbuffer", MatchError::NoCandidate))
+        .ok_or(DiscoverError::Match("luaL_loadbuffer", MatchError::NoCandidate))
         .and_then(|t| {
             if t == 0 {
                 Err(DiscoverError::Match("luaL_loadbuffer", MatchError::NoCandidate))
@@ -185,7 +185,7 @@ pub fn discover_with(
     // the CFG thunk callers invoke + the real body it jumps to.
     let (lua_newstate_thunk, lua_newstate_body) =
         find_newstate_via_trace(dis, image, pe, init_begin, init_end, lua_atpanic)
-            .ok_or_else(|| DiscoverError::Match("lua_newstate_body", MatchError::NoCandidate))?;
+            .ok_or(DiscoverError::Match("lua_newstate_body", MatchError::NoCandidate))?;
 
     Ok(AddressTable {
         lua_newstate_thunk,
@@ -459,11 +459,9 @@ fn find_newstate_via_trace(
     }
     let thunk = newstate_target?;
 
-    // Follow the CFG thunk (E9 rel32) to the real body.
+    // Follow the CFG thunk (E9 rel32) to the real body. (The trace result is
+    // returned as-is whether or not the thunk resolved to a distinct body —
+    // both cases yield the same `(thunk, body)` pair for the caller.)
     let (body, _chain) = crate::scan::trace_thunk(pe, image, thunk, 8);
-    if body == thunk {
-        Some((thunk, body))
-    } else {
-        Some((thunk, body))
-    }
+    Some((thunk, body))
 }

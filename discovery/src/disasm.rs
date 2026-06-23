@@ -121,7 +121,7 @@ impl Disassembler {
             Some(c) => c,
             None => return Vec::new(),
         };
-        let count = max_insns.min(512) as usize;
+        let count = max_insns.min(512);
         let insns = match self.cs.disasm_count(code, begin as u64, count) {
             Ok(i) => i,
             Err(_) => return Vec::new(),
@@ -180,8 +180,8 @@ pub fn body_end_rva(insns: &[DecodedInsn], fn_start: u32) -> u32 {
 /// address (capstone prints absolute targets for rel8/rel32 branches).
 pub fn parse_branch_target(ins: &DecodedInsn) -> Option<u64> {
     let op = ins.op_str.trim();
-    if op.starts_with("0x") {
-        u64::from_str_radix(&op[2..], 16).ok()
+    if let Some(h) = op.strip_prefix("0x") {
+        u64::from_str_radix(h, 16).ok()
     } else if op.starts_with("0") && op.len() > 1 && op.chars().all(|c| c.is_ascii_hexdigit()) {
         u64::from_str_radix(op, 16).ok()
     } else {

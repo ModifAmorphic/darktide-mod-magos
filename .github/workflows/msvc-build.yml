@@ -33,6 +33,9 @@ jobs:
             target
           key: msvc-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
+      - name: Lint with clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
       - name: Build Rust staticlib (x86_64-pc-windows-msvc)
         run: cargo build --release -p magos-discovery --target x86_64-pc-windows-msvc
 
