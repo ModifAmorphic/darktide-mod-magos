@@ -1,6 +1,6 @@
 # ADR 0001: Component A Language and Structure
 
-- **Status:** Proposed — pending [Spike 001](../planning/spike-001-component-a-language.md)
+- **Status:** Accepted — Hybrid validated by [Spike 001](../planning/spike-001-component-a-language.md). Step 4/5 hook-capture confirmation pending the timing-fix re-run (expected to pass; see outcome).
 - **Date:** 2026-06-23
 - **Decides:** The implementation language and internal structure of
   Component A (the injected payload that runs inside `Darktide.exe`).
@@ -49,25 +49,48 @@ Two architectural facts shape the choice (established in planning):
 
 ## Decision
 
-**Pending Spike 001 results.** Pre-wired decision tree, so the outcome
-fills in the choice without re-litigation:
+**Adopt the Hybrid** (Rust pure-library for discovery + C live-game
+shell). Spike 001 met the adoption gate — steps 1, 2, 6 pass + safe
+surface exceeded — so per the pre-wired tree the Hybrid is chosen.
 
-- **Steps 1, 2, 6 pass + safe surface high (>90%)** → adopt the **Hybrid**.
-- **1/2 pass but 6 fails** → the *seam design* is flawed, not Rust;
-  revise the seam, or fall back to **All-Rust**.
-- **Step 2 fails (thin safe surface)** → Rust's benefit doesn't
-  materialize where claimed → adopt **All-C** or **All-C++**.
-- **Step 3 fails on Proton** → a delivery problem, independent of
-  language; proxy-DLL fallback applies and does **not** block this ADR.
+## Spike 001 outcome
 
-## Consequences (anticipated — confirm post-spike)
+**Adoption gate (met):**
+- **Step 1** (mixed Rust+C build) — PASS. MinGW cross-compile + MSVC (CI); valid PE DLL, statically linked, system-DLL-only runtime deps.
+- **Step 2** (discovery, full 16-address engine) — PASS. All 16 found; **100% safe Rust** in core logic (1476 lines, 0 `unsafe`); only 5 `unsafe` lines at the C-ABI seam. Exceeded the >90% bar.
+- **Step 6** (seam, in-process) — PASS. The C shell drove the Rust `magos_discover` against the live image; all 16 matched the offline oracle exactly. The hybrid-specific integration risk is validated.
+- Safe surface — exceeded (>90% → 100%).
 
-- *If Hybrid adopted:* two toolchains and a C-ABI seam to maintain; the
-  seam must be held at the safety boundary (Rust = stateless discovery,
-  C = everything touching the live game) or it rots; Rust testability
-  captured on the discovery engine; C track record captured on the shell.
-- *If All-C/C++ adopted:* single language, no seam; testability of the
-  discovery engine rests on that language's testing ergonomics.
+**Other steps:**
+- **Step 3** (CreateRemoteThread on Proton) — PASS. The spike's #1 unvalidated risk is de-risked: create-suspend-inject-resume worked under Proton; game reached the menu.
+- **Step 7** (panic boundary) — PASS (offline); host stable live.
+- **Step 4/5** (hook fire + `lua_gettop`) — hook installed at the correct address but didn't fire due to a **timing bug** (launcher resumed the main thread before the worker installed the hook). Fixed via a hook-ready event handshake (commit `3b9692f`); re-run pending. Not an architecture failure — the POC proved the hook fires on the thunk; the spike found the correct shifted address; the only issue was timing.
+
+**Bonus — game-update resilience validated:** the installed binary (SHA `5abdecb9…`) is newer than the pinned oracle (`132eed5f…`); the engine is build-agnostic and found all 16 at uniformly-shifted addresses (+0xf0680 cluster, +0xae50 engine region). This de-risks the "game update breaks discovery" concern from the production risk table.
+
+**Two tempering nuances (inform future maintenance, not the decision):**
+1. The source-pattern matchers needed real tuning to be *build-agnostic* (the POC's keyed on specific RVAs/call counts that don't survive an update). `lua_newstate`/`luaL_loadbuffer` couldn't be body-matched at all — they needed the POC's dataflow/anchor traces. The maintenance surface is the signatures; a LuaJIT-version change (rare — static Stingray code) would require re-tuning. Property of the *method*, not the language.
+2. `panic=abort` vs `catch_unwind` are mutually exclusive per-build — a real Rust-over-FFI discipline item the seam must enforce. Resolution: unwind build + `catch_unwind` as primary containment, abort as a separate fail-safe profile.
+
+**Production launcher insights (from live testing — feed Component B):**
+1. **Proton launch model:** Steam non-Steam-game (the launcher) + forced Proton + `STEAM_COMPAT_DATA_PATH` → our launcher creates+suspends+injects. Steam UX + zero game-dir footprint + correct hook timing in one design (resolves the Steam-UX-vs-zero-footprint tension).
+2. **Steam appID:** the launcher must set `SteamAppId=1361210` + `SteamGameId=1361210` in Darktide's env — otherwise the non-Steam-shortcut's hashed appID denies `SteamAPI_Init`.
+3. **Hook-ready handshake:** the production "Launch Modded" flow is `CreateProcess(SUSPENDED) → inject → **wait for hook-ready** → ResumeThread` — the production-summary's `CreateProcess→inject→ResumeThread` is incomplete without the hook-ready wait.
+
+## Consequences
+
+- Two toolchains (Rust + C) and a C-ABI seam to maintain; the seam must
+  be held at the safety boundary (Rust = stateless discovery, C =
+  everything touching the live game) or it rots.
+- Rust testability captured on the discovery engine (100% safe,
+  offline-tested); C track record captured on the shell (MinHook, LuaJIT C ABI).
+- The discovery crate carries forward as production; the minimal C shell
+  is expanded into the full production shell (DMF bootstrap, multi-shot
+  injection, DMF-dep impls) as the next Component A workstream.
+- Signature maintenance: the build-agnostic matchers are the ongoing
+  maintenance surface (re-tune on a LuaJIT version change — rare).
+- The spike branch (`spike/001-component-a`) is the seed of production
+  Component A; merge to `main` once step 4/5 confirm and code review passes.
 
 ## References
 
