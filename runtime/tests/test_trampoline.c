@@ -1,0 +1,125 @@
+/*
+ * test_trampoline.c — Unit tests for the Phase-4 trampoline pure helpers.
+ *
+ * Covers trampoline_escape_path (the Windows-path -> Lua-string escape) and
+ * trampoline_build_chunk (the full chunk assembly). These run via wine like the
+ * other C tests; they compile trampoline.c directly (no Lua/Windows deps).
+ */
+#include "test_runner.h"
+#include "../shell/src/trampoline.c"  /* compile the pure impl directly */
+#include <stdio.h>
+#include <string.h>
+
+/* ---- trampoline_escape_path ---- */
+
+void test_escape_plain_path(void) {
+    char out[64];
+    int n = trampoline_escape_path("C:/tmp/x.lua", 12, out, sizeof(out));
+    ASSERT_EQ(12, n);
+    ASSERT_STREQ("C:/tmp/x.lua", out);  /* forward slashes unchanged */
+}
+
+void test_escape_backslashes_doubled(void) {
+    /* Windows path: every backslash doubles in a Lua double-quoted string. */
+    char out[64];
+    int n = trampoline_escape_path("Z:\\foo\\bar.lua", 14, out, sizeof(out));
+    ASSERT_EQ(16, n);  /* 14 + 2 extra (two backslashes doubled) */
+    ASSERT_STREQ("Z:\\\\foo\\\\bar.lua", out);
+}
+
+void test_escape_quote_doubled(void) {
+    char out[64];
+    int n = trampoline_escape_path("a\"b", 3, out, sizeof(out));
+    ASSERT_EQ(4, n);
+    ASSERT_STREQ("a\\\"b", out);
+}
+
+void test_escape_empty_path(void) {
+    char out[8];
+    int n = trampoline_escape_path("", 0, out, sizeof(out));
+    ASSERT_EQ(0, n);
+    ASSERT_STREQ("", out);
+}
+
+void test_escape_overflow_returns_neg1(void) {
+    /* 2 backslashes -> 4 escaped bytes + NUL = 5; cap of 4 must reject. */
+    char out[4];
+    int n = trampoline_escape_path("\\\\", 2, out, sizeof(out));
+    ASSERT_EQ(-1, n);
+}
+
+void test_escape_null_args(void) {
+    char out[8];
+    ASSERT_EQ(-1, trampoline_escape_path(NULL, 0, out, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_escape_path("a", 1, NULL, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_escape_path("a", 1, out, 0));
+}
+
+/* ---- trampoline_build_chunk ---- */
+
+void test_build_chunk_contains_escaped_path(void) {
+    char out[1024];
+    int n = trampoline_build_chunk("Z:\\t.lua", out, sizeof(out));
+    ASSERT_TRUE(n > 0);
+
+    /* The escaped path must appear inside io.open("..."). */
+    ASSERT_NOTNULL(strstr(out, "io.open(\"Z:\\\\t.lua\", \"r\")"));
+    /* Each FAIL step label is present (defines the status vocabulary). */
+    ASSERT_NOTNULL(strstr(out, "FAIL io.open:"));
+    ASSERT_NOTNULL(strstr(out, "FAIL loadstring:"));
+    ASSERT_NOTNULL(strstr(out, "FAIL run:"));
+    /* Success path returns OK. */
+    ASSERT_NOTNULL(strstr(out, "return \"OK\""));
+}
+
+void test_build_chunk_plain_path(void) {
+    char out[1024];
+    int n = trampoline_build_chunk("/tmp/x.lua", out, sizeof(out));
+    ASSERT_TRUE(n > 0);
+    ASSERT_NOTNULL(strstr(out, "io.open(\"/tmp/x.lua\", \"r\")"));
+}
+
+void test_build_chunk_empty_path_rejected(void) {
+    char out[64];
+    ASSERT_EQ(-1, trampoline_build_chunk("", out, sizeof(out)));
+}
+
+void test_build_chunk_null_args(void) {
+    char out[64];
+    ASSERT_EQ(-1, trampoline_build_chunk(NULL, out, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_build_chunk("x", NULL, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_build_chunk("x", out, 0));
+}
+
+void test_build_chunk_overflow(void) {
+    /* A tiny buffer cannot hold the chunk -> reject, no partial write relied on. */
+    char out[8];
+    int n = trampoline_build_chunk("Z:\\t.lua", out, sizeof(out));
+    ASSERT_EQ(-1, n);
+}
+
+void test_build_chunk_round_trips_long_path(void) {
+    /* A realistically long Windows path still fits the default out cap. */
+    const char *path = "Z:\\very\\deep\\path\\to\\a\\staged\\mod\\file.lua";
+    char out[1024];
+    int n = trampoline_build_chunk(path, out, sizeof(out));
+    ASSERT_TRUE(n > 0);
+    /* Every backslash in the original is doubled in the baked chunk. */
+    ASSERT_NOTNULL(strstr(out, "Z:\\\\very\\\\deep\\\\path"));
+}
+
+int main(void) {
+    test_register("escape_plain_path", test_escape_plain_path);
+    test_register("escape_backslashes_doubled", test_escape_backslashes_doubled);
+    test_register("escape_quote_doubled", test_escape_quote_doubled);
+    test_register("escape_empty_path", test_escape_empty_path);
+    test_register("escape_overflow_returns_neg1", test_escape_overflow_returns_neg1);
+    test_register("escape_null_args", test_escape_null_args);
+    test_register("build_chunk_contains_escaped_path", test_build_chunk_contains_escaped_path);
+    test_register("build_chunk_plain_path", test_build_chunk_plain_path);
+    test_register("build_chunk_empty_path_rejected", test_build_chunk_empty_path_rejected);
+    test_register("build_chunk_null_args", test_build_chunk_null_args);
+    test_register("build_chunk_overflow", test_build_chunk_overflow);
+    test_register("build_chunk_round_trips_long_path", test_build_chunk_round_trips_long_path);
+    return test_summary();
+}

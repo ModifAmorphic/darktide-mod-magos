@@ -67,11 +67,55 @@
  * bundle-script env / run during the full-env phase / load via the engine's
  * path).
  *
+ * Phase-4 trampoline prototype (this build) — the DEFINITIVE engine-context
+ * validation. The probes established:
+ *   - LUA_GLOBALSINDEX has the full stdlib (io, loadstring, ...) from
+ *     luaL_openlibs through lua_pcall #1.
+ *   - The engine REMOVES io + loadstring from globals between pcall #1 and #10.
+ *   - A chunk's env IS the globals table (no setfenv sandbox at pcall #1).
+ *   => a chunk injected at pcall #1 sees io/loadstring and can use them.
+ * (POC/probe-v2 reported io/loadstring=nil because they injected LATE — pcall
+ * #50 / retry-on-error firing after io was stripped.)
+ *
+ * This build proves it: on the FIRST lua_pcall (pcall #1) — one-shot — and
+ * BEFORE calling g_orig_pcall (so it runs in the io-present window), inject a
+ * trampoline chunk that does exactly what patch_999's trampoline does:
+ *
+ *   local f, err = io.open("<TEST_PATH>", "r")
+ *   if not f then return "FAIL io.open: " .. tostring(err) end
+ *   local data = f:read("*all"); f:close()
+ *   local fn, lerr = loadstring(data)
+ *   if not fn then return "FAIL loadstring: " .. tostring(lerr) end
+ *   local ok, rerr = pcall(fn)
+ *   if not ok then return "FAIL run: " .. tostring(rerr) end
+ *   return "OK"
+ *
+ * <TEST_PATH> is baked in from the MAGOS_TRAMPOLINE_TEST env var (a Proton-
+ * resolvable path the user confirms io.open accepts — typically a Z:\ form
+ * under Proton). The C side runs the chunk (luaL_loadbuffer + lua_pcall(0,1,0)),
+ * reads the returned status string via lua_tolstring, and logs one line:
+ *
+ *   [trampoline] @ pcall#1: OK                       <- engine-context PROVEN
+ *   [trampoline] @ pcall#1: FAIL io.open: <err>      <- io.open issue (path?)
+ *   [trampoline] @ pcall#1: FAIL loadstring: <err>   <- loadstring issue
+ *   [trampoline] @ pcall#1: FAIL run: <err>          <- staged file errored
+ *
+ * Game-safe (same discipline as the probe chunks): one-shot (Interlocked
+ * guard), synchronous on the engine's Lua thread, g_in_probe set for the
+ * duration (the chunk's internal Lua pcall re-enters lua_pcall but is skipped
+ * by the guard), stack-clean (gettop saved / settop restored — zero net effect;
+ * the engine's pcall args below base are untouched), lua_pcall never longjmps
+ * (errors are returned), and the staged file is benign (e.g. `return 42`).
+ *
+ * NOTE: the prior probe hooks are retained for context (the pcall#1 globals
+ * snapshot, etc.); the trampoline is the focus and runs first at pcall#1.
+ *
  * Hook points (all use the single captured lua_State*):
  *   - lua_newstate      (1-shot, right after capture)            — VM fresh, baseline
  *   - luaL_openlibs     (1-shot, after the engine call returns)  — stdlib registered
  *   - luaL_loadbuffer   (calls 1, 5, 20)                         — script loads
  *   - lua_pcall         (every call)                             — POC injection point
+ *       · Phase-4 trampoline @ pcall#1 (one-shot, BEFORE orig pcall) — the focus
  *       · per-call CLASS/Managers transition (one-shot per global)
  *       · full-16 snapshot @ calls {1, 10, 50, 100, both-present}
  *       · chunk-injection (v3: getfenv env + before/after globals + returns) @ both-present (fallback #50/#100)
@@ -92,7 +136,9 @@
  *
  * Out of scope: DMF bootstrap, multi-shot injection, mod-manager UI. Logging
  * goes to OutputDebugString + a log file (MAGOS_LOG_FILE env, or
- * magos_spike.log beside the game exe).
+ * magos_spike.log beside the game exe). The trampoline test-file path comes
+ * from the MAGOS_TRAMPOLINE_TEST env var; if unset, the trampoline is SKIPPED
+ * (logged) and the build degrades to the Phase-3 probes.
  */
 #include <windows.h>
 #include <psapi.h>
@@ -101,6 +147,7 @@
 #include <string.h>
 
 #include "magos_discovery.h"
+#include "trampoline.h"
 #include "MinHook.h"
 
 /* Named event for the launcher<->shell hook-ready handshake. The launcher
@@ -124,6 +171,7 @@ typedef int  (*setfenv_t)(lua_State *L, int idx);
 typedef void (*openlibs_t)(lua_State *L);
 typedef int  (*loadbuffer_t)(lua_State *L, const char *buf, size_t size, const char *name);
 typedef int  (*pcall_t)(lua_State *L, int nargs, int nresults, int errfunc);
+typedef const char *(*tolstring_t)(lua_State *L, int idx, size_t *len);
 
 /* ---- resolved from the discovered RVAs ---- */
 static newstate_t   g_orig_newstate = NULL;
@@ -137,6 +185,7 @@ static type_t       g_lua_type = NULL;
 static getfield_t   g_lua_getfield = NULL;
 static getfenv_t    g_lua_getfenv = NULL;
 static loadbuffer_t g_lua_loadbuffer = NULL;  /* direct (post-discovery) — fallback if the loadbuffer hook didn't install */
+static tolstring_t  g_lua_tolstring = NULL;   /* read the trampoline's status-string return */
 
 static uint8_t   *g_module_base = NULL;      /* Darktide.exe base */
 static FILE      *g_log = NULL;
@@ -159,6 +208,16 @@ static volatile int  g_class_logged = 0;     /* one-shot: CLASS nil→non-nil lo
 static volatile int  g_managers_logged = 0;  /* one-shot: Managers nil→non-nil logged */
 static volatile int  g_both_logged = 0;      /* one-shot: both non-nil at the same call */
 static volatile int  g_chunk_done = 0;       /* one-shot: chunk-injection test performed */
+
+/* ---- Phase-4 trampoline prototype state ----
+ * The staged chunk (built once at worker startup from MAGOS_TRAMPOLINE_TEST)
+ * and the one-shot guard that fires it at pcall#1. Lua is single-threaded on
+ * the engine's main thread, so these are only touched from that thread; the
+ * guard is Interlocked anyway as the cheap Win32 one-shot idiom. */
+#define TRAMPOLINE_TEST_ENV "MAGOS_TRAMPOLINE_TEST"
+static char            g_trampoline_chunk[4096];   /* NUL-terminated chunk; len 0 => not staged */
+static size_t          g_trampoline_chunk_len = 0;
+static volatile LONG   g_trampoline_done = 0;      /* one-shot: trampoline fired at pcall#1 */
 
 /* The fixed list of globals the probe checks at each lifecycle point. */
 static const char *PROBE_GLOBALS[] = {
@@ -494,6 +553,122 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
     g_in_probe = 0;
 }
 
+/* ---- Phase-4 trampoline prototype ----
+ * See the file header's Phase-4 note. The staging step reads the test-file
+ * path from MAGOS_TRAMPOLINE_TEST and builds the chunk once (worker startup);
+ * the run step executes it one-shot at pcall#1, BEFORE g_orig_pcall, so it
+ * runs in the io/loadstring-present window. */
+
+/*
+ * Read MAGOS_TRAMPOLINE_TEST and build g_trampoline_chunk. On any failure (var
+ * unset, too long, escape overflow) the chunk len stays 0 and trampoline_run
+ * will log SKIPPED. Idempotent: called once from the worker.
+ */
+static void trampoline_stage_chunk(void) {
+    char path[1024];
+    DWORD got = GetEnvironmentVariableA(TRAMPOLINE_TEST_ENV, path, sizeof(path));
+    if (got == 0) {
+        DWORD e = GetLastError();
+        if (e == ERROR_ENVVAR_NOT_FOUND) {
+            magos_log("[trampoline] %s not set; trampoline will be SKIPPED at pcall#1\n",
+                      TRAMPOLINE_TEST_ENV);
+        } else {
+            magos_log("[trampoline] %s read error (lu=%lu); trampoline will be SKIPPED\n",
+                      TRAMPOLINE_TEST_ENV, e);
+        }
+        return;
+    }
+    if (got >= sizeof(path)) {
+        magos_log("[trampoline] %s too long (%lu chars, max %zu); trampoline will be SKIPPED\n",
+                  TRAMPOLINE_TEST_ENV, got, sizeof(path) - 1);
+        return;
+    }
+
+    int n = trampoline_build_chunk(path, g_trampoline_chunk, sizeof(g_trampoline_chunk));
+    if (n < 0) {
+        magos_log("[trampoline] chunk build failed (escape/overflow); trampoline will be SKIPPED\n");
+        return;
+    }
+    g_trampoline_chunk_len = (size_t)n;
+    magos_log("[trampoline] %s=%s\n", TRAMPOLINE_TEST_ENV, path);
+    magos_log("[trampoline] chunk staged (%zu bytes); will run one-shot at pcall#1 (before orig pcall)\n",
+              g_trampoline_chunk_len);
+}
+
+/*
+ * Execute the staged trampoline chunk on the engine's Lua thread at pcall#1.
+ * Reads back the chunk's status-string return and logs it as
+ *   [trampoline] @ pcall#1: <status>
+ * Stack-clean (gettop saved / settop restored) and contained (lua_pcall returns
+ * on error, never longjmps). See the file header's Phase-4 safety note.
+ */
+static void trampoline_run(lua_State *L) {
+    g_in_probe = 1;
+    magos_log("[trampoline] --- trampoline prototype @ pcall#1 ---\n");
+
+    if (!g_orig_pcall || !g_lua_gettop || !g_lua_settop || !g_lua_tolstring) {
+        magos_log("[trampoline] @ pcall#1: SKIPPED (C-API not resolved)\n");
+        g_in_probe = 0;
+        return;
+    }
+    if (g_trampoline_chunk_len == 0) {
+        /* staging already logged why (env var unset / too long / build fail). */
+        magos_log("[trampoline] @ pcall#1: SKIPPED (chunk not staged — see startup log)\n");
+        g_in_probe = 0;
+        return;
+    }
+    /* Prefer the loadbuffer trampoline (bypasses our detour -> no re-entrancy
+     * when the loadbuffer hook is installed); fall back to the direct discovered
+     * address if the loadbuffer hook didn't install. */
+    loadbuffer_t lb = g_orig_loadbuffer ? g_orig_loadbuffer : g_lua_loadbuffer;
+    if (!lb) {
+        magos_log("[trampoline] @ pcall#1: SKIPPED (luaL_loadbuffer not resolved)\n");
+        g_in_probe = 0;
+        return;
+    }
+
+    int base = g_lua_gettop(L);
+
+    /* Load the chunk (pushes a function at base+1). On parse failure the error
+     * message is on top; log it and bail with a clean stack. */
+    int rc = lb(L, g_trampoline_chunk, g_trampoline_chunk_len, "magos_trampoline");
+    if (rc != 0) {
+        const char *e = g_lua_tolstring(L, -1, NULL);
+        magos_log("[trampoline] CHUNK LOAD FAILED (rc=%d): %s\n", rc, e ? e : "<no msg>");
+        g_lua_settop(L, base);
+        g_in_probe = 0;
+        return;
+    }
+
+    /* Run the chunk: 0 args, 1 result, no errfunc. pcall RETURNS on error
+     * (never longjmps), so the chunk is fully contained. On success the status
+     * string is at base+1. The chunk's internal Lua pcall(fn) re-enters our
+     * lua_pcall hook, but g_in_probe=1 makes detour_pcall skip its probe block
+     * and forward — so it does not perturb the counters or re-run the trampoline. */
+    int prc = g_orig_pcall(L, 0, 1, 0);
+    if (prc != 0) {
+        const char *e = g_lua_tolstring(L, -1, NULL);
+        magos_log("[trampoline] CHUNK PCALL FAILED (rc=%d): %s\n", prc, e ? e : "<no msg>");
+        magos_log("[trampoline]   (the chunk itself errored before returning a status string)\n");
+        g_lua_settop(L, base);
+        g_in_probe = 0;
+        return;
+    }
+
+    /* Read + log the status string. The chunk always returns a string ("OK" or
+     * "FAIL <step>: <err>"); lua_tolstring returns NULL only if the top value
+     * isn't a string/number — defensive. */
+    size_t len = 0;
+    const char *status = g_lua_tolstring(L, -1, &len);
+    magos_log("[trampoline] @ pcall#1: %s\n", status ? status : "<null status>");
+    if (status && strncmp(status, "OK", 2) == 0) {
+        magos_log("[trampoline]   engine-context PROVEN: io.open + loadstring + staged run succeeded at pcall#1\n");
+    }
+
+    g_lua_settop(L, base);  /* pop the status string — restore engine stack */
+    g_in_probe = 0;
+}
+
 /* ---- lifecycle detours ---- */
 
 /* lua_newstate — capture L (baseline; VM fresh, no stdlib/globals yet). */
@@ -555,11 +730,22 @@ static int detour_loadbuffer(lua_State *L, const char *buff, size_t size, const 
  * 100, and the first call where both CLASS+Managers are non-nil; and at that
  * both-present point (fallback: #50/#100) inject a read-only chunk to test
  * whether an injected chunk sees the same globals the C-side table read sees
- * (H2: rules out a setfenv / env difference for injected chunks). */
+ * (H2: rules out a setfenv / env difference for injected chunks).
+ * Phase 4: at pcall#1 (one-shot, BEFORE g_orig_pcall) run the trampoline
+ * prototype — the definitive io.open+loadstring+run test in the io-present
+ * window. See the file header's Phase-4 note. */
 static int detour_pcall(lua_State *L, int nargs, int nresults, int errfunc) {
     if (!g_in_probe) {
         LONG n = InterlockedIncrement(&g_pcall_calls);
         if (!g_L) g_L = L;
+
+        /* 0. Phase-4 trampoline prototype — one-shot at pcall#1, BEFORE the
+         *    engine's pcall, so it runs while io/loadstring are still present
+         *    (they are stripped between pcall #1 and #10). Runs first so its
+         *    result is the headline of the pcall#1 log block. */
+        if (n == 1 && InterlockedCompareExchange(&g_trampoline_done, 1, 0) == 0) {
+            trampoline_run(L);
+        }
 
         /* 1. Per-pcall CLASS/Managers transition (one-shot per global; the
          *    whole check is skipped once both have been seen). */
@@ -713,6 +899,7 @@ static DWORD WINAPI worker(LPVOID arg) {
     g_lua_getfield = (getfield_t)(g_module_base + tbl.lua_getfield);
     g_lua_getfenv  = (getfenv_t)(g_module_base + tbl.lua_getfenv);
     g_lua_loadbuffer = (loadbuffer_t)(g_module_base + tbl.lual_loadbuffer);
+    g_lua_tolstring = (tolstring_t)(g_module_base + tbl.lua_tolstring);
 
     /* step 4: install the lifecycle hooks. lua_newstate is critical (can't
      * capture L without it); the other three are best-effort — a failure
@@ -744,6 +931,13 @@ static DWORD WINAPI worker(LPVOID arg) {
     magos_log("[probe] NOTE: lua_resource::bytecode @0x%08x discovered (anchor) but NOT hooked "
               "(unknown C++ sig) — luaL_loadbuffer (its known-sig callee) is the proxy.\n",
               tbl.lua_resource_bytecode);
+
+    /* Phase-4 trampoline prototype: stage the chunk from MAGOS_TRAMPOLINE_TEST
+     * now so it is ready to fire one-shot at pcall#1 (the hooks above are armed
+     * and the engine's first lua_pcall is imminent once the main thread resumes). */
+    magos_log("[probe] === Phase-4 trampoline prototype ===\n");
+    magos_log("[probe] fires one-shot at pcall#1 (before orig pcall); reads MAGOS_TRAMPOLINE_TEST\n");
+    trampoline_stage_chunk();
 
     /* Production hook-ready handshake: signal the launcher that the hooks are
      * enabled so it can resume the main thread. The launcher creates the

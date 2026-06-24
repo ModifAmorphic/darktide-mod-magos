@@ -27,7 +27,7 @@ RUST_SRCS := $(wildcard runtime/discovery/src/*.rs)
 DLL       := magos_shell.dll
 LAUNCHER  := magos_launcher.exe
 
-SHELL_SRC := runtime/shell/src/dllmain.c
+SHELL_SRC := runtime/shell/src/dllmain.c runtime/shell/src/trampoline.c
 MINHOOK_SRC := runtime/shell/vendor/minhook/src/buffer.c \
                runtime/shell/vendor/minhook/src/hook.c \
                runtime/shell/vendor/minhook/src/trampoline.c \
@@ -40,7 +40,7 @@ RUST_SYS  := -lpsapi -lkernel32 -luser32 -lws2_32 -lbcrypt -luserenv -lntdll -lg
 # ---- C test infrastructure ----
 TEST_CC       := $(CROSS_CC)
 TEST_CFLAGS   := -static-libgcc -O2
-TEST_INCLUDES := -I runtime/launcher/src
+TEST_INCLUDES := -I runtime/launcher/src -I runtime/shell/include
 TEST_LIBS     := -lkernel32
 
 TEST_RUNNER_OBJ := runtime/tests/test_runner.o
@@ -51,7 +51,7 @@ STUB_TARGET := runtime/tests/stub_target.exe
 STUB_SHELL  := runtime/tests/stub_shell.dll
 
 # Test executables
-TEST_EXES := runtime/tests/test_steam_env.exe runtime/tests/test_injection.exe
+TEST_EXES := runtime/tests/test_steam_env.exe runtime/tests/test_injection.exe runtime/tests/test_trampoline.exe
 
 .PHONY: all build dll launcher check test c-tests clean rust-staticlib
 
@@ -64,7 +64,7 @@ $(RUST_LIB): $(RUST_SRCS) runtime/discovery/Cargo.toml Cargo.toml Cargo.lock
 build: dll launcher
 
 dll: $(DLL)
-$(DLL): $(RUST_LIB) $(SHELL_SRC) $(MINHOOK_SRC) runtime/shell/include/magos_discovery.h
+$(DLL): $(RUST_LIB) $(SHELL_SRC) $(MINHOOK_SRC) runtime/shell/include/magos_discovery.h runtime/shell/include/trampoline.h
 	$(CROSS_CC) -shared -static-libgcc -O2 -o $@ \
 	  $(SHELL_SRC) $(MINHOOK_SRC) $(INCLUDES) \
 	  -l:libmagos_discovery.a -L $(REL_DIR) \
@@ -108,10 +108,19 @@ runtime/tests/test_injection.exe: runtime/tests/test_injection.c runtime/tests/t
 	$(TEST_CC) $(TEST_CFLAGS) $(TEST_INCLUDES) -o $@ $< \
 	  $(TEST_RUNNER_OBJ) runtime/tests/launcher.o $(TEST_LIBS)
 
+# test_trampoline compiles the pure trampoline.c inline (via #include), so it
+# needs only the test runner + kernel32 (no Lua/hook deps).
+runtime/tests/test_trampoline.exe: runtime/tests/test_trampoline.c \
+                          runtime/shell/src/trampoline.c runtime/shell/include/trampoline.h \
+                          runtime/tests/test_runner.h $(TEST_RUNNER_OBJ)
+	$(TEST_CC) $(TEST_CFLAGS) $(TEST_INCLUDES) -o $@ $< \
+	  $(TEST_RUNNER_OBJ) $(TEST_LIBS)
+
 c-tests: $(TEST_EXES) $(STUB_TARGET) $(STUB_SHELL)
 	@echo "=== C unit tests (via wine) ==="
 	$(WINE) runtime/tests/test_steam_env.exe
 	$(WINE) runtime/tests/test_injection.exe
+	$(WINE) runtime/tests/test_trampoline.exe
 
 test: c-tests
 	$(CARGO) test --features test-hooks -p magos-discovery
