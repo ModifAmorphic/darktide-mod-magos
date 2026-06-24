@@ -1,4 +1,4 @@
-# Makefile — Component A mixed DLL build (Spike 001 step 1).
+# Makefile — Component A mixed DLL build.
 #
 # Reproducible MinGW cross-compile from Linux: Rust staticlib + C shell/MinHook
 # -> one PE DLL (magos_shell.dll), plus the launcher exe. The MSVC-native build
@@ -21,18 +21,18 @@ WINE      ?= wine
 REL_DIR   := target/$(TARGET)/$(PROFILE)
 RUST_LIB  := $(REL_DIR)/libmagos_discovery.a
 # Rust sources the staticlib depends on. GNU make's `**` is not recursive (it
-# expands to nothing here), so list src/*.rs explicitly. discovery/tests/*.rs
+# expands to nothing here), so list src/*.rs explicitly. runtime/discovery/tests/*.rs
 # are separate integration-test binaries, not compiled into the staticlib.
-RUST_SRCS := $(wildcard discovery/src/*.rs)
+RUST_SRCS := $(wildcard runtime/discovery/src/*.rs)
 DLL       := magos_shell.dll
 LAUNCHER  := magos_launcher.exe
 
-SHELL_SRC := shell/src/dllmain.c
-MINHOOK_SRC := shell/vendor/minhook/src/buffer.c \
-               shell/vendor/minhook/src/hook.c \
-               shell/vendor/minhook/src/trampoline.c \
-               shell/vendor/minhook/src/hde/hde64.c
-INCLUDES  := -I shell/include -I shell/vendor/minhook/include
+SHELL_SRC := runtime/shell/src/dllmain.c
+MINHOOK_SRC := runtime/shell/vendor/minhook/src/buffer.c \
+               runtime/shell/vendor/minhook/src/hook.c \
+               runtime/shell/vendor/minhook/src/trampoline.c \
+               runtime/shell/vendor/minhook/src/hde/hde64.c
+INCLUDES  := -I runtime/shell/include -I runtime/shell/vendor/minhook/include
 
 # Rust std's Windows system-lib dependencies (mingw).
 RUST_SYS  := -lpsapi -lkernel32 -luser32 -lws2_32 -lbcrypt -luserenv -lntdll -lgcc
@@ -40,39 +40,39 @@ RUST_SYS  := -lpsapi -lkernel32 -luser32 -lws2_32 -lbcrypt -luserenv -lntdll -lg
 # ---- C test infrastructure ----
 TEST_CC       := $(CROSS_CC)
 TEST_CFLAGS   := -static-libgcc -O2
-TEST_INCLUDES := -I launcher/src
+TEST_INCLUDES := -I runtime/launcher/src
 TEST_LIBS     := -lkernel32
 
-TEST_RUNNER_OBJ := tests/test_runner.o
-LAUNCHER_OBJ    := tests/launcher.o
+TEST_RUNNER_OBJ := runtime/tests/test_runner.o
+LAUNCHER_OBJ    := runtime/tests/launcher.o
 
-# Stub executables for injection testing (built into tests/ alongside test exes)
-STUB_TARGET := tests/stub_target.exe
-STUB_SHELL  := tests/stub_shell.dll
+# Stub executables for injection testing (built into runtime/tests/ alongside test exes)
+STUB_TARGET := runtime/tests/stub_target.exe
+STUB_SHELL  := runtime/tests/stub_shell.dll
 
 # Test executables
-TEST_EXES := tests/test_steam_env.exe tests/test_injection.exe
+TEST_EXES := runtime/tests/test_steam_env.exe runtime/tests/test_injection.exe
 
 .PHONY: all build dll launcher check test c-tests clean rust-staticlib
 
 all: build
 
 rust-staticlib: $(RUST_LIB)
-$(RUST_LIB): $(RUST_SRCS) discovery/Cargo.toml Cargo.toml Cargo.lock
+$(RUST_LIB): $(RUST_SRCS) runtime/discovery/Cargo.toml Cargo.toml Cargo.lock
 	$(CARGO) build --$(PROFILE) -p magos-discovery --target $(TARGET)
 
 build: dll launcher
 
 dll: $(DLL)
-$(DLL): $(RUST_LIB) $(SHELL_SRC) $(MINHOOK_SRC) shell/include/magos_discovery.h
+$(DLL): $(RUST_LIB) $(SHELL_SRC) $(MINHOOK_SRC) runtime/shell/include/magos_discovery.h
 	$(CROSS_CC) -shared -static-libgcc -O2 -o $@ \
 	  $(SHELL_SRC) $(MINHOOK_SRC) $(INCLUDES) \
 	  -l:libmagos_discovery.a -L $(REL_DIR) \
 	  $(RUST_SYS) -Wl,--out-implib,magos_shell.lib
 
 launcher: $(LAUNCHER)
-$(LAUNCHER): launcher/src/launcher.c launcher/src/launcher.h
-	$(CROSS_CC) -static-libgcc -O2 -o $@ launcher/src/launcher.c -lkernel32
+$(LAUNCHER): runtime/launcher/src/launcher.c runtime/launcher/src/launcher.h
+	$(CROSS_CC) -static-libgcc -O2 -o $@ runtime/launcher/src/launcher.c -lkernel32
 
 check: $(DLL)
 	@echo "--- file type ---"; file $(DLL)
@@ -84,34 +84,34 @@ check: $(DLL)
 
 # ---- C test build rules ----
 
-tests/test_runner.o: tests/test_runner.c tests/test_runner.h
+runtime/tests/test_runner.o: runtime/tests/test_runner.c runtime/tests/test_runner.h
 	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
 
-tests/launcher.o: launcher/src/launcher.c launcher/src/launcher.h
+runtime/tests/launcher.o: runtime/launcher/src/launcher.c runtime/launcher/src/launcher.h
 	$(TEST_CC) $(TEST_CFLAGS) $(TEST_INCLUDES) -DMAGOS_TEST_BUILD -c -o $@ $<
 
 # Stub target — minimal Windows GUI exe that sleeps then exits 0
-$(STUB_TARGET): tests/stub_target.c
+$(STUB_TARGET): runtime/tests/stub_target.c
 	$(TEST_CC) $(TEST_CFLAGS) -mwindows -o $@ $<
 
 # Stub shell — minimal DLL that signals magos_hook_ready on attach
-$(STUB_SHELL): tests/stub_shell.c
+$(STUB_SHELL): runtime/tests/stub_shell.c
 	$(TEST_CC) $(TEST_CFLAGS) -shared -o $@ $<
 
-tests/test_steam_env.exe: tests/test_steam_env.c tests/test_runner.h \
-                          $(TEST_RUNNER_OBJ) tests/launcher.o
+runtime/tests/test_steam_env.exe: runtime/tests/test_steam_env.c runtime/tests/test_runner.h \
+                          $(TEST_RUNNER_OBJ) runtime/tests/launcher.o
 	$(TEST_CC) $(TEST_CFLAGS) $(TEST_INCLUDES) -o $@ $< \
-	  $(TEST_RUNNER_OBJ) tests/launcher.o $(TEST_LIBS)
+	  $(TEST_RUNNER_OBJ) runtime/tests/launcher.o $(TEST_LIBS)
 
-tests/test_injection.exe: tests/test_injection.c tests/test_runner.h \
-                          $(TEST_RUNNER_OBJ) tests/launcher.o
+runtime/tests/test_injection.exe: runtime/tests/test_injection.c runtime/tests/test_runner.h \
+                          $(TEST_RUNNER_OBJ) runtime/tests/launcher.o
 	$(TEST_CC) $(TEST_CFLAGS) $(TEST_INCLUDES) -o $@ $< \
-	  $(TEST_RUNNER_OBJ) tests/launcher.o $(TEST_LIBS)
+	  $(TEST_RUNNER_OBJ) runtime/tests/launcher.o $(TEST_LIBS)
 
 c-tests: $(TEST_EXES) $(STUB_TARGET) $(STUB_SHELL)
 	@echo "=== C unit tests (via wine) ==="
-	$(WINE) tests/test_steam_env.exe
-	$(WINE) tests/test_injection.exe
+	$(WINE) runtime/tests/test_steam_env.exe
+	$(WINE) runtime/tests/test_injection.exe
 
 test: c-tests
 	$(CARGO) test --features test-hooks -p magos-discovery
@@ -120,4 +120,4 @@ clean:
 	$(CARGO) clean
 	rm -f $(DLL) $(LAUNCHER) magos_shell.lib
 	rm -f $(TEST_EXES) $(STUB_TARGET) $(STUB_SHELL)
-	rm -f tests/*.o
+	rm -f runtime/tests/*.o

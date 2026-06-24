@@ -199,7 +199,7 @@ fn write_detail(detail: *mut u8, cap: usize, msg: &str) {
 }
 
 // =========================================================================
-// Panic boundary (Spike 001, step 7)
+// Panic boundary
 // =========================================================================
 //
 // `panic = "abort"` (workspace `[profile.release]` keeps unwind so that
@@ -233,7 +233,7 @@ fn write_detail(detail: *mut u8, cap: usize, msg: &str) {
 pub extern "C" fn magos_test_panic_boundary(induce: i32) -> i32 {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if induce != 0 {
-            panic!("induced panic for spike-001 step 7 boundary test");
+            panic!("induced panic for boundary test");
         }
     }));
     match r {

@@ -1,11 +1,15 @@
-# Spike 001 step 1 (MinGW cross-compile) — builds the mixed DLL from Linux.
+# Component A (MinGW cross-compile) — builds the mixed DLL from Linux.
 name: mingw-build
 
 on:
   push:
     branches: [main, spike/001-component-a]
+    paths:
+      - 'runtime/**'
   pull_request:
     branches: [main, spike/001-component-a]
+    paths:
+      - 'runtime/**'
   workflow_dispatch:
 
 jobs:
