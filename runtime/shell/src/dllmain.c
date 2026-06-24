@@ -8,21 +8,49 @@
  *   - Installs a MinHook detour on `lua_newstate`; captures `lua_State*`;
  *     calls `lua_gettop(L)` once.
  *
- * Phase-1 engine-context probe (this build): the worker additionally installs
- * detours on four Lua-lifecycle points and, at each, reads a fixed list of
- * engine globals via the LuaJIT C API (`lua_getfield` + `lua_type`) and logs
- * presence/type. This is READ-ONLY recon — no global is *called*, no Lua is
- * loaded, no mods; the only side effect is log output. The log answers:
- *   - At which lifecycle point does the engine's globals table contain the
- *     full bundle-script environment (io, require, loadstring, CLASS, Managers,
- *     ...)? That point is the engine-context entry for DLL injection (the
- *     patch_999-equivalent), or evidence it is not achievable.
+ * Phase-2 engine-context probe (this build): the worker additionally installs
+ * detours on four Lua-lifecycle points and reads a fixed list of engine
+ * globals via the LuaJIT C API (`lua_getfield` + `lua_type`). This extends the
+ * Phase-1 probe (which established the stdlib is present at the
+ * `luaL_loadbuffer`/`lua_pcall` points, so the POC's "sandboxed `_G`" was a
+ * timing artifact). Phase 2 resolves the two things Phase 1 left open:
+ *
+ *   1. WHEN do CLASS + Managers appear? They were `nil` through loadbuffer
+ *      call #20 — engine globals set later (when `class.lua` runs, ~pcall #10+,
+ *      and during engine init). Phase 1's pcall sampling (calls 1, 2) was too
+ *      early. Phase 2 checks CLASS + Managers on EVERY pcall (2× lua_getfield,
+ *      cheap) and logs the call# at which each first transitions nil→non-nil
+ *      (one-shot per global), plus the full 16-globals snapshot at pcall calls
+ *      1, 10, 50, 100, and the first pcall where both CLASS+Managers are
+ *      non-nil. That both-present call# is the engine-context lifecycle point.
+ *
+ *   2. Does an injected CHUNK actually see those globals (rule out setfenv)?
+ *      Phase 1 measured the globals *table* from C; a chunk's env defaults to
+ *      that table, so it should match — but the definitive test is to inject a
+ *      chunk and read what *it* sees. Phase 2 injects the read-only chunk
+ *      `return print, require, loadstring, io, CLASS, Managers` via
+ *      luaL_loadbuffer + lua_pcall at the both-present point (fallback: pcall
+ *      #50/#100) and logs the 6 return-value types. Comparing those to the
+ *      C-side lua_getfield(LUA_GLOBALSINDEX) snapshot at the same point is the
+ *      definitive H2 answer: match ⇒ chunk env = globals table (engine-context
+ *      confirmed for injected chunks); differ ⇒ a setfenv/env difference.
+ *
+ * This is READ-ONLY recon — no engine global is *called*, no mods; the only
+ * side effects are the one-shot chunk injection (a read-only chunk that reads
+ * 6 globals and returns them) and log output. The log answers: at which
+ * lifecycle point does the engine's globals table contain the full bundle-
+ * script environment (io, require, loadstring, CLASS, Managers, ...), and does
+ * an injected chunk see it? That point is the engine-context entry for DLL
+ * injection (the patch_999-equivalent), or evidence it is not achievable.
  *
  * Hook points (all use the single captured lua_State*):
  *   - lua_newstate      (1-shot, right after capture)            — VM fresh, baseline
  *   - luaL_openlibs     (1-shot, after the engine call returns)  — stdlib registered
  *   - luaL_loadbuffer   (calls 1, 5, 20)                         — script loads
- *   - lua_pcall         (calls 1, 2)                             — POC injection point
+ *   - lua_pcall         (every call)                             — POC injection point
+ *       · per-call CLASS/Managers transition (one-shot per global)
+ *       · full-16 snapshot @ calls {1, 10, 50, 100, both-present}
+ *       · chunk-injection H2 test @ both-present (fallback #50/#100)
  *
  * NOTE on lua_resource::bytecode: the spec lists it as the primary hook point,
  * but it is an engine C++ function with an UNKNOWN signature/return convention
@@ -78,6 +106,7 @@ static gettop_t     g_lua_gettop = NULL;
 static settop_t     g_lua_settop = NULL;
 static type_t       g_lua_type = NULL;
 static getfield_t   g_lua_getfield = NULL;
+static loadbuffer_t g_lua_loadbuffer = NULL;  /* direct (post-discovery) — fallback if the loadbuffer hook didn't install */
 
 static uint8_t   *g_module_base = NULL;      /* Darktide.exe base */
 static FILE      *g_log = NULL;
@@ -94,6 +123,11 @@ static volatile LONG g_pcall_calls = 0;
 static volatile int  g_openlibs_logged = 0;
 static volatile int  g_newstate_logged = 0;
 static volatile int  g_in_probe = 0;
+/* Phase-2: CLASS/Managers transition tracking + one-shot chunk injection. */
+static volatile int  g_class_logged = 0;     /* one-shot: CLASS nil→non-nil logged */
+static volatile int  g_managers_logged = 0;  /* one-shot: Managers nil→non-nil logged */
+static volatile int  g_both_logged = 0;      /* one-shot: both non-nil at the same call */
+static volatile int  g_chunk_done = 0;       /* one-shot: chunk-injection test performed */
 
 /* The fixed list of globals the probe checks at each lifecycle point. */
 static const char *PROBE_GLOBALS[] = {
@@ -205,6 +239,138 @@ static void probe_log_globals(lua_State *L, const char *point, int call_num) {
     g_in_probe = 0;
 }
 
+/*
+ * Per-pcall CLASS/Managers transition check. On every lua_pcall (until both
+ * globals are seen), read CLASS + Managers via lua_getfield (2 cheap raw hash
+ * lookups on the globals table — no metamethod, no longjmp) and log the call#
+ * at which each first transitions nil→non-nil (one-shot per global). Returns 1
+ * iff BOTH are non-nil at this call (i.e. this is the first call where the
+ * engine globals have fully materialized), else 0.
+ *
+ * Stack-clean: saves lua_gettop, restores it (pops both lookups) — zero net
+ * effect on the engine stack. READ-ONLY.
+ */
+static int probe_check_class_managers(lua_State *L, LONG call_num) {
+    g_in_probe = 1;
+    int base = g_lua_gettop(L);
+
+    g_lua_getfield(L, LUA_GLOBALSINDEX, "CLASS");
+    int class_t = g_lua_type(L, -1);
+    if (!g_class_logged && class_t != 0 /* nil */) {
+        g_class_logged = 1;
+        magos_log("[probe] CLASS first non-nil at lua_pcall call#%ld (type=%s)\n",
+                  call_num, lua_type_name(class_t));
+    }
+
+    g_lua_getfield(L, LUA_GLOBALSINDEX, "Managers");
+    int managers_t = g_lua_type(L, -1);
+    if (!g_managers_logged && managers_t != 0 /* nil */) {
+        g_managers_logged = 1;
+        magos_log("[probe] Managers first non-nil at lua_pcall call#%ld (type=%s)\n",
+                  call_num, lua_type_name(managers_t));
+    }
+
+    g_lua_settop(L, base);  /* pop both lookups — restore engine stack */
+    g_in_probe = 0;
+    return (class_t != 0 && managers_t != 0);
+}
+
+/*
+ * The definitive H2 test: inject a tiny read-only chunk and read what *it*
+ * sees, vs. the C-side lua_getfield(LUA_GLOBALSINDEX) snapshot at the same
+ * point. A chunk's env defaults to the globals table, so the two SHOULD match
+ * — but if the engine setfenvs scripts (or swaps the thread globals), an
+ * injected chunk would see a different env. This rules that in or out.
+ *
+ * Chunk: `return print, require, loadstring, io, CLASS, Managers`
+ * (read-only: reads 6 globals, calls nothing, mutates nothing).
+ *
+ * SAFETY (game-safe, like probe v1):
+ *   - Same thread: the detour runs synchronously on the engine's Lua thread;
+ *     Lua is single-threaded, so no concurrency.
+ *   - Stack discipline: lua_gettop saved before, lua_settop restored after —
+ *     the engine observes an untouched stack (zero net effect).
+ *   - lua_pcall with errfunc=0: a runtime error is RETURNED (pcall never
+ *     longjmps), so the chunk cannot escape our control. The chunk is read-only
+ *     and cannot error in normal operation anyway.
+ *   - No re-entrancy: we call the original (trampoline) loadbuffer + pcall,
+ *     bypassing our own detours. g_in_probe is set for the duration.
+ *   - Residual longjmp risk: luaL_loadbuffer can longjmp on OOM during the
+ *     parse of the 60-byte chunk — negligibly unlikely on a running game (the
+ *     POC used this exact loadbuffer+pcall in-hook injection pattern).
+ */
+static void probe_inject_chunk(lua_State *L, int call_num) {
+    g_in_probe = 1;
+
+    static const char chunk[] = "return print, require, loadstring, io, CLASS, Managers";
+    static const char *names[6] = { "print", "require", "loadstring", "io", "CLASS", "Managers" };
+
+    magos_log("[probe] --- chunk-injection (H2) test @ pcall#%d ---\n", call_num);
+    magos_log("[probe] chunk: `%s`\n", chunk);
+
+    if (!g_orig_pcall || !g_lua_gettop || !g_lua_settop || !g_lua_type) {
+        magos_log("[probe] chunk-injection SKIPPED: pcall/C-API not resolved\n");
+        g_in_probe = 0;
+        return;
+    }
+    /* Prefer the loadbuffer trampoline (bypasses our detour → no re-entrancy
+     * when the hook is installed); fall back to the direct discovered address
+     * if the loadbuffer hook didn't install (no patch → no detour to bypass). */
+    loadbuffer_t lb = g_orig_loadbuffer ? g_orig_loadbuffer : g_lua_loadbuffer;
+    if (!lb) {
+        magos_log("[probe] chunk-injection SKIPPED: luaL_loadbuffer not resolved\n");
+        g_in_probe = 0;
+        return;
+    }
+
+    int base = g_lua_gettop(L);
+
+    /* Load the chunk (pushes a function on top). `lb` is the trampoline when
+     * the loadbuffer hook is installed (bypasses our detour → no re-entrancy),
+     * else the direct address (hook not installed → no detour to bypass). */
+    int rc = lb(L, chunk, sizeof(chunk) - 1, "magos_probe_v2");
+    if (rc != 0) {
+        int t = g_lua_type(L, -1);
+        magos_log("[probe] chunk LOAD FAILED (rc=%d, err_type=%s) — not injected\n",
+                  rc, lua_type_name(t));
+        g_lua_settop(L, base);
+        g_in_probe = 0;
+        return;
+    }
+
+    /* Run it: 0 args, 6 results, no errfunc. pcall RETURNS on error (never
+     * longjmps), so this is contained. On success, 6 values at base+1..base+6. */
+    int prc = g_orig_pcall(L, 0, 6, 0);
+    if (prc != 0) {
+        int t = g_lua_type(L, -1);
+        magos_log("[probe] chunk PCALL FAILED (rc=%d, err_type=%s) — chunk errored\n",
+                  prc, lua_type_name(t));
+        g_lua_settop(L, base);
+        g_in_probe = 0;
+        return;
+    }
+
+    /* Read the 6 return-value types and log them. */
+    char line[512];
+    int off = snprintf(line, sizeof(line), "[probe] chunk sees @ pcall#%d:", call_num);
+    for (int i = 0; i < 6; i++) {
+        int t = g_lua_type(L, base + 1 + i);
+        int w = snprintf(line + off, sizeof(line) - (size_t)off, "  %s=%s",
+                         names[i], lua_type_name(t));
+        if (w < 0 || (size_t)w >= sizeof(line) - (size_t)off) {
+            break;
+        }
+        off += w;
+    }
+    magos_log("%s\n", line);
+    magos_log("[probe] compare to the C-side 16-globals snapshot above: if these 6 types match\n");
+    magos_log("[probe] the lua_getfield(LUA_GLOBALSINDEX) types, chunk env = globals table → H2 ruled out\n");
+    magos_log("[probe] (no setfenv/env difference for injected chunks); else there is an env difference.\n");
+
+    g_lua_settop(L, base);  /* pop the 6 returns — restore engine stack */
+    g_in_probe = 0;
+}
+
 /* ---- lifecycle detours ---- */
 
 /* lua_newstate — capture L (baseline; VM fresh, no stdlib/globals yet). */
@@ -261,17 +427,53 @@ static int detour_loadbuffer(lua_State *L, const char *buff, size_t size, const 
 }
 
 /* lua_pcall — the POC's injection point (POC found executed chunks sandboxed).
- * Samples the first 2 engine calls. */
+ * Phase 2: on every call, track the CLASS/Managers nil→non-nil transition
+ * (one-shot per global); take the full 16-globals snapshot at calls 1, 10, 50,
+ * 100, and the first call where both CLASS+Managers are non-nil; and at that
+ * both-present point (fallback: #50/#100) inject a read-only chunk to test
+ * whether an injected chunk sees the same globals the C-side table read sees
+ * (H2: rules out a setfenv / env difference for injected chunks). */
 static int detour_pcall(lua_State *L, int nargs, int nresults, int errfunc) {
-    LONG n = 0;
-    int do_probe = 0;
     if (!g_in_probe) {
-        n = InterlockedIncrement(&g_pcall_calls);
-        do_probe = (n == 1 || n == 2);
-    }
-    if (do_probe) {
+        LONG n = InterlockedIncrement(&g_pcall_calls);
         if (!g_L) g_L = L;
-        probe_log_globals(L, "lua_pcall", (int)n);
+
+        /* 1. Per-pcall CLASS/Managers transition (one-shot per global; the
+         *    whole check is skipped once both have been seen). */
+        int both_now = 0;
+        if (!g_both_logged && g_lua_gettop && g_lua_getfield && g_lua_type && g_lua_settop) {
+            both_now = probe_check_class_managers(L, n);
+            if (both_now) {
+                g_both_logged = 1;
+                magos_log("[probe] === CLASS+Managers both non-nil at lua_pcall call#%ld ===\n", n);
+                magos_log("[probe]     engine-context lifecycle point: globals table fully materialized\n");
+            }
+        }
+
+        /* 2. Full 16-globals snapshot at scheduled calls + the both-present call. */
+        int scheduled = (n == 1 || n == 10 || n == 50 || n == 100);
+        if (scheduled && both_now) {
+            magos_log("[probe] (pcall#%ld: scheduled snapshot AND both-present point)\n", n);
+        } else if (both_now) {
+            magos_log("[probe] (pcall#%ld: both-present snapshot — first call with CLASS+Managers)\n", n);
+        }
+        if (scheduled || both_now) {
+            probe_log_globals(L, "lua_pcall", (int)n);
+        }
+
+        /* 3. Chunk-injection (H2) at the both-present point; fall back to
+         *    #50/#100 if the transition was never caught. One-shot. */
+        if (!g_chunk_done) {
+            int do_inject = both_now
+                          || (!g_both_logged && (n == 50 || n == 100));
+            if (do_inject) {
+                g_chunk_done = 1;
+                if (!both_now) {
+                    magos_log("[probe] chunk-injection FALLBACK @ pcall#%ld (both-present not yet caught)\n", n);
+                }
+                probe_inject_chunk(L, (int)n);
+            }
+        }
     }
     return g_orig_pcall(L, nargs, nresults, errfunc);
 }
@@ -345,6 +547,7 @@ static DWORD WINAPI worker(LPVOID arg) {
     g_lua_settop   = (settop_t)(g_module_base + tbl.lua_settop);
     g_lua_type     = (type_t)(g_module_base + tbl.lua_type);
     g_lua_getfield = (getfield_t)(g_module_base + tbl.lua_getfield);
+    g_lua_loadbuffer = (loadbuffer_t)(g_module_base + tbl.lual_loadbuffer);
 
     /* step 4: install the lifecycle hooks. lua_newstate is critical (can't
      * capture L without it); the other three are best-effort — a failure
@@ -362,8 +565,10 @@ static DWORD WINAPI worker(LPVOID arg) {
     install_hook((void *)(g_module_base + tbl.lua_pcall),
                  (void *)&detour_pcall, (void **)&g_orig_pcall, "lua_pcall");
 
-    magos_log("[probe] === engine-context probe (Phase 1) ===\n");
-    magos_log("[probe] hooks: lua_newstate{1} luaL_openlibs{1} luaL_loadbuffer{1,5,20} lua_pcall{1,2}\n");
+    magos_log("[probe] === engine-context probe (Phase 2) ===\n");
+    magos_log("[probe] hooks: lua_newstate{1} luaL_openlibs{1} luaL_loadbuffer{1,5,20} lua_pcall{every}\n");
+    magos_log("[probe] pcall: per-call CLASS+Managers transition (one-shot per global);\n");
+    magos_log("[probe]        full-16 snapshot @ {1,10,50,100,both-present}; chunk-injection (H2) @ both-present (fallback #50/#100)\n");
     magos_log("[probe] globals: print require dofile loadfile load loadstring io pcall pairs "
               "table string math CLASS Managers _G _VERSION\n");
     magos_log("[probe] NOTE: lua_resource::bytecode @0x%08x discovered (anchor) but NOT hooked "
