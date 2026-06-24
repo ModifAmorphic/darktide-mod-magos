@@ -13,7 +13,7 @@
  * globals via the LuaJIT C API (`lua_getfield` + `lua_type`). This extends the
  * Phase-1 probe (which established the stdlib is present at the
  * `luaL_loadbuffer`/`lua_pcall` points, so the POC's "sandboxed `_G`" was a
- * timing artifact). Phase 2 resolves the two things Phase 1 left open:
+ * timing artifact). Phase 2 resolved the two things Phase 1 left open:
  *
  *   1. WHEN do CLASS + Managers appear? They were `nil` through loadbuffer
  *      call #20 — engine globals set later (when `class.lua` runs, ~pcall #10+,
@@ -35,13 +35,37 @@
  *      definitive H2 answer: match ⇒ chunk env = globals table (engine-context
  *      confirmed for injected chunks); differ ⇒ a setfenv/env difference.
  *
+ * Phase 2 RESULT: H2 CONFIRMED — the chunk sees `loadstring=nil`, `io=nil`
+ * while the C-side `LUA_GLOBALSINDEX` (measured at the `luaL_openlibs`/early-
+ * `lua_pcall` points) has `loadstring=function`, `io=table`. So an injected
+ * chunk's env is NOT the globals table. (By pcall #10 the globals table ITSELF
+ * also lost io/loadstring — the table changed between pcall #1 and #10.)
+ *
+ * Phase-3 mechanism-cracker (this build) cracks WHY: is the chunk `setfenv`'d
+ * to a sandbox table, is `LUA_GLOBALSINDEX` dynamically swapped/rebound per-
+ * phase, or something else? Three measurements in one live run:
+ *
+ *   1. Hook `lua_setfenv` (high-value). On each call (first ~20), BEFORE the
+ *      original, inspect the env table at the top (io/loadstring/require/print/
+ *      Managers via lua_getfield) + log the object type (a THREAD setfenv =
+ *      globals rebind, since `LUA_GLOBALSINDEX` = `tabref(L->env)`). Reveals
+ *      what env the engine assigns scripts — and whether it has io/loadstring
+ *      (the bundle-script env patch_999 uses).
+ *   2. The chunk's actual env (`lua_getfenv`). At the both-present point, after
+ *      `luaL_loadbuffer`, call `lua_getfenv(L, chunk_idx)` and inspect the
+ *      chunk's env. If it lacks io while `LUA_GLOBALSINDEX` has it → the chunk
+ *      is `setfenv`'d to a sandbox.
+ *   3. Dynamic-swap check. Measure io/loadstring in `LUA_GLOBALSINDEX`
+ *      immediately before AND immediately after the chunk's `lua_pcall`. If
+ *      they flip around execution → the globals table is dynamically swapped/
+ *      rebound per-phase (our detour-entry read caught a different phase).
+ *
  * This is READ-ONLY recon — no engine global is *called*, no mods; the only
  * side effects are the one-shot chunk injection (a read-only chunk that reads
- * 6 globals and returns them) and log output. The log answers: at which
- * lifecycle point does the engine's globals table contain the full bundle-
- * script environment (io, require, loadstring, CLASS, Managers, ...), and does
- * an injected chunk see it? That point is the engine-context entry for DLL
- * injection (the patch_999-equivalent), or evidence it is not achievable.
+ * 6 globals and returns them) and log output. The log identifies the
+ * sandboxing mechanism and points to the fix (setfenv our chunk to the
+ * bundle-script env / run during the full-env phase / load via the engine's
+ * path).
  *
  * Hook points (all use the single captured lua_State*):
  *   - lua_newstate      (1-shot, right after capture)            — VM fresh, baseline
@@ -50,7 +74,9 @@
  *   - lua_pcall         (every call)                             — POC injection point
  *       · per-call CLASS/Managers transition (one-shot per global)
  *       · full-16 snapshot @ calls {1, 10, 50, 100, both-present}
- *       · chunk-injection H2 test @ both-present (fallback #50/#100)
+ *       · chunk-injection (v3: getfenv env + before/after globals + returns) @ both-present (fallback #50/#100)
+ *   - lua_setfenv       (first 20 calls)                         — Phase-3: env the engine assigns
+ *       · log obj_type (thread = globals rebind) + env globals (io/loadstring/require/print/Managers)
  *
  * NOTE on lua_resource::bytecode: the spec lists it as the primary hook point,
  * but it is an engine C++ function with an UNKNOWN signature/return convention
@@ -93,6 +119,8 @@ typedef int  (*gettop_t)(lua_State *L);
 typedef void (*settop_t)(lua_State *L, int idx);
 typedef int  (*type_t)(lua_State *L, int idx);
 typedef void (*getfield_t)(lua_State *L, int idx, const char *k);
+typedef void (*getfenv_t)(lua_State *L, int idx);
+typedef int  (*setfenv_t)(lua_State *L, int idx);
 typedef void (*openlibs_t)(lua_State *L);
 typedef int  (*loadbuffer_t)(lua_State *L, const char *buf, size_t size, const char *name);
 typedef int  (*pcall_t)(lua_State *L, int nargs, int nresults, int errfunc);
@@ -102,10 +130,12 @@ static newstate_t   g_orig_newstate = NULL;
 static openlibs_t   g_orig_openlibs = NULL;
 static loadbuffer_t g_orig_loadbuffer = NULL;
 static pcall_t      g_orig_pcall = NULL;
+static setfenv_t    g_orig_setfenv = NULL;
 static gettop_t     g_lua_gettop = NULL;
 static settop_t     g_lua_settop = NULL;
 static type_t       g_lua_type = NULL;
 static getfield_t   g_lua_getfield = NULL;
+static getfenv_t    g_lua_getfenv = NULL;
 static loadbuffer_t g_lua_loadbuffer = NULL;  /* direct (post-discovery) — fallback if the loadbuffer hook didn't install */
 
 static uint8_t   *g_module_base = NULL;      /* Darktide.exe base */
@@ -120,6 +150,7 @@ static lua_State *g_L = NULL;                /* the single captured VM */
  * probe game-safe. Counters use Interlocked as the cheap Win32 idiom. */
 static volatile LONG g_loadbuffer_calls = 0;
 static volatile LONG g_pcall_calls = 0;
+static volatile LONG g_setfenv_calls = 0;
 static volatile int  g_openlibs_logged = 0;
 static volatile int  g_newstate_logged = 0;
 static volatile int  g_in_probe = 0;
@@ -276,28 +307,105 @@ static int probe_check_class_managers(lua_State *L, LONG call_num) {
 }
 
 /*
- * The definitive H2 test: inject a tiny read-only chunk and read what *it*
- * sees, vs. the C-side lua_getfield(LUA_GLOBALSINDEX) snapshot at the same
- * point. A chunk's env defaults to the globals table, so the two SHOULD match
- * — but if the engine setfenvs scripts (or swaps the thread globals), an
- * injected chunk would see a different env. This rules that in or out.
+ * Inspect a table at absolute stack index `env_idx`: read io/loadstring/
+ * require/print/Managers via lua_getfield + lua_type, log the types. READ-ONLY
+ * and stack-clean: each getfield pushes one value, we read its type, then
+ * lua_settop back to the entry top pops it — the env table stays at env_idx
+ * throughout, zero net effect on the engine stack.
  *
- * Chunk: `return print, require, loadstring, io, CLASS, Managers`
- * (read-only: reads 6 globals, calls nothing, mutates nothing).
+ * Save/restore g_in_probe so this is safe to call from inside an already-
+ * guarded probe path (e.g. the chunk-injection test) as well as from a fresh
+ * detour entry.
  *
- * SAFETY (game-safe, like probe v1):
- *   - Same thread: the detour runs synchronously on the engine's Lua thread;
- *     Lua is single-threaded, so no concurrency.
+ * Residual longjmp risk: lua_getfield follows __index metamethods. The engine's
+ * script-env tables are plain tables (or __index=_G, a plain-table fallback →
+ * no function call), so in practice this cannot longjmp. If an env had a
+ * function __index that errored it could longjmp — same residual category as
+ * probe v2's loadbuffer-OOM longjmp, and far less likely. Acceptable for a
+ * read-only probe (v1/v2 ran clean).
+ */
+static void probe_inspect_env(lua_State *L, int env_idx, const char *label, int call_num) {
+    static const char *env_globals[] = { "io", "loadstring", "require", "print", "Managers" };
+    int saved = g_in_probe;
+    g_in_probe = 1;
+    int base = g_lua_gettop(L);
+    char line[512];
+    int off = snprintf(line, sizeof(line), "[probe] %s call#%d env:", label, call_num);
+    for (int i = 0; i < (int)(sizeof(env_globals) / sizeof(env_globals[0])); i++) {
+        g_lua_getfield(L, env_idx, env_globals[i]);
+        int t = g_lua_type(L, -1);
+        int w = snprintf(line + off, sizeof(line) - (size_t)off, "  %s=%s",
+                         env_globals[i], lua_type_name(t));
+        if (w < 0 || (size_t)w >= sizeof(line) - (size_t)off) {
+            break;
+        }
+        off += w;
+        g_lua_settop(L, base);  /* pop the getfield result; env table stays at env_idx */
+    }
+    magos_log("%s\n", line);
+    g_in_probe = saved;
+}
+
+/*
+ * Read io + loadstring in LUA_GLOBALSINDEX (= tabref(L->env), the thread's
+ * globals table) and log their types. READ-ONLY, stack-clean (save/restore
+ * top). Used for the before/after dynamic-swap check around the chunk's pcall:
+ * if these flip (e.g. function→nil) across the chunk's execution, the globals
+ * table is dynamically swapped/rebound per-phase. LUA_GLOBALSINDEX resolves to
+ * the thread globals (a plain table) → lua_getfield does a raw lookup, no
+ * metamethod, cannot longjmp.
+ */
+static void probe_globals_io_loadstring(lua_State *L, const char *label, int call_num) {
+    int saved = g_in_probe;
+    g_in_probe = 1;
+    int base = g_lua_gettop(L);
+    g_lua_getfield(L, LUA_GLOBALSINDEX, "io");
+    int io_t = g_lua_type(L, -1);
+    g_lua_getfield(L, LUA_GLOBALSINDEX, "loadstring");
+    int ls_t = g_lua_type(L, -1);
+    magos_log("[probe] globals %-6s @ pcall#%d:  io=%s  loadstring=%s\n",
+              label, call_num, lua_type_name(io_t), lua_type_name(ls_t));
+    g_lua_settop(L, base);  /* pop both lookups */
+    g_in_probe = saved;
+}
+
+/*
+ * The mechanism-cracker test (extends probe v2's H2 test). Injects the same
+ * read-only chunk `return print, require, loadstring, io, CLASS, Managers`
+ * via luaL_loadbuffer + lua_pcall, but now resolves WHY the chunk's env may
+ * differ from LUA_GLOBALSINDEX via three measurements:
+ *
+ *   #2 (chunk's actual env): after luaL_loadbuffer (chunk function on stack),
+ *      call lua_getfenv(L, chunk_idx) to push the chunk's env table and
+ *      inspect it (io/loadstring/require/print/Managers). Compare to the
+ *      C-side LUA_GLOBALSINDEX snapshot. If the chunk's env lacks io while
+ *      LUA_GLOBALSINDEX has it → the chunk is setfenv'd to a sandbox table
+ *      (NOT the globals). (lua_getfenv on a valid idx is longjmp-safe: it
+ *      calls index2adr_check + type checks + settabV/setnilV + incr_top, no
+ *      metamethods.)
+ *
+ *   #3 (dynamic-swap check): measure io/loadstring in LUA_GLOBALSINDEX
+ *      immediately BEFORE and immediately AFTER the chunk's lua_pcall. If they
+ *      flip around execution → the globals table is dynamically swapped/
+ *      rebound per-phase (and our detour-entry lua_getfield caught a different
+ *      phase than the chunk runs in).
+ *
+ *   (chunk return types): the v2 H2 result — what the chunk ACTUALLY sees.
+ *      Combined with #2/#3 this localizes the cause: sandbox setfenv vs.
+ *      per-phase globals swap vs. timing.
+ *
+ * SAFETY (game-safe, like probe v2):
+ *   - Same thread: the detour runs synchronously on the engine's Lua thread.
  *   - Stack discipline: lua_gettop saved before, lua_settop restored after —
- *     the engine observes an untouched stack (zero net effect).
+ *     the engine observes an untouched stack (zero net effect). getfenv pushes
+ *     one table (popped before pcall); the before/after checks are stack-clean.
  *   - lua_pcall with errfunc=0: a runtime error is RETURNED (pcall never
- *     longjmps), so the chunk cannot escape our control. The chunk is read-only
- *     and cannot error in normal operation anyway.
- *   - No re-entrancy: we call the original (trampoline) loadbuffer + pcall,
- *     bypassing our own detours. g_in_probe is set for the duration.
- *   - Residual longjmp risk: luaL_loadbuffer can longjmp on OOM during the
- *     parse of the 60-byte chunk — negligibly unlikely on a running game (the
- *     POC used this exact loadbuffer+pcall in-hook injection pattern).
+ *     longjmps), so the chunk cannot escape our control.
+ *   - No re-entrancy: trampolines bypass our detours; g_in_probe is set for
+ *     the duration (save/restored by the helpers).
+ *   - Residual longjmp risk: luaL_loadbuffer can longjmp on OOM during parse
+ *     of the 60-byte chunk — negligibly unlikely on a running game (probe v2
+ *     used this exact pattern).
  */
 static void probe_inject_chunk(lua_State *L, int call_num) {
     g_in_probe = 1;
@@ -305,11 +413,11 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
     static const char chunk[] = "return print, require, loadstring, io, CLASS, Managers";
     static const char *names[6] = { "print", "require", "loadstring", "io", "CLASS", "Managers" };
 
-    magos_log("[probe] --- chunk-injection (H2) test @ pcall#%d ---\n", call_num);
+    magos_log("[probe] --- chunk-injection (v3) test @ pcall#%d ---\n", call_num);
     magos_log("[probe] chunk: `%s`\n", chunk);
 
-    if (!g_orig_pcall || !g_lua_gettop || !g_lua_settop || !g_lua_type) {
-        magos_log("[probe] chunk-injection SKIPPED: pcall/C-API not resolved\n");
+    if (!g_orig_pcall || !g_lua_gettop || !g_lua_settop || !g_lua_type || !g_lua_getfenv) {
+        magos_log("[probe] chunk-injection SKIPPED: pcall/C-API (need getfenv) not resolved\n");
         g_in_probe = 0;
         return;
     }
@@ -325,10 +433,8 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
 
     int base = g_lua_gettop(L);
 
-    /* Load the chunk (pushes a function on top). `lb` is the trampoline when
-     * the loadbuffer hook is installed (bypasses our detour → no re-entrancy),
-     * else the direct address (hook not installed → no detour to bypass). */
-    int rc = lb(L, chunk, sizeof(chunk) - 1, "magos_probe_v2");
+    /* Load the chunk (pushes a function on top at base+1). */
+    int rc = lb(L, chunk, sizeof(chunk) - 1, "magos_probe_v3");
     if (rc != 0) {
         int t = g_lua_type(L, -1);
         magos_log("[probe] chunk LOAD FAILED (rc=%d, err_type=%s) — not injected\n",
@@ -338,8 +444,22 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
         return;
     }
 
-    /* Run it: 0 args, 6 results, no errfunc. pcall RETURNS on error (never
-     * longjmps), so this is contained. On success, 6 values at base+1..base+6. */
+    /* Measurement #2: the chunk's ACTUAL env via lua_getfenv. Pushes the chunk
+     * function's env table at base+2; inspect it; pop it (back to base+1, the
+     * chunk function still on top). */
+    g_lua_getfenv(L, base + 1);   /* push chunk's env at base+2 */
+    probe_inspect_env(L, base + 2, "chunk env (getfenv)", call_num);
+    g_lua_settop(L, base + 1);    /* pop the env — chunk function back on top */
+    magos_log("[probe] compare 'chunk env (getfenv)' to the C-side globals snapshot:\n");
+    magos_log("[probe]   chunk env lacks io but globals has io → chunk is setfenv'd to a sandbox.\n");
+
+    /* Measurement #3 (before): io/loadstring in LUA_GLOBALSINDEX immediately
+     * before the chunk's pcall. */
+    probe_globals_io_loadstring(L, "BEFORE", call_num);
+
+    /* Run the chunk: 0 args, 6 results, errfunc=0. pcall RETURNS on error
+     * (never longjmps), so this is contained. On success, 6 values at
+     * base+1..base+6. */
     int prc = g_orig_pcall(L, 0, 6, 0);
     if (prc != 0) {
         int t = g_lua_type(L, -1);
@@ -350,7 +470,11 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
         return;
     }
 
-    /* Read the 6 return-value types and log them. */
+    /* Measurement #3 (after): io/loadstring in LUA_GLOBALSINDEX immediately
+     * after the chunk's pcall. If BEFORE != AFTER → globals swapped per-phase. */
+    probe_globals_io_loadstring(L, "AFTER", call_num);
+
+    /* The chunk's 6 return-value types (what it ACTUALLY sees). */
     char line[512];
     int off = snprintf(line, sizeof(line), "[probe] chunk sees @ pcall#%d:", call_num);
     for (int i = 0; i < 6; i++) {
@@ -363,9 +487,8 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
         off += w;
     }
     magos_log("%s\n", line);
-    magos_log("[probe] compare to the C-side 16-globals snapshot above: if these 6 types match\n");
-    magos_log("[probe] the lua_getfield(LUA_GLOBALSINDEX) types, chunk env = globals table → H2 ruled out\n");
-    magos_log("[probe] (no setfenv/env difference for injected chunks); else there is an env difference.\n");
+    magos_log("[probe] v3 summary: chunk env (#2) + before/after globals (#3) + chunk sees (above)\n");
+    magos_log("[probe]   localize the mechanism: sandbox setfenv vs. per-phase globals swap vs. timing.\n");
 
     g_lua_settop(L, base);  /* pop the 6 returns — restore engine stack */
     g_in_probe = 0;
@@ -478,6 +601,45 @@ static int detour_pcall(lua_State *L, int nargs, int nresults, int errfunc) {
     return g_orig_pcall(L, nargs, nresults, errfunc);
 }
 
+/* lua_setfenv(L, idx) — the HIGH-VALUE Phase-3 hook. lua_setfenv sets the env
+ * of the func/udata/thread at `idx` to the table at the top of the stack
+ * (L->top-1). For a THREAD, that rebinds the thread's globals (because
+ * LUA_GLOBALSINDEX resolves to tabref(L->env) — the thread's globals table).
+ * So if the engine setfenvs a thread/coroutine to a sandbox table, that is the
+ * sandboxing mechanism.
+ *
+ * Measurement #1: on each call (sample the first ~20), BEFORE calling the
+ * original (the env is at the top then), inspect the env table — check
+ * io/loadstring/require/print/Managers via lua_getfield — and log the call#,
+ * the type of the object being setfenv'd (func/udata/thread — a thread means a
+ * globals rebind), and which globals that env has. This reveals what env the
+ * engine assigns to scripts, and whether it has io/loadstring (i.e. is it the
+ * bundle-script env patch_999 uses).
+ *
+ * Known LuaJIT signature `int (lua_State*, int)` → safe to MinHook (unlike the
+ * unknown-sig lua_resource::bytecode). READ-ONLY inspection (lua_type +
+ * lua_getfield + lua_settop), stack-balanced, before the original pops the env.
+ */
+static int detour_setfenv(lua_State *L, int idx) {
+    if (!g_in_probe) {
+        LONG n = InterlockedIncrement(&g_setfenv_calls);
+        if (n <= 20 && g_lua_getfield && g_lua_type && g_lua_gettop && g_lua_settop) {
+            /* The env table is at the top (L->top-1 == absolute index gettop).
+             * Log what's being setfenv'd (type at idx) — a thread (type 8)
+             * means a globals rebind — then inspect the env's globals. */
+            int env_idx = g_lua_gettop(L);
+            int obj_t = g_lua_type(L, idx);
+            magos_log("[probe] --- lua_setfenv call#%ld  idx=%d  obj_type=%s (%s) ---\n",
+                      n, idx, lua_type_name(obj_t),
+                      (obj_t == 8) ? "THREAD → globals rebind" : "func/udata/other");
+            probe_inspect_env(L, env_idx, "setfenv env", (int)n);
+        } else if (n <= 20) {
+            magos_log("[probe] lua_setfenv call#%ld (env not inspected: C-API not resolved)\n", n);
+        }
+    }
+    return g_orig_setfenv(L, idx);
+}
+
 /* Create + enable a MinHook detour. Returns 1 on success, 0 on failure. */
 static int install_hook(void *target, void *detour, void **original, const char *name) {
     MH_STATUS mh = MH_CreateHook(target, detour, original);
@@ -541,12 +703,15 @@ static DWORD WINAPI worker(LPVOID arg) {
          tbl.luaenvironment_init_begin, tbl.luaenvironment_init_end);
     magos_log("[magos]   [probe] lua_getfield=0x%08x  lua_resource::bytecode=0x%08x\n",
          tbl.lua_getfield, tbl.lua_resource_bytecode);
+    magos_log("[magos]   [probe] lua_getfenv=0x%08x  lua_setfenv=0x%08x\n",
+         tbl.lua_getfenv, tbl.lua_setfenv);
 
     /* resolve the LuaJIT C-API pointers used by the probe + the slice. */
     g_lua_gettop   = (gettop_t)(g_module_base + tbl.lua_gettop);
     g_lua_settop   = (settop_t)(g_module_base + tbl.lua_settop);
     g_lua_type     = (type_t)(g_module_base + tbl.lua_type);
     g_lua_getfield = (getfield_t)(g_module_base + tbl.lua_getfield);
+    g_lua_getfenv  = (getfenv_t)(g_module_base + tbl.lua_getfenv);
     g_lua_loadbuffer = (loadbuffer_t)(g_module_base + tbl.lual_loadbuffer);
 
     /* step 4: install the lifecycle hooks. lua_newstate is critical (can't
@@ -564,11 +729,16 @@ static DWORD WINAPI worker(LPVOID arg) {
                  (void *)&detour_loadbuffer, (void **)&g_orig_loadbuffer, "luaL_loadbuffer");
     install_hook((void *)(g_module_base + tbl.lua_pcall),
                  (void *)&detour_pcall, (void **)&g_orig_pcall, "lua_pcall");
+    install_hook((void *)(g_module_base + tbl.lua_setfenv),
+                 (void *)&detour_setfenv, (void **)&g_orig_setfenv, "lua_setfenv");
 
-    magos_log("[probe] === engine-context probe (Phase 2) ===\n");
-    magos_log("[probe] hooks: lua_newstate{1} luaL_openlibs{1} luaL_loadbuffer{1,5,20} lua_pcall{every}\n");
+    magos_log("[probe] === engine-context probe (Phase 3 — mechanism-cracker) ===\n");
+    magos_log("[probe] hooks: lua_newstate{1} luaL_openlibs{1} luaL_loadbuffer{1,5,20}\n");
+    magos_log("[probe]        lua_pcall{every} lua_setfenv{first 20}\n");
     magos_log("[probe] pcall: per-call CLASS+Managers transition (one-shot per global);\n");
-    magos_log("[probe]        full-16 snapshot @ {1,10,50,100,both-present}; chunk-injection (H2) @ both-present (fallback #50/#100)\n");
+    magos_log("[probe]        full-16 snapshot @ {1,10,50,100,both-present}; chunk-injection (v3) @ both-present (fallback #50/#100)\n");
+    magos_log("[probe] setfenv: sample first 20 — log obj_type + env globals (io/loadstring/require/print/Managers)\n");
+    magos_log("[probe] chunk (v3): #2 getfenv env, #3 before/after globals, + chunk return types\n");
     magos_log("[probe] globals: print require dofile loadfile load loadstring io pcall pairs "
               "table string math CLASS Managers _G _VERSION\n");
     magos_log("[probe] NOTE: lua_resource::bytecode @0x%08x discovered (anchor) but NOT hooked "

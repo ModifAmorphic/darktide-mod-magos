@@ -6,7 +6,9 @@
  * from the module base passed to `magos_discover`).
  *
  * The two `probe` fields (`lua_getfield`, `lua_resource_bytecode`) are Phase-1
- * engine-context-probe additions, not part of the canonical 16.
+ * engine-context-probe additions, not part of the canonical 16. The two
+ * Phase-3 fields (`lua_getfenv`, `lua_setfenv`) are mechanism-cracker
+ * additions, also not part of the canonical 16.
  */
 #ifndef MAGOS_DISCOVERY_H
 #define MAGOS_DISCOVERY_H
@@ -39,6 +41,9 @@ typedef struct {
     /* Phase-1 engine-context-probe additions (not part of the canonical 16). */
     uint32_t lua_getfield;             /* C-API table-get; reads globals. */
     uint32_t lua_resource_bytecode;    /* engine bundle-script loader (anchor). */
+    /* Phase-3 mechanism-cracker additions (not part of the canonical 16). */
+    uint32_t lua_getfenv;              /* C-API: read func/udata/thread env. */
+    uint32_t lua_setfenv;              /* C-API: set func/udata/thread env. */
 } MagosAddressTable;
 
 /* Return codes. */

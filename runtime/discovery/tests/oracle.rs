@@ -209,6 +209,35 @@ fn oracle_all_sixteen_match() {
         table.lua_resource_bytecode, table.lual_loadbuffer
     );
 
+    // ---- Phase-3 mechanism-cracker additions: lua_getfenv + lua_setfenv ----
+    // `lua_getfenv` / `lua_setfenv` are lapi.c siblings of `lua_getfield` /
+    // `lua_setfield` (same index2adr prologue + func/udata/thread type-check
+    // triple), discriminated by `top++` (getfenv pushes the env) vs `top--`
+    // (setfenv pops the env). Assert each was found uniquely (discover() already
+    // required this), self-validates against its matcher, is non-zero, and that
+    // the two are distinct from each other and from their getfield/setfield
+    // siblings (the top++/top-- epilogue is the discriminator).
+    assert!(table.lua_getfenv != 0, "probe: lua_getfenv discovered as 0");
+    assert!(table.lua_setfenv != 0, "probe: lua_setfenv discovered as 0");
+    assert_ne!(
+        table.lua_getfenv, table.lua_setfenv,
+        "lua_getfenv must differ from lua_setfenv (top++ vs top-- epilogue)"
+    );
+    assert_ne!(
+        table.lua_getfenv, table.lua_getfield,
+        "lua_getfenv must differ from lua_getfield"
+    );
+    assert_ne!(
+        table.lua_setfenv, table.lua_setfield,
+        "lua_setfenv must differ from lua_setfield"
+    );
+    assert_match("lua_getfenv", table.lua_getfenv, &pe, &image, &mut dis, patterns::match_lua_getfenv);
+    assert_match("lua_setfenv", table.lua_setfenv, &pe, &image, &mut dis, patterns::match_lua_setfenv);
+    eprintln!(
+        "[oracle] probe: lua_getfenv @ 0x{:x}, lua_setfenv @ 0x{:x} (both self-validate)",
+        table.lua_getfenv, table.lua_setfenv
+    );
+
     // ---- Report: full table + shift vs the pinned build (informative) ----
     eprintln!("[oracle] ---- discovered 16 (RVA) ----");
     let mut deltas: Vec<i64> = Vec::new();

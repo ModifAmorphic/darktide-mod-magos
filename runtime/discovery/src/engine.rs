@@ -54,6 +54,15 @@ pub struct AddressTable {
     /// `stingray::lua_resource::bytecode` string and calls `luaL_loadbuffer`
     /// — i.e. the bundle-script loader (the `lua_resource::bytecode` anchor).
     pub lua_resource_bytecode: u32,
+    // --- Phase-3 mechanism-cracker additions (not part of the 16) ---
+    /// `lua_getfenv(L, idx)` — pushes the env table of the func/udata/thread
+    /// at `idx`. Used by the probe to read a chunk's *actual* env (vs
+    /// `LUA_GLOBALSINDEX`).
+    pub lua_getfenv: u32,
+    /// `lua_setfenv(L, idx)` — sets the env of the func/udata/thread at `idx`
+    /// to the table at `L->top-1`. Hooked by the probe to reveal what env the
+    /// engine assigns to scripts (and whether it rebinds a thread's globals).
+    pub lua_setfenv: u32,
 }
 
 impl AddressTable {
@@ -176,6 +185,16 @@ pub fn discover_with(
     let lua_getfield =
         find_unique(dis, image, pe, &candidates, |i| patterns::match_lua_getfield(i, cluster))
             .map_err(|e| DiscoverError::Match("lua_getfield", e))?;
+    // `lua_getfenv` / `lua_setfenv` are lapi.c siblings of `lua_getfield` /
+    // `lua_setfield` (same `index2adr(L, idx)` prologue + the func/udata/thread
+    // type-check triple), discriminated by their `top++`/`top--` epilogues.
+    // Phase-3 probe enablers: `lua_setfenv` is hooked (known LuaJIT signature
+    // `int (lua_State*, int)`) to reveal what env the engine assigns scripts;
+    // `lua_getfenv` reads a chunk's actual env to test the setfenv hypothesis.
+    let lua_getfenv = find_unique(dis, image, pe, &candidates, patterns::match_lua_getfenv)
+        .map_err(|e| DiscoverError::Match("lua_getfenv", e))?;
+    let lua_setfenv = find_unique(dis, image, pe, &candidates, patterns::match_lua_setfenv)
+        .map_err(|e| DiscoverError::Match("lua_setfenv", e))?;
     let lua_pushstring =
         find_unique(dis, image, pe, &candidates, |i| patterns::match_lua_pushstring(i, cluster))
             .map_err(|e| DiscoverError::Match("lua_pushstring", e))?;
@@ -233,6 +252,8 @@ pub fn discover_with(
         luaenvironment_init_end: init_end,
         lua_getfield,
         lua_resource_bytecode,
+        lua_getfenv,
+        lua_setfenv,
     })
 }
 

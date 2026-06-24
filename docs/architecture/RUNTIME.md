@@ -32,31 +32,45 @@ staged DML/DMF entry point in engine context → reports status.
 
 - **Built (minimal validation slice):** discovery call, `lua_newstate` MinHook
   + `L` capture, `lua_gettop` call, hook-ready signal.
-- **Built (Phase-2 engine-context probe):** the worker additionally installs
-  detours on four Lua-lifecycle points (`lua_newstate`, `luaL_openlibs`,
-  `luaL_loadbuffer`, `lua_pcall`) and reads a fixed list of engine globals via
-  the LuaJIT C API (`lua_getfield` + `lua_type`). This is **read-only recon** —
-  no engine global is *called*, no mods; the only side effects are the one-shot
-  chunk injection (a read-only chunk) and log output. Phase 1 established the
-  stdlib is present at the `luaL_loadbuffer`/`lua_pcall` points (the POC's
-  "sandboxed `_G`" was a timing artifact — it injected at/after `lua_newstate`,
-  before `luaL_openlibs`). Phase 2 resolves the two things Phase 1 left open:
-  (1) **when** `CLASS` + `Managers` appear — checked on every `lua_pcall`
-  (one-shot per global), with full-16 snapshots at pcall calls 1, 10, 50, 100,
-  and the first call where both are non-nil (the engine-context lifecycle
-  point); (2) **whether an injected chunk sees those globals** (rules out a
-  `setfenv`/env difference) — at that both-present point (fallback: pcall
-  #50/#100), the read-only chunk `return print, require, loadstring, io, CLASS,
-  Managers` is injected via `luaL_loadbuffer` + `lua_pcall` and its 6 return
-  types are compared to the C-side `lua_getfield(LUA_GLOBALSINDEX)` snapshot.
-  The chunk injection is game-safe: read-only chunk, `errfunc=0` (pcall returns
-  on error, never longjmps), stack saved/restored (zero net effect), trampolines
-  bypass the detours (no re-entrancy). `lua_resource::bytecode` is discovered +
-  logged but not hooked (unknown C++ signature — not game-safe to detour);
-  `luaL_loadbuffer` (its known-sig callee, found by tracing from the bytecode
-  anchor) is the hooked proxy and fires at the same lifecycle point. The probe
-  cannot run without the live game; it builds + the discovery additions are
-  unit-tested against the real binary.
+- **Built (Phase-3 engine-context probe — mechanism-cracker):** the worker
+  additionally installs detours on five Lua-lifecycle points (`lua_newstate`,
+  `luaL_openlibs`, `luaL_loadbuffer`, `lua_pcall`, `lua_setfenv`) and reads a
+  fixed list of engine globals via the LuaJIT C API (`lua_getfield` +
+  `lua_type`). This is **read-only recon** — no engine global is *called*, no
+  mods; the only side effects are the one-shot chunk injection (a read-only
+  chunk) and log output. Phase 1 established the stdlib is present at the
+  `luaL_loadbuffer`/`lua_pcall` points (the POC's "sandboxed `_G`" was a timing
+  artifact). Phase 2 resolved **when** `CLASS` + `Managers` appear (checked on
+  every `lua_pcall`; full-16 snapshots at pcall calls 1, 10, 50, 100, and the
+  first where both are non-nil) and **whether an injected chunk sees those
+  globals** — at that point it injected `return print, require, loadstring, io,
+  CLASS, Managers` and found the chunk sees `loadstring=nil`/`io=nil` while the
+  C-side `LUA_GLOBALSINDEX` (at the early `luaL_openlibs`/pcall#1 points) has
+  `loadstring=function`/`io=table`. So an injected chunk's env is NOT the
+  globals table. Phase 3 cracks **why** with three measurements in one run:
+  (1) hook `lua_setfenv` — on each of the first ~20 calls, inspect the env
+  table at the top (io/loadstring/require/print/Managers via `lua_getfield`)
+  and log the object type (a *thread* setfenv = a globals rebind, since
+  `LUA_GLOBALSINDEX` resolves to `tabref(L->env)`, the thread's globals table),
+  revealing what env the engine assigns scripts; (2) the chunk's actual env
+  (`lua_getfenv`) — `lua_getfenv(L, chunk_idx)` after `luaL_loadbuffer` to see
+  whether the chunk is `setfenv`'d to a sandbox; (3) dynamic-swap check —
+  `io`/`loadstring` in `LUA_GLOBALSINDEX` measured immediately before AND after
+  the chunk's `lua_pcall`, to detect a per-phase globals rebind. Together these
+  localize the mechanism (sandbox `setfenv` vs. per-phase globals swap vs.
+  timing) and point to the fix (`setfenv` our chunk to the bundle-script env /
+  run during the full-env phase / load via the engine's path). The probe is
+  game-safe: read-only inspections + read-only chunk, `errfunc=0` (pcall
+  returns on error, never longjmps), stack saved/restored (zero net effect),
+  trampolines bypass the detours (no re-entrancy). `lua_setfenv` has the known
+  LuaJIT signature `int (lua_State*, int)` → safe to MinHook (unlike the
+  unknown-sig `lua_resource::bytecode`, which is discovered + logged but not
+  hooked; `luaL_loadbuffer` — its known-sig callee, found by tracing from the
+  bytecode anchor — is the hooked proxy and fires at the same lifecycle point).
+  Discovery adds `lua_getfenv` + `lua_setfenv` (source-pattern, `lapi.c`
+  siblings of `lua_getfield`/`lua_setfield`, discriminated by `top++`/`top--`
+  epilogues). The probe cannot run without the live game; it builds + the
+  discovery additions are unit-tested against the real binary.
 - **To build (the shell expansion):**
   - **Engine-context execution (the core challenge).** Get staged Lua (our DML
     → DMF → mods) loaded *by the engine* — through the engine's Lua lifecycle,

@@ -143,6 +143,9 @@ fn magos_discover_detail_success_and_error_paths() {
         out.lua_resource_bytecode != 0,
         "success path: lua_resource::bytecode loader discovered as 0"
     );
+    // Phase-3 probe additions must also be populated through the C-ABI seam.
+    assert!(out.lua_getfenv != 0, "success path: lua_getfenv discovered as 0");
+    assert!(out.lua_setfenv != 0, "success path: lua_setfenv discovered as 0");
     // Success writes nothing to the detail buffer: it must remain empty
     // (all-NUL, i.e. untouched since zero-init — matching the C shell's
     // `uint8_t detail[256] = {0}` usage in shell/src/dllmain.c).
