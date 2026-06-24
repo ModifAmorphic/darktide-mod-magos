@@ -300,6 +300,13 @@ require re-doing the POC:
 
 ## POC Code Map
 
+> **Reference only.** This map orients future work to what the POC
+> already solved. The POC is a capability proof, not a pre-release;
+> production is built from the ground up with its own testability and
+> review bar. "Reusable" below is a statement of code quality — proven
+> techniques worth consulting — not a prescription to adopt POC code
+> as-is.
+
 The `poc/` directory contains the working code from each phase. These
 are disposable artifacts, not production code — but they contain
 validated implementations that production can reference or adapt:
@@ -314,8 +321,8 @@ validated implementations that production can reference or adapt:
 | 4 | `phase4-execute-lua/` | lua_pcall hook, retry-on-error injection, Lua execution |
 | 5 | `phase5-dmf-bootstrap/` | C-function bootstrap, Mods table builder, dmf_loader loading |
 
-**The most reusable code for production** (on the `poc` branch —
-`git checkout poc -- <path>` to retrieve specific files):
+**The code most worth referencing for production** (on the `poc`
+branch — `git checkout poc -- <path>` to read specific files):
 - `poc/phase5-dmf-bootstrap/src/inject.c` — the C-function implementations
   (`c_print`, `c_dofile`, `c_loadstring`, `setup_mods_globals()`)
 - `poc/phase2-runtime-discovery/engine/` — the portable C discovery engine
