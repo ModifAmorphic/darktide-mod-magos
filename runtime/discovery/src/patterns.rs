@@ -245,6 +245,63 @@ pub fn match_lua_setfield(insns: &[DecodedInsn], _c: Cluster) -> bool {
     prologue && prologue2 && str_tag && top_dec
 }
 
+/// `lua_getfield(L, idx, k)`: the symmetric sibling of `lua_setfield` — same
+/// prologue (`mov rsi, rcx` saves L, `mov rbx, r8` saves k) and same
+/// `0xfffffffb` (LJ_TSTR key tag) from `setstrV(&key, luaS_new(L, k))`, but
+/// ends with `api_incr_top` (`L->top++`) instead of `L->top--`. The `top++`
+/// epilogue (and the absence of setfield's `top--`) is the discriminator vs
+/// `lua_setfield`.
+///
+/// This is a Phase-1 probe enabler: the C shell reads globals via
+/// `lua_getfield(L, LUA_GLOBALSINDEX, name)` (`lua_getglobal` is a macro over
+/// it), so `lua_getfield` must be discoverable alongside the 16.
+pub fn match_lua_getfield(insns: &[DecodedInsn], _c: Cluster) -> bool {
+    if insns.len() < 8 {
+        return false;
+    }
+    let prologue = insns[..8]
+        .iter()
+        .any(|i| i.is_mnemonic("mov") && i.op_str.trim() == "rsi, rcx");
+    let prologue2 = insns[..8]
+        .iter()
+        .any(|i| i.is_mnemonic("mov") && i.op_str.trim() == "rbx, r8");
+    let str_tag = has_const_in_op(insns, "0xfffffffb");
+    // setfield's L->top-- epilogue: `lea rcx,[rdx - 8]; mov [rsi + 0x18],rcx`.
+    // getfield must NOT exhibit this (it increments top instead).
+    let mut has_top_dec = false;
+    // getfield's api_incr_top (L->top++) — load-add-store compile shape:
+    // `lea <reg>,[<topreg> + 8]; mov [rsi + 0x18],<reg>`.
+    let mut has_top_inc_lea = false;
+    for i in 0..insns.len().saturating_sub(1) {
+        let a = &insns[i];
+        let b = &insns[i + 1];
+        if a.id == X86_INS_LEA
+            && (a.op_contains("[rdx - 8]") || a.op_contains("[rdx - 0x8]"))
+            && b.is_mnemonic("mov")
+            && b.op_contains("[rsi + 0x18]")
+        {
+            has_top_dec = true;
+        }
+        if a.id == X86_INS_LEA
+            && (a.op_contains("+ 8]") || a.op_contains("+ 0x8]"))
+            && !a.op_contains(" - 8]")
+            && !a.op_contains(" - 0x8]")
+            && b.is_mnemonic("mov")
+            && b.op_contains("[rsi + 0x18]")
+        {
+            has_top_inc_lea = true;
+        }
+    }
+    // getfield's api_incr_top — direct-add compile shape:
+    // `add qword [rsi + 0x18], 8`.
+    let has_top_inc_add = insns.iter().any(|i| {
+        i.is_mnemonic("add")
+            && i.op_contains("[rsi + 0x18]")
+            && (i.op_contains(", 8") || i.op_contains(", 0x8"))
+    });
+    prologue && prologue2 && str_tag && !has_top_dec && (has_top_inc_add || has_top_inc_lea)
+}
+
 /// `lua_pushstring(L, s)`: `test rdx, rdx` + `jne` (the `if (str==NULL)` check),
 /// then the NULL branch writes the NIL tag via `mov dword [reg+4], 0xffffffff`
 /// (setnilV) and the else branch writes the STR tag `0xfffffffb` (setstrV).

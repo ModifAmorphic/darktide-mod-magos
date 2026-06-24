@@ -17,8 +17,12 @@ offline-testable against a binary fixture. Compiled to a C-ABI staticlib.
 - **Interface (the seam):** `magos_discover` / `magos_discover_detail`
   (C-ABI). Shared contract: `MagosAddressTable` (`#[repr(C)]`, mirrored in
   `shell/include/magos_discovery.h`) + return codes.
-- **State:** production-quality (the Component A seed). Stable; no expansion
-  planned.
+- **State:** production-quality (the Component A seed). The canonical 16
+  addresses are stable; two bonus Phase-1 probe fields are also exposed —
+  `lua_getfield` (the C-API table-get the shell uses to read globals;
+  `lua_getglobal` is a macro over it) and `lua_resource_bytecode` (the engine
+  bundle-script loader, resolved via the `stingray::lua_resource::bytecode`
+  string anchor).
 
 ### `shell/` — C live-game shell (the injected DLL)  *(minimal slice built; expansion planned)*
 
@@ -28,6 +32,22 @@ staged DML/DMF entry point in engine context → reports status.
 
 - **Built (minimal validation slice):** discovery call, `lua_newstate` MinHook
   + `L` capture, `lua_gettop` call, hook-ready signal.
+- **Built (Phase-1 engine-context probe):** the worker additionally installs
+  detours on four Lua-lifecycle points (`lua_newstate`, `luaL_openlibs`,
+  `luaL_loadbuffer`, `lua_pcall`) and, at each, reads a fixed list of engine
+  globals via the LuaJIT C API (`lua_getfield` + `lua_type`) and logs
+  presence/type. This is **read-only recon** — no global is called, no Lua is
+  loaded, no mods; the only side effect is log output. The probe answers the
+  make-or-break question: at which lifecycle point does the engine's globals
+  table contain the full bundle-script environment (`io`, `require`,
+  `loadstring`, `CLASS`, `Managers`, …)? That point is the engine-context
+  entry for DLL injection (the `patch_999`-equivalent), or evidence it is not
+  achievable. `lua_resource::bytecode` is discovered + logged but not hooked
+  (unknown C++ signature — not game-safe to detour); `luaL_loadbuffer` (its
+  known-sig callee, found by tracing from the bytecode anchor) is the hooked
+  proxy and fires at the same lifecycle point. The probe cannot run without
+  the live game; it builds + the discovery additions are unit-tested against
+  the real binary.
 - **To build (the shell expansion):**
   - **Engine-context execution (the core challenge).** Get staged Lua (our DML
     → DMF → mods) loaded *by the engine* — through the engine's Lua lifecycle,

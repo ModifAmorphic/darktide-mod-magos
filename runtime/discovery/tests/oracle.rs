@@ -177,6 +177,38 @@ fn oracle_all_sixteen_match() {
     );
     eprintln!("[oracle] Tier-2 PASS: all 16 signatures self-validate at their discovered RVAs");
 
+    // ---- Phase-1 probe additions: lua_getfield + lua_resource::bytecode ----
+    // `lua_getfield` is the C-API table-get the shell uses to read globals
+    // (`lua_getglobal` = `lua_getfield(L, LUA_GLOBALSINDEX, s)`). Assert it was
+    // found uniquely (discover() already required this), self-validates against
+    // its matcher, and is distinct from its `lua_setfield` sibling.
+    assert!(table.lua_getfield != 0, "probe: lua_getfield discovered as 0");
+    assert_ne!(
+        table.lua_getfield, table.lua_setfield,
+        "lua_getfield must differ from lua_setfield (top++ vs top-- epilogue)"
+    );
+    assert_match_c(
+        "lua_getfield",
+        table.lua_getfield,
+        &pe,
+        &image,
+        &mut dis,
+        cluster,
+        patterns::match_lua_getfield,
+    );
+    eprintln!("[oracle] probe: lua_getfield @ 0x{:x} (self-validates)", table.lua_getfield);
+
+    // `lua_resource::bytecode` is the engine's bundle-script loader — the
+    // `.pdata` function that references the `stingray::lua_resource::bytecode`
+    // string AND calls `luaL_loadbuffer`. Round-trip the discovery: the
+    // discovered loader's body must exhibit both.
+    assert!(table.lua_resource_bytecode != 0, "probe: lua_resource::bytecode loader discovered as 0");
+    assert_bytecode_loader(&pe, &image, &mut dis, table.lua_resource_bytecode, table.lual_loadbuffer);
+    eprintln!(
+        "[oracle] probe: lua_resource::bytecode loader @ 0x{:x} (references anchor + calls luaL_loadbuffer @ 0x{:x})",
+        table.lua_resource_bytecode, table.lual_loadbuffer
+    );
+
     // ---- Report: full table + shift vs the pinned build (informative) ----
     eprintln!("[oracle] ---- discovered 16 (RVA) ----");
     let mut deltas: Vec<i64> = Vec::new();
@@ -294,6 +326,44 @@ fn assert_match_body(
     assert!(
         !insns.is_empty() && matcher(&insns, pe, image, cluster),
         "Tier-2: signature mismatch for {name} @ 0x{rva:x}"
+    );
+}
+
+/// Phase-1 probe: assert the discovered `lua_resource::bytecode` loader is a
+/// real function whose body both LEA-references the
+/// `stingray::lua_resource::bytecode` anchor string AND makes a direct call to
+/// the discovered `luaL_loadbuffer`. This round-trips the Method-A trace in
+/// `engine::find_loadbuffer_via_bytecode` against the binary.
+fn assert_bytecode_loader(
+    pe: &Pe,
+    image: &[u8],
+    dis: &mut magos_discovery::disasm::Disassembler,
+    loader_rva: u32,
+    loadbuffer_rva: u32,
+) {
+    let (begin, end) = magos_discovery::disasm::body_bounds(pe, loader_rva);
+    let insns = dis.disasm_range(image, begin, end);
+    assert!(
+        !insns.is_empty(),
+        "probe: lua_resource::bytecode loader body empty @ 0x{loader_rva:x}"
+    );
+    let bytecode_str_rva = string_rva(pe, image, b"stingray::lua_resource::bytecode\x00")
+        .expect("bytecode anchor string must be present in .rdata");
+    let has_str_xref = insns.iter().any(|i| {
+        i.id == magos_discovery::disasm::X86_INS_LEA
+            && magos_discovery::disasm::rip_relative_target(i) == Some(bytecode_str_rva)
+    });
+    let has_loadbuffer_call = insns.iter().any(|i| {
+        i.id == magos_discovery::disasm::X86_INS_CALL
+            && magos_discovery::disasm::parse_branch_target(i) == Some(loadbuffer_rva as u64)
+    });
+    assert!(
+        has_str_xref,
+        "probe: loader @ 0x{loader_rva:x} must LEA-reference the bytecode anchor string"
+    );
+    assert!(
+        has_loadbuffer_call,
+        "probe: loader @ 0x{loader_rva:x} must call luaL_loadbuffer (0x{loadbuffer_rva:x})"
     );
 }
 

@@ -40,6 +40,9 @@ pub use pe::{map_from_file, Pe};
 /// C-ABI address table. Field order is fixed; the C header (`shell/include/
 /// magos_discovery.h`) mirrors it exactly. All values are RVAs (offsets from
 /// the module base the caller passed in).
+///
+/// The two `probe` fields (`lua_getfield`, `lua_resource_bytecode`) are
+/// Phase-1 engine-context-probe additions, not part of the canonical 16.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MagosAddressTable {
@@ -61,6 +64,10 @@ pub struct MagosAddressTable {
     pub lua_panic_body: u32,
     pub luaenvironment_init_begin: u32,
     pub luaenvironment_init_end: u32,
+    /// Phase-1 probe: `lua_getfield` — C-API table-get used to read globals.
+    pub lua_getfield: u32,
+    /// Phase-1 probe: primary `lua_resource::bytecode` loader function.
+    pub lua_resource_bytecode: u32,
 }
 
 impl From<&AddressTable> for MagosAddressTable {
@@ -84,6 +91,8 @@ impl From<&AddressTable> for MagosAddressTable {
             lua_panic_body: t.lua_panic_body,
             luaenvironment_init_begin: t.luaenvironment_init_begin,
             luaenvironment_init_end: t.luaenvironment_init_end,
+            lua_getfield: t.lua_getfield,
+            lua_resource_bytecode: t.lua_resource_bytecode,
         }
     }
 }

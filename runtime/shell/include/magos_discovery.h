@@ -4,6 +4,9 @@
  * The Rust crate (discovery/src/lib.rs) defines the same struct with `#[repr(C)]`;
  * this header mirrors it exactly for the C shell. All fields are RVAs (offsets
  * from the module base passed to `magos_discover`).
+ *
+ * The two `probe` fields (`lua_getfield`, `lua_resource_bytecode`) are Phase-1
+ * engine-context-probe additions, not part of the canonical 16.
  */
 #ifndef MAGOS_DISCOVERY_H
 #define MAGOS_DISCOVERY_H
@@ -33,6 +36,9 @@ typedef struct {
     uint32_t lua_panic_body;
     uint32_t luaenvironment_init_begin;
     uint32_t luaenvironment_init_end;
+    /* Phase-1 engine-context-probe additions (not part of the canonical 16). */
+    uint32_t lua_getfield;             /* C-API table-get; reads globals. */
+    uint32_t lua_resource_bytecode;    /* engine bundle-script loader (anchor). */
 } MagosAddressTable;
 
 /* Return codes. */
