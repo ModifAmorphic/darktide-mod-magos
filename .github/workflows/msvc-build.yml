@@ -9,8 +9,12 @@ name: msvc-build
 on:
   push:
     branches: [main]
+    paths:
+      - 'runtime/**'
   pull_request:
     branches: [main]
+    paths:
+      - 'runtime/**'
   workflow_dispatch:
 
 jobs:

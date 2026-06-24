@@ -4,8 +4,12 @@ name: mingw-build
 on:
   push:
     branches: [main, spike/001-component-a]
+    paths:
+      - 'runtime/**'
   pull_request:
     branches: [main, spike/001-component-a]
+    paths:
+      - 'runtime/**'
   workflow_dispatch:
 
 jobs:
