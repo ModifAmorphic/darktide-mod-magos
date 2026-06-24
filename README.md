@@ -7,11 +7,11 @@ bundle-database patching — and stays out of the way for vanilla play
 
 ## Status
 
-- **Component A** — the injected modding runtime + launcher — is merged as
+- [**Runtime**](runtime) — the injected modding runtime + launcher — is merged as
   the production seed: a Rust discovery engine + C shell, validated
   end-to-end (the game reaches the main menu, the Lua VM hook fires, all 16
   LuaJIT functions are discovered in-process).
-- **Component B** — the mod manager app (UI, staging, load order, profiles,
+- [**Mod Magos (Mod Manager)**](mod-manager) — the mod manager app (UI, staging, load order, profiles,
   dependency resolution) — is planned, not yet built.
 - The `poc` branch holds the historical proof-of-concept (reference only).
 
