@@ -20,6 +20,10 @@ WINE      ?= wine
 
 REL_DIR   := target/$(TARGET)/$(PROFILE)
 RUST_LIB  := $(REL_DIR)/libmagos_discovery.a
+# Rust sources the staticlib depends on. GNU make's `**` is not recursive (it
+# expands to nothing here), so list src/*.rs explicitly. discovery/tests/*.rs
+# are separate integration-test binaries, not compiled into the staticlib.
+RUST_SRCS := $(wildcard discovery/src/*.rs)
 DLL       := magos_shell.dll
 LAUNCHER  := magos_launcher.exe
 
@@ -54,7 +58,7 @@ TEST_EXES := tests/test_steam_env.exe tests/test_injection.exe
 all: build
 
 rust-staticlib: $(RUST_LIB)
-$(RUST_LIB):
+$(RUST_LIB): $(RUST_SRCS) discovery/Cargo.toml Cargo.toml Cargo.lock
 	$(CARGO) build --$(PROFILE) -p magos-discovery --target $(TARGET)
 
 build: dll launcher

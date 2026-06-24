@@ -68,19 +68,23 @@ jobs:
           set REL=target\x86_64-pc-windows-msvc\release
           :: Test runner object.
           cl /nologo /O2 /c tests\test_runner.c
-          :: Launcher object (for test linking).
-          cl /nologo /O2 /I launcher\src /c launcher\src\launcher.c
-          :: Stub target — minimal GUI exe.
-          cl /nologo /O2 /SUBSYSTEM:WINDOWS /Fe:tests\stub_target.exe tests\stub_target.c
+          :: Launcher object for test linking — compiled with MAGOS_TEST_BUILD so
+          :: launcher.c's main() is excluded (each test exe provides its own main).
+          :: Mirrors the Makefile's tests/launcher.o rule. The production
+          :: magos_launcher.exe (built above) is compiled WITHOUT the guard.
+          cl /nologo /O2 /I launcher\src /DMAGOS_TEST_BUILD /c launcher\src\launcher.c /Fo:launcher_test.obj
+          :: Stub target — minimal GUI exe (/SUBSYSTEM:WINDOWS is a linker flag,
+          :: so it goes after /link, not on the cl compile line).
+          cl /nologo /O2 /Fe:tests\stub_target.exe tests\stub_target.c /link /SUBSYSTEM:WINDOWS
           :: Stub shell — minimal DLL.
           cl /nologo /O2 /c tests\stub_shell.c
           link /nologo /DLL /OUT:tests\stub_shell.dll stub_shell.obj kernel32.lib
-          :: test_steam_env.exe
+          :: test_steam_env.exe — links the guarded launcher_test.obj (no main).
           cl /nologo /O2 /I launcher\src /Fe:tests\test_steam_env.exe ^
-             tests\test_steam_env.c test_runner.obj launcher.obj kernel32.lib
-          :: test_injection.exe
+             tests\test_steam_env.c test_runner.obj launcher_test.obj kernel32.lib
+          :: test_injection.exe — links the guarded launcher_test.obj (no main).
           cl /nologo /O2 /I launcher\src /Fe:tests\test_injection.exe ^
-             tests\test_injection.c test_runner.obj launcher.obj kernel32.lib
+             tests\test_injection.c test_runner.obj launcher_test.obj kernel32.lib
 
       - name: Run C unit tests (native)
         shell: cmd
