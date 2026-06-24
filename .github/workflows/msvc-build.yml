@@ -8,9 +8,9 @@ name: msvc-build
 
 on:
   push:
-    branches: [spike/001-component-a]
+    branches: [main, spike/001-component-a]
   pull_request:
-    branches: [spike/001-component-a]
+    branches: [main, spike/001-component-a]
   workflow_dispatch:
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
           key: msvc-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Lint with clippy (deny warnings)
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --features test-hooks -- -D warnings
 
       - name: Build Rust staticlib (x86_64-pc-windows-msvc)
         run: cargo build --release -p magos-discovery --target x86_64-pc-windows-msvc
@@ -71,10 +71,10 @@ jobs:
           :: Launcher object (for test linking).
           cl /nologo /O2 /I launcher\src /c launcher\src\launcher.c
           :: Stub target — minimal GUI exe.
-          cl /nologo /O2 /SUBSYSTEM:WINDOWS /Fe:stub_target.exe tests\stub_target.c
+          cl /nologo /O2 /SUBSYSTEM:WINDOWS /Fe:tests\stub_target.exe tests\stub_target.c
           :: Stub shell — minimal DLL.
           cl /nologo /O2 /c tests\stub_shell.c
-          link /nologo /DLL /OUT:stub_shell.dll stub_shell.obj kernel32.lib
+          link /nologo /DLL /OUT:tests\stub_shell.dll stub_shell.obj kernel32.lib
           :: test_steam_env.exe
           cl /nologo /O2 /I launcher\src /Fe:tests\test_steam_env.exe ^
              tests\test_steam_env.c test_runner.obj launcher.obj kernel32.lib
@@ -102,7 +102,7 @@ jobs:
       - name: Run host-side discovery tests (cargo test)
         env:
           MAGOS_CI: "1"
-        run: cargo test -p magos-discovery
+        run: cargo test --features test-hooks -p magos-discovery
 
       - name: Upload PE artifacts
         uses: actions/upload-artifact@v4

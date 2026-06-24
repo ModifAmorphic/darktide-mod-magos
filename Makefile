@@ -110,7 +110,7 @@ c-tests: $(TEST_EXES) $(STUB_TARGET) $(STUB_SHELL)
 	$(WINE) tests/test_injection.exe
 
 test: c-tests
-	$(CARGO) test -p magos-discovery
+	$(CARGO) test --features test-hooks -p magos-discovery
 
 clean:
 	$(CARGO) clean

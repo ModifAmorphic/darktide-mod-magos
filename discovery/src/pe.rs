@@ -302,20 +302,10 @@ fn parse_pdata(image: &[u8], pdata: &Section) -> Vec<RuntimeFunction> {
             unwind: u,
         });
     }
-    // ~44k entries: insertion sort once (POC does the same; cheap relative to
-    // the rest of the run, and `.pdata` is normally already sorted).
-    for i in 1..out.len() {
-        let v = out[i];
-        let mut j = i as isize - 1;
-        while j >= 0
-            && (out[j as usize].begin > v.begin
-                || (out[j as usize].begin == v.begin && out[j as usize].end > v.end))
-        {
-            out[(j + 1) as usize] = out[j as usize];
-            j -= 1;
-        }
-        out[(j + 1) as usize] = v;
-    }
+    // ~44k entries: sort by (begin, end). `.pdata` is normally already sorted,
+    // so `sort_by_key` is adaptive (O(n) on sorted input) and safe against
+    // malformed/out-of-order input.
+    out.sort_by_key(|rf| (rf.begin, rf.end));
     out
 }
 

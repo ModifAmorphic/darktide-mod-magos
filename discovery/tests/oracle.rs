@@ -133,8 +133,12 @@ fn oracle_all_sixteen_match() {
     let sixteen = table.sixteen();
     for (name, rva) in sixteen {
         assert!(rva != 0, "Tier-2: {name} discovered as 0");
+        // The only legitimate duplicate: lua_newstate_thunk may equal
+        // lua_newstate_body when the CFG thunk didn't resolve to a distinct
+        // body. Every other pair must be distinct.
+        let allowed_dup = name == "lua_newstate_body" && rva == table.lua_newstate_thunk;
         assert!(
-            distinct.insert(rva) || name == "lua_newstate_thunk" || name == "lua_newstate_body",
+            distinct.insert(rva) || allowed_dup,
             "Tier-2: duplicate RVA 0x{rva:x} for {name}"
         );
     }
@@ -310,50 +314,4 @@ fn thunk_targets(image: &[u8], thunk_rva: u32, body_rva: u32) -> bool {
 fn discover_error_displays() {
     let e = DiscoverError::Anchor("test");
     assert_eq!(format!("{e}"), "method-A anchor 'test' not found");
-}
-
-#[ignore] // run with: cargo test -p magos-discovery --test oracle dbg_ -- --nocapture --ignored
-#[test]
-fn dbg_disasm_predicted() {
-    let exe = darktide_exe().expect("binary");
-    let file = std::fs::read(&exe).unwrap();
-    let image = map_from_file(&file).unwrap();
-    let pe = Pe::from_mapped(&image).unwrap();
-    let mut dis = magos_discovery::disasm::Disassembler::new_x86_64_intel().unwrap();
-    // predicted = pinned + observed uniform shift 0xf0680
-    for (name, pinned) in [
-        ("lua_setfield", 0xc74cb0u32),
-        ("lua_settop", 0xc74f30),
-        ("luaL_loadbuffer", 0xc7ad80),
-        ("luaL_openlibs", 0xc7f380),
-        ("lua_createtable", 0xc73ad0),
-        ("lua_tolstring", 0xc75190),
-        ("lua_pushstring", 0xc747d0),
-        ("lua_tonumber", 0xc730c0),
-        ("lua_panic_body", 0x328220),
-    ] {
-        let rva = pinned + 0xf0680;
-        let (begin, end) = magos_discovery::disasm::body_bounds(&pe, rva);
-        let insns = dis.disasm_range(&image, begin, end);
-        println!("\n=== {name} @ predicted 0x{rva:x} (pinned 0x{pinned:x}) === insns={}", insns.len());
-        let lim = if name == "lua_tolstring" { 40 } else { 14 };
-        for ins in insns.iter().take(lim) {
-            println!("  0x{:x}: {} {}", ins.address, ins.mnemonic, ins.op_str);
-        }
-        // direct call targets
-        let calls: Vec<u64> = insns.iter()
-            .filter(|i| i.id == magos_discovery::disasm::X86_INS_CALL)
-            .filter_map(|i| i.op_str.trim().strip_prefix("0x").and_then(|h| u64::from_str_radix(h,16).ok()))
-            .collect();
-        println!("  direct call targets: {:?}", calls.iter().map(|c| format!("0x{c:x}")).collect::<Vec<_>>());
-    }
-    // Disambiguation aid: print a specific address's body.
-    for rva in [0xd90a50u32] {
-        let (begin, end) = magos_discovery::disasm::body_bounds(&pe, rva);
-        let insns = dis.disasm_range(&image, begin, end);
-        println!("\n=== extra @ 0x{rva:x} (begin=0x{begin:x} end=0x{end:x}) insns={} ===", insns.len());
-        for ins in insns.iter().take(36) {
-            println!("  0x{:x}: {} {}", ins.address, ins.mnemonic, ins.op_str);
-        }
-    }
 }

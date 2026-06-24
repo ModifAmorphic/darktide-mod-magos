@@ -3,9 +3,9 @@ name: mingw-build
 
 on:
   push:
-    branches: [spike/001-component-a]
+    branches: [main, spike/001-component-a]
   pull_request:
-    branches: [spike/001-component-a]
+    branches: [main, spike/001-component-a]
   workflow_dispatch:
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
           key: mingw-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Lint with clippy (deny warnings)
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --features test-hooks -- -D warnings
 
       - name: Build Rust staticlib (x86_64-pc-windows-gnu)
         run: cargo build --release -p magos-discovery --target x86_64-pc-windows-gnu
@@ -53,7 +53,7 @@ jobs:
           # The oracle test resolves Darktide.exe via _local/DARKTIDE.env; in CI
           # (no game install) it skips cleanly rather than failing.
           MAGOS_CI: "1"
-        run: cargo test -p magos-discovery
+        run: cargo test --features test-hooks -p magos-discovery
 
       - name: Upload PE artifacts
         uses: actions/upload-artifact@v4

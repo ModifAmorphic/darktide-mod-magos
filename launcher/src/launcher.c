@@ -23,7 +23,7 @@
  *
  * Windows native: build with cl.exe or x86_64-w64-mingw32-gcc.
  * Proton: build the launcher for Windows (mingw) and run it under Wine inside
- * the Steam Proton prefix (see runbook.md).
+ * the Steam Proton prefix (see docs/decisions/0001-component-a-language-and-structure.md).
  */
 #include "launcher.h"
 #include <stdio.h>
@@ -114,8 +114,18 @@ int inject_and_resume(const char *game_exe, const char *dll_path,
 
     /* 5. Wait for LoadLibraryA to return (DllMain ran). DllMain returns
      *    immediately — it only spawns a worker — so this just confirms the
-     *    DLL is loaded; the hook is NOT ready yet. */
-    WaitForSingleObject(th, 10000);
+     *    DLL is loaded; the hook is NOT ready yet. A timeout here means DllMain
+     *    hung (e.g. the worker blocked under the loader lock); the LoadLibraryA
+     *    thread may still be running and referencing `remote`, so we must NOT
+     *    free it out from under the thread — terminate the process instead. */
+    DWORD lt = WaitForSingleObject(th, 10000);
+    if (lt != WAIT_OBJECT_0) {
+        fprintf(stderr, "[launcher] error: LoadLibraryA thread %s (GetLastError=%lu)\n",
+                lt == WAIT_TIMEOUT ? "timed out (DllMain hung)" : "wait failed",
+                GetLastError());
+        CloseHandle(th);
+        goto kill;
+    }
     CloseHandle(th);
     VirtualFreeEx(pi.hProcess, remote, 0, MEM_RELEASE);
 

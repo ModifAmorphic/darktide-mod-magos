@@ -26,6 +26,14 @@ name = "magos_discovery"
 # linked in, not a standalone Rust DLL.)
 crate-type = ["rlib", "staticlib"]
 
+[features]
+# `test-hooks` exposes the `magos_test_panic_boundary` C-ABI entry used only by
+# the panic-boundary unit tests. The release staticlib linked into the C shell
+# is built without this feature, so the test-only symbol never ships in the
+# production DLL. Enable for `cargo test`/`cargo clippy`:
+#   cargo test --features test-hooks -p magos-discovery
+test-hooks = []
+
 [dependencies]
 # capstone is the one external dependency: the source-pattern matchers compare
 # against capstone's Intel-syntax `op_str` exactly as the POC's C engine did,

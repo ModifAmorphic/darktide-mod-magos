@@ -18,7 +18,7 @@ publish = false
 # Abort on uncaught panic in release artifacts: an uncaught panic crossing the
 # C-ABI boundary would be UB, so the fail-safe is to terminate the host process
 # rather than unwind into C. (See step 7 / the panic-boundary discussion in
-# runbook.md and lib.rs: the C-ABI seam wraps every entry point in
+# lib.rs: the C-ABI seam wraps every entry point in
 # `catch_unwind`, which is the *primary* containment; `panic = "abort"` is the
 # belt-and-suspenders backstop for anything that escapes a boundary.)
 #

@@ -8,7 +8,7 @@
 //! content updates), and every target function is identified by its
 //! source-derived signature.
 
-use crate::disasm::{parse_branch_target, rip_relative_target, Disassembler, X86_INS_CALL};
+use crate::disasm::{parse_branch_target, Disassembler, X86_INS_CALL};
 use crate::pe::{map_from_file, Pe};
 use crate::patterns::{self, candidate_starts, find_unique, Cluster, MatchError};
 use crate::scan::{find_callers, find_lea_xrefs};
@@ -121,7 +121,7 @@ pub fn discover_with(
     // ---- Phase A: Method-A string anchors ----
     let panic_body = method_a_lua_panic_body(pe, image, dis).ok_or(DiscoverError::Anchor("lua_panic"))?;
     let (init_begin, init_end) =
-        method_a_luaenv_init(pe, image, dis, panic_body).ok_or(DiscoverError::Anchor("luaenvironment_init"))?;
+        method_a_luaenv_init(pe, image, panic_body).ok_or(DiscoverError::Anchor("luaenvironment_init"))?;
 
     // LuaJIT version string → its single containing function is our cluster
     // anchor (it sits inside the LuaJIT API block).
@@ -243,7 +243,6 @@ fn method_a_lua_panic_body(pe: &Pe, image: &[u8], _dis: &mut Disassembler) -> Op
 fn method_a_luaenv_init(
     pe: &Pe,
     image: &[u8],
-    dis: &mut Disassembler,
     lua_panic_body: u32,
 ) -> Option<(u32, u32)> {
     // LEA refs to the lua_panic body address (the &lua_panic takes), plus
@@ -266,16 +265,6 @@ fn method_a_luaenv_init(
         };
     }
     let (begin, end) = best?;
-
-    // Verify the "lua_environment" marker string is referenced inside the body
-    // (POC correctness check).
-    let marker_rva = string_rva(pe, image, b"lua_environment_api\x00")
-        .or_else(|| string_rva(pe, image, b"lua_environment\x00"))?;
-    let insns = dis.disasm_range(image, begin, end);
-    let found = insns.iter().any(|i| {
-        i.mnemonic == "lea" && rip_relative_target(i) == Some(marker_rva)
-    });
-    let _ = found; // marker is a strong signal but not mandatory for the spike
     Some((begin, end))
 }
 

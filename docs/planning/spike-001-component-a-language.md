@@ -60,10 +60,10 @@ assumption first.
 |---|------|-------|------|-----------|-------|
 | 1 | **Build the mixed DLL.** Rust staticlib (C ABI) + C shell → one Windows PE. MinGW cross-compile from Linux; MSVC native on Windows. CI workflows committed. | offline | Valid PE DLL with a `DllMain`, reproducible on both toolchains. | toolchain won't link → Hybrid rejected. | coder |
 | 2 | **Discovery as safe, unit-tested Rust — full engine.** Port the POC's complete lookup set (all 16 addresses; Method A string-anchor + Method B source-pattern; `.pdata` gap-handling for CFG thunks / leaf / import thunks) to safe Rust. Tested against the POC's `addresses.json` + the 16-address table in `docs/poc/production-spec.md` as the oracle. Measure safe-vs-unsafe line ratio. | offline (no game) | All 16 addresses match the oracle; core discovery logic is **>90% safe Rust** with passing tests. | Rust benefit doesn't materialize → consider All-C / All-C++. | coder |
-| 3 | **CreateRemoteThread delivery.** Launcher: `CreateProcess(SUSPENDED)` → inject → `ResumeThread`; `DllMain` runs; zero game-dir files. Validated on Windows native **and** Proton. | live | DLL attaches; game reaches main menu; zero footprint; both platforms. | injection fails / crashes / Proton broken. | user (runbook) |
-| 4 | **Hook `lua_newstate`, capture `lua_State*`.** C shell installs MinHook on the thunk; handler fires; `L` captured and valid. | live | Hook fires; `L` non-null/valid (log). | hooking in C fails (unexpected — proven path). | user (runbook) |
-| 5 | **Exercise the LuaJIT C ABI.** One call, e.g. `lua_gettop(L)`, confirming the documented struct offsets. | live | Call returns expected value; offsets confirmed. | ABI/offset mismatch in C shell. | user (runbook) |
-| 6 | **Seam integration, in-process.** C shell reads the live image from the module base, passes bytes to the Rust `discover()` C-API, gets the address table back. | live | All 16 addresses match the oracle against the **live** image. | Seam design is wrong — **not** that Rust is wrong. | user (runbook) |
+| 3 | **CreateRemoteThread delivery.** Launcher: `CreateProcess(SUSPENDED)` → inject → `ResumeThread`; `DllMain` runs; zero game-dir files. Validated on Windows native **and** Proton. | live | DLL attaches; game reaches main menu; zero footprint; both platforms. | injection fails / crashes / Proton broken. | user (live) |
+| 4 | **Hook `lua_newstate`, capture `lua_State*`.** C shell installs MinHook on the thunk; handler fires; `L` captured and valid. | live | Hook fires; `L` non-null/valid (log). | hooking in C fails (unexpected — proven path). | user (live) |
+| 5 | **Exercise the LuaJIT C ABI.** One call, e.g. `lua_gettop(L)`, confirming the documented struct offsets. | live | Call returns expected value; offsets confirmed. | ABI/offset mismatch in C shell. | user (live) |
+| 6 | **Seam integration, in-process.** C shell reads the live image from the module base, passes bytes to the Rust `discover()` C-API, gets the address table back. | live | All 16 addresses match the oracle against the **live** image. | Seam design is wrong — **not** that Rust is wrong. | user (live) |
 | 7 | **Panic boundary.** `panic = "abort"` on the Rust side; an induced panic in the pure-lib is contained — no UB crossing into C. | offline (mechanism) + live (confirm) | Panic terminates cleanly; no host corruption. | Panic discipline insufficient. | coder (+ user confirm) |
 
 **Sequencing logic:** steps 1–2 are offline and prove the novel/risky
@@ -80,11 +80,11 @@ The spike has a hard split between autonomous-offline and human-live
 work (the live game can't be driven by a subagent):
 
 - **Coder** (offline): steps 1, 2, 7-mechanism; produces the integrated
-  build + a **runbook** for steps 3–6; reports the safe/unsafe ratio.
-- **User** (live): executes steps 3–6 + 7-confirm via the runbook,
+  build for steps 3–6; reports the safe/unsafe ratio.
+- **User** (live): executes steps 3–6 + 7-confirm live,
   reports results/logs.
 - **QA**: reviews offline test coverage (step 2), structures the live
-  runbook so steps 3–6 are reproducible, validates pass/fail evidence.
+  procedure so steps 3–6 are reproducible, validates pass/fail evidence.
 
 ## Decisions (confirmed)
 
@@ -110,7 +110,6 @@ work (the live game can't be driven by a subagent):
 - Discovery crate (Rust) — production quality, full 16-address engine,
   tested against the oracle.
 - C shell (minimal validation slice) + launcher.
-- Live runbook (steps 3–6) for the user.
 - Offline test results + measured safe/unsafe ratio.
 - User-filled live result log.
 - Findings feed **ADR-0001** (decision + rationale filled in from outcomes).

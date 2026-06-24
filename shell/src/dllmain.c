@@ -55,13 +55,21 @@ static void magos_log(const char *fmt, ...) {
 
 static void open_log(void) {
     char path[MAX_PATH];
+    static const char logname[] = "magos_spike.log";
     DWORD n = GetEnvironmentVariableA("MAGOS_LOG_FILE", path, sizeof(path));
     if (n == 0 || n >= sizeof(path)) {
-        /* default: beside the game exe */
-        GetModuleFileNameA(NULL, path, sizeof(path));
-        char *slash = strrchr(path, '\\');
-        if (slash) strcpy(slash + 1, "magos_spike.log");
-        else       snprintf(path, sizeof(path), "magos_spike.log");
+        /* default: beside the game exe. GetModuleFileNameA may fail (return 0)
+         * or truncate (return >= sizeof(path)); in either case fall back to a
+         * relative log name rather than using a bogus/truncated path. */
+        DWORD m = GetModuleFileNameA(NULL, path, sizeof(path));
+        char *slash = (m > 0 && m < sizeof(path)) ? strrchr(path, '\\') : NULL;
+        if (slash && (size_t)(slash + 1 - path) + sizeof(logname) <= sizeof(path)) {
+            strcpy(slash + 1, logname);
+        } else {
+            /* no separator, unresolvable path, or too long to append: fall
+             * back to a relative log name in the current directory. */
+            snprintf(path, sizeof(path), "%s", logname);
+        }
     }
     g_log = fopen(path, "a");
     magos_log("[magos] log -> %s\n", path);

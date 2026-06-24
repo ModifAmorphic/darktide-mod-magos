@@ -15,7 +15,7 @@
 //! panic anywhere in the pure-library can never unwind across the C-ABI
 //! boundary (which would be UB). See the *Panic boundary* notes below.
 //!
-//! See `runbook.md` and `docs/planning/spike-001-component-a-language.md`.
+//! See `docs/planning/spike-001-component-a-language.md`.
 
 pub mod disasm;
 pub mod engine;
@@ -157,6 +157,7 @@ pub unsafe extern "C" fn magos_discover_detail(
 ) -> i32 {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if image.is_null() || out.is_null() {
+            write_detail(detail, detail_cap, "null argument (image or out)");
             return MAGOS_ERR_NULL_ARG;
         }
         let slice = unsafe { core::slice::from_raw_parts(image, len) };
@@ -224,6 +225,10 @@ fn write_detail(detail: *mut u8, cap: usize, msg: &str) {
 /// Induce a panic inside the pure-library, caught at the C-ABI boundary.
 /// Returns 0 if `induce == 0` (no panic); returns `MAGOS_PANIC_CAUGHT` if a
 /// panic was induced and successfully contained; never returns otherwise.
+///
+/// Test-only: gated behind the `test-hooks` Cargo feature so the release
+/// staticlib linked into the C shell never exports this symbol.
+#[cfg(feature = "test-hooks")]
 #[no_mangle]
 pub extern "C" fn magos_test_panic_boundary(induce: i32) -> i32 {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -238,9 +243,10 @@ pub extern "C" fn magos_test_panic_boundary(induce: i32) -> i32 {
 }
 
 /// Sentinel returned by [`magos_test_panic_boundary`] when a panic is caught.
+#[cfg(feature = "test-hooks")]
 pub const MAGOS_PANIC_CAUGHT: i32 = 0x7FFF_FFB7; // 'B7' = boundary
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-hooks"))]
 mod panic_tests {
     use super::*;
 
