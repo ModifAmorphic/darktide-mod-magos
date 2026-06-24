@@ -8,9 +8,9 @@ name: msvc-build
 
 on:
   push:
-    branches: [main, spike/001-component-a]
+    branches: [main]
   pull_request:
-    branches: [main, spike/001-component-a]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
