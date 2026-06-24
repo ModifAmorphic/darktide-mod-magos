@@ -1,5 +1,5 @@
 /*
- * dllmain.c — Component A C shell (Spike 001 minimal validation slice).
+ * dllmain.c — Component A C shell.
  *
  * Linked with the Rust `magos-discovery` staticlib (C-ABI) + MinHook into one
  * PE DLL, delivered by CreateRemoteThread. This slice validates the Hybrid:
@@ -9,7 +9,7 @@
  *   - In the detour, calls `lua_gettop(L)` via the discovered RVA (step 5: one
  *     LuaJIT C-API call against the documented struct offsets).
  *
- * Out of scope (per spike): DMF bootstrap, multi-shot injection, mod-manager
+ * Out of scope: DMF bootstrap, multi-shot injection, mod-manager
  * UI. Logging goes to OutputDebugString + a log file (MAGOS_LOG_FILE env, or
  * magos_spike.log beside the game exe).
  */

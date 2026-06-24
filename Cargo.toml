@@ -1,11 +1,11 @@
-# darktide-mod-magos — Component A (Spike 001: Hybrid Rust discovery + C shell)
+# darktide-mod-magos — Component A — Hybrid Rust discovery + C shell (production)
 #
 # Workspace root. The production deliverable here is the `discovery` crate
 # (pure-library + C-ABI staticlib). `shell` and `launcher` are native C and
 # built with their own Makefiles; they are not cargo crates.
 [workspace]
 resolver = "2"
-members = ["discovery"]
+members = ["runtime/discovery"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,5 +1,5 @@
 /*
- * launcher.c — CreateRemoteThread DLL injector (Spike 001 step 3).
+ * launcher.c — CreateRemoteThread DLL injector.
  *
  * Creates Darktide.exe in a SUSPENDED state, injects magos_shell.dll via
  * CreateRemoteThread(LoadLibraryA, <dllpath>), waits for the DLL to signal
@@ -7,7 +7,7 @@
  * game directory (the DLL is loaded from a staging path).
  *
  * Production "Launch Modded" flow (a production-launcher requirement, not
- * just a spike fix): CreateProcess(SUSPENDED) → inject → wait for hook-ready
+ * production requirement): CreateProcess(SUSPENDED) → inject → wait for hook-ready
  * → ResumeThread, with the correct Steam appID set in the child environment.
  * The hook-ready wait is essential: DllMain returns instantly (it only spawns
  * a worker), and the worker doesn't enable the lua_newstate hook until after
@@ -32,7 +32,7 @@
 /* Darktide's Steam appID. Set in the launcher env (inherited by the child via
  * CreateProcess) so the correct appID reaches steamclient. When launched via a
  * Steam non-Steam-game shortcut the shortcut's *hashed* SteamAppId is
- * inherited instead and SteamAPI_Init is denied. Spike: constant; production:
+ * inherited instead and SteamAPI_Init is denied. Currently: constant; production:
  * configured. */
 #define DARKTIDE_STEAM_APPID "1361210"
 

@@ -1,4 +1,4 @@
-# Spike 001 step 1 (MinGW cross-compile) — builds the mixed DLL from Linux.
+# Component A (MinGW cross-compile) — builds the mixed DLL from Linux.
 name: mingw-build
 
 on:

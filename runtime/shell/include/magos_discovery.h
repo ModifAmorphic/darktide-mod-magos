@@ -60,7 +60,7 @@ int magos_discover_detail(const uint8_t *image, size_t len,
                           MagosAddressTable *out,
                           uint8_t *detail, size_t detail_cap);
 
-/* Spike 001 step 7: induce a panic in the pure-library and catch it at the
+/* Test-only: induce a panic in the pure-library and catch it at the
  * C-ABI boundary. Returns 0 if induce==0, MAGOS_PANIC_CAUGHT if contained. */
 int magos_test_panic_boundary(int induce);
 #define MAGOS_PANIC_CAUGHT 0x7FFFFFB7

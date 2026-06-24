@@ -1,4 +1,4 @@
-# Spike 001 step 1 (MSVC native) — builds the mixed DLL on a Windows runner.
+# Component A (MSVC native) — builds the mixed DLL on a Windows runner.
 #
 # Mirrors the MinGW path with the MSVC toolchain: the Rust staticlib targets
 # x86_64-pc-windows-msvc, and the C shell/MinHook are compiled with cl.exe and
@@ -47,12 +47,12 @@ jobs:
         run: |
           set REL=target\x86_64-pc-windows-msvc\release
           :: Compile the C shell + MinHook to objects.
-          cl /nologo /O2 /c /I shell\include /I shell\vendor\minhook\include ^
-             shell\src\dllmain.c ^
-             shell\vendor\minhook\src\buffer.c ^
-             shell\vendor\minhook\src\hook.c ^
-             shell\vendor\minhook\src\trampoline.c ^
-             shell\vendor\minhook\src\hde\hde64.c
+          cl /nologo /O2 /c /I runtime\shell\include /I runtime\shell\vendor\minhook\include ^
+             runtime\shell\src\dllmain.c ^
+             runtime\shell\vendor\minhook\src\buffer.c ^
+             runtime\shell\vendor\minhook\src\hook.c ^
+             runtime\shell\vendor\minhook\src\trampoline.c ^
+             runtime\shell\vendor\minhook\src\hde\hde64.c
           :: Link the DLL against the Rust staticlib + system libs.
           link /nologo /DLL /OUT:magos_shell.dll ^
              dllmain.obj buffer.obj hook.obj trampoline.obj hde64.obj ^
@@ -60,38 +60,38 @@ jobs:
              psapi.lib kernel32.lib user32.lib ws2_32.lib userenv.lib bcrypt.lib ntdll.lib ^
              /NODEFAULTLIB:libgcc.lib
           :: Launcher.
-          cl /nologo /O2 /Fe:magos_launcher.exe launcher\src\launcher.c /link kernel32.lib
+          cl /nologo /O2 /Fe:magos_launcher.exe runtime\launcher\src\launcher.c /link kernel32.lib
 
       - name: Build C tests (cl/link)
         shell: cmd
         run: |
           set REL=target\x86_64-pc-windows-msvc\release
           :: Test runner object.
-          cl /nologo /O2 /c tests\test_runner.c
+          cl /nologo /O2 /c runtime\tests\test_runner.c
           :: Launcher object for test linking — compiled with MAGOS_TEST_BUILD so
           :: launcher.c's main() is excluded (each test exe provides its own main).
-          :: Mirrors the Makefile's tests/launcher.o rule. The production
+          :: Mirrors the Makefile's runtime/tests/launcher.o rule. The production
           :: magos_launcher.exe (built above) is compiled WITHOUT the guard.
-          cl /nologo /O2 /I launcher\src /DMAGOS_TEST_BUILD /c launcher\src\launcher.c /Fo:launcher_test.obj
+          cl /nologo /O2 /I runtime\launcher\src /DMAGOS_TEST_BUILD /c runtime\launcher\src\launcher.c /Fo:launcher_test.obj
           :: Stub target — minimal GUI exe (/SUBSYSTEM:WINDOWS is a linker flag,
           :: so it goes after /link, not on the cl compile line).
-          cl /nologo /O2 /Fe:tests\stub_target.exe tests\stub_target.c /link /SUBSYSTEM:WINDOWS
+          cl /nologo /O2 /Fe:runtime\tests\stub_target.exe runtime\tests\stub_target.c /link /SUBSYSTEM:WINDOWS
           :: Stub shell — minimal DLL.
-          cl /nologo /O2 /c tests\stub_shell.c
-          link /nologo /DLL /OUT:tests\stub_shell.dll stub_shell.obj kernel32.lib
+          cl /nologo /O2 /c runtime\tests\stub_shell.c
+          link /nologo /DLL /OUT:runtime\tests\stub_shell.dll stub_shell.obj kernel32.lib
           :: test_steam_env.exe — links the guarded launcher_test.obj (no main).
-          cl /nologo /O2 /I launcher\src /Fe:tests\test_steam_env.exe ^
-             tests\test_steam_env.c test_runner.obj launcher_test.obj kernel32.lib
+          cl /nologo /O2 /I runtime\launcher\src /Fe:runtime\tests\test_steam_env.exe ^
+             runtime\tests\test_steam_env.c test_runner.obj launcher_test.obj kernel32.lib
           :: test_injection.exe — links the guarded launcher_test.obj (no main).
-          cl /nologo /O2 /I launcher\src /Fe:tests\test_injection.exe ^
-             tests\test_injection.c test_runner.obj launcher_test.obj kernel32.lib
+          cl /nologo /O2 /I runtime\launcher\src /Fe:runtime\tests\test_injection.exe ^
+             runtime\tests\test_injection.c test_runner.obj launcher_test.obj kernel32.lib
 
       - name: Run C unit tests (native)
         shell: cmd
         run: |
           echo === C unit tests ===
-          tests\test_steam_env.exe
-          tests\test_injection.exe
+          runtime\tests\test_steam_env.exe
+          runtime\tests\test_injection.exe
 
       - name: Verify valid PE with DllMain
         shell: pwsh
