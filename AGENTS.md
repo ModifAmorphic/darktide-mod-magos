@@ -13,8 +13,7 @@ from Steam = unmodified game).
 Architecture: a **Hybrid** Component A — a Rust discovery pure-library
 (C-ABI staticlib) + a C live-game shell, linked into one DLL, delivered by
 `CreateRemoteThread`. Component B (the mod-manager app) is planned, not yet
-built. See `docs/decisions/0001-component-a-language-and-structure.md` (ADR:
-Hybrid adopted) for the decision + outcome.
+built. See `docs/architecture/` for the full architecture.
 
 ## Baseline (read before planning)
 
@@ -22,9 +21,9 @@ The POC (on the `poc` branch) is a capability proof and reference — **not** a
 pre-release of production code. Production is built ground-up with
 testability, review, and production-readiness as first-class goals. The POC
 carries forward (1) proof of feasibility and (2) validated technical
-constraints that are properties of the Darktide binary (below). It does not
-carry forward code. Requirements, architecture, and technology choices are
-made fresh.
+constraints that are properties of the Darktide binary (in
+`docs/reference/darktide-binary.md`). It does not carry forward code.
+Requirements, architecture, and technology choices are made fresh.
 
 ## Repository state
 
@@ -43,7 +42,7 @@ runtime/            Component A — the injected modding runtime + injector
   launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
   tests/            C unit tests (run via wine)
 mod-manager/        Component B — the mod manager app (not yet built; placeholder)
-docs/               architecture, decisions (ADRs), planning, poc (frozen), reference
+docs/               architecture, poc (frozen), reference
 .github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
 Cargo.toml          workspace root (members = ["runtime/discovery"])
 Cargo.lock
@@ -74,37 +73,14 @@ make test     # C tests (via wine) + Rust tests
 - **CI** runs on push/PR to `main`: mingw (Linux cross-compile + wine tests)
   + msvc (Windows native). Both gate on clippy + tests.
 
-## Validated technical constraints (properties of the Darktide binary)
-
-- LuaJIT 2.1, statically linked, non-GC64 (LJ_64, 32-bit MRefs). 16 function
-  addresses confirmed at runtime in the live game.
-- **Sandboxed `_G`**: the engine replaces `print`/`require`/`dofile`/
-  `loadfile`/`load`; stdlib not exposed to injected chunks. Solved via
-  C-function bootstrap (`lua_pushcclosure` + `lua_setfield`), **not**
-  `luaL_openlibs` (which is destructive — overwrites engine wrappers).
-- `lua_State` field offsets (LJ_64 non-GC64): `glref`@0x08, `base`@0x10,
-  `top`@0x18, `stack`@0x24, `stacksize`@0x38.
-- Retry-on-error timing: the injected chunk self-checks for readiness and
-  retries on the engine's `lua_pcall` calls.
-- Pinned binary SHA-256 `132eed5f…` (the `docs/poc` addresses are for this
-  build; the engine found all 16 at uniformly-shifted RVAs on a newer build —
-  game-update resilience validated).
-- Full detail: `docs/poc/production-spec.md` + `docs/poc/lua-vm-injection-anchors.md`.
-
 ## Key docs
 
-- `docs/decisions/0001-component-a-language-and-structure.md` — ADR: Component
-  A language/structure (Hybrid, accepted) + spike outcome + production launcher
-  insights.
-- `docs/planning/spike-001-component-a-language.md` — the spike spec that
-  became Component A's seed.
-- `docs/architecture/` — production architecture (component boundaries,
-  contracts, test strategy); grows with the project.
-- `docs/decisions/` — ADRs. `docs/planning/` — work breakdown, sequencing, spikes.
-- `docs/reference/` — living reference: game-binary facts + the existing
-  modding ecosystem being replaced.
-- `docs/poc/` — frozen POC handoff (historical; the constraints above are
-  distilled from here).
+- `docs/architecture/` — the production architecture (component model, the
+  Hybrid, the seam, test strategy, build, launcher flow).
+- `docs/reference/darktide-binary.md` — validated game-binary constraints.
+- `docs/reference/darktide-framework-analysis.md` — the existing modding
+  ecosystem being replaced.
+- `docs/poc/` — frozen POC handoff (historical reference).
 
 ## Conventions
 
@@ -119,8 +95,8 @@ affects repo structure, build, architecture, or ops, update:
 - **`AGENTS.md`** (this file) — directory structure, ops, architecture
   pointers — to reflect the change.
 - **`README.md`** if the user-facing structure/status changed.
-- **`docs/decisions/`** (an ADR) for any architecture decision;
-  `docs/architecture/` + `docs/planning/` as needed.
+- **`docs/architecture/`** for any architecture change; `docs/reference/` for
+  game/ecosystem facts.
 
 Then ensure `make build/check/test` + clippy pass. **Outdated docs in a PR are
 a review blocker** — including this file.
