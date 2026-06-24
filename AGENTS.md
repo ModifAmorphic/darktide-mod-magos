@@ -1,131 +1,126 @@
-# AGENTS.md — darktide-mod-magos Project Guide
+# AGENTS.md — darktide-mod-magos
 
-> Orientation document for any agent or developer starting work on
-> this project. Read this first.
+> Orientation for any agent working in this repo. Read this first. This file
+> is for **agents**, not humans — the human-facing entry point is `README.md`.
 
-## What This Project Is
+## What this is
 
-**darktide-mod-magos** is a new modding application for Warhammer 40,000:
-Darktide. It replaces the existing community modding toolchain
-(dtkit-patch + Darktide-Mod-Loader + Darktide-Mod-Framework harness)
-with a DLL-injection-based approach that eliminates game-directory
-footprint and bundle-database fragility.
+**darktide-mod-magos** is a mod manager for Warhammer 40,000: Darktide. It
+launches the game modded via DLL injection (no game-directory footprint, no
+bundle-database patching) and stays out of the way for vanilla play (launch
+from Steam = unmodified game).
 
-A POC has been completed and validated on both Linux/Proton and
-Windows native. The project is transitioning from POC to production
-development.
+Architecture: a **Hybrid** Component A — a Rust discovery pure-library
+(C-ABI staticlib) + a C live-game shell, linked into one DLL, delivered by
+`CreateRemoteThread`. Component B (the mod-manager app) is planned, not yet
+built. See `docs/decisions/0001-component-a-language-and-structure.md` (ADR:
+Hybrid adopted) for the decision + outcome.
 
-> **Baseline (read before planning).** The POC is a capability proof
-> and reference — *not* a pre-release of production code. Production
-> is built from the ground up, with testability, review, and
-> production-readiness as first-class goals. The POC carries forward
-> two things only: (1) proof that the approach is feasible, and
-> (2) validated technical constraints that are properties of the
-> Darktide binary (LuaJIT addresses/struct layouts, the sandboxed
-> `_G`, retry-on-error timing, the C-function bootstrap mechanism).
-> It does not carry forward code. Phrases like "reusable" elsewhere
-> in the docs are statements of code quality, not prescriptions to
-> adopt POC code. Requirements, architecture, and technology choices
-> for production are made fresh — the implementation language is
-> decided by the architecture, not the other way around.
+## Baseline (read before planning)
 
-## Directory Structure
+The POC (on the `poc` branch) is a capability proof and reference — **not** a
+pre-release of production code. Production is built ground-up with
+testability, review, and production-readiness as first-class goals. The POC
+carries forward (1) proof of feasibility and (2) validated technical
+constraints that are properties of the Darktide binary (below). It does not
+carry forward code. Requirements, architecture, and technology choices are
+made fresh.
 
-> The tree below depicts the **POC repository**, preserved on the
-> `poc` branch as historical reference. The `main` branch contains
-> only this orientation doc plus production planning/reference docs
-> under `docs/`. The production source layout is an open decision
-> (part of architecture work), not yet established.
+## Repository state
+
+- **`main`** — production. Component A (the injected runtime + launcher) is
+  merged as the production seed; Component B is not yet built.
+- **`poc`** — historical proof-of-concept, reference only. Not built upon.
+- Development is branch + PR; no unreviewed merges to `main` (reviewed +
+  covered + qa'd + CI green).
+
+## Directory structure (current `main`)
 
 ```
-darktide-mod-magos/
-├── AGENTS.md                              ← You are here
-├── .gitignore
-├── docs/
-│   ├── reference/                         ← Background on the existing modding ecosystem
-│   │   ├── darktide-framework-analysis.md     How current Darktide modding works (not our work)
-│   │   └── analysis-verification.md           Verification audit of the above
-│   ├── poc/                               ← POC documentation (approach, evidence, results)
-│   │   ├── lua-vm-injection-theory.md         Architecture and approach (10 sections)
-│   │   ├── lua-vm-injection-anchors.md        Technical evidence: 16 confirmed addresses, PE layout
-│   │   ├── lua-vm-injection-poc.md            POC plan: 6 user stories (historical record)
-│   │   ├── lua-vm-injection-poc-results.md    POC outcomes: all stories passed
-│   │   └── poc-postmortem.md                  Goals vs outcomes, lessons learned, gaps
-│   ├── DEPLOYMENT_OPTIONS_SURVEY.md       ← Why Lua VM Injection was chosen (decision rationale)
-│   ├── production-summary.md              ← High-level next steps (orientation)
-│   └── production-spec.md                 ← Detailed technical spec for production (grounded in POC)
-├── poc/                                   ← POC code (disposable, but contains validated implementations)
-│   ├── phase0-offline-discovery/             Python offline discovery script
-│   ├── phase1-proxy-dll/                     Proxy DLL with dbghelp export forwarding
-│   ├── phase2-runtime-discovery/             Portable C discovery engine + capstone
-│   ├── phase2b-runtime-discovery/            DLL integration (discovery worker thread)
-│   ├── phase3-state-capture/                 MinHook, lua_newstate hook, lua_State capture
-│   ├── phase4-execute-lua/                   lua_pcall hook, retry-on-error, Lua execution
-│   └── phase5-dmf-bootstrap/                 C-function bootstrap, Mods table, DMF loading
-└── .agents/                               ← Empty (was used for inter-session communication during POC)
+runtime/            Component A — the injected modding runtime + injector
+  discovery/        Rust crate: LuaJIT discovery engine (pure library, C-ABI staticlib)
+  shell/            C shell — the injected DLL (DllMain, MinHook, lua_newstate hook)
+  launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
+  tests/            C unit tests (run via wine)
+mod-manager/        Component B — the mod manager app (not yet built; placeholder)
+docs/               architecture, decisions (ADRs), planning, poc (frozen), reference
+.github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
+Cargo.toml          workspace root (members = ["runtime/discovery"])
+Cargo.lock
+Makefile            builds Component A: make build / check / test / clean
+.gitignore          ignores /target, build artifacts, _local/
 ```
 
-## Reading Order
+## Agent ops
 
-For a new agent starting production work, read in this order:
+Build + test (Linux dev box):
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"   # system rust lacks the windows-gnu target
+source _local/DARKTIDE.env             # sets DARKTIDE_GAME_DIR (for oracle tests)
+make build    # cross-compile DLL + launcher (x86_64-pc-windows-gnu)
+make check    # verify valid PE DLL with DllMain
+make test     # C tests (via wine) + Rust tests
+```
+- **Oracle tests** run discovery against the real `Darktide.exe` (resolved via
+  `DARKTIDE_GAME_DIR`). The engine is build-agnostic (Tier-2 self-validation
+  passes on any build; Tier-1 exact-match skips if the SHA differs from the
+  pinned one).
+- **`test-hooks` feature** gates the debug panic-boundary symbol out of
+  release builds. Tests use it: `cargo test --features test-hooks -p
+  magos-discovery`. `make test` handles this; clippy too
+  (`cargo clippy --all-targets --features test-hooks -- -D warnings`).
+- **`_local/`** is gitignored (local env, e.g. `DARKTIDE.env`). Never commit
+  it or the game binary.
+- **CI** runs on push/PR to `main`: mingw (Linux cross-compile + wine tests)
+  + msvc (Windows native). Both gate on clippy + tests.
 
-1. **`docs/production-summary.md`** — High-level overview of what was
-   proven and what needs to be built. Start here.
-2. **`docs/production-spec.md`** — Detailed technical grounding for each
-   work item, tied to POC findings and confirmed addresses.
-3. **`docs/poc/poc-postmortem.md`** — Honest assessment of what went
-   right, what went wrong, and what remains unproven. Read before
-   making architectural assumptions.
-4. **`docs/poc/lua-vm-injection-theory.md`** — Full architecture
-   document. Read the sections relevant to your work item.
-5. **`docs/poc/lua-vm-injection-anchors.md`** — Reference for function
-   addresses, PE layout, and discovery methodology. Consult when
-   implementing discovery or hooks.
-6. **`docs/reference/darktide-framework-analysis.md`** — Background on
-   the existing modding toolchain. Read to understand DMF compatibility
-   requirements and what's being replaced.
-7. **`docs/DEPLOYMENT_OPTIONS_SURVEY.md`** — Why this approach was
-   chosen. Read if questioning architectural decisions.
+## Validated technical constraints (properties of the Darktide binary)
 
-## Key Technical Facts
+- LuaJIT 2.1, statically linked, non-GC64 (LJ_64, 32-bit MRefs). 16 function
+  addresses confirmed at runtime in the live game.
+- **Sandboxed `_G`**: the engine replaces `print`/`require`/`dofile`/
+  `loadfile`/`load`; stdlib not exposed to injected chunks. Solved via
+  C-function bootstrap (`lua_pushcclosure` + `lua_setfield`), **not**
+  `luaL_openlibs` (which is destructive — overwrites engine wrappers).
+- `lua_State` field offsets (LJ_64 non-GC64): `glref`@0x08, `base`@0x10,
+  `top`@0x18, `stack`@0x24, `stacksize`@0x38.
+- Retry-on-error timing: the injected chunk self-checks for readiness and
+  retries on the engine's `lua_pcall` calls.
+- Pinned binary SHA-256 `132eed5f…` (the `docs/poc` addresses are for this
+  build; the engine found all 16 at uniformly-shifted RVAs on a newer build —
+  game-update resilience validated).
+- Full detail: `docs/poc/production-spec.md` + `docs/poc/lua-vm-injection-anchors.md`.
 
-- **Approach:** DLL injection into Darktide.exe → runtime function
-  discovery → hook `lua_newstate` → capture `lua_State*` → C-function
-  bootstrap → load DMF from staging directory
-- **No anti-cheat:** Darktide has server-side EAC only (no client-side
-  kernel-mode scanner). DLL injection is safe today.
-- **Sandboxed `_G`:** The engine's default Lua environment does NOT
-  expose standard library functions. Solved via C-function bootstrap
-  (register C functions as Lua globals via `lua_pushcclosure` +
-  `lua_setfield`).
-- **16 function addresses confirmed** (all verified at runtime in the
-  live game). See `docs/poc/lua-vm-injection-anchors.md` §9.
-- **Binary SHA-256:**
-  `132eed5fe58515774a41199269dd240ef6092f84b1efc8ad4a28e23ea6791661`
-  (all addresses are for this binary version)
-- **POC validated on both Linux/Proton and Windows native.**
-- **Production uses `CreateRemoteThread` injection** (zero game-directory
-  footprint). The POC used a proxy DLL shortcut. The DLL internals are
-  identical either way.
+## Key docs
 
-## Architecture Decisions Locked
+- `docs/decisions/0001-component-a-language-and-structure.md` — ADR: Component
+  A language/structure (Hybrid, accepted) + spike outcome + production launcher
+  insights.
+- `docs/planning/spike-001-component-a-language.md` — the spike spec that
+  became Component A's seed.
+- `docs/architecture/` — production architecture (component boundaries,
+  contracts, test strategy); grows with the project.
+- `docs/decisions/` — ADRs. `docs/planning/` — work breakdown, sequencing, spikes.
+- `docs/reference/` — living reference: game-binary facts + the existing
+  modding ecosystem being replaced.
+- `docs/poc/` — frozen POC handoff (historical; the constraints above are
+  distilled from here).
 
-1. Lua VM Injection over Bundle Virtualization
-2. C-function bootstrap (not `luaL_openlibs` — destructive)
-3. Source-pattern matching for function discovery (not dynamic heuristics)
-4. Retry-on-error timing (not precise hook-point timing)
-5. DMF Lua files preserved as-is; harness fully replaced
+## Conventions
 
-## POC Phase Summary
+- **Conventional Commits** (`type(scope): subject`); commit freely on feature
+  branches. Branch + PR flow; no unreviewed merges to `main`.
+- Don't commit secrets, the game binary, or anything under `_local/`.
 
-| Phase | What Was Proven | Key Output |
-|-------|----------------|------------|
-| 0 | Offline function discovery methodology | 7 addresses, 6 methodology gaps |
-| 1 | DLL injection into the game process | Proxy DLL with 200 export forwarders |
-| 2 | Runtime function discovery in live process | `matched=7 mismatched=0` |
-| 3 | lua_State pointer capture | `lua_gettop(L)=0`, state verified |
-| 4 | Arbitrary Lua code execution | `return 42` — `load_rc=0 pcall_rc=0` |
-| 5 | DMF bootstrap via C-function bootstrap | `dmf_loader.lua` loaded, game reached main menu |
+## Before opening a PR — keep docs current
 
-All phases passed Tier A (offline/mock tests) and Tier B (live game)
-on both Linux/Proton and Windows.
+Docs must reflect the code in the PR. Before opening a PR for any change that
+affects repo structure, build, architecture, or ops, update:
+- **`AGENTS.md`** (this file) — directory structure, ops, architecture
+  pointers — to reflect the change.
+- **`README.md`** if the user-facing structure/status changed.
+- **`docs/decisions/`** (an ADR) for any architecture decision;
+  `docs/architecture/` + `docs/planning/` as needed.
+
+Then ensure `make build/check/test` + clippy pass. **Outdated docs in a PR are
+a review blocker** — including this file.
