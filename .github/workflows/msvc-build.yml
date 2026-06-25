@@ -92,11 +92,10 @@ jobs:
           :: test_injection.exe — links the guarded launcher_test.obj (no main).
           cl /nologo /O2 /I runtime\launcher\src /Fe:runtime\tests\test_injection.exe ^
              runtime\tests\test_injection.c test_runner.obj launcher_test.obj kernel32.lib
-          :: Our trampoline helpers for test linking.
-          cl /nologo /O2 /c /I runtime\shell\include runtime\shell\src\trampoline.c /Fo:magos_trampoline_helper.obj
           :: test_trampoline.exe — path escape/build/join tests (20 tests).
+          :: test_trampoline.c #includes trampoline.c directly (to access internal helpers).
           cl /nologo /O2 /I runtime\shell\include /Fe:runtime\tests\test_trampoline.exe ^
-             runtime\tests\test_trampoline.c test_runner.obj magos_trampoline_helper.obj kernel32.lib
+             runtime\tests\test_trampoline.c test_runner.obj kernel32.lib
 
       - name: Run C unit tests (native)
         shell: cmd
