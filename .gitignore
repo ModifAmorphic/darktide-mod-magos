@@ -79,13 +79,13 @@ Testing/
 _local/
 
 # Rust / cargo build artifacts
-/target/
+/runtime/target/
 **/*.rs.bk
 
-# Mixed-DLL build outputs (shell + launcher), launch batch file
-/magos_shell.dll
-/magos_shell.lib
-/magos_launcher.exe
+# Mixed-DLL build outputs (all build outputs land in runtime/bin/), launch
+# batch file. The global *.dll/*.exe/*.lib/*.o ignores already cover the
+# contents; the explicit /runtime/bin/ documents intent.
+/runtime/bin/
 /launch.bat
 *.obj
 
