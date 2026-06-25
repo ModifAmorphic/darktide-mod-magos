@@ -15,6 +15,9 @@ on:
 jobs:
   mingw:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtime
     steps:
       - uses: actions/checkout@v4
 
@@ -34,8 +37,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: mingw-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+            runtime/target
+          key: mingw-${{ runner.os }}-${{ hashFiles('runtime/Cargo.lock') }}
 
       - name: Lint with clippy (deny warnings)
         run: cargo clippy --all-targets --features test-hooks -- -D warnings
@@ -67,5 +70,5 @@ jobs:
         with:
           name: magos-shell-mingw
           path: |
-            magos_shell.dll
-            magos_launcher.exe
+            runtime/bin/magos_shell.dll
+            runtime/bin/magos_launcher.exe
