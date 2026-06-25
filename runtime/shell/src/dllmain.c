@@ -114,10 +114,11 @@
  * Hook points (all use the single captured lua_State*):
  *   - lua_newstate      (1-shot, right after capture)            — VM fresh, baseline
  *   - luaL_openlibs     (1-shot, after the engine call returns)  — stdlib registered
- *   - luaL_loadbuffer   (calls 1, 5, 20)                         — script loads
+ *   - luaL_loadbuffer   (calls 1..150 name log; n==1 snapshot)   — script loads
  *   - lua_pcall         (every call)                             — POC injection point
  *       · Phase-4 trampoline @ pcall#1 (one-shot, BEFORE orig pcall) — the focus
  *       · per-call CLASS/Managers transition (one-shot per global)
+ *       · per-call 7-global recon transition (one-shot per global: class/CLASS/Managers/Main/StateRequireScripts/StateGame/GameStateMachine) + defensive CLASS.X dump
  *       · full-16 snapshot @ calls {1, 10, 50, 100, both-present}
  *       · chunk-injection (v3: getfenv env + before/after globals + returns) @ both-present (fallback #50/#100)
  *   - lua_setfenv       (first 20 calls)                         — Phase-3: env the engine assigns
@@ -365,6 +366,85 @@ static int probe_check_class_managers(lua_State *L, LONG call_num) {
     g_lua_settop(L, base);  /* pop both lookups — restore engine stack */
     g_in_probe = 0;
     return (class_t != 0 && managers_t != 0);
+}
+
+/*
+ * Recon: map the engine init timeline — the lua_pcall call# at which each of
+ * 7 engine globals first transitions nil→non-nil. Same read-only, stack-clean
+ * discipline as probe_check_class_managers: lua_getfield on LUA_GLOBALSINDEX
+ * (a plain table → raw hash lookup, no metamethod, cannot longjmp) + lua_type
+ * read, one-shot per global (g_recon_logged[]), stack restored to the saved
+ * top. g_in_probe is save/restored (like probe_inspect_env) so this is safe
+ * from inside an already-guarded path as well as from a fresh detour entry.
+ *
+ * The 7 targets de-risk the Enginseer v2 design: when do class/CLASS/Managers/
+ * Main/StateRequireScripts/StateGame/GameStateMachine materialize relative to
+ * pcall#? (v2 must defer work until those globals exist.) Called on EVERY
+ * pcall; the one-shot flags bound the logging.
+ *
+ * Defensive CLASS.X dump (one-shot, Change 1b): the first pcall# where CLASS is
+ * non-nil, additionally read CLASS then lua_getfield on it for each of
+ * {Main, StateRequireScripts, StateGame, GameStateMachine} and log their types.
+ * In the unmodified game CLASS is loader-provided and will likely NEVER appear,
+ * so this probably logs nothing — that is expected; it is defensive coverage
+ * for the v2 CLASS monkey-patch timing. Stack-clean (each member lookup is
+ * popped before the next; CLASS stays on top until the final settop).
+ */
+static void probe_log_transitions(lua_State *L, LONG call_num) {
+    static const char *RECON_GLOBALS[] = {
+        "class", "CLASS", "Managers", "Main",
+        "StateRequireScripts", "StateGame", "GameStateMachine",
+    };
+    static volatile int g_recon_logged[7] = {0};
+    static const char *CLASS_MEMBERS[] = {
+        "Main", "StateRequireScripts", "StateGame", "GameStateMachine",
+    };
+    static volatile int g_class_dump_logged = 0;
+
+    int saved = g_in_probe;
+    g_in_probe = 1;
+
+    if (!L || !g_lua_getfield || !g_lua_type || !g_lua_gettop || !g_lua_settop) {
+        g_in_probe = saved;
+        return;
+    }
+
+    int base = g_lua_gettop(L);
+
+    for (int i = 0; i < 7; i++) {
+        if (g_recon_logged[i]) continue;
+        g_lua_getfield(L, LUA_GLOBALSINDEX, RECON_GLOBALS[i]);
+        int t = g_lua_type(L, -1);
+        if (t != 0 /* non-nil */) {
+            g_recon_logged[i] = 1;
+            magos_log("[probe] %s first non-nil at lua_pcall call#%ld (type=%s)\n",
+                      RECON_GLOBALS[i], call_num, lua_type_name(t));
+
+            /* CLASS is currently on top (absolute idx = gettop). Dump its
+             * members one-shot, popping each so CLASS stays on top. */
+            if (strcmp(RECON_GLOBALS[i], "CLASS") == 0 && !g_class_dump_logged) {
+                g_class_dump_logged = 1;
+                int class_idx = g_lua_gettop(L);
+                char line[256];
+                int off = snprintf(line, sizeof(line),
+                                   "[probe] CLASS dump @ pcall#%ld:", call_num);
+                for (int j = 0; j < 4; j++) {
+                    g_lua_getfield(L, class_idx, CLASS_MEMBERS[j]);
+                    int mt = g_lua_type(L, -1);
+                    int w = snprintf(line + off, sizeof(line) - (size_t)off,
+                                     "  %s=%s", CLASS_MEMBERS[j], lua_type_name(mt));
+                    if (w < 0 || (size_t)w >= sizeof(line) - (size_t)off) break;
+                    off += w;
+                    g_lua_settop(L, class_idx);  /* pop member; CLASS back on top */
+                }
+                magos_log("%s\n", line);
+            }
+        }
+        g_lua_settop(L, base);  /* pop this global's lookup — stack-clean per iter */
+    }
+
+    g_lua_settop(L, base);  /* belt-and-suspenders: zero net stack effect */
+    g_in_probe = saved;
 }
 
 /*
@@ -720,21 +800,33 @@ static void detour_openlibs(lua_State *L) {
     }
 }
 
-/* luaL_loadbuffer — the bytecode-load proxy (see file header NOTE). Samples
- * calls 1, 5, 20; logs the script `name` for each sampled call. */
+/* Per-call loadbuffer name-log cap (recon: map the script-compilation order).
+ * Every call with n <= this cap logs its script name + the current pcall# (read
+ * from g_pcall_calls for correlation). g_orig_loadbuffer is ALWAYS called. */
+#define RECON_LOADBUFFER_LOG_CAP 150
+
+/* luaL_loadbuffer — the bytecode-load proxy (see file header NOTE). Recon: log
+ * every script name for the first RECON_LOADBUFFER_LOG_CAP calls (maps the
+ * script-compilation order, correlated with the pcall#), plus the full 16-
+ * globals snapshot once at n==1 (the per-call name log supersedes the old
+ * 5/20 sampling). g_orig_loadbuffer is always called regardless of the cap. */
 static int detour_loadbuffer(lua_State *L, const char *buff, size_t size, const char *name) {
     LONG n = 0;
-    int do_probe = 0;
+    int do_name_log = 0;
+    int do_snapshot = 0;
     if (!g_in_probe) {
         n = InterlockedIncrement(&g_loadbuffer_calls);
-        do_probe = (n == 1 || n == 5 || n == 20);
+        do_name_log = (n <= RECON_LOADBUFFER_LOG_CAP);
+        do_snapshot = (n == 1);
     }
-    if (do_probe) {
+    if (do_name_log) {
         if (!g_L) g_L = L;
         char namebuf[128];
         snprintf(namebuf, sizeof(namebuf), "%s", name ? name : "<null>");
-        magos_log("[probe] luaL_loadbuffer (bytecode-load proxy) call#%ld  name=%s  size=%zu\n",
-                  n, namebuf, size);
+        magos_log("[probe] luaL_loadbuffer call#%ld (pcall#%ld) name=%s size=%zu\n",
+                  n, g_pcall_calls, namebuf, size);
+    }
+    if (do_snapshot) {
         probe_log_globals(L, "luaL_loadbuffer", (int)n);
     }
     return g_orig_loadbuffer(L, buff, size, name);
@@ -774,6 +866,11 @@ static int detour_pcall(lua_State *L, int nargs, int nresults, int errfunc) {
                 magos_log("[probe]     engine-context lifecycle point: globals table fully materialized\n");
             }
         }
+
+        /* 1b. Recon: 7-global init-timeline transition log on EVERY pcall
+         *     (one-shot flags inside bound the logging). Read-only, stack-clean.
+         *     Does not touch probe_check_class_managers / g_both_logged. */
+        probe_log_transitions(L, n);
 
         /* 2. Full 16-globals snapshot at scheduled calls + the both-present call. */
         int scheduled = (n == 1 || n == 10 || n == 50 || n == 100);
