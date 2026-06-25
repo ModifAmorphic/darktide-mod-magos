@@ -4,10 +4,17 @@
 -- deferred bootstrap hook (lifecycle.lua), reads the user's mod_load_order,
 -- prepends "dmf" (DMF is just the first mod — a bag of helper APIs other mods
 -- opt into), and loads each mod synchronously: exec its `.mod` file, call its
--- `run()` to get the mod object, store it, then call `object:init()`. DMF loads
--- first; its `init()` defines `new_mod`/`get_mod` that the subsequent user
--- mods' `run()` calls — so the per-mod ordering (run+init before the next mod
--- loads) is what makes that dependency work.
+-- `run()`, and if it yields a mod object store it + call `object:init()`. DMF
+-- loads first; its `init()` defines `new_mod`/`get_mod` that the subsequent
+-- user mods' `run()` calls — so the per-mod ordering (run+init before the next
+-- mod loads) is what makes that dependency work.
+--
+-- Two authoring patterns: a mod whose `run()` returns an object is
+-- OUTER-DRIVEN (this rite calls its init/update/on_game_state_changed). A mod
+-- whose `run()` returns nil registered itself via `new_mod()` for its side
+-- effect (the typical DMF pattern) and is DMF-DRIVEN — its update fires from
+-- DMF's inner loop, not here, so entry.object stays nil and the outer update/
+-- gsc loops skip it. Either way the scan-phase _mods entry is retained.
 --
 -- DMF-shape compatibility: DMF reads exactly three fields off Managers.mod
 -- (grepped across dmf/scripts/mods/dmf):
@@ -36,7 +43,7 @@
 -- as the loop finishes). _settings is defaulted (NOT loaded from
 -- Application.user_setting — DMF owns persisting it via dmf_options.lua).
 --
--- Loaded via Mods.file.dofile("mod_manager") (rooted at MAGOS_STAGING), NOT via
+-- Loaded via Mods.file.dofile("mod_manager") (rooted at MAGOS_MOD_PATH), NOT via
 -- the entry's bootstrap_load, because `class("ModManager")` only exists after
 -- the class patch installs at boot time (pcall#1's require-wrap), not at the
 -- entry's pcall#1. Runs in the real `_G` env (loadstring chunk default), so the
@@ -83,7 +90,7 @@ end
 --
 -- WHY: DMF (kept stock — no vendored edits) hardcodes its mod directory as
 -- "./../mods" in dmf/scripts/mods/dmf/modules/core/io.lua:14 (DML heritage).
--- Magos stages the user's mods under MAGOS_STAGING instead, so a user mod's
+-- Magos stages the user's mods under MAGOS_MOD_PATH instead, so a user mod's
 -- resources (mod_script / mod_data) would otherwise miss: DMF loads them via
 -- dmf_mod_manager.resolve_resource -> dmf.safe_call_io_dofile -> mod:io_dofile_unsafe,
 -- which routes through that hardcoded local. Replacing each DMFMod:io_* method
@@ -189,13 +196,24 @@ function ModManager:init()
         elseif type(mod_data.run) ~= "function" then
             _log(("[Enginseer] mod '%s' load failed: .mod has no run() function"):format(entry.name))
         else
-            -- run() yields the mod object. A run() error (or nil result) logs +
-            -- skips this mod but must not abort the rite.
+            -- run() yields the mod object. A run() error logs + skips this mod
+            -- (must not abort the rite). A successful nil return is the BENIGN
+            -- DMF-managed case — see the object == nil branch below.
             local ok, object = pcall(mod_data.run)
             if not ok then
                 _log(("[Enginseer] mod '%s' run failed: %s"):format(entry.name, tostring(object)))
             elseif object == nil then
-                _log(("[Enginseer] mod '%s' run returned no object; skipped"):format(entry.name))
+                -- DMF-managed mod: run() registered the mod via new_mod() (the
+                -- typical DMF authoring pattern — call new_mod for its side
+                -- effect, return nothing) so it's driven by DMF's inner update
+                -- loop, NOT this rite's outer update/on_game_state_changed. This
+                -- is a success, not a failure: leave entry.object nil so the
+                -- outer update/gsc loops skip it (DMF drives it), and keep the
+                -- scan-phase _mods entry so _state still reaches "done" and
+                -- _mod_load_index accounting is unchanged. DMF reads
+                -- _mods[_mod_load_index].id/.name/.handle during run()'s new_mod
+                -- call, and the scan-phase entry still resolves those.
+                _log(("[Enginseer] mod '%s' loaded (no top-level object; DMF-driven)"):format(entry.name))
             else
                 entry.object = object
                 entry.state = "running"
@@ -222,8 +240,8 @@ end
 
 -- ModManager:update — pump every loaded mod's per-frame update. Mods without an
 -- update() (and ones whose update() errors) are skipped silently/in-log; one
--- failure never stops the others. Entries without an object (failed/skipped
--- mods) are skipped.
+-- failure never stops the others. Entries without an object (failed mods +
+-- DMF-driven mods whose run() returned nil) are skipped.
 function ModManager:update(dt)
     for _, entry in ipairs(self._mods) do
         if entry.object then
@@ -234,7 +252,8 @@ end
 
 -- ModManager:on_game_state_changed — fan enter/exit notifications out to every
 -- loaded mod that opted into on_game_state_changed. Args are forwarded verbatim.
--- Entries without an object (failed/skipped mods) are skipped.
+-- Entries without an object (failed mods + DMF-driven mods whose run() returned
+-- nil) are skipped.
 function ModManager:on_game_state_changed(status, state_name, state_object)
     for _, entry in ipairs(self._mods) do
         if entry.object then

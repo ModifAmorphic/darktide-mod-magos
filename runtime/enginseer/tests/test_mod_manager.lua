@@ -248,6 +248,76 @@ return function(runner)
             "log line must name the failing mod + phase")
     end)
 
+    -- A mod whose run() returns nil (no error) is the BENIGN DMF-managed case:
+    -- the realistic DMF-mod convention is to call new_mod() for its side effect
+    -- and return nothing, so the mod is driven by DMF's inner update loop, not
+    -- this rite's outer update. This is NOT a failure. The rite logs an
+    -- info-level "DMF-driven" message (never "skipped"/"failed"), leaves
+    -- entry.object nil (so the outer update/gsc loops skip it), keeps the
+    -- scan-phase _mods entry (so _state still reaches "done", index accounting
+    -- is unchanged, and DMF's new_mod can read _mods[_mod_load_index].handle
+    -- during run()), and later mods still load.
+    runner.register("mod_manager: a mod whose run() returns nil is DMF-driven (not skipped), rite continues", function()
+        local logged = {}
+        local sb = setup({ order = { "dmfmod", "later" } })
+        sb.__print = function(msg) table.insert(logged, msg) end
+
+        -- The handle DMF's new_mod reads off Managers.mod during run() — mirrors
+        -- dmf_mod_data.lua:39 (_mods[_mod_load_index].handle). Proves the
+        -- scan-phase entry is present + indexed correctly even for a nil-return
+        -- mod (DMF reads it synchronously inside new_mod).
+        local handle_during_run
+        local function fake_new_mod(name, resources)
+            local m = sb.Managers.mod
+            local entry = m._mods[m._mod_load_index]
+            handle_during_run = entry and entry.handle or nil
+            return { name = name, init = function() end }  -- created but NOT returned by run()
+        end
+
+        local later_init = 0
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            return ({
+                dmf = mod_file("dmf", { init = function() end }),
+                dmfmod = {
+                    run = function()
+                        -- Realistic DMF-mod convention: call new_mod for its
+                        -- side effect (registers the mod) and return NOTHING.
+                        fake_new_mod("dmfmod", { mod_script = "dmfmod/script" })
+                        -- intentional: no return -> run() yields nil
+                    end,
+                },
+                later = mod_file("later", { init = function() later_init = later_init + 1 end }),
+            })[local_path]
+        end
+
+        local ModManager = load_driver(sb)
+        local mm = ModManager:new()
+
+        -- _state reaches done; the nil-return didn't abort the rite.
+        runner.assert_eq("done", mm._state, "rite reaches done despite the nil-return mod")
+        -- The entry is retained (scan phase) with id/name/handle; object stays nil.
+        runner.assert_eq(3, #mm._mods, "all ordered mods have entries; dmfmod's entry retained")
+        runner.assert_eq("dmfmod", mm._mods[2].name)
+        runner.assert_nil(mm._mods[2].object, "DMF-driven mod has no top-level object")
+        -- The later mod still loads (nil-return doesn't abort).
+        runner.assert_eq("later", mm._mods[3].name)
+        runner.assert_truthy(mm._mods[3].object ~= nil, "a mod after the nil-return mod still loads")
+        runner.assert_eq(1, later_init, "the later mod still inits")
+        -- DMF's new_mod (inside run()) read the scan-phase _mods entry's handle.
+        runner.assert_eq("dmfmod", handle_during_run,
+            "DMF's new_mod must read _mods[_mod_load_index].handle during the nil-return mod's run()")
+        -- The log is the benign DMF-driven message, NOT "skipped"/"failed".
+        local dmfmod_log
+        for _, line in ipairs(logged) do
+            if line:find("mod 'dmfmod'") then dmfmod_log = line break end
+        end
+        runner.assert_not_nil(dmfmod_log, "the nil-return mod must be logged")
+        runner.assert_truthy(dmfmod_log:find("DMF%-driven") ~= nil,
+            "nil-return must log the DMF-driven message: " .. tostring(dmfmod_log))
+        runner.assert_truthy(dmfmod_log:find("skipped") == nil and dmfmod_log:find("failed") == nil,
+            "nil-return must NOT be logged as skipped/failed: " .. tostring(dmfmod_log))
+    end)
+
     runner.register("mod_manager: a mod whose init() raises is skipped without killing the rite", function()
         local logged = {}
         local sb = setup({ order = { "boom", "good" } })
@@ -538,7 +608,7 @@ return function(runner)
     end)
 
     -- DMF io_* re-rooting: DMF hardcodes "./../mods" (DML heritage) for its
-    -- mod-facing IO surface; Magos stages mods under MAGOS_STAGING. The
+    -- mod-facing IO surface; Magos stages mods under MAGOS_MOD_PATH. The
     -- Enginseer overrides DMFMod:io_* to delegate to Mods.file.* (staging-
     -- rooted) right after DMF's init(), so a user mod's resource load
     -- (new_mod -> resolve_resource -> safe_call_io_dofile -> mod:io_dofile_unsafe)
