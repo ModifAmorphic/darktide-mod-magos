@@ -96,20 +96,24 @@ Mods.hook.set_on_file = function(mod_name, filepath, func_name, hook_func)
 end
 
 --
--- Enable/disable a hook (by mod_name+func_name, or all of a func_name). Rebuilds
--- the chain so the change takes effect immediately.
+-- Enable/disable a hook. With mod_name: toggle that mod's hook on func_name.
+-- With mod_name == nil: toggle EVERY mod's hook on func_name (matches DML —
+-- nil mod_name = all mods). Rebuilds the chain once per enable call (not once
+-- per matching hook) so the change takes effect immediately.
 --
 Mods.hook.enable = function(value, mod_name, func_name)
     for _, item in ipairs(MODS_HOOKS) do
         if item.name == func_name or func_name == nil then
             for _, hook in ipairs(item.hooks) do
-                if hook.name == mod_name then
+                if mod_name == nil or hook.name == mod_name then
                     hook.enable = value
-                    Mods.hook._patch()
                 end
             end
         end
     end
+    -- Rebuild the chain once per enable call (hoisted out of the inner loop so
+    -- a multi-match enable doesn't _patch N times).
+    Mods.hook._patch()
 end
 
 --

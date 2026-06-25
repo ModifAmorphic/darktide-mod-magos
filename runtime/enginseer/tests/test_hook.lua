@@ -116,4 +116,72 @@ return function(runner)
         local item = sb.MODS_HOOKS[1]
         runner.assert_eq(1, #item.hooks)
     end)
+
+    -- #3: enable(value, nil, func_name) must toggle EVERY mod's hook on that
+    -- func_name (the doc contract). Previously the inner guard required
+    -- hook.name == mod_name, and since hook names are strings, nil matched
+    -- nothing — a silent no-op.
+    runner.register("hook: enable(false, nil, fn) disables ALL mods on that func_name", function()
+        local sb = setup()
+        sb.fn = function(...) return "orig" end
+        sb.Mods.hook.set("ModA", "fn", function(prev, ...) return "A[" .. prev(...) .. "]" end)
+        sb.Mods.hook.set("ModB", "fn", function(prev, ...) return "B[" .. prev(...) .. "]" end)
+        -- Both mods hook fn; nil mod_name must disable BOTH -> calling the
+        -- target runs the original, no wrappers.
+        sb.Mods.hook.enable(false, nil, "fn")
+        runner.assert_eq("orig", sb.fn())
+    end)
+
+    runner.register("hook: enable(true, nil, fn) re-enables all mods on that func_name", function()
+        local sb = setup()
+        sb.fn = function(...) return "orig" end
+        sb.Mods.hook.set("ModA", "fn", function(prev, ...) return "A[" .. prev(...) .. "]" end)
+        sb.Mods.hook.set("ModB", "fn", function(prev, ...) return "B[" .. prev(...) .. "]" end)
+        sb.Mods.hook.enable(false, nil, "fn")
+        runner.assert_eq("orig", sb.fn(), "precondition: both disabled")
+        sb.Mods.hook.enable(true, nil, "fn")
+        runner.assert_eq("A[B[orig]]", sb.fn(), "both mods must be back in the chain")
+    end)
+
+    -- #4: set_on_file + enable_by_file (DMF integrates these via its
+    -- hook_require). The require-wrap calls enable_by_file; set_on_file must
+    -- replay its hook-create function against every existing require_store
+    -- instance via the dynamic Mods.require_store[path][N].func_name loadstring.
+    runner.register("hook: set_on_file replays against existing require_store instances", function()
+        local sb = setup()
+        -- Seed two already-require'd instances of "fake/path", each with an
+        -- .update method (the dynamic loadstring path targets these).
+        sb.Mods.require_store["fake/path"] = {
+            { update = function() return "orig1" end },
+            { update = function() return "orig2" end },
+        }
+        sb.Mods.hook.set_on_file("ModA", "fake/path", "update",
+            function(prev, ...) return "A[" .. prev(...) .. "]" end)
+
+        -- Both instances must be hooked: the dynamic per-index loadstring path
+        -- resolved and attached a chain to each.
+        runner.assert_eq("A[orig1]", sb.Mods.require_store["fake/path"][1].update(),
+            "instance 1 must run the hook chain")
+        runner.assert_eq("A[orig2]", sb.Mods.require_store["fake/path"][2].update(),
+            "instance 2 must run the hook chain")
+    end)
+
+    runner.register("hook: enable_by_file attaches a stored hook to a newly-required instance", function()
+        local sb = setup()
+        -- Register a set_on_file hook BEFORE any instance is require'd.
+        sb.Mods.hook.set_on_file("ModA", "fake/path", "update",
+            function(prev, ...) return "A[" .. prev(...) .. "]" end)
+        runner.assert_eq(1, #sb.MODS_HOOKS_BY_FILE["fake/path"],
+            "set_on_file must store the hook-create function")
+
+        -- Simulate a require: append a fresh instance, then call enable_by_file
+        -- (mirrors what the require wrap does on each require).
+        sb.Mods.require_store["fake/path"] = {
+            { update = function() return "orig" end },
+        }
+        sb.Mods.hook.enable_by_file("fake/path", 1)
+
+        runner.assert_eq("A[orig]", sb.Mods.require_store["fake/path"][1].update(),
+            "enable_by_file must replay the stored hook against the new instance")
+    end)
 end
