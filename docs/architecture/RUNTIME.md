@@ -32,63 +32,34 @@ staged DML/DMF entry point in engine context → reports status.
 
 - **Built (minimal validation slice):** discovery call, `lua_newstate` MinHook
   + `L` capture, `lua_gettop` call, hook-ready signal.
-- **Built (Phase-3 engine-context probe — mechanism-cracker):** the worker
-  additionally installs detours on five Lua-lifecycle points (`lua_newstate`,
-  `luaL_openlibs`, `luaL_loadbuffer`, `lua_pcall`, `lua_setfenv`) and reads a
-  fixed list of engine globals via the LuaJIT C API (`lua_getfield` +
-  `lua_type`). This is **read-only recon** — no engine global is *called*, no
-  mods; the only side effects are the one-shot chunk injection (a read-only
-  chunk) and log output. Phase 1 established the stdlib is present at the
-  `luaL_loadbuffer`/`lua_pcall` points (the POC's "sandboxed `_G`" was a timing
-  artifact). Phase 2 resolved **when** `CLASS` + `Managers` appear (checked on
-  every `lua_pcall`; full-16 snapshots at pcall calls 1, 10, 50, 100, and the
-  first where both are non-nil) and **whether an injected chunk sees those
-  globals** — at that point it injected `return print, require, loadstring, io,
-  CLASS, Managers` and found the chunk sees `loadstring=nil`/`io=nil` while the
-  C-side `LUA_GLOBALSINDEX` (at the early `luaL_openlibs`/pcall#1 points) has
-  `loadstring=function`/`io=table`. So an injected chunk's env is NOT the
-  globals table. Phase 3 cracks **why** with three measurements in one run:
-  (1) hook `lua_setfenv` — on each of the first ~20 calls, inspect the env
-  table at the top (io/loadstring/require/print/Managers via `lua_getfield`)
-  and log the object type (a *thread* setfenv = a globals rebind, since
-  `LUA_GLOBALSINDEX` resolves to `tabref(L->env)`, the thread's globals table),
-  revealing what env the engine assigns scripts; (2) the chunk's actual env
-  (`lua_getfenv`) — `lua_getfenv(L, chunk_idx)` after `luaL_loadbuffer` to see
-  whether the chunk is `setfenv`'d to a sandbox; (3) dynamic-swap check —
-  `io`/`loadstring` in `LUA_GLOBALSINDEX` measured immediately before AND after
-  the chunk's `lua_pcall`, to detect a per-phase globals rebind. Together these
-  localize the mechanism (sandbox `setfenv` vs. per-phase globals swap vs.
-  timing) and point to the fix (`setfenv` our chunk to the bundle-script env /
-  run during the full-env phase / load via the engine's path). The probe is
-  game-safe: read-only inspections + read-only chunk, `errfunc=0` (pcall
-  returns on error, never longjmps), stack saved/restored (zero net effect),
-  trampolines bypass the detours (no re-entrancy). `lua_setfenv` has the known
-  LuaJIT signature `int (lua_State*, int)` → safe to MinHook (unlike the
-  unknown-sig `lua_resource::bytecode`, which is discovered + logged but not
-  hooked; `luaL_loadbuffer` — its known-sig callee, found by tracing from the
-  bytecode anchor — is the hooked proxy and fires at the same lifecycle point).
-  Discovery adds `lua_getfenv` + `lua_setfenv` (source-pattern, `lapi.c`
-  siblings of `lua_getfield`/`lua_setfield`, discriminated by `top++`/`top--`
-  epilogues). The probe cannot run without the live game; it builds + the
-  discovery additions are unit-tested against the real binary.
-- **To build (the shell expansion):**
-  - **Engine-context execution (the core challenge).** Get staged Lua (our DML
-    → DMF → mods) loaded *by the engine* — through the engine's Lua lifecycle,
-    with its real `require`/`io`/`loadstring`/globals/loader behavior, not a
-    sandboxed or C-shim environment. This is the make-or-break feature: it must
-    work, or the project's premise (eliminate bundle-db/`patch_999` fragility,
-    not move it upstream into reimplemented Lua facilities) fails. The
-    `lua_pcall` hook is a candidate timing mechanism for reaching the right
-    lifecycle point, but the bar is engine-context execution, not merely
-    injecting a chunk.
-  - **Runtime patch / DML entry.** The shell injects a runtime patch that
-    replaces the bundle-db entry point (the role of `patch_999`): a trampoline
-    that reaches an engine-equivalent point in the Lua lifecycle and loads the
-    staged DML (likely our own; same job as the existing `mod_loader` — load the
-    mods), which loads DMF + mods. The DML's job is to get mods into the engine
-    environment, not to reimplement engine facilities.
-  - **Status reporting** — report discovery results, DMF/mod load, errors to
-    the launcher (via the internal status channel).
+- **Built (engine-context validation — PROVEN).** Probes (Phase 1-3) + a
+  trampoline prototype (Phase 4) established the engine-context mechanism:
+  - The engine's globals table has the full stdlib (`io`, `loadstring`,
+    `require`, `print`, …) from `luaL_openlibs` through `lua_pcall` #1.
+  - The engine **removes `io` + `loadstring` from the globals between pcall#1
+    and pcall#10** (after the initial script-compilation phase). Gone
+    thereafter.
+  - **No `setfenv` sandbox** — a chunk's env *is* the globals table (confirmed
+    at every measured point). The only "sandboxing" is that removal.
+  - **`Managers`** is an engine global (appears ~pcall#16). **`CLASS`** is
+    never engine-set (mod-loader-provided — our DML sets it, as today).
+  - **Trampoline (PROVEN live):** a chunk injected at pcall#1 used the
+    engine's real `io.open` + `loadstring` to read, compile, and run staged
+    Lua → `OK`. **Engine-context is achievable via DLL injection.**
+  The probe hooks (detours on `lua_newstate`/`luaL_openlibs`/
+  `luaL_loadbuffer`/`lua_pcall`/`lua_setfenv`, read-only globals inspection)
+  remain as recon tooling; they are not the production path.
+- **To build (the production shell):**
+  - **Production trampoline (inject at pcall#1).** On the first `lua_pcall`,
+    inject a trampoline chunk that replicates `patch_999`'s mechanism:
+    `io.open` the staged DML (our `mod_loader` equivalent) → `loadstring` →
+    run. The DML runs in engine-context (sees the real `io`/`loadstring`/
+    `require`), captures them into the `Mods` table **before the engine
+    removes them (~pcall#10)**, then defers `CLASS`/`Managers`-dependent work
+    (hooks `Main.init`/`StateRequireScripts`, runs after the game state
+    machine is up — same model as the existing `mod_loader`).
+  - **Status reporting** — report discovery results, DML/DMF/mod load, errors
+    to the launcher (via the file-backed status channel).
 - **Bootstrap-only C helpers.** C functions are acceptable only at the
   bootstrap boundary (crossing from DLL injection into the Lua lifecycle) or
   for runtime-private plumbing (status/log) — never as DML/DMF/mod-visible
@@ -182,15 +153,16 @@ initial bootstrap: its trampoline reads `./mod_loader` from disk and executes it
 with `loadstring`. After that, `mod_loader` runs inside the game's normal Lua
 startup path and captures the engine-visible Lua facilities that DML/DMF expect.
 
-Magos preserves that model by injecting a runtime patch that reaches an
-equivalent point in the game's Lua lifecycle, then loading the staged DML/DMF
-entry point with equivalent semantics. The implementation may achieve this by
-re-entering the engine's Lua loading path, by capturing/wrapping engine-provided
-Lua facilities, or by another mechanism that is behaviorally equivalent. If the
-runtime cannot achieve engine-context execution, the project's core premise
-fails — there is no acceptable fallback, because reimplementing engine Lua
-facilities would reintroduce the very fragility (mods breaking on
-un-reimplemented features; constant update churn) Magos exists to eliminate.
+**This mechanism is proven.** A chunk injected at `lua_pcall` #1 (the first
+script execution after `luaL_openlibs`, while `io`/`loadstring` are still in
+the globals) sees the engine's real facilities and can `io.open` + `loadstring`
+staged Lua — validated end-to-end in the live game (trampoline prototype loaded
++ ran staged Lua successfully). The engine removes `io`/`loadstring` by
+~pcall#10, so the trampoline runs in the pcall#1 → pcall#10 window and captures
+them first. There is no `setfenv` sandbox (chunk env = globals table). The DML
+then runs in engine-context, captures `io`/`loadstring`/`require` into the
+`Mods` table, and defers `CLASS`/`Managers` work (same model as the existing
+`mod_loader`).
 
 ### `Mods.original_require`
 
