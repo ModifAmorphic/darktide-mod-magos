@@ -26,6 +26,9 @@ offline-testable against a binary fixture. Compiled to a C-ABI staticlib.
 
 ### `shell/` — C live-game shell (the injected DLL)  *(built; live-validated)*
 
+This is **`magos_shell.dll`** — the C shell linked with the Rust **discovery**
+staticlib (`libmagos_discovery.a`) + MinHook, into one PE DLL.
+
 The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
 (via the seam) → installs the `lua_newstate` hook → loads the staged Enginseer
 (aka the Mod Loader) in engine context → reports status.
@@ -90,6 +93,9 @@ The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
   compatibility section below.
 
 ### `launcher/` — C injector + session host  *(injection built; session-host mode planned)*
+
+This is **`magos_launcher.exe`** — the C injector (`runtime/launcher/`), the
+host process Darktide Magos invokes.
 
 The host process Darktide Magos invokes. `CreateProcess(Darktide.exe,
 SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
