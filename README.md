@@ -34,15 +34,17 @@ How it all works is documented under [`docs/`](docs/) — start with
 
 ## Building
 
-From a Linux box with Rust + MinGW installed:
+From a Linux box with Rust + MinGW installed. The build files live under
+`runtime/`, so commands run from there:
 
 ```sh
+cd runtime
 make build    # cross-compile the DLL + launcher for Windows
 make check    # verify the DLL
 make test     # run the C + Rust tests
 ```
 
-`make build` produces two artifacts at the repo root:
+`make build` produces two artifacts in `runtime/bin/`:
 
 - **`magos_launcher.exe`** — the C injector (`runtime/launcher/`). The host
   process Darktide Magos invokes: `CreateProcess(Darktide.exe, SUSPENDED)` →
