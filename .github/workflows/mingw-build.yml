@@ -23,10 +23,10 @@ jobs:
         with:
           targets: x86_64-pc-windows-gnu
 
-      - name: Install MinGW-w64 cross-compiler + wine
+      - name: Install MinGW-w64 cross-compiler + wine + LuaJIT
         run: |
           sudo apt-get update
-          sudo apt-get install -y mingw-w64 wine64
+          sudo apt-get install -y mingw-w64 wine64 luajit
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -51,6 +51,9 @@ jobs:
 
       - name: Run C unit tests (via wine)
         run: make c-tests
+
+      - name: Run Enginseer Lua tests (LuaJIT)
+        run: make enginseer-test
 
       - name: Run host-side discovery tests (cargo test)
         env:
