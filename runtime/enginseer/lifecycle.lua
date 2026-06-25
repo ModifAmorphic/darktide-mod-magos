@@ -13,9 +13,11 @@
 -- The bootstrap hook (Mods.install_lifecycle_hooks) mirrors DML's
 -- init_mod_framework: a deferred hook on
 -- CLASS.BootStateRequireGameScripts._state_update that runs AFTER the original
--- (which requires game scripts -> StateGame created), then loads DMF, assigns
--- Managers.mod, and installs the per-frame + state-change hooks. DMF then reads
--- mod_load_order.txt and loads mods.
+-- (which requires game scripts -> StateGame created), then loads the Enginseer's
+-- mod_manager (the rite — our driver), assigns Managers.mod (whose :init() reads
+-- mod_load_order, prepends "dmf", and loads DMF + every user mod), and installs
+-- the per-frame + state-change hooks. DMF loads as the first mod inside the
+-- rite; it is NOT loaded here directly.
 --
 -- LIVE-VALIDATE: that BootStateRequireGameScripts._state_update resolves + fires
 -- at the right boot point and that the DMF load succeeds.
@@ -96,16 +98,21 @@ Mods.install_lifecycle_hooks = function()
             local state_update_result = state_update_func(self, ...)
 
             -- Everything below is Enginseer's bootstrap. Guard it so a failure
-            -- (missing/mis-pathed DMF, ModManager:new() raising, an inner hook
-            -- not resolving) degrades cleanly to vanilla + a log line instead
+            -- (missing/mis-pathed mod_manager, ModManager:new() raising, an inner
+            -- hook not resolving) degrades cleanly to vanilla + a log line instead
             -- of propagating through the engine's _state_update and crashing
             -- the game at boot. Always return the original's result regardless.
             local ok, err = pcall(function()
-                -- Load DMF's ModManager and assign Managers.mod. DMF then reads
-                -- mod_load_order.txt and loads mods.
-                -- LIVE-VALIDATE: the dmf_loader path resolves in our staging
-                -- layout and returns DMF's ModManager class.
-                local ModManager = Mods.file.dofile("dmf/scripts/mods/dmf/dmf_loader")
+                -- Load + run the rite (the Enginseer's mod loader).
+                -- mod_manager.lua is loaded via Mods.file.dofile (rooted at
+                -- MAGOS_STAGING), NOT the entry's bootstrap_load, because it
+                -- calls class("ModManager") — which only exists after the class
+                -- patch installs at boot (the require-wrap), not at the entry's
+                -- pcall#1. :init() reads mod_load_order, prepends "dmf", and
+                -- loads DMF + every user mod synchronously; _state -> "done".
+                -- LIVE-VALIDATE: the full rite end-to-end (DMF init loads all
+                -- its modules; user mods' run/init work) against the real engine.
+                local ModManager = Mods.file.dofile("mod_manager")
                 Managers = Managers or {}
                 Managers.mod = Managers.mod or ModManager:new()
 

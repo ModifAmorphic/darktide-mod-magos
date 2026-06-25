@@ -91,9 +91,9 @@ return function(runner)
         runner.assert_eq(1, #sb.Mods._deferred_hooks, "must stay queued pre-target")
     end)
 
-    -- Full bootstrap simulation: stand up the boot target + DMF + the inner
-    -- hook targets, then verify the bootstrap hook installs, runs, assigns
-    -- Managers.mod, and installs the StateGame.update + GameStateMachine
+    -- Full bootstrap simulation: stand up the boot target + the rite driver +
+    -- the inner hook targets, then verify the bootstrap hook installs, runs,
+    -- assigns Managers.mod, and installs the StateGame.update / GameStateMachine
     -- _change_state inner hooks.
     runner.register("lifecycle: bootstrap installs + runs original first + assigns Managers.mod", function()
         local sb = setup()
@@ -106,8 +106,8 @@ return function(runner)
             end,
         }
         sb.Mods.file.dofile = function(path)
-            runner.assert_eq("dmf/scripts/mods/dmf/dmf_loader", path,
-                "bootstrap must load DMF via Mods.file.dofile('dmf/scripts/mods/dmf/dmf_loader')")
+            runner.assert_eq("mod_manager", path,
+                "bootstrap must load the rite via Mods.file.dofile('mod_manager')")
             return FakeModManager
         end
 
