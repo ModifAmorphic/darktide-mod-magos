@@ -107,6 +107,25 @@ return function(runner)
         runner.assert_eq(false, result, "missing module should abort and return false")
     end)
 
+    -- #6: double-load must short-circuit before Mods.original_require is
+    -- recaptured (which would clobber the saved original with the now-wrapped
+    -- require -> infinite recursion on the next require).
+    runner.register("entry: double-load is a no-op (original_require not clobbered)", function()
+        local sb = build()
+        mock.load_module("enginseer", sb)()
+        runner.assert_truthy(sb.Mods._v2_loaded, "first load sets _v2_loaded")
+        local saved_require = sb.Mods.original_require
+        runner.assert_truthy(saved_require)
+
+        -- Run the entry a second time. global require is now wrapped; without
+        -- the guard, `Mods.original_require = require` would capture the wrapper.
+        local ok, result = pcall(function() return mock.load_module("enginseer", sb)() end)
+        runner.assert_truthy(ok, "second load must not error: " .. tostring(result))
+        runner.assert_eq(true, result, "second load returns true (short-circuit)")
+        runner.assert_eq(saved_require, sb.Mods.original_require,
+            "second load must NOT clobber original_require with the wrapped require")
+    end)
+
     -- End-to-end deferred bridge: simulate main.lua require'ing class.lua and a
     -- later materialization of the boot target. Verify the class patch fires
     -- and the bootstrap hook installs through the require-wrap's flush.

@@ -20,6 +20,12 @@
 -- appears when main.lua requires foundation/utilities/class.lua), so the
 -- require-wrap fires the class patch before any engine class() call.
 
+-- 0. Idempotency guard. The C trampoline is one-shot, but if this entry ever
+-- re-ran after global require is wrapped, the `Mods.original_require = require`
+-- below would capture the WRAPPED function and clobber the saved original ->
+-- infinite recursion on the next require. Bail if we've already loaded.
+if Mods and Mods._v2_loaded then return true end
+
 -- 1. Capture the engine's real facilities (present at pcall#1).
 Mods = Mods or {}
 Mods.original_require = require
@@ -98,4 +104,5 @@ Mods.install_lifecycle_hooks()
 -- 5. Done. The class patch and bootstrap hook fire later, deferred via the
 -- require-wrap as main.lua executes.
 __print("[Enginseer] v2 loaded at pcall#1")
+Mods._v2_loaded = true
 return true
