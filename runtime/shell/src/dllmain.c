@@ -81,7 +81,7 @@
  * BEFORE calling g_orig_pcall (so it runs in the io-present window), inject a
  * trampoline chunk that does exactly what patch_999's trampoline does:
  *
- *   local f, err = io.open("<TEST_PATH>", "r")
+ *   local f, err = io.open("<ENTRY_PATH>", "r")
  *   if not f then return "FAIL io.open: " .. tostring(err) end
  *   local data = f:read("*all"); f:close()
  *   local fn, lerr = loadstring(data)
@@ -90,10 +90,11 @@
  *   if not ok then return "FAIL run: " .. tostring(rerr) end
  *   return "OK"
  *
- * <TEST_PATH> is baked in from the MAGOS_TRAMPOLINE_TEST env var (a Proton-
- * resolvable path the user confirms io.open accepts — typically a Z:\ form
- * under Proton). The C side runs the chunk (luaL_loadbuffer + lua_pcall(0,1,0)),
- * reads the returned status string via lua_tolstring, and logs one line:
+ * PRODUCTION PATH: <ENTRY_PATH> = <DARKTIDE_MOD_STAGING>\dml.lua. The staging
+ * dir is read from DARKTIDE_MOD_STAGING (the launcher/mod-manager sets it; for
+ * now the user sets it in launch.bat). The C side joins staging + dml.lua, bakes
+ * the path into the chunk (luaL_loadbuffer + lua_pcall(0,1,0)), reads the
+ * returned status string via lua_tolstring, and logs one line:
  *
  *   [trampoline] @ pcall#1: OK                       <- engine-context PROVEN
  *   [trampoline] @ pcall#1: FAIL io.open: <err>      <- io.open issue (path?)
@@ -136,9 +137,9 @@
  *
  * Out of scope: DMF bootstrap, multi-shot injection, mod-manager UI. Logging
  * goes to OutputDebugString + a log file (MAGOS_LOG_FILE env, or
- * magos_spike.log beside the game exe). The trampoline test-file path comes
- * from the MAGOS_TRAMPOLINE_TEST env var; if unset, the trampoline is SKIPPED
- * (logged) and the build degrades to the Phase-3 probes.
+ * magos_spike.log beside the game exe). The trampoline entry path comes from
+ * DARKTIDE_MOD_STAGING + dml.lua; if the env var is unset, the trampoline is
+ * SKIPPED (logged) and the build degrades to the Phase-3 recon probes.
  */
 #include <windows.h>
 #include <psapi.h>
@@ -209,12 +210,13 @@ static volatile int  g_managers_logged = 0;  /* one-shot: Managers nil→non-nil
 static volatile int  g_both_logged = 0;      /* one-shot: both non-nil at the same call */
 static volatile int  g_chunk_done = 0;       /* one-shot: chunk-injection test performed */
 
-/* ---- Phase-4 trampoline prototype state ----
- * The staged chunk (built once at worker startup from MAGOS_TRAMPOLINE_TEST)
- * and the one-shot guard that fires it at pcall#1. Lua is single-threaded on
- * the engine's main thread, so these are only touched from that thread; the
- * guard is Interlocked anyway as the cheap Win32 one-shot idiom. */
-#define TRAMPOLINE_TEST_ENV "MAGOS_TRAMPOLINE_TEST"
+/* ---- Production trampoline state ----
+ * The staged chunk (built once at worker startup from DARKTIDE_MOD_STAGING +
+ * dml.lua) and the one-shot guard that fires it at pcall#1. Lua is single-
+ * threaded on the engine's main thread, so these are only touched from that
+ * thread; the guard is Interlocked anyway as the cheap Win32 one-shot idiom. */
+#define MOD_STAGING_ENV    "DARKTIDE_MOD_STAGING"  /* staging dir (launcher/mod-manager sets it) */
+#define DML_ENTRY_FILENAME "dml.lua"               /* the DML bootstrap entry (patch_999's mod_loader analogue) */
 static char            g_trampoline_chunk[4096];   /* NUL-terminated chunk; len 0 => not staged */
 static size_t          g_trampoline_chunk_len = 0;
 static volatile LONG   g_trampoline_done = 0;      /* one-shot: trampoline fired at pcall#1 */
@@ -553,34 +555,47 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
     g_in_probe = 0;
 }
 
-/* ---- Phase-4 trampoline prototype ----
- * See the file header's Phase-4 note. The staging step reads the test-file
- * path from MAGOS_TRAMPOLINE_TEST and builds the chunk once (worker startup);
- * the run step executes it one-shot at pcall#1, BEFORE g_orig_pcall, so it
- * runs in the io/loadstring-present window. */
+/* ---- Production trampoline ----
+ * See the file header's Phase-4 + production notes. The staging step reads the
+ * staging dir from DARKTIDE_MOD_STAGING, joins it with the DML entry filename
+ * (dml.lua), and builds the chunk once (worker startup); the run step executes
+ * it one-shot at pcall#1, BEFORE g_orig_pcall, so it runs in the io/loadstring-
+ * present window (the engine strips io/loadstring from globals between pcall #1
+ * and #10). If DARKTIDE_MOD_STAGING is unset, staging logs why and the run step
+ * logs SKIPPED at pcall#1 — the build degrades to the recon probes. */
 
 /*
- * Read MAGOS_TRAMPOLINE_TEST and build g_trampoline_chunk. On any failure (var
- * unset, too long, escape overflow) the chunk len stays 0 and trampoline_run
- * will log SKIPPED. Idempotent: called once from the worker.
+ * Read DARKTIDE_MOD_STAGING, join it with dml.lua, and build g_trampoline_chunk.
+ * On any failure (var unset/too long, join overflow, escape/overflow) the chunk
+ * len stays 0 and trampoline_run will log SKIPPED. Idempotent: called once from
+ * the worker.
  */
 static void trampoline_stage_chunk(void) {
-    char path[1024];
-    DWORD got = GetEnvironmentVariableA(TRAMPOLINE_TEST_ENV, path, sizeof(path));
+    char staging[1024];
+    DWORD got = GetEnvironmentVariableA(MOD_STAGING_ENV, staging, sizeof(staging));
     if (got == 0) {
         DWORD e = GetLastError();
         if (e == ERROR_ENVVAR_NOT_FOUND) {
             magos_log("[trampoline] %s not set; trampoline will be SKIPPED at pcall#1\n",
-                      TRAMPOLINE_TEST_ENV);
+                      MOD_STAGING_ENV);
         } else {
             magos_log("[trampoline] %s read error (lu=%lu); trampoline will be SKIPPED\n",
-                      TRAMPOLINE_TEST_ENV, e);
+                      MOD_STAGING_ENV, e);
         }
         return;
     }
-    if (got >= sizeof(path)) {
+    if (got >= sizeof(staging)) {
         magos_log("[trampoline] %s too long (%lu chars, max %zu); trampoline will be SKIPPED\n",
-                  TRAMPOLINE_TEST_ENV, got, sizeof(path) - 1);
+                  MOD_STAGING_ENV, got, sizeof(staging) - 1);
+        return;
+    }
+
+    /* Join <staging> + dml.lua into the production entry path (Windows-canonical:
+     * exactly one backslash separator, idempotent on a trailing separator). */
+    char path[1024];
+    int jn = trampoline_join_path(staging, DML_ENTRY_FILENAME, path, sizeof(path));
+    if (jn < 0) {
+        magos_log("[trampoline] staging+entry join failed (overflow); trampoline will be SKIPPED\n");
         return;
     }
 
@@ -590,7 +605,8 @@ static void trampoline_stage_chunk(void) {
         return;
     }
     g_trampoline_chunk_len = (size_t)n;
-    magos_log("[trampoline] %s=%s\n", TRAMPOLINE_TEST_ENV, path);
+    magos_log("[trampoline] %s=%s\n", MOD_STAGING_ENV, staging);
+    magos_log("[trampoline] entry path=%s\n", path);
     magos_log("[trampoline] chunk staged (%zu bytes); will run one-shot at pcall#1 (before orig pcall)\n",
               g_trampoline_chunk_len);
 }
@@ -604,7 +620,7 @@ static void trampoline_stage_chunk(void) {
  */
 static void trampoline_run(lua_State *L) {
     g_in_probe = 1;
-    magos_log("[trampoline] --- trampoline prototype @ pcall#1 ---\n");
+    magos_log("[trampoline] --- production trampoline @ pcall#1 ---\n");
 
     if (!g_orig_pcall || !g_lua_gettop || !g_lua_settop || !g_lua_tolstring) {
         magos_log("[trampoline] @ pcall#1: SKIPPED (C-API not resolved)\n");
@@ -932,11 +948,12 @@ static DWORD WINAPI worker(LPVOID arg) {
               "(unknown C++ sig) — luaL_loadbuffer (its known-sig callee) is the proxy.\n",
               tbl.lua_resource_bytecode);
 
-    /* Phase-4 trampoline prototype: stage the chunk from MAGOS_TRAMPOLINE_TEST
+    /* Production trampoline: stage the chunk from DARKTIDE_MOD_STAGING + dml.lua
      * now so it is ready to fire one-shot at pcall#1 (the hooks above are armed
      * and the engine's first lua_pcall is imminent once the main thread resumes). */
-    magos_log("[probe] === Phase-4 trampoline prototype ===\n");
-    magos_log("[probe] fires one-shot at pcall#1 (before orig pcall); reads MAGOS_TRAMPOLINE_TEST\n");
+    magos_log("[probe] === production trampoline ===\n");
+    magos_log("[probe] fires one-shot at pcall#1 (before orig pcall); reads %s + %s\n",
+              MOD_STAGING_ENV, DML_ENTRY_FILENAME);
     trampoline_stage_chunk();
 
     /* Production hook-ready handshake: signal the launcher that the hooks are

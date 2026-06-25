@@ -1,12 +1,12 @@
 /*
- * trampoline.h — pure helpers for the Phase-4 trampoline prototype.
+ * trampoline.h — pure helpers for the runtime trampoline.
  *
  * The trampoline chunk (io.open a staged file -> read -> loadstring -> run) is
- * the definitive engine-context mechanism test (see dllmain.c's Phase-4 note).
- * These helpers build that chunk from a test-file path, escaping the path for a
- * Lua double-quoted string. Kept separate from the hook-heavy dllmain.c so the
- * pure logic is unit-testable (compiled directly into the C test exes, like
- * launcher.c's testable seams).
+ * the proven engine-context mechanism (see dllmain.c's Phase-4 + production
+ * notes). The production path joins DARKTIDE_MOD_STAGING + dml.lua into the
+ * entry-file path; trampoline_build_chunk bakes that path into the chunk. Kept
+ * separate from the hook-heavy dllmain.c so the pure logic is unit-testable
+ * (compiled directly into the C test exes, like launcher.c's testable seams).
  */
 #ifndef MAGOS_TRAMPOLINE_H
 #define MAGOS_TRAMPOLINE_H
@@ -16,6 +16,18 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/*
+ * Join a directory `dir` and a filename `name` into one Windows-canonical path
+ * with exactly one backslash separator: if `dir` already ends in a backslash or
+ * forward slash no separator is added, otherwise a single backslash is inserted.
+ * (Backslash is the documented canonical separator — works on native Windows
+ * and Proton alike.) Writes up to (out_cap - 1) chars + NUL to `out`. Returns
+ * the path length (excluding NUL), or -1 on a NULL arg, zero cap, empty `dir`,
+ * empty `name`, or overflow. Pure and side-effect-free.
+ */
+int trampoline_join_path(const char *dir, const char *name,
+                         char *out, size_t out_cap);
 
 /*
  * Escape `path` (length `path_len`) into a Lua double-quoted-string-safe form:

@@ -108,6 +108,68 @@ void test_build_chunk_round_trips_long_path(void) {
     ASSERT_NOTNULL(strstr(out, "Z:\\\\very\\\\deep\\\\path"));
 }
 
+/* ---- trampoline_join_path ---- */
+
+void test_join_basic_no_trailing_sep(void) {
+    char out[64];
+    int n = trampoline_join_path("Z:\\staging", "dml.lua", out, sizeof(out));
+    ASSERT_EQ(18, n);  /* "Z:\staging"(10) + "\"(1) + "dml.lua"(7) */
+    ASSERT_STREQ("Z:\\staging\\dml.lua", out);  /* one backslash inserted */
+}
+
+void test_join_trailing_backslash_idempotent(void) {
+    /* dir already ends in backslash -> no double separator. */
+    char out[64];
+    int n = trampoline_join_path("Z:\\staging\\", "dml.lua", out, sizeof(out));
+    ASSERT_EQ(18, n);  /* "Z:\staging\"(11) + "dml.lua"(7), no extra sep */
+    ASSERT_STREQ("Z:\\staging\\dml.lua", out);
+}
+
+void test_join_trailing_fwdslash_accepted(void) {
+    /* A trailing forward slash is tolerated as an already-present separator. */
+    char out[64];
+    int n = trampoline_join_path("Z:/staging/", "dml.lua", out, sizeof(out));
+    ASSERT_EQ(18, n);  /* "Z:/staging/"(11) + "dml.lua"(7), no extra sep */
+    ASSERT_STREQ("Z:/staging/dml.lua", out);
+}
+
+void test_join_empty_dir_rejected(void) {
+    char out[8];
+    ASSERT_EQ(-1, trampoline_join_path("", "dml.lua", out, sizeof(out)));
+}
+
+void test_join_empty_name_rejected(void) {
+    char out[8];
+    ASSERT_EQ(-1, trampoline_join_path("Z:\\staging", "", out, sizeof(out)));
+}
+
+void test_join_null_args(void) {
+    char out[8];
+    ASSERT_EQ(-1, trampoline_join_path(NULL, "dml.lua", out, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_join_path("Z:\\staging", NULL, out, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_join_path("Z:\\staging", "dml.lua", NULL, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_join_path("Z:\\staging", "dml.lua", out, 0));
+}
+
+void test_join_overflow_returns_neg1(void) {
+    /* need = "Z:\staging"(10) + "\"(1) + "dml.lua"(7) = 18; +NUL = 19. cap 18 rejects. */
+    char out[18];
+    int n = trampoline_join_path("Z:\\staging", "dml.lua", out, sizeof(out));
+    ASSERT_EQ(-1, n);
+}
+
+void test_join_feeds_build_chunk(void) {
+    /* End-to-end: join -> build_chunk must bake the joined, escaped path. */
+    char path[128];
+    int jn = trampoline_join_path("Z:\\staging", "dml.lua", path, sizeof(path));
+    ASSERT_TRUE(jn > 0);
+
+    char chunk[1024];
+    int cn = trampoline_build_chunk(path, chunk, sizeof(chunk));
+    ASSERT_TRUE(cn > 0);
+    ASSERT_NOTNULL(strstr(chunk, "io.open(\"Z:\\\\staging\\\\dml.lua\", \"r\")"));
+}
+
 int main(void) {
     test_register("escape_plain_path", test_escape_plain_path);
     test_register("escape_backslashes_doubled", test_escape_backslashes_doubled);
@@ -121,5 +183,13 @@ int main(void) {
     test_register("build_chunk_null_args", test_build_chunk_null_args);
     test_register("build_chunk_overflow", test_build_chunk_overflow);
     test_register("build_chunk_round_trips_long_path", test_build_chunk_round_trips_long_path);
+    test_register("join_basic_no_trailing_sep", test_join_basic_no_trailing_sep);
+    test_register("join_trailing_backslash_idempotent", test_join_trailing_backslash_idempotent);
+    test_register("join_trailing_fwdslash_accepted", test_join_trailing_fwdslash_accepted);
+    test_register("join_empty_dir_rejected", test_join_empty_dir_rejected);
+    test_register("join_empty_name_rejected", test_join_empty_name_rejected);
+    test_register("join_null_args", test_join_null_args);
+    test_register("join_overflow_returns_neg1", test_join_overflow_returns_neg1);
+    test_register("join_feeds_build_chunk", test_join_feeds_build_chunk);
     return test_summary();
 }

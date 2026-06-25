@@ -40,6 +40,7 @@ runtime/            Component A — the injected modding runtime + injector
   discovery/        Rust crate: LuaJIT discovery engine (pure library, C-ABI staticlib)
   shell/            C shell — the injected DLL (DllMain, MinHook, lua_newstate hook)
   launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
+  dml/              minimal Darktide Magos Loader (dml.lua) — user-staged DML entry
   tests/            C unit tests (run via wine)
 mod-manager/        Component B — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference

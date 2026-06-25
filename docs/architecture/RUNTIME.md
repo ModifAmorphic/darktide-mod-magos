@@ -49,15 +49,23 @@ staged DML/DMF entry point in engine context → reports status.
   The probe hooks (detours on `lua_newstate`/`luaL_openlibs`/
   `luaL_loadbuffer`/`lua_pcall`/`lua_setfenv`, read-only globals inspection)
   remain as recon tooling; they are not the production path.
+- **Built (production trampoline + minimal DML).** The production trampoline
+  is wired in `dllmain.c`: on the first `lua_pcall` (one-shot, before the
+  engine's pcall) it injects the proven Phase-4 chunk — `io.open` the staged
+  entry (`<DARKTIDE_MOD_STAGING>\dml.lua`) → read → `loadstring` → run. The
+  staging dir is read from `DARKTIDE_MOD_STAGING` (the launcher/mod-manager
+  sets it); if unset the trampoline is SKIPPED (logged) and the build degrades
+  to the recon probes. The minimal DML (`runtime/dml/dml.lua`, the user-staged
+  entry) runs in engine-context at pcall#1 and captures the engine's real
+  `io`/`loadstring`/`require`/`print` into the `Mods` table **before the engine
+  removes `io`/`loadstring` (~pcall#10)**, then logs + returns. The chunk
+  template and safety discipline (one-shot, stack-clean, `g_in_probe` guard)
+  carry over unchanged from the Phase-4 prototype that validated the mechanism.
 - **To build (the production shell):**
-  - **Production trampoline (inject at pcall#1).** On the first `lua_pcall`,
-    inject a trampoline chunk that replicates `patch_999`'s mechanism:
-    `io.open` the staged DML (our `mod_loader` equivalent) → `loadstring` →
-    run. The DML runs in engine-context (sees the real `io`/`loadstring`/
-    `require`), captures them into the `Mods` table **before the engine
-    removes them (~pcall#10)**, then defers `CLASS`/`Managers`-dependent work
-    (hooks `Main.init`/`StateRequireScripts`, runs after the game state
-    machine is up — same model as the existing `mod_loader`).
+  - **DML deferred work.** The minimal DML captures facilities but does not yet
+    defer `CLASS`/`Managers`-dependent work (hooks `Main.init`/
+    `StateRequireScripts`, runs after the game state machine is up — same model
+    as the existing `mod_loader`), load DMF, or run mods.
   - **Status reporting** — report discovery results, DML/DMF/mod load, errors
     to the launcher (via the file-backed status channel).
 - **Bootstrap-only C helpers.** C functions are acceptable only at the
