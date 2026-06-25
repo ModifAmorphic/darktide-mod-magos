@@ -40,7 +40,7 @@ runtime/            Component A — the injected modding runtime + injector
   discovery/        Rust crate: LuaJIT discovery engine (pure library, C-ABI staticlib)
   shell/            C shell — the injected DLL (DllMain, MinHook, lua_newstate hook)
   launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
-  dml/              minimal Darktide Magos Loader (dml.lua) — user-staged DML entry
+  enginseer/        Enginseer (aka the Mod Loader) — user-staged loader entry (enginseer.lua)
   tests/            C unit tests (run via wine)
 mod-manager/        Component B — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference
@@ -88,6 +88,24 @@ make test     # C tests (via wine) + Rust tests
 - **Conventional Commits** (`type(scope): subject`); commit freely on feature
   branches. Branch + PR flow; no unreviewed merges to `main`.
 - Don't commit secrets, the game binary, or anything under `_local/`.
+
+## Naming convention
+
+User-facing names — anything a user sees, hears, or interacts with (log
+prefixes, component names, UI text) — use **Warhammer 40k / pseudo-gothic**
+naming, fitting the Adeptus Mechanicus / Tech-Priest theme of "Magos."
+Internal technical names (Rust crates, C modules, functions) keep plain
+descriptive names.
+
+The boundary is the **Enginseer** (aka the Mod Loader): everything before
+it (injection, discovery, hooks, the shell, the launcher) is internal;
+everything from the Enginseer onward (the loader itself, log entries users
+see, mod management) is user-facing.
+
+- **Folders/filenames:** lowercase (`runtime/enginseer/enginseer.lua`).
+- **Prose/docs:** proper case ("Enginseer"). First mention in a doc:
+  "Enginseer (aka the Mod Loader)"; thereafter just "Enginseer."
+- Don't obscure — names should be evocative but accessible, not cryptic.
 
 ## Before opening a PR — keep docs current
 

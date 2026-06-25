@@ -3,7 +3,7 @@
  *
  * The trampoline chunk (io.open a staged file -> read -> loadstring -> run) is
  * the proven engine-context mechanism (see dllmain.c's Phase-4 + production
- * notes). The production path joins DARKTIDE_MOD_STAGING + dml.lua into the
+ * notes). The production path joins DARKTIDE_MOD_STAGING + enginseer.lua into the
  * entry-file path; trampoline_build_chunk bakes that path into the chunk. Kept
  * separate from the hook-heavy dllmain.c so the pure logic is unit-testable
  * (compiled directly into the C test exes, like launcher.c's testable seams).

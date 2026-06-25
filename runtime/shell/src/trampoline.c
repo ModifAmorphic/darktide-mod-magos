@@ -4,7 +4,7 @@
  * Implementation of the helpers declared in trampoline.h. The trampoline chunk
  * (io.open a staged file -> read -> loadstring -> run) is the proven engine-
  * context mechanism (see dllmain.c's Phase-4 + production notes). The production
- * path joins DARKTIDE_MOD_STAGING + dml.lua and feeds it to trampoline_build_
+ * path joins DARKTIDE_MOD_STAGING + enginseer.lua and feeds it to trampoline_build_
  * chunk; the chunk template itself is unchanged from the Phase-4 prototype that
  * validated the mechanism live. This file has NO Windows, Lua, or hook
  * dependencies — only string ops — so it compiles directly into both the shell

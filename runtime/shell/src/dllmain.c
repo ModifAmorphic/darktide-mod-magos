@@ -90,9 +90,9 @@
  *   if not ok then return "FAIL run: " .. tostring(rerr) end
  *   return "OK"
  *
- * PRODUCTION PATH: <ENTRY_PATH> = <DARKTIDE_MOD_STAGING>\dml.lua. The staging
+ * PRODUCTION PATH: <ENTRY_PATH> = <DARKTIDE_MOD_STAGING>\enginseer.lua. The staging
  * dir is read from DARKTIDE_MOD_STAGING (the launcher/mod-manager sets it; for
- * now the user sets it in launch.bat). The C side joins staging + dml.lua, bakes
+ * now the user sets it in launch.bat). The C side joins staging + enginseer.lua, bakes
  * the path into the chunk (luaL_loadbuffer + lua_pcall(0,1,0)), reads the
  * returned status string via lua_tolstring, and logs one line:
  *
@@ -138,7 +138,7 @@
  * Out of scope: DMF bootstrap, multi-shot injection, mod-manager UI. Logging
  * goes to OutputDebugString + a log file (MAGOS_LOG_FILE env, or
  * magos_spike.log beside the game exe). The trampoline entry path comes from
- * DARKTIDE_MOD_STAGING + dml.lua; if the env var is unset, the trampoline is
+ * DARKTIDE_MOD_STAGING + enginseer.lua; if the env var is unset, the trampoline is
  * SKIPPED (logged) and the build degrades to the Phase-3 recon probes.
  */
 #include <windows.h>
@@ -212,11 +212,11 @@ static volatile int  g_chunk_done = 0;       /* one-shot: chunk-injection test p
 
 /* ---- Production trampoline state ----
  * The staged chunk (built once at worker startup from DARKTIDE_MOD_STAGING +
- * dml.lua) and the one-shot guard that fires it at pcall#1. Lua is single-
+ * enginseer.lua) and the one-shot guard that fires it at pcall#1. Lua is single-
  * threaded on the engine's main thread, so these are only touched from that
  * thread; the guard is Interlocked anyway as the cheap Win32 one-shot idiom. */
 #define MOD_STAGING_ENV    "DARKTIDE_MOD_STAGING"  /* staging dir (launcher/mod-manager sets it) */
-#define DML_ENTRY_FILENAME "dml.lua"               /* the DML bootstrap entry (patch_999's mod_loader analogue) */
+#define ENGINSEER_ENTRY_FILENAME "enginseer.lua"               /* the Enginseer bootstrap entry (patch_999's mod_loader analogue) */
 static char            g_trampoline_chunk[4096];   /* NUL-terminated chunk; len 0 => not staged */
 static size_t          g_trampoline_chunk_len = 0;
 static volatile LONG   g_trampoline_done = 0;      /* one-shot: trampoline fired at pcall#1 */
@@ -557,15 +557,15 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
 
 /* ---- Production trampoline ----
  * See the file header's Phase-4 + production notes. The staging step reads the
- * staging dir from DARKTIDE_MOD_STAGING, joins it with the DML entry filename
- * (dml.lua), and builds the chunk once (worker startup); the run step executes
+ * staging dir from DARKTIDE_MOD_STAGING, joins it with the Enginseer entry filename
+ * (enginseer.lua), and builds the chunk once (worker startup); the run step executes
  * it one-shot at pcall#1, BEFORE g_orig_pcall, so it runs in the io/loadstring-
  * present window (the engine strips io/loadstring from globals between pcall #1
  * and #10). If DARKTIDE_MOD_STAGING is unset, staging logs why and the run step
  * logs SKIPPED at pcall#1 — the build degrades to the recon probes. */
 
 /*
- * Read DARKTIDE_MOD_STAGING, join it with dml.lua, and build g_trampoline_chunk.
+ * Read DARKTIDE_MOD_STAGING, join it with enginseer.lua, and build g_trampoline_chunk.
  * On any failure (var unset/too long, join overflow, escape/overflow) the chunk
  * len stays 0 and trampoline_run will log SKIPPED. Idempotent: called once from
  * the worker.
@@ -590,10 +590,10 @@ static void trampoline_stage_chunk(void) {
         return;
     }
 
-    /* Join <staging> + dml.lua into the production entry path (Windows-canonical:
+    /* Join <staging> + enginseer.lua into the production entry path (Windows-canonical:
      * exactly one backslash separator, idempotent on a trailing separator). */
     char path[1024];
-    int jn = trampoline_join_path(staging, DML_ENTRY_FILENAME, path, sizeof(path));
+    int jn = trampoline_join_path(staging, ENGINSEER_ENTRY_FILENAME, path, sizeof(path));
     if (jn < 0) {
         magos_log("[trampoline] staging+entry join failed (overflow); trampoline will be SKIPPED\n");
         return;
@@ -948,12 +948,12 @@ static DWORD WINAPI worker(LPVOID arg) {
               "(unknown C++ sig) — luaL_loadbuffer (its known-sig callee) is the proxy.\n",
               tbl.lua_resource_bytecode);
 
-    /* Production trampoline: stage the chunk from DARKTIDE_MOD_STAGING + dml.lua
+    /* Production trampoline: stage the chunk from DARKTIDE_MOD_STAGING + enginseer.lua
      * now so it is ready to fire one-shot at pcall#1 (the hooks above are armed
      * and the engine's first lua_pcall is imminent once the main thread resumes). */
     magos_log("[probe] === production trampoline ===\n");
     magos_log("[probe] fires one-shot at pcall#1 (before orig pcall); reads %s + %s\n",
-              MOD_STAGING_ENV, DML_ENTRY_FILENAME);
+              MOD_STAGING_ENV, ENGINSEER_ENTRY_FILENAME);
     trampoline_stage_chunk();
 
     /* Production hook-ready handshake: signal the launcher that the hooks are
