@@ -224,6 +224,44 @@ return function(runner)
         runner.assert_not_nil(err, "the error must be surfaced to the caller")
     end)
 
+    -- A syntax error fails at loadstring (before the chunk runs). Under
+    -- safe_call the pcall must swallow it and return false (no raise) — and the
+    -- read handle must be closed on this path, not leaked past the throw. The
+    -- existence-probe handle is closed by handle_io; the count proves the READ
+    -- handle (opened inside read_or_execute) is also closed even when
+    -- loadstring raises.
+    runner.register("file: exec with a syntax error returns false under safe_call (no handle leak)", function()
+        local closed = 0
+        local real_io = mock.make_io({ ["/staging/broken.lua"] = "this is not valid lua (" })
+        local sb = mock.new_sandbox()
+        sb.MAGOS_MOD_PATH = "/staging"
+        sb.Mods = {
+            lua = {
+                io = {
+                    open = function(path, mode)
+                        local f = real_io.open(path, mode)
+                        if f then
+                            local orig = f.close
+                            f.close = function(self) closed = closed + 1; return orig(self) end
+                        end
+                        return f
+                    end,
+                    close = real_io.close, lines = real_io.lines,
+                },
+                loadstring = sb.loadstring,
+            },
+            file = {},
+            _staging_base = "/staging",
+        }
+        mock.run_module("file", sb)
+
+        local ok, ret = pcall(sb.Mods.file.exec, "", "broken")
+        runner.assert_truthy(ok, "exec (safe) must not raise on a syntax error: " .. tostring(ret))
+        runner.assert_eq(false, ret, "exec must return false on a syntax-error chunk (safe_call contract)")
+        runner.assert_eq(2, closed,
+            "both opened handles (probe + read) must be closed even when loadstring throws")
+    end)
+
     runner.register("file: exec_unsafe_with_return returns the chunk value", function()
         local sb = setup({ ["/staging/val.lua"] = "return 'unsafe-value'" })
         runner.assert_eq("unsafe-value", sb.Mods.file.exec_unsafe_with_return("", "val"),

@@ -103,6 +103,14 @@ Mods.file.get_file_path = get_file_path
 -- Read a file's content and either return it raw, parse it line-by-line, or
 -- loadstring+execute it. Mirrors DML's read_or_execute. The caller must have
 -- already confirmed the file exists (handle_io does that).
+--
+-- The file handle is closed BEFORE the exec (loadstring + fn(args)). The exec
+-- can raise (malformed chunk -> loadstring throws; chunk body errors at call),
+-- and in the safe_call path that raise propagates to handle_io's pcall — so
+-- closing first guarantees f:close() runs on every path rather than leaking
+-- past the throw (inherited DML bug; low impact — GC finalizes, mods load once
+-- at boot — but cheap to fix). Behavior for the success + safe-call-failure
+-- paths is unchanged.
 local function read_or_execute(file_path, args, return_type)
     local io = _lua().io
     local loadstring = _lua().loadstring
@@ -126,15 +134,16 @@ local function read_or_execute(file_path, args, return_type)
                 end
             end
         end
+        f:close()
     else
         result = f:read("*all")
+        f:close()
         if return_type == "exec_result" or return_type == "exec_boolean" then
             local fn = assert(loadstring(result, file_path))
             result = fn(args)
         end
     end
 
-    f:close()
     if return_type == "exec_boolean" then
         return true
     else
