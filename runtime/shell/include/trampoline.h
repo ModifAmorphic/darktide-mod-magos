@@ -1,12 +1,14 @@
 /*
  * trampoline.h — pure helpers for the runtime trampoline.
  *
- * The trampoline chunk (io.open a staged file -> read -> loadstring -> run) is
- * the proven engine-context mechanism (see dllmain.c's Phase-4 + production
- * notes). The production path joins DARKTIDE_MOD_STAGING + enginseer.lua into the
- * entry-file path; trampoline_build_chunk bakes that path into the chunk. Kept
- * separate from the hook-heavy dllmain.c so the pure logic is unit-testable
- * (compiled directly into the C test exes, like launcher.c's testable seams).
+ * The trampoline chunk (set MAGOS_STAGING -> io.open a staged file -> read ->
+ * loadstring -> run) is the proven engine-context mechanism (see dllmain.c's
+ * Phase-4 + production notes). The production path joins DARKTIDE_MOD_STAGING +
+ * enginseer.lua into the entry-file path; trampoline_build_chunk takes the raw
+ * staging dir AND that joined entry path, sets MAGOS_STAGING from the former,
+ * and bakes the latter into the io.open call. Kept separate from the hook-
+ * heavy dllmain.c so the pure logic is unit-testable (compiled directly into
+ * the C test exes, like launcher.c's testable seams).
  */
 #ifndef MAGOS_TRAMPOLINE_H
 #define MAGOS_TRAMPOLINE_H
@@ -42,9 +44,11 @@ int trampoline_escape_path(const char *path, size_t path_len,
                            char *out, size_t out_cap);
 
 /*
- * Build the trampoline Lua chunk with `path` baked in (escaped). The chunk:
+ * Build the trampoline Lua chunk. Sets MAGOS_STAGING from `staging` (escaped),
+ * then opens + loads + runs `entry_path` (escaped). The chunk:
  *
- *   local f, err = io.open("<path>", "r")
+ *   MAGOS_STAGING = "<staging>"
+ *   local f, err = io.open("<entry_path>", "r")
  *   if not f then return "FAIL io.open: " .. tostring(err) end
  *   local data = f:read("*all"); f:close()
  *   local fn, lerr = loadstring(data)
@@ -53,12 +57,20 @@ int trampoline_escape_path(const char *path, size_t path_len,
  *   if not ok then return "FAIL run: " .. tostring(rerr) end
  *   return "OK"
  *
+ * The MAGOS_STAGING global hands the staging dir to the Enginseer so it can
+ * later build Mods.file.dofile. (Note: in the production call site `staging`
+ * is also the prefix of `entry_path`, so the staging value appears twice in
+ * the chunk — once as the global, once inside the io.open path. That is
+ * intended.)
+ *
  * It returns a status string: "OK" if every step succeeded, else "FAIL <step>:
  * <err>" identifying which step broke. Writes the NUL-terminated chunk to `out`.
- * Returns the chunk length (excluding NUL), or -1 on a NULL arg, zero cap,
- * empty path, or overflow. Pure and side-effect-free.
+ * Returns the chunk length (excluding NUL), or -1 on a NULL arg (`staging`,
+ * `entry_path`, or `out`), zero cap, empty `staging`, empty `entry_path`, or
+ * overflow. Pure and side-effect-free.
  */
-int trampoline_build_chunk(const char *path, char *out, size_t out_cap);
+int trampoline_build_chunk(const char *staging, const char *entry_path,
+                           char *out, size_t out_cap);
 
 #ifdef __cplusplus
 }

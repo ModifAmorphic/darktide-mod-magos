@@ -79,8 +79,10 @@
  *
  * This build proves it: on the FIRST lua_pcall (pcall #1) — one-shot — and
  * BEFORE calling g_orig_pcall (so it runs in the io-present window), inject a
- * trampoline chunk that does exactly what patch_999's trampoline does:
+ * trampoline chunk that does what patch_999's trampoline does (plus setting
+ * MAGOS_STAGING first so the Enginseer can build Mods.file.dofile):
  *
+ *   MAGOS_STAGING = "<STAGING>"
  *   local f, err = io.open("<ENTRY_PATH>", "r")
  *   if not f then return "FAIL io.open: " .. tostring(err) end
  *   local data = f:read("*all"); f:close()
@@ -679,7 +681,7 @@ static void trampoline_stage_chunk(void) {
         return;
     }
 
-    int n = trampoline_build_chunk(path, g_trampoline_chunk, sizeof(g_trampoline_chunk));
+    int n = trampoline_build_chunk(staging, path, g_trampoline_chunk, sizeof(g_trampoline_chunk));
     if (n < 0) {
         magos_log("[trampoline] chunk build failed (escape/overflow); trampoline will be SKIPPED\n");
         return;
