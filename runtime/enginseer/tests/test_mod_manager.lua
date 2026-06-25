@@ -147,10 +147,23 @@ return function(runner)
         runner.assert_eq({ "dmf", "usermod" }, loaded,
             "dmf must be prepended and loaded first, then user mods in order")
         runner.assert_eq(2, #mm._mods)
+        -- DMF-compat entry shape: id/name/handle match each entry's position +
+        -- name (mirrors DML's _build_mod_table). DMF reads id/name/handle.
+        runner.assert_eq(1, mm._mods[1].id)
         runner.assert_eq("dmf", mm._mods[1].name)
-        runner.assert_eq("usermod", mm._mods[2].name)
+        runner.assert_eq("dmf", mm._mods[1].handle)
         runner.assert_eq(dmf_object, mm._mods[1].object)
+        runner.assert_eq("running", mm._mods[1].state)
+        runner.assert_eq(2, mm._mods[2].id)
+        runner.assert_eq("usermod", mm._mods[2].name)
+        runner.assert_eq("usermod", mm._mods[2].handle)
         runner.assert_eq(user_object, mm._mods[2].object)
+        runner.assert_eq("running", mm._mods[2].state)
+        -- DMF-compat top-level fields: _state reaches done; _settings defaults
+        -- (developer_mode == false is what dmf_options.lua:253 overwrites).
+        runner.assert_eq("done", mm._state)
+        runner.assert_eq(false, mm._settings.developer_mode)
+        runner.assert_eq(1, mm._settings.log_level)
     end)
 
     runner.register("mod_manager: _state transitions scanning -> loading -> done", function()
@@ -220,9 +233,15 @@ return function(runner)
         local mm = ModManager:new()
 
         runner.assert_eq("done", mm._state, "rite still reaches done despite a run() failure")
-        runner.assert_eq(2, #mm._mods, "dmf + the good mod loaded; boom skipped")
+        -- Two-phase scan: every ordered mod has an entry; boom's failed entry
+        -- is retained (object == nil) so the indices of later mods stay stable.
+        runner.assert_eq(3, #mm._mods, "all ordered mods have entries; boom's failed entry is retained")
         runner.assert_eq("dmf", mm._mods[1].name)
-        runner.assert_eq("good", mm._mods[2].name)
+        runner.assert_eq("boom", mm._mods[2].name)
+        runner.assert_nil(mm._mods[2].object, "boom's run() failed -> no object stored")
+        runner.assert_eq("not_loaded", mm._mods[2].state, "boom's entry stays 'not_loaded'")
+        runner.assert_eq("good", mm._mods[3].name)
+        runner.assert_truthy(mm._mods[3].object ~= nil, "the good mod after the failing one still stores its object")
         runner.assert_eq(1, good_init, "the good mod after the failing one still inits")
         runner.assert_truthy(#logged >= 1, "the run() failure must be logged")
         runner.assert_truthy(logged[1]:find("mod 'boom' run failed") ~= nil,
@@ -247,6 +266,9 @@ return function(runner)
         -- failed. It stays in _mods (object retained) but the rite continues.
         runner.assert_eq("done", mm._state, "rite reaches done despite an init() failure")
         runner.assert_eq(3, #mm._mods, "dmf + boom + good all stored (run succeeded)")
+        runner.assert_eq("boom", mm._mods[2].name)
+        runner.assert_truthy(mm._mods[2].object ~= nil,
+            "boom's run() succeeded -> object retained (only init failed)")
         runner.assert_eq("good", mm._mods[3].name, "the good mod after the failing one still loaded")
         runner.assert_truthy(logged[1]:find("mod 'boom' init failed") ~= nil,
             "log line must name the failing mod + 'init' phase")
@@ -267,8 +289,11 @@ return function(runner)
         local mm = ModManager:new()
 
         runner.assert_eq("done", mm._state)
-        runner.assert_eq(2, #mm._mods, "dmf + real; ghost (no .mod) skipped")
-        runner.assert_eq("real", mm._mods[2].name)
+        runner.assert_eq(3, #mm._mods, "all ordered mods have entries; ghost's entry retained (no object)")
+        runner.assert_eq("ghost", mm._mods[2].name)
+        runner.assert_nil(mm._mods[2].object, "ghost has no .mod -> no object stored")
+        runner.assert_eq("real", mm._mods[3].name)
+        runner.assert_truthy(mm._mods[3].object ~= nil, "real's object stored")
         runner.assert_truthy(logged[1]:find("mod 'ghost'") ~= nil,
             "missing .mod must be logged naming the mod")
     end)
@@ -441,11 +466,74 @@ return function(runner)
         }, seq, "DMF must init (defining new_mod) before any user mod's run() calls it")
 
         runner.assert_eq(2, #mm._mods, "dmf + usermod loaded")
+        runner.assert_eq(1, mm._mods[1].id)
         runner.assert_eq("dmf", mm._mods[1].name)
+        runner.assert_eq("dmf", mm._mods[1].handle)
+        runner.assert_eq(2, mm._mods[2].id)
         runner.assert_eq("usermod", mm._mods[2].name)
+        runner.assert_eq("usermod", mm._mods[2].handle)
         runner.assert_eq(dmf_object, mm._mods[1].object,
             "dmf's stored object is the singleton from run() (not a :new() instance)")
         runner.assert_eq(created.usermod, mm._mods[2].object,
             "usermod's stored object is the new_mod() result")
+    end)
+
+    -- DMF-compat contract pin: the EXACT read DMF performs at
+    -- dmf_mod_data.lua:39 — Managers.mod._mods[Managers.mod._mod_load_index],
+    -- then .handle/.id/.name — must resolve to the currently-loading mod's entry
+    -- for BOTH the first mod (DMF, index 1) and a second user mod (index 2).
+    -- DMF's DMFMod:init is fired synchronously: inside object:init() for DMF
+    -- (dmf_mod_manager.lua's create_mod("DMF") runs at module load) and inside
+    -- run() for user mods (their .mod calls new_mod -> create_mod -> DMFMod:new).
+    -- This is the read that indexed nil and died before the shape fix.
+    runner.register("mod_manager: DMF read — _mods[_mod_load_index].handle resolves per mod", function()
+        local seen = {}  -- phase tag -> handle read via Managers.mod
+        local sb = setup({ order = { "usermod" } })
+
+        -- Record the handle Managers.mod._mods[_mod_load_index] points at, the
+        -- same indexing DMF's DMFMod:init does. Returns a mod object whose
+        -- init() records (mirrors DMF reading during object:init()).
+        local function reading_object(tag)
+            return {
+                init = function()
+                    local m = sb.Managers.mod
+                    local entry = m._mods[m._mod_load_index]
+                    seen[tag .. ":init"] = entry and entry.handle or nil
+                end,
+            }
+        end
+
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            if local_path == "dmf" then
+                -- DMF: its DMFMod:init (fired during object:init()) reads the
+                -- entry. run() just yields the object.
+                return { run = function() return reading_object("dmf") end }
+            elseif local_path == "usermod" then
+                -- User mod: new_mod() -> DMFMod:init fires INSIDE run(), so
+                -- record there too, then yield the object (whose own init()
+                -- also records).
+                return {
+                    run = function()
+                        local m = sb.Managers.mod
+                        local entry = m._mods[m._mod_load_index]
+                        seen["usermod:run"] = entry and entry.handle or nil
+                        return reading_object("usermod")
+                    end,
+                }
+            end
+        end
+
+        local ModManager = load_driver(sb)
+        ModManager:new()
+
+        runner.assert_eq("dmf", seen["dmf:init"],
+            "DMF (index 1) must read its own handle via _mods[_mod_load_index] during init()")
+        runner.assert_eq("usermod", seen["usermod:run"],
+            "user mod (index 2) must read its own handle during run() (DMF's new_mod path)")
+        runner.assert_eq("usermod", seen["usermod:init"],
+            "user mod (index 2) must read its own handle during init()")
+        -- _mod_load_index is cleared once the rite finishes (no stale index).
+        runner.assert_nil(sb.Managers.mod._mod_load_index,
+            "_mod_load_index must be cleared after the load loop completes")
     end)
 end
