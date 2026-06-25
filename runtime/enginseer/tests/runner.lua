@@ -99,6 +99,7 @@ local test_files = {
     "test_class_patch",
     "test_require_wrap",
     "test_lifecycle",
+    "test_mod_manager",
     "test_entry",
 }
 for _, name in ipairs(test_files) do
