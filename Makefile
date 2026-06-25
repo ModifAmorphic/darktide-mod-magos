@@ -125,6 +125,18 @@ c-tests: $(TEST_EXES) $(STUB_TARGET) $(STUB_SHELL)
 test: c-tests
 	$(CARGO) test --features test-hooks -p magos-discovery
 
+# ---- Enginseer Lua tests (offline LuaJIT harness) ----
+# Runs the v2 Enginseer loader's offline test harness via luajit. Pure-Lua;
+# no game binary or wine needed. Kept out of `test` for now (new infra — wire
+# into CI once the harness is reviewed). Requires /usr/bin/luajit (LuaJIT 2.1).
+LUAJIT ?= luajit
+ENGINSER_TESTS := runtime/enginseer/tests/runner.lua
+
+.PHONY: enginseer-test
+enginseer-test:
+	@echo "=== Enginseer Lua tests (LuaJIT) ==="
+	$(LUAJIT) $(ENGINSER_TESTS)
+
 clean:
 	$(CARGO) clean
 	rm -f $(DLL) $(LAUNCHER) magos_shell.lib
