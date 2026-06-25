@@ -24,12 +24,14 @@ offline-testable against a binary fixture. Compiled to a C-ABI staticlib.
   bundle-script loader, resolved via the `stingray::lua_resource::bytecode`
   string anchor).
 
-### `shell/` — C live-game shell (the injected DLL)  *(minimal slice built; expansion planned)*
+### `shell/` — C live-game shell (the injected DLL)  *(built; live-validated)*
+
+This is **`magos_shell.dll`** — the C shell linked with the Rust **discovery**
+staticlib (`libmagos_discovery.a`) + MinHook, into one PE DLL.
 
 The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
-(via the seam) → installs the `lua_newstate` hook → **[to build]** loads the
-staged Enginseer (aka the Mod Loader) + DMF entry point in engine context →
-reports status.
+(via the seam) → installs the `lua_newstate` hook → loads the staged Enginseer
+(aka the Mod Loader) in engine context → reports status.
 
 - **Built (minimal validation slice):** discovery call, `lua_newstate` MinHook
   + `L` capture, `lua_gettop` call, hook-ready signal.
@@ -50,25 +52,40 @@ reports status.
   The probe hooks (detours on `lua_newstate`/`luaL_openlibs`/
   `luaL_loadbuffer`/`lua_pcall`/`lua_setfenv`, read-only globals inspection)
   remain as recon tooling; they are not the production path.
-- **Built (production trampoline + minimal Enginseer).** The production trampoline
+- **Built (production trampoline + Enginseer v2).** The production trampoline
   is wired in `dllmain.c`: on the first `lua_pcall` (one-shot, before the
-  engine's pcall) it injects the proven Phase-4 chunk — `io.open` the staged
-  entry (`<DARKTIDE_MOD_STAGING>\enginseer.lua`) → read → `loadstring` → run. The
-  staging dir is read from `DARKTIDE_MOD_STAGING` (the launcher/mod-manager
-  sets it); if unset the trampoline is SKIPPED (logged) and the build degrades
-  to the recon probes. The minimal Enginseer (`runtime/enginseer/enginseer.lua`, the user-staged
-  entry) runs in engine-context at pcall#1 and captures the engine's real
-  `io`/`loadstring`/`require`/`print` into the `Mods` table **before the engine
-  removes `io`/`loadstring` (~pcall#10)**, then logs + returns. The chunk
-  template and safety discipline (one-shot, stack-clean, `g_in_probe` guard)
-  carry over unchanged from the Phase-4 prototype that validated the mechanism.
+  engine's pcall) it injects the proven Phase-4 chunk — set the `MAGOS_MOD_PATH`
+  global, `io.open` the staged entry (`<DARKTIDE_MOD_PATH>/enginseer.lua`) →
+  read → `loadstring` → run. The staging dir is read from `DARKTIDE_MOD_PATH`
+  (the launcher sets it in the child env); if unset the trampoline is SKIPPED
+  (logged) and the build degrades to the recon probes. The chunk template and
+  safety discipline (one-shot, stack-clean, `g_in_probe` guard) carry over
+  unchanged from the Phase-4 prototype that validated the mechanism.
+- **Built + live-validated (Enginseer v2 — the full modding chain).** The
+  Enginseer (`runtime/enginseer/enginseer.lua`, the user-staged entry) runs in
+  engine-context at pcall#1, captures the engine's real
+  `io`/`loadstring`/`require`/`print`/`os`/`ffi` into the `Mods` table **before
+  the engine removes `io`/`loadstring` (~pcall#6)**, and bridges pcall#1 to the
+  engine's late boot via a **deferred bootstrap**:
+  - the wrapped global `require` (`require_wrap.lua`) caches require results
+    (`Mods.require_store`), one-shot installs the `class()` monkey-patch once
+    `_G.class` appears (building `CLASS` — the only handle on engine state
+    classes), and flushes a deferred-hook queue after every `require`;
+  - the bootstrap hook (`lifecycle.lua`) attaches (deferred) to
+    `CLASS.BootStateRequireGameScripts._state_update`, loads the **rite**
+    (`mod_manager.lua` — the Enginseer IS the mod loader), and installs the
+    per-frame (`CLASS.StateGame.update`) + state-change
+    (`CLASS.GameStateMachine._change_state`) hooks that drive `Managers.mod`.
+  The rite reads `mod_load_order.txt`, prepends `dmf`, and loads each mod's
+  `.mod` (`run()` → object → `init()`), exposing itself as `Managers.mod`. The
+  whole bootstrap is pcall-wrapped so a DMF/mod failure degrades to vanilla +
+  a log line, not a crash. **Live-validated end-to-end** (DMF loads, runs to
+  `StateMainMenu`, a test mod's hook fires). See
+  `docs/architecture/ENGINSEER-DMF.md` for the DMF integration + the IO
+  re-rooting.
 - **To build (the production shell):**
-  - **Enginseer deferred work.** The minimal Enginseer captures facilities but does not yet
-    defer `CLASS`/`Managers`-dependent work (hooks `Main.init`/
-    `StateRequireScripts`, runs after the game state machine is up — same model
-    as the existing `mod_loader`), load DMF, or run mods.
-  - **Status reporting** — report discovery results, Enginseer/DMF/mod load, errors
-    to the launcher (via the file-backed status channel).
+  - **Status reporting** — report discovery results, Enginseer/DMF/mod load,
+    errors to the launcher (via the file-backed status channel).
 - **Bootstrap-only C helpers.** C functions are acceptable only at the
   bootstrap boundary (crossing from DLL injection into the Lua lifecycle) or
   for runtime-private plumbing (status/log) — never as Enginseer/DMF/mod-visible
@@ -77,6 +94,9 @@ reports status.
 
 ### `launcher/` — C injector + session host  *(injection built; session-host mode planned)*
 
+This is **`magos_launcher.exe`** — the C injector (`runtime/launcher/`), the
+host process Darktide Magos invokes.
+
 The host process Darktide Magos invokes. `CreateProcess(Darktide.exe,
 SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
 `ResumeThread`. Sets `SteamAppId`/`SteamGameId`.
@@ -84,22 +104,39 @@ SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
 - **Built:** injection + hook-ready handshake + Steam appID.
 - **To build (session-host mode):** stay alive after resume, relay the
   shell's status to Darktide Magos via structured stdout, wait for Darktide
-  to exit, then exit.
-- **Interface (to Darktide Magos):** the CLI —
-  `--game <Darktide.exe> --dll <magos_shell.dll> --staging <staging_dir>` —
-  + structured stdout (status). Darktide Magos reads stdout; the
-  shell→launcher channel is internal to the runtime.
+  to exit, then exit. (Today the launcher exits after `ResumeThread`.)
+- **Interface (to Darktide Magos):** a **flag-based CLI**, where every setting
+  follows **flag > env var > default**. `--game-binary` is the only required
+  flag; the shell DLL + log file default next to the launcher exe.
+
+  | Flag | Env var | Default |
+  | --- | --- | --- |
+  | `--game-binary <path>` | `MAGOS_ENGINSEER_GAME_BINARY` | — **(required)** |
+  | `--magos-shell <path>` | `MAGOS_ENGINSEER_SHELL` | `<launcher-dir>\magos_shell.dll` |
+  | `--mod-path <path>` | `DARKTIDE_MOD_PATH` | unset (trampoline skips) |
+  | `--log-file <path>` | `MAGOS_ENGINSEER_LOG_FILE` | `<launcher-dir>\magos_enginseer.log` |
+  | `--log-level <level>` | `MAGOS_ENGINSEER_LOG_LEVEL` | `info` (`error`/`warn`/`info`/`debug`/`trace`) |
+  | `--steam-app-id <id>` | `MAGOS_ENGINSEER_STEAM_APP_ID` | `1361210` |
+
+  The launcher resolves the config, then publishes the shell-contract values
+  (`SteamAppId`/`SteamGameId`, `DARKTIDE_MOD_PATH`, `MAGOS_ENGINSEER_LOG_FILE`,
+  `MAGOS_ENGINSEER_LOG_LEVEL`) into the child env before `CreateProcess`, so the
+  injected shell inherits them. `-h`/`--help` prints the full table. Darktide
+  Magos reads the launcher's stdout; the shell→launcher channel is internal to
+  the runtime.
 
 ## Contracts
 
 ### Runtime ↔ Darktide Magos (the component boundary)
 
-- **Invocation:** Darktide Magos calls the launcher (subprocess) with
-  `--game` / `--dll` / `--staging`.
-- **Staging dir:** Darktide Magos writes (DMF, mods, `mod_load_order.txt`);
-  the runtime bootstraps the staged Enginseer/DMF entry point with engine-equivalent
-  Lua semantics. `mod_load_order.txt` is a Darktide Magos → DMF artifact (the
-  runtime is the conduit; it does not parse the load order).
+- **Invocation:** Darktide Magos calls the launcher (subprocess) with the
+  flag-based CLI above (`--game-binary` required; the rest flag > env > default).
+- **Staging dir:** Darktide Magos writes it (DMF, mods, `mod_load_order.txt`);
+  the runtime bootstraps the staged Enginseer entry point with engine-equivalent
+  Lua semantics. `mod_load_order.txt` is a Darktide Magos artifact, but the
+  **Enginseer reads it** (the rite — it is the mod loader); DMF does not. The
+  runtime is the conduit; it does not compute the load order or resolve
+  dependencies (that's Darktide Magos's job).
 - **Status:** the launcher relays the shell's status via stdout (launch
   progress, mod-load outcome, errors, game exit). Game-update detection
   (discovery mismatch) rides this channel.
@@ -116,6 +153,38 @@ SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
   `extern "C"` entry, `panic = "abort"` fail-safe).
 - **launcher ↔ shell:** the `magos_hook_ready` named-event handshake (hook
   armed before `main`); the file-backed status channel (shell→launcher).
+
+### Env-var contract (shell ↔ launcher ↔ mod-manager)
+
+The source of truth for the values the launcher publishes into the child env
+and the injected shell reads. (The launcher's own config-override env vars are
+in the CLI table above; these are the *contract* the shell depends on.)
+
+| Env var | Set by | Read by | Meaning |
+| --- | --- | --- | --- |
+| `DARKTIDE_MOD_PATH` | launcher (only when `--mod-path`/env configured) | shell trampoline | staging dir for mods + `enginseer.lua`. Unset ⇒ trampoline SKIPPED (degrades to recon probes / vanilla) |
+| `MAGOS_ENGINSEER_LOG_FILE` | launcher | shell | shell log file path |
+| `MAGOS_ENGINSEER_LOG_LEVEL` | launcher | shell | shell log level (`error`/`warn`/`info`/`debug`/`trace`) |
+| `SteamAppId` / `SteamGameId` | launcher | Steam | the real Darktide app id (`1361210`); without it `SteamAPI_Init` is denied under a non-Steam shortcut |
+
+### Logging
+
+The shell's C-side log is **`magos_enginseer.log`** (supersedes the old
+`magos_spike.log`). Each line is structured
+`<UTC ts> <LEVEL> <component>: <msg>` (e.g.
+`2026-06-25T13:01:07Z INFO  trampoline: @ pcall#1: OK`) and goes to both
+`OutputDebugString` and the log file. Level-filtered via
+`MAGOS_ENGINSEER_LOG_LEVEL` (default `info`; the probe recon runs at
+`debug`/`trace`). Default location is next to the launcher exe (resolved by the
+launcher from `--log-file`/`MAGOS_ENGINSEER_LOG_FILE`); the shell itself opens
+`MAGOS_ENGINSEER_LOG_FILE` if set, otherwise falls back to beside the game exe.
+
+**Log split to be aware of:** the Enginseer's Lua-side `print`/`__print` output
+(the `[Enginseer] …` lines) goes to the **engine's** print destination —
+Fatshark's console log (under Proton, the Proton/steam log) — **not** to
+`magos_enginseer.log`. `magos_enginseer.log` carries the C-side shell + probe +
+trampoline lines (including the trampoline's one-line `OK`/`FAIL` status, which
+is the reliable bootstrap validation).
 
 ## Runtime patch compatibility
 
@@ -215,9 +284,9 @@ runtime-command work.
 ## Out of scope for the runtime
 
 - **Dependency resolution / load-order computation** — Darktide Magos's job
-  (it writes `mod_load_order.txt`); the runtime bootstraps the staged Enginseer/DMF
-  entry point, and DMF reads the load order.
-- **Multi-shot injection** — not needed for v1. The runtime's injection is
+  (it writes `mod_load_order.txt`); the runtime bootstraps the staged Enginseer
+  entry point, and the Enginseer's rite reads the load order (DMF does not).
+- **Multi-shot injection** — not needed for v1/v2. The runtime's injection is
   one-shot (bootstrap); DMF's own hook system handles ongoing mod execution.
   Multi-shot (hot-reload, runtime commands) is a future capability.
 - **The mod manager UI / staging-dir management** — Darktide Magos.
@@ -230,6 +299,8 @@ gate.
 
 ## References
 
+- `docs/architecture/ENGINSEER-DMF.md` — the Enginseer↔DMF integration + IO
+  re-rooting (the rite, the loader surfaces, the `Managers.mod` shape contract).
 - `docs/architecture/README.md` — project architecture + the runtime↔mod-manager contract.
 - `docs/reference/darktide-binary.md` — the validated game-binary constraints.
 - `docs/poc/` — frozen POC handoff (the discovery methodology + DMF bootstrap approach are validated here).

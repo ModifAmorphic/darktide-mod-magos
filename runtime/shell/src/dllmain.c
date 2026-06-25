@@ -79,8 +79,10 @@
  *
  * This build proves it: on the FIRST lua_pcall (pcall #1) — one-shot — and
  * BEFORE calling g_orig_pcall (so it runs in the io-present window), inject a
- * trampoline chunk that does exactly what patch_999's trampoline does:
+ * trampoline chunk that does what patch_999's trampoline does (plus setting
+ * MAGOS_MOD_PATH first so the Enginseer can build Mods.file.dofile):
  *
+ *   MAGOS_MOD_PATH = "<MOD_PATH>"
  *   local f, err = io.open("<ENTRY_PATH>", "r")
  *   if not f then return "FAIL io.open: " .. tostring(err) end
  *   local data = f:read("*all"); f:close()
@@ -90,9 +92,9 @@
  *   if not ok then return "FAIL run: " .. tostring(rerr) end
  *   return "OK"
  *
- * PRODUCTION PATH: <ENTRY_PATH> = <DARKTIDE_MOD_STAGING>\enginseer.lua. The staging
- * dir is read from DARKTIDE_MOD_STAGING (the launcher/mod-manager sets it; for
- * now the user sets it in launch.bat). The C side joins staging + enginseer.lua, bakes
+ * PRODUCTION PATH: <ENTRY_PATH> = <DARKTIDE_MOD_PATH>\enginseer.lua. The mod root
+ * is read from DARKTIDE_MOD_PATH (the launcher/mod-manager sets it; for now the
+ * user sets it in launch.bat). The C side joins mod root + enginseer.lua, bakes
  * the path into the chunk (luaL_loadbuffer + lua_pcall(0,1,0)), reads the
  * returned status string via lua_tolstring, and logs one line:
  *
@@ -114,10 +116,11 @@
  * Hook points (all use the single captured lua_State*):
  *   - lua_newstate      (1-shot, right after capture)            — VM fresh, baseline
  *   - luaL_openlibs     (1-shot, after the engine call returns)  — stdlib registered
- *   - luaL_loadbuffer   (calls 1, 5, 20)                         — script loads
+ *   - luaL_loadbuffer   (calls 1..150 name log; n==1 snapshot)   — script loads
  *   - lua_pcall         (every call)                             — POC injection point
  *       · Phase-4 trampoline @ pcall#1 (one-shot, BEFORE orig pcall) — the focus
  *       · per-call CLASS/Managers transition (one-shot per global)
+ *       · per-call 7-global recon transition (one-shot per global: class/CLASS/Managers/Main/StateRequireScripts/StateGame/GameStateMachine) + defensive CLASS.X dump
  *       · full-16 snapshot @ calls {1, 10, 50, 100, both-present}
  *       · chunk-injection (v3: getfenv env + before/after globals + returns) @ both-present (fallback #50/#100)
  *   - lua_setfenv       (first 20 calls)                         — Phase-3: env the engine assigns
@@ -136,9 +139,9 @@
  * as arg 1, and its `name` arg (arg 4) identifies which script is loading.
  *
  * Out of scope: DMF bootstrap, multi-shot injection, mod-manager UI. Logging
- * goes to OutputDebugString + a log file (MAGOS_LOG_FILE env, or
- * magos_spike.log beside the game exe). The trampoline entry path comes from
- * DARKTIDE_MOD_STAGING + enginseer.lua; if the env var is unset, the trampoline is
+ * goes to OutputDebugString + a log file (MAGOS_ENGINSEER_LOG_FILE env, or
+ * magos_enginseer.log beside the game exe). The trampoline entry path comes from
+ * DARKTIDE_MOD_PATH + enginseer.lua; if the env var is unset, the trampoline is
  * SKIPPED (logged) and the build degrades to the Phase-3 recon probes.
  */
 #include <windows.h>
@@ -211,11 +214,11 @@ static volatile int  g_both_logged = 0;      /* one-shot: both non-nil at the sa
 static volatile int  g_chunk_done = 0;       /* one-shot: chunk-injection test performed */
 
 /* ---- Production trampoline state ----
- * The staged chunk (built once at worker startup from DARKTIDE_MOD_STAGING +
+ * The staged chunk (built once at worker startup from DARKTIDE_MOD_PATH +
  * enginseer.lua) and the one-shot guard that fires it at pcall#1. Lua is single-
  * threaded on the engine's main thread, so these are only touched from that
  * thread; the guard is Interlocked anyway as the cheap Win32 one-shot idiom. */
-#define MOD_STAGING_ENV    "DARKTIDE_MOD_STAGING"  /* staging dir (launcher/mod-manager sets it) */
+#define MOD_STAGING_ENV    "DARKTIDE_MOD_PATH"  /* mod root dir (launcher/mod-manager sets it) */
 #define ENGINSEER_ENTRY_FILENAME "enginseer.lua"               /* the Enginseer bootstrap entry (patch_999's mod_loader analogue) */
 static char            g_trampoline_chunk[4096];   /* NUL-terminated chunk; len 0 => not staged */
 static size_t          g_trampoline_chunk_len = 0;
@@ -229,25 +232,88 @@ static const char *PROBE_GLOBALS[] = {
 };
 #define PROBE_NGLOBALS (sizeof(PROBE_GLOBALS) / sizeof(PROBE_GLOBALS[0]))
 
-static void magos_log(const char *fmt, ...) {
-    char buf[512];
+/* ---- structured logging ----
+ * Every line: "<UTC ts> <LEVEL> <component>: <message>\n" to both
+ * OutputDebugStringA and g_log. Levels filter via g_log_level (resolved once
+ * at worker startup from MAGOS_ENGINSEER_LOG_LEVEL; default INFO). The filter
+ * check happens BEFORE any formatting/clock read, so filtered levels (the bulk
+ * of the probe output at default INFO) cost a single compare — important since
+ * the probe paths run on the engine's Lua thread. */
+enum { MAGOS_LOG_ERROR = 1, MAGOS_LOG_WARN = 2, MAGOS_LOG_INFO = 3,
+       MAGOS_LOG_DEBUG = 4, MAGOS_LOG_TRACE = 5 };
+static int g_log_level = MAGOS_LOG_INFO;
+
+/* Case-insensitive ASCII equality (level names are ASCII; avoids a CRT
+ * _stricmp dependency). */
+static int log_name_ieq(const char *a, const char *b) {
+    for (;;) {
+        char ca = a[0], cb = b[0];
+        if (ca >= 'a' && ca <= 'z') ca = (char)(ca - 32);
+        if (cb >= 'a' && cb <= 'z') cb = (char)(cb - 32);
+        if (ca != cb) return 0;
+        if (ca == '\0') return 1;
+        a++; b++;
+    }
+}
+
+/* Resolve g_log_level from MAGOS_ENGINSEER_LOG_LEVEL (case-insensitive name →
+ * enum). Unset, overflow, or unknown name ⇒ INFO. */
+static int resolve_log_level(void) {
+    char buf[16];
+    DWORD n = GetEnvironmentVariableA("MAGOS_ENGINSEER_LOG_LEVEL", buf, sizeof(buf));
+    if (n == 0 || n >= sizeof(buf)) return MAGOS_LOG_INFO;
+    if (log_name_ieq(buf, "error")) return MAGOS_LOG_ERROR;
+    if (log_name_ieq(buf, "warn"))  return MAGOS_LOG_WARN;
+    if (log_name_ieq(buf, "info"))  return MAGOS_LOG_INFO;
+    if (log_name_ieq(buf, "debug")) return MAGOS_LOG_DEBUG;
+    if (log_name_ieq(buf, "trace")) return MAGOS_LOG_TRACE;
+    return MAGOS_LOG_INFO;
+}
+
+static void magos_log(int level, const char *component, const char *fmt, ...) {
+    if (level > g_log_level) return;
+
+    /* UTC timestamp YYYY-MM-DDThh:mm:ssZ */
+    SYSTEMTIME st;
+    GetSystemTime(&st);
+    char ts[24];
+    snprintf(ts, sizeof(ts), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+    /* Level name right-padded to 5 chars uppercase (keeps columns aligned). */
+    const char *lname;
+    switch (level) {
+        case MAGOS_LOG_ERROR: lname = "ERROR"; break;
+        case MAGOS_LOG_WARN:  lname = "WARN "; break;
+        case MAGOS_LOG_INFO:  lname = "INFO "; break;
+        case MAGOS_LOG_DEBUG: lname = "DEBUG"; break;
+        case MAGOS_LOG_TRACE: lname = "TRACE"; break;
+        default:              lname = "?????"; break;
+    }
+
+    char msg[1024];
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    int mlen = vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
-    if (n > 0) {
-        OutputDebugStringA(buf);
-        if (g_log) {
-            fputs(buf, g_log);
-            fflush(g_log);
-        }
+    if (mlen < 0) return;
+
+    /* fmt already ends in \n at every call site, so the line is terminated. */
+    char line[1280];
+    int n = snprintf(line, sizeof(line), "%s %s %s: %s", ts, lname, component, msg);
+    if (n < 0) return;
+
+    OutputDebugStringA(line);
+    if (g_log) {
+        fputs(line, g_log);
+        fflush(g_log);
     }
 }
 
 static void open_log(void) {
     char path[MAX_PATH];
-    static const char logname[] = "magos_spike.log";
-    DWORD n = GetEnvironmentVariableA("MAGOS_LOG_FILE", path, sizeof(path));
+    static const char logname[] = "magos_enginseer.log";
+    DWORD n = GetEnvironmentVariableA("MAGOS_ENGINSEER_LOG_FILE", path, sizeof(path));
     if (n == 0 || n >= sizeof(path)) {
         /* default: beside the game exe. GetModuleFileNameA may fail (return 0)
          * or truncate (return >= sizeof(path)); in either case fall back to a
@@ -263,7 +329,7 @@ static void open_log(void) {
         }
     }
     g_log = fopen(path, "a");
-    magos_log("[magos] log -> %s\n", path);
+    magos_log(MAGOS_LOG_INFO, "shell", "log -> %s\n", path);
 }
 
 /* Lua type code -> name (LUA_TNIL..LUA_TTHREAD). */
@@ -293,15 +359,15 @@ static const char *lua_type_name(int t) {
 static void probe_log_globals(lua_State *L, const char *point, int call_num) {
     g_in_probe = 1;
     if (!L || !g_lua_getfield || !g_lua_type || !g_lua_gettop || !g_lua_settop) {
-        magos_log("[probe] %s call#%d  (skipped: probe C-API not resolved)\n", point, call_num);
+        magos_log(MAGOS_LOG_DEBUG, "probe", "%s call#%d  (skipped: probe C-API not resolved)\n", point, call_num);
         g_in_probe = 0;
         return;
     }
     if (g_L && L != g_L) {
-        magos_log("[probe] %s call#%d  (note: L=%p differs from captured g_L=%p)\n",
+        magos_log(MAGOS_LOG_DEBUG, "probe", "%s call#%d  (note: L=%p differs from captured g_L=%p)\n",
                   point, call_num, (void *)L, (void *)g_L);
     }
-    magos_log("[probe] %s call#%d\n", point, call_num);
+    magos_log(MAGOS_LOG_DEBUG, "probe", "%s call#%d\n", point, call_num);
     int base = g_lua_gettop(L);
     char line[512];
     int off = 0;
@@ -314,18 +380,18 @@ static void probe_log_globals(lua_State *L, const char *point, int call_num) {
                          sep, PROBE_GLOBALS[i], lua_type_name(t));
         if (n < 0 || (size_t)n >= sizeof(line) - (size_t)off) {
             /* line buffer full (defensive — never hits at 5/line): flush + stop */
-            if (per_line > 0) magos_log("[probe]%s\n", line);
+            if (per_line > 0) magos_log(MAGOS_LOG_DEBUG, "probe", "%s\n", line);
             break;
         }
         off += n;
         if (++per_line >= 5) {
-            magos_log("[probe]%s\n", line);
+            magos_log(MAGOS_LOG_DEBUG, "probe", "%s\n", line);
             off = 0;
             per_line = 0;
         }
     }
     if (per_line > 0) {
-        magos_log("[probe]%s\n", line);
+        magos_log(MAGOS_LOG_DEBUG, "probe", "%s\n", line);
     }
     g_lua_settop(L, base);  /* restore stack — read-only, zero net effect */
     g_in_probe = 0;
@@ -350,7 +416,7 @@ static int probe_check_class_managers(lua_State *L, LONG call_num) {
     int class_t = g_lua_type(L, -1);
     if (!g_class_logged && class_t != 0 /* nil */) {
         g_class_logged = 1;
-        magos_log("[probe] CLASS first non-nil at lua_pcall call#%ld (type=%s)\n",
+        magos_log(MAGOS_LOG_DEBUG, "probe", "CLASS first non-nil at lua_pcall call#%ld (type=%s)\n",
                   call_num, lua_type_name(class_t));
     }
 
@@ -358,13 +424,92 @@ static int probe_check_class_managers(lua_State *L, LONG call_num) {
     int managers_t = g_lua_type(L, -1);
     if (!g_managers_logged && managers_t != 0 /* nil */) {
         g_managers_logged = 1;
-        magos_log("[probe] Managers first non-nil at lua_pcall call#%ld (type=%s)\n",
+        magos_log(MAGOS_LOG_DEBUG, "probe", "Managers first non-nil at lua_pcall call#%ld (type=%s)\n",
                   call_num, lua_type_name(managers_t));
     }
 
     g_lua_settop(L, base);  /* pop both lookups — restore engine stack */
     g_in_probe = 0;
     return (class_t != 0 && managers_t != 0);
+}
+
+/*
+ * Recon: map the engine init timeline — the lua_pcall call# at which each of
+ * 7 engine globals first transitions nil→non-nil. Same read-only, stack-clean
+ * discipline as probe_check_class_managers: lua_getfield on LUA_GLOBALSINDEX
+ * (a plain table → raw hash lookup, no metamethod, cannot longjmp) + lua_type
+ * read, one-shot per global (g_recon_logged[]), stack restored to the saved
+ * top. g_in_probe is save/restored (like probe_inspect_env) so this is safe
+ * from inside an already-guarded path as well as from a fresh detour entry.
+ *
+ * The 7 targets de-risk the Enginseer v2 design: when do class/CLASS/Managers/
+ * Main/StateRequireScripts/StateGame/GameStateMachine materialize relative to
+ * pcall#? (v2 must defer work until those globals exist.) Called on EVERY
+ * pcall; the one-shot flags bound the logging.
+ *
+ * Defensive CLASS.X dump (one-shot, Change 1b): the first pcall# where CLASS is
+ * non-nil, additionally read CLASS then lua_getfield on it for each of
+ * {Main, StateRequireScripts, StateGame, GameStateMachine} and log their types.
+ * In the unmodified game CLASS is loader-provided and will likely NEVER appear,
+ * so this probably logs nothing — that is expected; it is defensive coverage
+ * for the v2 CLASS monkey-patch timing. Stack-clean (each member lookup is
+ * popped before the next; CLASS stays on top until the final settop).
+ */
+static void probe_log_transitions(lua_State *L, LONG call_num) {
+    static const char *RECON_GLOBALS[] = {
+        "class", "CLASS", "Managers", "Main",
+        "StateRequireScripts", "StateGame", "GameStateMachine",
+    };
+    static volatile int g_recon_logged[7] = {0};
+    static const char *CLASS_MEMBERS[] = {
+        "Main", "StateRequireScripts", "StateGame", "GameStateMachine",
+    };
+    static volatile int g_class_dump_logged = 0;
+
+    int saved = g_in_probe;
+    g_in_probe = 1;
+
+    if (!L || !g_lua_getfield || !g_lua_type || !g_lua_gettop || !g_lua_settop) {
+        g_in_probe = saved;
+        return;
+    }
+
+    int base = g_lua_gettop(L);
+
+    for (int i = 0; i < 7; i++) {
+        if (g_recon_logged[i]) continue;
+        g_lua_getfield(L, LUA_GLOBALSINDEX, RECON_GLOBALS[i]);
+        int t = g_lua_type(L, -1);
+        if (t != 0 /* non-nil */) {
+            g_recon_logged[i] = 1;
+            magos_log(MAGOS_LOG_DEBUG, "probe", "%s first non-nil at lua_pcall call#%ld (type=%s)\n",
+                      RECON_GLOBALS[i], call_num, lua_type_name(t));
+
+            /* CLASS is currently on top (absolute idx = gettop). Dump its
+             * members one-shot, popping each so CLASS stays on top. */
+            if (strcmp(RECON_GLOBALS[i], "CLASS") == 0 && !g_class_dump_logged) {
+                g_class_dump_logged = 1;
+                int class_idx = g_lua_gettop(L);
+                char line[256];
+                int off = snprintf(line, sizeof(line),
+                                   "CLASS dump @ pcall#%ld:", call_num);
+                for (int j = 0; j < 4; j++) {
+                    g_lua_getfield(L, class_idx, CLASS_MEMBERS[j]);
+                    int mt = g_lua_type(L, -1);
+                    int w = snprintf(line + off, sizeof(line) - (size_t)off,
+                                     "  %s=%s", CLASS_MEMBERS[j], lua_type_name(mt));
+                    if (w < 0 || (size_t)w >= sizeof(line) - (size_t)off) break;
+                    off += w;
+                    g_lua_settop(L, class_idx);  /* pop member; CLASS back on top */
+                }
+                magos_log(MAGOS_LOG_DEBUG, "probe", "%s\n", line);
+            }
+        }
+        g_lua_settop(L, base);  /* pop this global's lookup — stack-clean per iter */
+    }
+
+    g_lua_settop(L, base);  /* belt-and-suspenders: zero net stack effect */
+    g_in_probe = saved;
 }
 
 /*
@@ -391,7 +536,7 @@ static void probe_inspect_env(lua_State *L, int env_idx, const char *label, int 
     g_in_probe = 1;
     int base = g_lua_gettop(L);
     char line[512];
-    int off = snprintf(line, sizeof(line), "[probe] %s call#%d env:", label, call_num);
+    int off = snprintf(line, sizeof(line), "%s call#%d env:", label, call_num);
     for (int i = 0; i < (int)(sizeof(env_globals) / sizeof(env_globals[0])); i++) {
         g_lua_getfield(L, env_idx, env_globals[i]);
         int t = g_lua_type(L, -1);
@@ -403,7 +548,7 @@ static void probe_inspect_env(lua_State *L, int env_idx, const char *label, int 
         off += w;
         g_lua_settop(L, base);  /* pop the getfield result; env table stays at env_idx */
     }
-    magos_log("%s\n", line);
+    magos_log(MAGOS_LOG_DEBUG, "probe", "%s\n", line);
     g_in_probe = saved;
 }
 
@@ -424,7 +569,7 @@ static void probe_globals_io_loadstring(lua_State *L, const char *label, int cal
     int io_t = g_lua_type(L, -1);
     g_lua_getfield(L, LUA_GLOBALSINDEX, "loadstring");
     int ls_t = g_lua_type(L, -1);
-    magos_log("[probe] globals %-6s @ pcall#%d:  io=%s  loadstring=%s\n",
+    magos_log(MAGOS_LOG_DEBUG, "probe", "globals %-6s @ pcall#%d:  io=%s  loadstring=%s\n",
               label, call_num, lua_type_name(io_t), lua_type_name(ls_t));
     g_lua_settop(L, base);  /* pop both lookups */
     g_in_probe = saved;
@@ -474,11 +619,11 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
     static const char chunk[] = "return print, require, loadstring, io, CLASS, Managers";
     static const char *names[6] = { "print", "require", "loadstring", "io", "CLASS", "Managers" };
 
-    magos_log("[probe] --- chunk-injection (v3) test @ pcall#%d ---\n", call_num);
-    magos_log("[probe] chunk: `%s`\n", chunk);
+    magos_log(MAGOS_LOG_DEBUG, "probe", "--- chunk-injection (v3) test @ pcall#%d ---\n", call_num);
+    magos_log(MAGOS_LOG_DEBUG, "probe", "chunk: `%s`\n", chunk);
 
     if (!g_orig_pcall || !g_lua_gettop || !g_lua_settop || !g_lua_type || !g_lua_getfenv) {
-        magos_log("[probe] chunk-injection SKIPPED: pcall/C-API (need getfenv) not resolved\n");
+        magos_log(MAGOS_LOG_DEBUG, "probe", "chunk-injection SKIPPED: pcall/C-API (need getfenv) not resolved\n");
         g_in_probe = 0;
         return;
     }
@@ -487,7 +632,7 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
      * if the loadbuffer hook didn't install (no patch → no detour to bypass). */
     loadbuffer_t lb = g_orig_loadbuffer ? g_orig_loadbuffer : g_lua_loadbuffer;
     if (!lb) {
-        magos_log("[probe] chunk-injection SKIPPED: luaL_loadbuffer not resolved\n");
+        magos_log(MAGOS_LOG_DEBUG, "probe", "chunk-injection SKIPPED: luaL_loadbuffer not resolved\n");
         g_in_probe = 0;
         return;
     }
@@ -498,7 +643,7 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
     int rc = lb(L, chunk, sizeof(chunk) - 1, "magos_probe_v3");
     if (rc != 0) {
         int t = g_lua_type(L, -1);
-        magos_log("[probe] chunk LOAD FAILED (rc=%d, err_type=%s) — not injected\n",
+        magos_log(MAGOS_LOG_DEBUG, "probe", "chunk LOAD FAILED (rc=%d, err_type=%s) — not injected\n",
                   rc, lua_type_name(t));
         g_lua_settop(L, base);
         g_in_probe = 0;
@@ -511,8 +656,8 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
     g_lua_getfenv(L, base + 1);   /* push chunk's env at base+2 */
     probe_inspect_env(L, base + 2, "chunk env (getfenv)", call_num);
     g_lua_settop(L, base + 1);    /* pop the env — chunk function back on top */
-    magos_log("[probe] compare 'chunk env (getfenv)' to the C-side globals snapshot:\n");
-    magos_log("[probe]   chunk env lacks io but globals has io → chunk is setfenv'd to a sandbox.\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "compare 'chunk env (getfenv)' to the C-side globals snapshot:\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "  chunk env lacks io but globals has io → chunk is setfenv'd to a sandbox.\n");
 
     /* Measurement #3 (before): io/loadstring in LUA_GLOBALSINDEX immediately
      * before the chunk's pcall. */
@@ -524,7 +669,7 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
     int prc = g_orig_pcall(L, 0, 6, 0);
     if (prc != 0) {
         int t = g_lua_type(L, -1);
-        magos_log("[probe] chunk PCALL FAILED (rc=%d, err_type=%s) — chunk errored\n",
+        magos_log(MAGOS_LOG_DEBUG, "probe", "chunk PCALL FAILED (rc=%d, err_type=%s) — chunk errored\n",
                   prc, lua_type_name(t));
         g_lua_settop(L, base);
         g_in_probe = 0;
@@ -537,7 +682,7 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
 
     /* The chunk's 6 return-value types (what it ACTUALLY sees). */
     char line[512];
-    int off = snprintf(line, sizeof(line), "[probe] chunk sees @ pcall#%d:", call_num);
+    int off = snprintf(line, sizeof(line), "chunk sees @ pcall#%d:", call_num);
     for (int i = 0; i < 6; i++) {
         int t = g_lua_type(L, base + 1 + i);
         int w = snprintf(line + off, sizeof(line) - (size_t)off, "  %s=%s",
@@ -547,9 +692,9 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
         }
         off += w;
     }
-    magos_log("%s\n", line);
-    magos_log("[probe] v3 summary: chunk env (#2) + before/after globals (#3) + chunk sees (above)\n");
-    magos_log("[probe]   localize the mechanism: sandbox setfenv vs. per-phase globals swap vs. timing.\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "%s\n", line);
+    magos_log(MAGOS_LOG_DEBUG, "probe", "v3 summary: chunk env (#2) + before/after globals (#3) + chunk sees (above)\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "  localize the mechanism: sandbox setfenv vs. per-phase globals swap vs. timing.\n");
 
     g_lua_settop(L, base);  /* pop the 6 returns — restore engine stack */
     g_in_probe = 0;
@@ -557,15 +702,15 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
 
 /* ---- Production trampoline ----
  * See the file header's Phase-4 + production notes. The staging step reads the
- * staging dir from DARKTIDE_MOD_STAGING, joins it with the Enginseer entry filename
- * (enginseer.lua), and builds the chunk once (worker startup); the run step executes
- * it one-shot at pcall#1, BEFORE g_orig_pcall, so it runs in the io/loadstring-
- * present window (the engine strips io/loadstring from globals between pcall #1
- * and #10). If DARKTIDE_MOD_STAGING is unset, staging logs why and the run step
- * logs SKIPPED at pcall#1 — the build degrades to the recon probes. */
+ * mod root from DARKTIDE_MOD_PATH, joins it with enginseer.lua, and builds the
+ * chunk once (worker startup); the run step executes it one-shot at pcall#1,
+ * BEFORE g_orig_pcall, so it runs in the io/loadstring-present window (the
+ * engine strips io/loadstring from globals between pcall #1 and #10). If
+ * DARKTIDE_MOD_PATH is unset, staging logs why and the run step logs SKIPPED
+ * at pcall#1 — the build degrades to the recon probes. */
 
 /*
- * Read DARKTIDE_MOD_STAGING, join it with enginseer.lua, and build g_trampoline_chunk.
+ * Read DARKTIDE_MOD_PATH, join it with enginseer.lua, and build g_trampoline_chunk.
  * On any failure (var unset/too long, join overflow, escape/overflow) the chunk
  * len stays 0 and trampoline_run will log SKIPPED. Idempotent: called once from
  * the worker.
@@ -576,38 +721,38 @@ static void trampoline_stage_chunk(void) {
     if (got == 0) {
         DWORD e = GetLastError();
         if (e == ERROR_ENVVAR_NOT_FOUND) {
-            magos_log("[trampoline] %s not set; trampoline will be SKIPPED at pcall#1\n",
+            magos_log(MAGOS_LOG_INFO, "trampoline", "%s not set; trampoline will be SKIPPED at pcall#1\n",
                       MOD_STAGING_ENV);
         } else {
-            magos_log("[trampoline] %s read error (lu=%lu); trampoline will be SKIPPED\n",
+            magos_log(MAGOS_LOG_INFO, "trampoline", "%s read error (lu=%lu); trampoline will be SKIPPED\n",
                       MOD_STAGING_ENV, e);
         }
         return;
     }
     if (got >= sizeof(staging)) {
-        magos_log("[trampoline] %s too long (%lu chars, max %zu); trampoline will be SKIPPED\n",
+        magos_log(MAGOS_LOG_INFO, "trampoline", "%s too long (%lu chars, max %zu); trampoline will be SKIPPED\n",
                   MOD_STAGING_ENV, got, sizeof(staging) - 1);
         return;
     }
 
-    /* Join <staging> + enginseer.lua into the production entry path (Windows-canonical:
+    /* Join <mod path> + enginseer.lua into the production entry path (Windows-canonical:
      * exactly one backslash separator, idempotent on a trailing separator). */
     char path[1024];
     int jn = trampoline_join_path(staging, ENGINSEER_ENTRY_FILENAME, path, sizeof(path));
     if (jn < 0) {
-        magos_log("[trampoline] staging+entry join failed (overflow); trampoline will be SKIPPED\n");
+        magos_log(MAGOS_LOG_INFO, "trampoline", "mod-path+entry join failed (overflow); trampoline will be SKIPPED\n");
         return;
     }
 
-    int n = trampoline_build_chunk(path, g_trampoline_chunk, sizeof(g_trampoline_chunk));
+    int n = trampoline_build_chunk(staging, path, g_trampoline_chunk, sizeof(g_trampoline_chunk));
     if (n < 0) {
-        magos_log("[trampoline] chunk build failed (escape/overflow); trampoline will be SKIPPED\n");
+        magos_log(MAGOS_LOG_INFO, "trampoline", "chunk build failed (escape/overflow); trampoline will be SKIPPED\n");
         return;
     }
     g_trampoline_chunk_len = (size_t)n;
-    magos_log("[trampoline] %s=%s\n", MOD_STAGING_ENV, staging);
-    magos_log("[trampoline] entry path=%s\n", path);
-    magos_log("[trampoline] chunk staged (%zu bytes); will run one-shot at pcall#1 (before orig pcall)\n",
+    magos_log(MAGOS_LOG_INFO, "trampoline", "%s=%s\n", MOD_STAGING_ENV, staging);
+    magos_log(MAGOS_LOG_INFO, "trampoline", "entry path=%s\n", path);
+    magos_log(MAGOS_LOG_INFO, "trampoline", "chunk staged (%zu bytes); will run one-shot at pcall#1 (before orig pcall)\n",
               g_trampoline_chunk_len);
 }
 
@@ -620,16 +765,16 @@ static void trampoline_stage_chunk(void) {
  */
 static void trampoline_run(lua_State *L) {
     g_in_probe = 1;
-    magos_log("[trampoline] --- production trampoline @ pcall#1 ---\n");
+    magos_log(MAGOS_LOG_INFO, "trampoline", "--- production trampoline @ pcall#1 ---\n");
 
     if (!g_orig_pcall || !g_lua_gettop || !g_lua_settop || !g_lua_tolstring) {
-        magos_log("[trampoline] @ pcall#1: SKIPPED (C-API not resolved)\n");
+        magos_log(MAGOS_LOG_INFO, "trampoline", "@ pcall#1: SKIPPED (C-API not resolved)\n");
         g_in_probe = 0;
         return;
     }
     if (g_trampoline_chunk_len == 0) {
         /* staging already logged why (env var unset / too long / build fail). */
-        magos_log("[trampoline] @ pcall#1: SKIPPED (chunk not staged — see startup log)\n");
+        magos_log(MAGOS_LOG_INFO, "trampoline", "@ pcall#1: SKIPPED (chunk not staged — see startup log)\n");
         g_in_probe = 0;
         return;
     }
@@ -638,7 +783,7 @@ static void trampoline_run(lua_State *L) {
      * address if the loadbuffer hook didn't install. */
     loadbuffer_t lb = g_orig_loadbuffer ? g_orig_loadbuffer : g_lua_loadbuffer;
     if (!lb) {
-        magos_log("[trampoline] @ pcall#1: SKIPPED (luaL_loadbuffer not resolved)\n");
+        magos_log(MAGOS_LOG_INFO, "trampoline", "@ pcall#1: SKIPPED (luaL_loadbuffer not resolved)\n");
         g_in_probe = 0;
         return;
     }
@@ -650,7 +795,7 @@ static void trampoline_run(lua_State *L) {
     int rc = lb(L, g_trampoline_chunk, g_trampoline_chunk_len, "magos_trampoline");
     if (rc != 0) {
         const char *e = g_lua_tolstring(L, -1, NULL);
-        magos_log("[trampoline] CHUNK LOAD FAILED (rc=%d): %s\n", rc, e ? e : "<no msg>");
+        magos_log(MAGOS_LOG_ERROR, "trampoline", "CHUNK LOAD FAILED (rc=%d): %s\n", rc, e ? e : "<no msg>");
         g_lua_settop(L, base);
         g_in_probe = 0;
         return;
@@ -664,8 +809,8 @@ static void trampoline_run(lua_State *L) {
     int prc = g_orig_pcall(L, 0, 1, 0);
     if (prc != 0) {
         const char *e = g_lua_tolstring(L, -1, NULL);
-        magos_log("[trampoline] CHUNK PCALL FAILED (rc=%d): %s\n", prc, e ? e : "<no msg>");
-        magos_log("[trampoline]   (the chunk itself errored before returning a status string)\n");
+        magos_log(MAGOS_LOG_ERROR, "trampoline", "CHUNK PCALL FAILED (rc=%d): %s\n", prc, e ? e : "<no msg>");
+        magos_log(MAGOS_LOG_ERROR, "trampoline", "  (the chunk itself errored before returning a status string)\n");
         g_lua_settop(L, base);
         g_in_probe = 0;
         return;
@@ -676,9 +821,9 @@ static void trampoline_run(lua_State *L) {
      * isn't a string/number — defensive. */
     size_t len = 0;
     const char *status = g_lua_tolstring(L, -1, &len);
-    magos_log("[trampoline] @ pcall#1: %s\n", status ? status : "<null status>");
+    magos_log(MAGOS_LOG_INFO, "trampoline", "@ pcall#1: %s\n", status ? status : "<null status>");
     if (status && strncmp(status, "OK", 2) == 0) {
-        magos_log("[trampoline]   engine-context PROVEN: io.open + loadstring + staged run succeeded at pcall#1\n");
+        magos_log(MAGOS_LOG_INFO, "trampoline", "  engine-context PROVEN: io.open + loadstring + staged run succeeded at pcall#1\n");
     }
 
     g_lua_settop(L, base);  /* pop the status string — restore engine stack */
@@ -691,21 +836,21 @@ static void trampoline_run(lua_State *L) {
 static lua_State *detour_newstate(lua_Alloc f, void *ud) {
     lua_State *L = g_orig_newstate(f, ud);
     if (L) {
-        magos_log("[magos] step4: lua_newstate hook fired; L = %p\n", (void *)L);
+        magos_log(MAGOS_LOG_INFO, "shell", "step4: lua_newstate hook fired; L = %p\n", (void *)L);
         if (!g_L) g_L = L;
         /* step 5: one LuaJIT C-API call against the documented offsets.
          * lua_gettop(L) = (L->top - L->base) >> 3; for a fresh state top==base
          * so it must return 0, confirming the LJ_64 non-GC64 struct layout. */
         if (g_lua_gettop) {
             int top = g_lua_gettop(L);
-            magos_log("[magos] step5: lua_gettop(L) = %d (expect 0 for fresh state)\n", top);
+            magos_log(MAGOS_LOG_INFO, "shell", "step5: lua_gettop(L) = %d (expect 0 for fresh state)\n", top);
         }
         if (!g_newstate_logged) {
             g_newstate_logged = 1;
             probe_log_globals(L, "lua_newstate", 1);
         }
     } else {
-        magos_log("[magos] step4: lua_newstate returned NULL\n");
+        magos_log(MAGOS_LOG_ERROR, "shell", "step4: lua_newstate returned NULL\n");
     }
     return L;
 }
@@ -720,21 +865,33 @@ static void detour_openlibs(lua_State *L) {
     }
 }
 
-/* luaL_loadbuffer — the bytecode-load proxy (see file header NOTE). Samples
- * calls 1, 5, 20; logs the script `name` for each sampled call. */
+/* Per-call loadbuffer name-log cap (recon: map the script-compilation order).
+ * Every call with n <= this cap logs its script name + the current pcall# (read
+ * from g_pcall_calls for correlation). g_orig_loadbuffer is ALWAYS called. */
+#define RECON_LOADBUFFER_LOG_CAP 150
+
+/* luaL_loadbuffer — the bytecode-load proxy (see file header NOTE). Recon: log
+ * every script name for the first RECON_LOADBUFFER_LOG_CAP calls (maps the
+ * script-compilation order, correlated with the pcall#), plus the full 16-
+ * globals snapshot once at n==1 (the per-call name log supersedes the old
+ * 5/20 sampling). g_orig_loadbuffer is always called regardless of the cap. */
 static int detour_loadbuffer(lua_State *L, const char *buff, size_t size, const char *name) {
     LONG n = 0;
-    int do_probe = 0;
+    int do_name_log = 0;
+    int do_snapshot = 0;
     if (!g_in_probe) {
         n = InterlockedIncrement(&g_loadbuffer_calls);
-        do_probe = (n == 1 || n == 5 || n == 20);
+        do_name_log = (n <= RECON_LOADBUFFER_LOG_CAP);
+        do_snapshot = (n == 1);
     }
-    if (do_probe) {
+    if (do_name_log) {
         if (!g_L) g_L = L;
         char namebuf[128];
         snprintf(namebuf, sizeof(namebuf), "%s", name ? name : "<null>");
-        magos_log("[probe] luaL_loadbuffer (bytecode-load proxy) call#%ld  name=%s  size=%zu\n",
-                  n, namebuf, size);
+        magos_log(MAGOS_LOG_TRACE, "probe", "luaL_loadbuffer call#%ld (pcall#%ld) name=%s size=%zu\n",
+                  n, g_pcall_calls, namebuf, size);
+    }
+    if (do_snapshot) {
         probe_log_globals(L, "luaL_loadbuffer", (int)n);
     }
     return g_orig_loadbuffer(L, buff, size, name);
@@ -770,17 +927,22 @@ static int detour_pcall(lua_State *L, int nargs, int nresults, int errfunc) {
             both_now = probe_check_class_managers(L, n);
             if (both_now) {
                 g_both_logged = 1;
-                magos_log("[probe] === CLASS+Managers both non-nil at lua_pcall call#%ld ===\n", n);
-                magos_log("[probe]     engine-context lifecycle point: globals table fully materialized\n");
+                magos_log(MAGOS_LOG_DEBUG, "probe", "=== CLASS+Managers both non-nil at lua_pcall call#%ld ===\n", n);
+                magos_log(MAGOS_LOG_DEBUG, "probe", "    engine-context lifecycle point: globals table fully materialized\n");
             }
         }
+
+        /* 1b. Recon: 7-global init-timeline transition log on EVERY pcall
+         *     (one-shot flags inside bound the logging). Read-only, stack-clean.
+         *     Does not touch probe_check_class_managers / g_both_logged. */
+        probe_log_transitions(L, n);
 
         /* 2. Full 16-globals snapshot at scheduled calls + the both-present call. */
         int scheduled = (n == 1 || n == 10 || n == 50 || n == 100);
         if (scheduled && both_now) {
-            magos_log("[probe] (pcall#%ld: scheduled snapshot AND both-present point)\n", n);
+            magos_log(MAGOS_LOG_DEBUG, "probe", "(pcall#%ld: scheduled snapshot AND both-present point)\n", n);
         } else if (both_now) {
-            magos_log("[probe] (pcall#%ld: both-present snapshot — first call with CLASS+Managers)\n", n);
+            magos_log(MAGOS_LOG_DEBUG, "probe", "(pcall#%ld: both-present snapshot — first call with CLASS+Managers)\n", n);
         }
         if (scheduled || both_now) {
             probe_log_globals(L, "lua_pcall", (int)n);
@@ -794,7 +956,7 @@ static int detour_pcall(lua_State *L, int nargs, int nresults, int errfunc) {
             if (do_inject) {
                 g_chunk_done = 1;
                 if (!both_now) {
-                    magos_log("[probe] chunk-injection FALLBACK @ pcall#%ld (both-present not yet caught)\n", n);
+                    magos_log(MAGOS_LOG_DEBUG, "probe", "chunk-injection FALLBACK @ pcall#%ld (both-present not yet caught)\n", n);
                 }
                 probe_inject_chunk(L, (int)n);
             }
@@ -831,12 +993,12 @@ static int detour_setfenv(lua_State *L, int idx) {
              * means a globals rebind — then inspect the env's globals. */
             int env_idx = g_lua_gettop(L);
             int obj_t = g_lua_type(L, idx);
-            magos_log("[probe] --- lua_setfenv call#%ld  idx=%d  obj_type=%s (%s) ---\n",
+            magos_log(MAGOS_LOG_DEBUG, "probe", "--- lua_setfenv call#%ld  idx=%d  obj_type=%s (%s) ---\n",
                       n, idx, lua_type_name(obj_t),
                       (obj_t == 8) ? "THREAD → globals rebind" : "func/udata/other");
             probe_inspect_env(L, env_idx, "setfenv env", (int)n);
         } else if (n <= 20) {
-            magos_log("[probe] lua_setfenv call#%ld (env not inspected: C-API not resolved)\n", n);
+            magos_log(MAGOS_LOG_DEBUG, "probe", "lua_setfenv call#%ld (env not inspected: C-API not resolved)\n", n);
         }
     }
     return g_orig_setfenv(L, idx);
@@ -846,33 +1008,34 @@ static int detour_setfenv(lua_State *L, int idx) {
 static int install_hook(void *target, void *detour, void **original, const char *name) {
     MH_STATUS mh = MH_CreateHook(target, detour, original);
     if (mh != MH_OK) {
-        magos_log("[magos] MH_CreateHook(%s) failed: %d\n", name, mh);
+        magos_log(MAGOS_LOG_ERROR, "shell", "MH_CreateHook(%s) failed: %d\n", name, mh);
         return 0;
     }
     mh = MH_EnableHook(target);
     if (mh != MH_OK) {
-        magos_log("[magos] MH_EnableHook(%s) failed: %d\n", name, mh);
+        magos_log(MAGOS_LOG_ERROR, "shell", "MH_EnableHook(%s) failed: %d\n", name, mh);
         return 0;
     }
-    magos_log("[magos] hook installed: %s at %p (detour %p)\n", name, target, detour);
+    magos_log(MAGOS_LOG_INFO, "shell", "hook installed: %s at %p (detour %p)\n", name, target, detour);
     return 1;
 }
 
 /* ---- worker: seam call (step 6) + hook install (step 4) ---- */
 static DWORD WINAPI worker(LPVOID arg) {
     (void)arg;
+    g_log_level = resolve_log_level();
     open_log();
-    magos_log("[magos] === DllMain worker started (pid=%lu) ===\n", GetCurrentProcessId());
+    magos_log(MAGOS_LOG_INFO, "shell", "=== DllMain worker started (pid=%lu) ===\n", GetCurrentProcessId());
 
     HMODULE h = GetModuleHandleW(NULL);  /* Darktide.exe */
-    if (!h) { magos_log("[magos] FATAL: GetModuleHandle(NULL) failed\n"); return 1; }
+    if (!h) { magos_log(MAGOS_LOG_ERROR, "shell", "FATAL: GetModuleHandle(NULL) failed\n"); return 1; }
     MODULEINFO mi;
     if (!GetModuleInformation(GetCurrentProcess(), h, &mi, sizeof(mi))) {
-        magos_log("[magos] FATAL: GetModuleInformation failed (lu=%lu)\n", GetLastError());
+        magos_log(MAGOS_LOG_ERROR, "shell", "FATAL: GetModuleInformation failed (lu=%lu)\n", GetLastError());
         return 1;
     }
     g_module_base = (uint8_t *)h;
-    magos_log("[magos] module base = %p, SizeOfImage = 0x%lx\n",
+    magos_log(MAGOS_LOG_INFO, "shell", "module base = %p, SizeOfImage = 0x%lx\n",
          (void *)g_module_base, (unsigned long)mi.SizeOfImage);
 
     /* step 6: invoke the Rust discovery seam in-process. */
@@ -881,31 +1044,31 @@ static DWORD WINAPI worker(LPVOID arg) {
     int rc = magos_discover_detail(g_module_base, mi.SizeOfImage, &tbl,
                                    detail, sizeof(detail));
     if (rc != MAGOS_OK) {
-        magos_log("[magos] FATAL: magos_discover rc=%d (%s)\n", rc, (char*)detail);
+        magos_log(MAGOS_LOG_ERROR, "shell", "FATAL: magos_discover rc=%d (%s)\n", rc, (char*)detail);
         return 1;
     }
-    magos_log("[magos] step6: discovery OK. 16 addresses (RVAs):\n");
-    magos_log("[magos]   lua_newstate_thunk  = 0x%08x  body=0x%08x\n",
+    magos_log(MAGOS_LOG_INFO, "discovery", "step6: discovery OK. 16 addresses (RVAs):\n");
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  lua_newstate_thunk  = 0x%08x  body=0x%08x\n",
          tbl.lua_newstate_thunk, tbl.lua_newstate_body);
-    magos_log("[magos]   lua_atpanic=0x%08x  lua_gettop=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  lua_atpanic=0x%08x  lua_gettop=0x%08x\n",
          tbl.lua_atpanic, tbl.lua_gettop);
-    magos_log("[magos]   lua_pcall=0x%08x  luaL_loadbuffer=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  lua_pcall=0x%08x  luaL_loadbuffer=0x%08x\n",
          tbl.lua_pcall, tbl.lual_loadbuffer);
-    magos_log("[magos]   lua_pushcclosure=0x%08x  lua_setfield=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  lua_pushcclosure=0x%08x  lua_setfield=0x%08x\n",
          tbl.lua_pushcclosure, tbl.lua_setfield);
-    magos_log("[magos]   lua_pushstring=0x%08x  lua_tolstring=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  lua_pushstring=0x%08x  lua_tolstring=0x%08x\n",
          tbl.lua_pushstring, tbl.lua_tolstring);
-    magos_log("[magos]   lua_createtable=0x%08x  lua_type=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  lua_createtable=0x%08x  lua_type=0x%08x\n",
          tbl.lua_createtable, tbl.lua_type);
-    magos_log("[magos]   lua_tonumber=0x%08x  lua_settop=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  lua_tonumber=0x%08x  lua_settop=0x%08x\n",
          tbl.lua_tonumber, tbl.lua_settop);
-    magos_log("[magos]   luaL_openlibs=0x%08x  lua_panic_body=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  luaL_openlibs=0x%08x  lua_panic_body=0x%08x\n",
          tbl.lual_openlibs, tbl.lua_panic_body);
-    magos_log("[magos]   LuaEnvironment::init = 0x%08x..0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  LuaEnvironment::init = 0x%08x..0x%08x\n",
          tbl.luaenvironment_init_begin, tbl.luaenvironment_init_end);
-    magos_log("[magos]   [probe] lua_getfield=0x%08x  lua_resource::bytecode=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  probe lua_getfield=0x%08x  lua_resource::bytecode=0x%08x\n",
          tbl.lua_getfield, tbl.lua_resource_bytecode);
-    magos_log("[magos]   [probe] lua_getfenv=0x%08x  lua_setfenv=0x%08x\n",
+    magos_log(MAGOS_LOG_DEBUG, "discovery", "  probe lua_getfenv=0x%08x  lua_setfenv=0x%08x\n",
          tbl.lua_getfenv, tbl.lua_setfenv);
 
     /* resolve the LuaJIT C-API pointers used by the probe + the slice. */
@@ -921,7 +1084,7 @@ static DWORD WINAPI worker(LPVOID arg) {
      * capture L without it); the other three are best-effort — a failure
      * degrades the probe to partial data rather than aborting. */
     MH_STATUS mh = MH_Initialize();
-    if (mh != MH_OK) { magos_log("[magos] MH_Initialize failed: %d\n", mh); return 1; }
+    if (mh != MH_OK) { magos_log(MAGOS_LOG_ERROR, "shell", "MH_Initialize failed: %d\n", mh); return 1; }
     if (!install_hook((void *)(g_module_base + tbl.lua_newstate_thunk),
                       (void *)&detour_newstate, (void **)&g_orig_newstate, "lua_newstate")) {
         return 1;
@@ -935,24 +1098,24 @@ static DWORD WINAPI worker(LPVOID arg) {
     install_hook((void *)(g_module_base + tbl.lua_setfenv),
                  (void *)&detour_setfenv, (void **)&g_orig_setfenv, "lua_setfenv");
 
-    magos_log("[probe] === engine-context probe (Phase 3 — mechanism-cracker) ===\n");
-    magos_log("[probe] hooks: lua_newstate{1} luaL_openlibs{1} luaL_loadbuffer{1,5,20}\n");
-    magos_log("[probe]        lua_pcall{every} lua_setfenv{first 20}\n");
-    magos_log("[probe] pcall: per-call CLASS+Managers transition (one-shot per global);\n");
-    magos_log("[probe]        full-16 snapshot @ {1,10,50,100,both-present}; chunk-injection (v3) @ both-present (fallback #50/#100)\n");
-    magos_log("[probe] setfenv: sample first 20 — log obj_type + env globals (io/loadstring/require/print/Managers)\n");
-    magos_log("[probe] chunk (v3): #2 getfenv env, #3 before/after globals, + chunk return types\n");
-    magos_log("[probe] globals: print require dofile loadfile load loadstring io pcall pairs "
+    magos_log(MAGOS_LOG_DEBUG, "probe", "=== engine-context probe (Phase 3 — mechanism-cracker) ===\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "hooks: lua_newstate{1} luaL_openlibs{1} luaL_loadbuffer{1,5,20}\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "       lua_pcall{every} lua_setfenv{first 20}\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "pcall: per-call CLASS+Managers transition (one-shot per global);\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "       full-16 snapshot @ {1,10,50,100,both-present}; chunk-injection (v3) @ both-present (fallback #50/#100)\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "setfenv: sample first 20 — log obj_type + env globals (io/loadstring/require/print/Managers)\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "chunk (v3): #2 getfenv env, #3 before/after globals, + chunk return types\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "globals: print require dofile loadfile load loadstring io pcall pairs "
               "table string math CLASS Managers _G _VERSION\n");
-    magos_log("[probe] NOTE: lua_resource::bytecode @0x%08x discovered (anchor) but NOT hooked "
+    magos_log(MAGOS_LOG_DEBUG, "probe", "NOTE: lua_resource::bytecode @0x%08x discovered (anchor) but NOT hooked "
               "(unknown C++ sig) — luaL_loadbuffer (its known-sig callee) is the proxy.\n",
               tbl.lua_resource_bytecode);
 
-    /* Production trampoline: stage the chunk from DARKTIDE_MOD_STAGING + enginseer.lua
+    /* Production trampoline: stage the chunk from DARKTIDE_MOD_PATH + enginseer.lua
      * now so it is ready to fire one-shot at pcall#1 (the hooks above are armed
      * and the engine's first lua_pcall is imminent once the main thread resumes). */
-    magos_log("[probe] === production trampoline ===\n");
-    magos_log("[probe] fires one-shot at pcall#1 (before orig pcall); reads %s + %s\n",
+    magos_log(MAGOS_LOG_DEBUG, "probe", "=== production trampoline ===\n");
+    magos_log(MAGOS_LOG_DEBUG, "probe", "fires one-shot at pcall#1 (before orig pcall); reads %s + %s\n",
               MOD_STAGING_ENV, ENGINSEER_ENTRY_FILENAME);
     trampoline_stage_chunk();
 
@@ -966,13 +1129,13 @@ static DWORD WINAPI worker(LPVOID arg) {
     if (ready) {
         SetEvent(ready);
         CloseHandle(ready);
-        magos_log("[magos] hook-ready signaled (%s)\n", MAGOS_HOOK_READY_EVENT);
+        magos_log(MAGOS_LOG_INFO, "shell", "hook-ready signaled (%s)\n", MAGOS_HOOK_READY_EVENT);
     } else {
-        magos_log("[magos] warning: OpenEvent(%s) failed (lu=%lu); hooks armed, not signaled\n",
+        magos_log(MAGOS_LOG_WARN, "shell", "OpenEvent(%s) failed (lu=%lu); hooks armed, not signaled\n",
              MAGOS_HOOK_READY_EVENT, GetLastError());
     }
 
-    magos_log("[magos] worker complete; waiting for the engine lifecycle...\n");
+    magos_log(MAGOS_LOG_INFO, "shell", "worker complete; waiting for the engine lifecycle...\n");
     return 0;
 }
 

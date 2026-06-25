@@ -88,3 +88,9 @@ _local/
 /magos_launcher.exe
 /launch.bat
 *.obj
+
+# Vendored DMF (Darktide-Mod-Framework) for live validation — local only;
+# the mod manager will own DMF acquisition in production.
+runtime/enginseer/dmf/
+runtime/enginseer/mod_load_order.txt
+runtime/enginseer/testmod/

@@ -4,10 +4,10 @@
 //! the detail-buffer variant's two contracts:
 //!
 //!   - **Success path**: against the real `Darktide.exe` (resolved via
-//!     `$DARKTIDE_GAME_DIR` / `_local/DARKTIDE.env`, the same pattern as
-//!     `oracle.rs`), `magos_discover_detail` returns `MAGOS_OK`, all 16 RVAs
-//!     are found, and the detail buffer is left untouched (success writes no
-//!     error message). Skips cleanly when the binary is absent (portable in CI).
+//!     `$DARKTIDE_GAME_DIR`, the same pattern as `oracle.rs`),
+//!     `magos_discover_detail` returns `MAGOS_OK`, all 16 RVAs are found, and
+//!     the detail buffer is left untouched (success writes no error message).
+//!     Skips cleanly when the binary is absent (portable in CI).
 //!   - **Error path**: a non-PE byte buffer yields a non-OK status (the PE
 //!     error code) AND populates the detail buffer with a non-empty message.
 
@@ -15,37 +15,17 @@ use magos_discovery::pe::map_from_file;
 use magos_discovery::{magos_discover_detail, MagosAddressTable, MAGOS_ERR_PE, MAGOS_OK};
 use std::path::PathBuf;
 
-/// Resolve `DARKTIDE_GAME_DIR`: prefer the env var, else parse
-/// `_local/DARKTIDE.env` (the documented local source — never committed).
+/// Resolve `DARKTIDE_GAME_DIR` from the environment. Returns `None` if the
+/// env var is unset or empty (the test then skips cleanly — same path CI
+/// takes). The env var is the only resolution source; no files are read.
 /// Mirrors `tests/oracle.rs::resolve_game_dir`.
 fn resolve_game_dir() -> Option<PathBuf> {
-    if let Ok(d) = std::env::var("DARKTIDE_GAME_DIR") {
-        if !d.is_empty() {
-            return Some(PathBuf::from(d));
-        }
+    let dir = std::env::var("DARKTIDE_GAME_DIR").ok()?;
+    if dir.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(dir))
     }
-    // Walk up from CARGO_MANIFEST_DIR to find the repo root (_local/ lives at
-    // the workspace root, next to discovery/).
-    let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while root.parent().is_some() {
-        let env_file = root.join("_local").join("DARKTIDE.env");
-        if env_file.exists() {
-            if let Ok(txt) = std::fs::read_to_string(&env_file) {
-                for line in txt.lines() {
-                    if let Some(rest) = line.trim().strip_prefix("export DARKTIDE_GAME_DIR=") {
-                        let v = rest.trim().trim_matches(|c: char| c == '\'' || c == '"');
-                        if !v.is_empty() {
-                            return Some(PathBuf::from(v));
-                        }
-                    }
-                }
-            }
-        }
-        if !root.pop() {
-            break;
-        }
-    }
-    None
 }
 
 fn darktide_exe() -> Option<PathBuf> {
@@ -115,7 +95,7 @@ fn magos_discover_detail_success_and_error_paths() {
         None => {
             eprintln!(
                 "[detail] SKIP success path: Darktide.exe not resolvable (set \
-                 $DARKTIDE_GAME_DIR or create _local/DARKTIDE.env)."
+                 $DARKTIDE_GAME_DIR)."
             );
             return;
         }

@@ -1,8 +1,8 @@
 /*
  * test_steam_env.c — Unit tests for launcher's Steam environment setup.
  *
- * Tests that set_steam_env() correctly sets both SteamAppId and
- * SteamGameId to Darktide's appID (1361210).
+ * Tests that set_steam_env(app_id) correctly sets both SteamAppId and
+ * SteamGameId to the supplied app id (was hardcoded; now caller-provided).
  */
 #include "test_runner.h"
 #include "../launcher/src/launcher.h"
@@ -18,7 +18,7 @@ static void cleanup_env(void) {
 
 void test_steam_appid_set(void) {
     cleanup_env();
-    set_steam_env();
+    set_steam_env("1361210");
 
     char buf[64];
     DWORD n = GetEnvironmentVariableA("SteamAppId", buf, sizeof(buf));
@@ -30,7 +30,7 @@ void test_steam_appid_set(void) {
 
 void test_steam_gameid_set(void) {
     cleanup_env();
-    set_steam_env();
+    set_steam_env("1361210");
 
     char buf[64];
     DWORD n = GetEnvironmentVariableA("SteamGameId", buf, sizeof(buf));
@@ -42,7 +42,7 @@ void test_steam_gameid_set(void) {
 
 void test_both_set_identical(void) {
     cleanup_env();
-    set_steam_env();
+    set_steam_env("1361210");
 
     char appId[64], gameId[64];
     DWORD na = GetEnvironmentVariableA("SteamAppId", appId, sizeof(appId));
@@ -53,9 +53,28 @@ void test_both_set_identical(void) {
     cleanup_env();
 }
 
+void test_custom_appid_propagated(void) {
+    /* The new signature must forward an arbitrary id, not just the Darktide
+     * default — this is what makes steam_app_id configurable. */
+    cleanup_env();
+    set_steam_env("999111");
+
+    char buf[64];
+    DWORD n = GetEnvironmentVariableA("SteamAppId", buf, sizeof(buf));
+    ASSERT_TRUE(n > 0 && n < sizeof(buf));
+    ASSERT_STREQ("999111", buf);
+
+    n = GetEnvironmentVariableA("SteamGameId", buf, sizeof(buf));
+    ASSERT_TRUE(n > 0 && n < sizeof(buf));
+    ASSERT_STREQ("999111", buf);
+
+    cleanup_env();
+}
+
 int main(void) {
     test_register("steam_appid_set", test_steam_appid_set);
     test_register("steam_gameid_set", test_steam_gameid_set);
     test_register("both_set_identical", test_both_set_identical);
+    test_register("custom_appid_propagated", test_custom_appid_propagated);
     return test_summary();
 }

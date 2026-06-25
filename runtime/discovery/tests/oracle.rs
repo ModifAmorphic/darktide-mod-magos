@@ -1,9 +1,7 @@
 //! Oracle integration test (Spike 001, step 2).
 //!
-//! Resolves the installed `Darktide.exe` via `$DARKTIDE_GAME_DIR` (read from
-//! `_local/DARKTIDE.env` at the repo root — the env var is NOT set in the
-//! shell by default), runs the full discovery engine, and validates the
-//! result on two tiers:
+//! Resolves the installed `Darktide.exe` via `$DARKTIDE_GAME_DIR`, runs the
+//! full discovery engine, and validates the result on two tiers:
 //!
 //!   - **Tier 1 — pinned exact-match.** Runs *only* if the resolved binary's
 //!     SHA-256 equals the oracle's pinned SHA (`132eed5f…`). Asserts every one
@@ -24,36 +22,16 @@ use magos_discovery::{discover, oracle::PINNED_SHA256, oracle::PINNED_SIXTEEN, D
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-/// Resolve `DARKTIDE_GAME_DIR`: prefer the env var, else parse
-/// `_local/DARKTIDE.env` (the documented local source — never committed).
+/// Resolve `DARKTIDE_GAME_DIR` from the environment. Returns `None` if the
+/// env var is unset or empty (the test then skips cleanly — same path CI
+/// takes). The env var is the only resolution source; no files are read.
 fn resolve_game_dir() -> Option<PathBuf> {
-    if let Ok(d) = std::env::var("DARKTIDE_GAME_DIR") {
-        if !d.is_empty() {
-            return Some(PathBuf::from(d));
-        }
+    let dir = std::env::var("DARKTIDE_GAME_DIR").ok()?;
+    if dir.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(dir))
     }
-    // Walk up from CARGO_MANIFEST_DIR to find the repo root (_local/ lives at
-    // the workspace root, next to discovery/).
-    let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while root.parent().is_some() {
-        let env_file = root.join("_local").join("DARKTIDE.env");
-        if env_file.exists() {
-            if let Ok(txt) = std::fs::read_to_string(&env_file) {
-                for line in txt.lines() {
-                    if let Some(rest) = line.trim().strip_prefix("export DARKTIDE_GAME_DIR=") {
-                        let v = rest.trim().trim_matches(|c: char| c == '\'' || c == '"');
-                        if !v.is_empty() {
-                            return Some(PathBuf::from(v));
-                        }
-                    }
-                }
-            }
-        }
-        if !root.pop() {
-            break;
-        }
-    }
-    None
 }
 
 fn darktide_exe() -> Option<PathBuf> {
@@ -79,8 +57,7 @@ fn oracle_all_sixteen_match() {
         Some(p) => p,
         None => {
             eprintln!(
-                "[oracle] SKIP: Darktide.exe not resolvable (set $DARKTIDE_GAME_DIR or \
-                 create _local/DARKTIDE.env). Tier-1/Tier-2 cannot run without the binary."
+                "[oracle] SKIP: Darktide.exe not resolvable (set $DARKTIDE_GAME_DIR)"
             );
             return;
         }
