@@ -299,6 +299,8 @@ return function(runner)
         runner.assert_eq(3, #mm._mods, "all ordered mods have entries; dmfmod's entry retained")
         runner.assert_eq("dmfmod", mm._mods[2].name)
         runner.assert_nil(mm._mods[2].object, "DMF-driven mod has no top-level object")
+        runner.assert_eq("dmf_driven", mm._mods[2].state,
+            "DMF-driven mod is marked 'dmf_driven' (loaded), distinct from a failed/missing 'not_loaded' entry")
         -- The later mod still loads (nil-return doesn't abort).
         runner.assert_eq("later", mm._mods[3].name)
         runner.assert_truthy(mm._mods[3].object ~= nil, "a mod after the nil-return mod still loads")

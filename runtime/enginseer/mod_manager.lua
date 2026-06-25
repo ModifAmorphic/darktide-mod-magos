@@ -208,11 +208,14 @@ function ModManager:init()
                 -- effect, return nothing) so it's driven by DMF's inner update
                 -- loop, NOT this rite's outer update/on_game_state_changed. This
                 -- is a success, not a failure: leave entry.object nil so the
-                -- outer update/gsc loops skip it (DMF drives it), and keep the
-                -- scan-phase _mods entry so _state still reaches "done" and
-                -- _mod_load_index accounting is unchanged. DMF reads
+                -- outer update/gsc loops skip it (DMF drives it), mark
+                -- entry.state = "dmf_driven" (loaded, but driven by DMF's inner
+                -- loop — distinct from "not_loaded" which means a failure/miss),
+                -- and keep the scan-phase _mods entry so _state still reaches
+                -- "done" and _mod_load_index accounting is unchanged. DMF reads
                 -- _mods[_mod_load_index].id/.name/.handle during run()'s new_mod
                 -- call, and the scan-phase entry still resolves those.
+                entry.state = "dmf_driven"
                 _log(("[Enginseer] mod '%s' loaded (no top-level object; DMF-driven)"):format(entry.name))
             else
                 entry.object = object
