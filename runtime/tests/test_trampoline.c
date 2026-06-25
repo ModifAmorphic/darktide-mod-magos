@@ -57,15 +57,15 @@ void test_escape_null_args(void) {
 
 /* ---- trampoline_build_chunk ---- */
 
-void test_build_chunk_sets_staging_global(void) {
-    /* The chunk sets MAGOS_STAGING (escaped staging dir) then opens the entry
+void test_build_chunk_sets_mod_path_global(void) {
+    /* The chunk sets MAGOS_MOD_PATH (escaped mod path) then opens the entry
      * file (escaped joined path). Both must appear. */
     char out[1024];
     int n = trampoline_build_chunk("Z:\\staging", "Z:\\staging\\t.lua", out, sizeof(out));
     ASSERT_TRUE(n > 0);
 
-    /* MAGOS_STAGING global set from the staging dir, escaped. */
-    ASSERT_NOTNULL(strstr(out, "MAGOS_STAGING = \"Z:\\\\staging\""));
+    /* MAGOS_MOD_PATH global set from the mod path, escaped. */
+    ASSERT_NOTNULL(strstr(out, "MAGOS_MOD_PATH = \"Z:\\\\staging\""));
     /* Entry path baked into io.open(...), escaped. */
     ASSERT_NOTNULL(strstr(out, "io.open(\"Z:\\\\staging\\\\t.lua\", \"r\")"));
     /* Each FAIL step label is present (defines the status vocabulary). */
@@ -77,11 +77,11 @@ void test_build_chunk_sets_staging_global(void) {
 }
 
 void test_build_chunk_plain_entry_path(void) {
-    /* Forward-slash staging + entry need no escaping. */
+    /* Forward-slash mod path + entry need no escaping. */
     char out[1024];
     int n = trampoline_build_chunk("/tmp", "/tmp/x.lua", out, sizeof(out));
     ASSERT_TRUE(n > 0);
-    ASSERT_NOTNULL(strstr(out, "MAGOS_STAGING = \"/tmp\""));
+    ASSERT_NOTNULL(strstr(out, "MAGOS_MOD_PATH = \"/tmp\""));
     ASSERT_NOTNULL(strstr(out, "io.open(\"/tmp/x.lua\", \"r\")"));
 }
 
@@ -192,7 +192,7 @@ int main(void) {
     test_register("escape_empty_path", test_escape_empty_path);
     test_register("escape_overflow_returns_neg1", test_escape_overflow_returns_neg1);
     test_register("escape_null_args", test_escape_null_args);
-    test_register("build_chunk_sets_staging_global", test_build_chunk_sets_staging_global);
+    test_register("build_chunk_sets_mod_path_global", test_build_chunk_sets_mod_path_global);
     test_register("build_chunk_plain_entry_path", test_build_chunk_plain_entry_path);
     test_register("build_chunk_empty_staging_rejected", test_build_chunk_empty_staging_rejected);
     test_register("build_chunk_empty_entry_rejected", test_build_chunk_empty_entry_rejected);

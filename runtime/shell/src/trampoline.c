@@ -2,11 +2,11 @@
  * trampoline.c — pure helpers for the runtime trampoline.
  *
  * Implementation of the helpers declared in trampoline.h. The trampoline chunk
- * (set MAGOS_STAGING -> io.open a staged file -> read -> loadstring -> run) is
+ * (set MAGOS_MOD_PATH -> io.open a staged file -> read -> loadstring -> run) is
  * the proven engine-context mechanism (see dllmain.c's Phase-4 + production
- * notes). The production path joins DARKTIDE_MOD_STAGING + enginseer.lua into
- * the entry path and feeds both the raw staging dir AND the joined entry path
- * to trampoline_build_chunk; the chunk sets MAGOS_STAGING first, then opens the
+ * notes). The production path joins DARKTIDE_MOD_PATH + enginseer.lua into
+ * the entry path and feeds both the raw mod path AND the joined entry path
+ * to trampoline_build_chunk; the chunk sets MAGOS_MOD_PATH first, then opens the
  * entry file. This file has NO Windows, Lua, or hook dependencies — only string
  * ops — so it compiles directly into both the shell DLL and the C unit-test exes.
  */
@@ -15,17 +15,17 @@
 #include <stdio.h>
 #include <string.h>
 
-/* The trampoline chunk template. The first `%s` receives the escaped staging
- * dir (set as MAGOS_STAGING); the second `%s` receives the escaped entry-file
+/* The trampoline chunk template. The first `%s` receives the escaped mod path
+ * (set as MAGOS_MOD_PATH); the second `%s` receives the escaped entry-file
  * path (opened + loaded + run). The chunk returns "OK" or a "FAIL <step>:
  * <err>" status string. Verbatim step order from the Phase-4 spec (io.open ->
  * read -> loadstring -> run), guarded at each step so the only way it
  * propagates an error is an unguarded step (e.g. f:read, which the outer
- * pcall then catches and reports as CHUNK PCALL FAILED). The MAGOS_STAGING
+ * pcall then catches and reports as CHUNK PCALL FAILED). The MAGOS_MOD_PATH
  * assignment is the only addition over the Phase-4 prototype — a path handoff
  * to the Enginseer, not a Lua-facility shim. */
 static const char TRAMPOLINE_CHUNK_FMT[] =
-    "MAGOS_STAGING = \"%s\"\n"
+    "MAGOS_MOD_PATH = \"%s\"\n"
     "local f, err = io.open(\"%s\", \"r\")\n"
     "if not f then return \"FAIL io.open: \" .. tostring(err) end\n"
     "local data = f:read(\"*all\"); f:close()\n"

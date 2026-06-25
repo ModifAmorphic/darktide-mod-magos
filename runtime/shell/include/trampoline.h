@@ -1,11 +1,11 @@
 /*
  * trampoline.h — pure helpers for the runtime trampoline.
  *
- * The trampoline chunk (set MAGOS_STAGING -> io.open a staged file -> read ->
+ * The trampoline chunk (set MAGOS_MOD_PATH -> io.open a staged file -> read ->
  * loadstring -> run) is the proven engine-context mechanism (see dllmain.c's
- * Phase-4 + production notes). The production path joins DARKTIDE_MOD_STAGING +
+ * Phase-4 + production notes). The production path joins DARKTIDE_MOD_PATH +
  * enginseer.lua into the entry-file path; trampoline_build_chunk takes the raw
- * staging dir AND that joined entry path, sets MAGOS_STAGING from the former,
+ * mod path AND that joined entry path, sets MAGOS_MOD_PATH from the former,
  * and bakes the latter into the io.open call. Kept separate from the hook-
  * heavy dllmain.c so the pure logic is unit-testable (compiled directly into
  * the C test exes, like launcher.c's testable seams).
@@ -44,10 +44,10 @@ int trampoline_escape_path(const char *path, size_t path_len,
                            char *out, size_t out_cap);
 
 /*
- * Build the trampoline Lua chunk. Sets MAGOS_STAGING from `staging` (escaped),
+ * Build the trampoline Lua chunk. Sets MAGOS_MOD_PATH from `staging` (escaped),
  * then opens + loads + runs `entry_path` (escaped). The chunk:
  *
- *   MAGOS_STAGING = "<staging>"
+ *   MAGOS_MOD_PATH = "<staging>"
  *   local f, err = io.open("<entry_path>", "r")
  *   if not f then return "FAIL io.open: " .. tostring(err) end
  *   local data = f:read("*all"); f:close()
@@ -57,7 +57,7 @@ int trampoline_escape_path(const char *path, size_t path_len,
  *   if not ok then return "FAIL run: " .. tostring(rerr) end
  *   return "OK"
  *
- * The MAGOS_STAGING global hands the staging dir to the Enginseer so it can
+ * The MAGOS_MOD_PATH global hands the mod path to the Enginseer so it can
  * later build Mods.file.dofile. (Note: in the production call site `staging`
  * is also the prefix of `entry_path`, so the staging value appears twice in
  * the chunk — once as the global, once inside the io.open path. That is
