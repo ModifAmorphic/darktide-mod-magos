@@ -46,8 +46,40 @@ end
 --   get_file_path(local_path, file_name, file_extension)
 --     -> "<staging>/<local_path>/<file_name>.<file_extension or 'lua'>"
 -- nil/empty components are skipped. file_extension defaults to "lua".
+--
+-- Staging-confinement check: if any path segment in local_path or file_name
+-- is exactly "..", the request escapes the staging root (e.g.
+-- Mods.file.dofile("../../etc/passwd")) and is rejected -> returns nil so the
+-- caller's io.open fails cleanly (handle_io short-circuits to false). This is
+-- the future-sandbox boundary; today a malicious mod already has full Lua via
+-- Mods.lua.io, so this grants no new capability, but the surface is locked
+-- down now while it's cheap.
+--
+-- A single trailing "/" or "\" on the staging base is stripped so the join
+-- never produces a doubled separator ("<base>//foo").
+local function has_traversal(p)
+    if not p or p == "" then return false end
+    local norm = _to_forward_slashes(p)
+    for seg in norm:gmatch("[^/]+") do
+        if seg == ".." then return true end
+    end
+    return false
+end
+
 local function get_file_path(local_path, file_name, file_extension)
-    local file_path = _staging_base() or ""
+    -- Strip a single trailing separator from the base (forward-proofing: real
+    -- filesystems tolerate "//", but the mock io and brittle tests don't).
+    local base = _staging_base() or ""
+    if #base > 0 then
+        base = base:gsub("[/\\]$", "")
+    end
+
+    -- Reject any path that would escape the staging root.
+    if has_traversal(local_path) or has_traversal(file_name) then
+        return nil
+    end
+
+    local file_path = base
     if local_path and local_path ~= "" then
         file_path = file_path .. "/" .. local_path
     end
@@ -78,7 +110,12 @@ local function read_or_execute(file_path, args, return_type)
             if line then
                 -- Trim leading/trailing whitespace.
                 line = line:gsub("^%s*(.-)%s*$", "%1")
-                -- Skip blank lines and single-line comments.
+                -- Skip blank lines and line comments ("--"). NOTE:
+                -- line-comment-only; Lua block comments ("--[[ ]]") are NOT
+                -- recognized — a "--[[" opener is dropped as a comment but the
+                -- lines inside the block are kept as content. Matches DML's
+                -- behavior (these files are mod_load_order.txt-style, no block
+                -- comments).
                 if line ~= "" and line:sub(1, 2) ~= "--" then
                     table.insert(result, line)
                 end
@@ -105,6 +142,10 @@ end
 local function handle_io(local_path, file_name, file_extension, args, safe_call, return_type)
     local io = _lua().io
     local file_path = get_file_path(local_path, file_name, file_extension)
+    if file_path == nil then
+        -- Staging-confinement check rejected the path (contains "..").
+        return false
+    end
 
     -- Existence probe (mirrors DML): the read_or_execute path assumes f ~= nil.
     local ff, err_io = io.open(file_path, "r")
@@ -161,6 +202,11 @@ Mods.file.read_content_to_table = function(file_path, file_extension)
     return handle_io(file_path, nil, file_extension, nil, true, "lines")
 end
 
+-- exists(name): probe a path with io.open. NOTE: unlike the other Mods.file.*
+-- helpers, `name` is NOT rooted at MAGOS_STAGING — it's opened as-is (absolute
+-- or engine-relative). This matches DML's surface; callers pass fully-qualified
+-- paths. Use dofile/exec/read_content for staging-relative access (those route
+-- through get_file_path and its confinement check).
 Mods.file.exists = function(name)
     local io = _lua().io
     local f = io.open(name, "r")

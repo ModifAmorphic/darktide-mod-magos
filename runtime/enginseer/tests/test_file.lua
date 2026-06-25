@@ -128,4 +128,93 @@ return function(runner)
         -- caught (pcall) and surfaces as false rather than raising.
         runner.assert_eq(false, sb.Mods.file.exec("", "broken"))
     end)
+
+    -- #9: a trailing separator on the staging base must not produce a doubled
+    -- separator in the joined path.
+    runner.register("file: trailing slash on staging base is stripped (no doubled separator)", function()
+        local seen_path
+        local real_io = mock.make_io({})
+        local sb = mock.new_sandbox()
+        sb.MAGOS_STAGING = "/staging/"
+        sb.Mods = {
+            lua = {
+                io = {
+                    open = function(p, m) seen_path = p; return real_io.open(p, m) end,
+                    close = real_io.close, lines = real_io.lines,
+                },
+                loadstring = sb.loadstring,
+            },
+            file = {},
+            _staging_base = "/staging/",
+        }
+        mock.run_module("file", sb)
+        sb.Mods.file.dofile("mod_x/init")
+        runner.assert_eq("/staging/mod_x/init.lua", seen_path,
+            "trailing '/' on base must not form '/staging//mod_x/init.lua'")
+    end)
+
+    runner.register("file: trailing backslash on staging base is stripped", function()
+        local seen_path
+        local real_io = mock.make_io({})
+        local sb = mock.new_sandbox()
+        sb.MAGOS_STAGING = "C:\\staging\\"
+        sb.Mods = {
+            lua = {
+                io = {
+                    open = function(p, m) seen_path = p; return real_io.open(p, m) end,
+                    close = real_io.close, lines = real_io.lines,
+                },
+                loadstring = sb.loadstring,
+            },
+            file = {},
+            _staging_base = "C:\\staging\\",
+        }
+        mock.run_module("file", sb)
+        sb.Mods.file.dofile("mod/init")
+        runner.assert_eq("C:/staging/mod/init.lua", seen_path,
+            "trailing '\\' on base must be stripped then normalized to '/'")
+    end)
+
+    -- #2: staging-confinement — path traversal must be rejected.
+    runner.register("file: dofile rejects path traversal (../) and returns false", function()
+        -- Stage a would-be escape target so the only thing that can return
+        -- non-false is a real traversal. The check must refuse before io.open.
+        local sb = setup({
+            ["etc/passwd"] = "SECRET",
+            ["/staging/../../../etc/passwd"] = "SECRET",
+            ["/staging/etc/passwd"] = "SECRET",
+        })
+        runner.assert_eq(false, sb.Mods.file.dofile("../../../etc/passwd"),
+            "traversal in dofile path must be confined to staging — no escape")
+    end)
+
+    runner.register("file: exec_with_return rejects traversal in local_path or file_name", function()
+        local sb = setup({})
+        runner.assert_eq(false, sb.Mods.file.exec_with_return("..", "win.ini", "lua"),
+            "traversal in local_path must be rejected")
+        runner.assert_eq(false, sb.Mods.file.exec_with_return("mods", "../../win", "ini"),
+            "traversal in file_name must be rejected")
+    end)
+
+    runner.register("file: legitimate nested path still resolves after traversal check", function()
+        -- The DMF bootstrap caller path must NOT regress.
+        local sb = setup({ ["/staging/dmf/scripts/mods/dmf/dmf_loader.lua"] = "return 42" })
+        runner.assert_eq(42, sb.Mods.file.dofile("dmf/scripts/mods/dmf/dmf_loader"),
+            "the real DMF loader path (no ..) must still resolve")
+    end)
+
+    -- #5: the unsafe variants propagate loadstring/runtime errors (they're the
+    -- un-pcall'd counterparts to exec / exec_with_return).
+    runner.register("file: exec_unsafe propagates a syntax error (no pcall swallow)", function()
+        local sb = setup({ ["/staging/broken.lua"] = "this is not valid lua (" })
+        local ok, err = pcall(sb.Mods.file.exec_unsafe, "", "broken")
+        runner.assert_eq(false, ok, "exec_unsafe must propagate the loadstring error, not swallow it")
+        runner.assert_not_nil(err, "the error must be surfaced to the caller")
+    end)
+
+    runner.register("file: exec_unsafe_with_return returns the chunk value", function()
+        local sb = setup({ ["/staging/val.lua"] = "return 'unsafe-value'" })
+        runner.assert_eq("unsafe-value", sb.Mods.file.exec_unsafe_with_return("", "val"),
+            "exec_unsafe_with_return must return the chunk's return value")
+    end)
 end
