@@ -6,19 +6,19 @@ way for vanilla play (launch from Steam = the unmodified game).
 
 ## Component model
 
-- **Component A — `runtime/`** (built): the injected modding runtime + its
+- **the runtime — `runtime/`** (built): the injected modding runtime + its
   launcher. A Rust discovery pure-library + a C live-game shell, linked into
   one DLL, delivered by `CreateRemoteThread`.
-- **Component B — `mod-manager/`** (planned, not built): the user-facing app —
+- **Darktide Magos — `mod-manager/`** (planned, not built): the user-facing app —
   staging-directory management, load order, profiles, dependency resolution,
   the "Launch Modded" button.
 - **DMF + user mods** (Lua, not our code): the Darktide-Mod-Framework Lua
-  files, preserved as-is; only the harness is replaced. Loaded by Component A
+  files, preserved as-is; only the harness is replaced. Loaded by the runtime
   at runtime.
 
-## Component A — the Hybrid
+## The runtime — the Hybrid
 
-Component A is a **Hybrid**: a Rust pure-library for discovery + a C shell for
+the runtime is a **Hybrid**: a Rust pure-library for discovery + a C shell for
 everything that touches the live game, linked into one DLL. Each language is
 placed where its benefit holds:
 
@@ -99,7 +99,7 @@ Windows (CI). Both gate on `cargo clippy --all-targets --features test-hooks --
 -D warnings` + tests. CI: `.github/workflows/mingw-build.yml` +
 `msvc-build.yml`.
 
-## Production launcher insights (from live testing — feed Component B)
+## Production launcher insights (from live testing — feed Darktide Magos)
 
 1. **Proton launch model**: Steam non-Steam-game (the launcher) + forced
    Proton + `STEAM_COMPAT_DATA_PATH` → launcher creates+suspends+injects. Steam

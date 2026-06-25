@@ -10,9 +10,9 @@ launches the game modded via DLL injection (no game-directory footprint, no
 bundle-database patching) and stays out of the way for vanilla play (launch
 from Steam = unmodified game).
 
-Architecture: a **Hybrid** Component A — a Rust discovery pure-library
+Architecture: a **Hybrid** the runtime — a Rust discovery pure-library
 (C-ABI staticlib) + a C live-game shell, linked into one DLL, delivered by
-`CreateRemoteThread`. Component B (the mod-manager app) is planned, not yet
+`CreateRemoteThread`. Darktide Magos (the mod-manager app) is planned, not yet
 built. See `docs/architecture/` for the full architecture.
 
 ## Baseline (read before planning)
@@ -27,8 +27,8 @@ Requirements, architecture, and technology choices are made fresh.
 
 ## Repository state
 
-- **`main`** — production. Component A (the injected runtime + launcher) is
-  merged as the production seed; Component B is not yet built.
+- **`main`** — production. the runtime (the injected runtime + launcher) is
+  merged as the production seed; Darktide Magos is not yet built.
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -36,18 +36,18 @@ Requirements, architecture, and technology choices are made fresh.
 ## Directory structure (current `main`)
 
 ```
-runtime/            Component A — the injected modding runtime + injector
+runtime/            the injected modding runtime + injector
   discovery/        Rust crate: LuaJIT discovery engine (pure library, C-ABI staticlib)
   shell/            C shell — the injected DLL (DllMain, MinHook, lua_newstate hook)
   launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
   enginseer/        Enginseer (aka the Mod Loader) — user-staged loader entry (enginseer.lua)
   tests/            C unit tests (run via wine)
-mod-manager/        Component B — the mod manager app (not yet built; placeholder)
+mod-manager/        Darktide Magos — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference
 .github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
 Cargo.toml          workspace root (members = ["runtime/discovery"])
 Cargo.lock
-Makefile            builds Component A: make build / check / test / clean
+Makefile            builds the runtime: make build / check / test / clean
 .gitignore          ignores /target, build artifacts, _local/
 ```
 

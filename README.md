@@ -18,12 +18,12 @@ bundle-database patching — and stays out of the way for vanilla play
 ## Directory layout
 
 ```
-runtime/        Component A — the injected modding runtime + injector
+runtime/        the injected modding runtime + injector
   discovery/      Rust: discovers Darktide's LuaJIT functions at runtime
   shell/          C: the injected DLL (hooks the game's Lua VM)
   launcher/       C: launches the game modded (injects the DLL)
   tests/          C unit tests
-mod-manager/    Component B — the mod manager app (planned, not yet built)
+mod-manager/    Darktide Magos — the mod manager app (planned, not yet built)
 docs/           architecture, reference, and POC record
 .github/        CI workflows
 ```

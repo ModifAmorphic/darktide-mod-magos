@@ -17,7 +17,7 @@ offline-testable against a binary fixture. Compiled to a C-ABI staticlib.
 - **Interface (the seam):** `magos_discover` / `magos_discover_detail`
   (C-ABI). Shared contract: `MagosAddressTable` (`#[repr(C)]`, mirrored in
   `shell/include/magos_discovery.h`) + return codes.
-- **State:** production-quality (the Component A seed). The canonical 16
+- **State:** production-quality (the the runtime seed). The canonical 16
   addresses are stable; two bonus Phase-1 probe fields are also exposed —
   `lua_getfield` (the C-API table-get the shell uses to read globals;
   `lua_getglobal` is a macro over it) and `lua_resource_bytecode` (the engine
