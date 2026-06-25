@@ -7,23 +7,23 @@ bundle-database patching — and stays out of the way for vanilla play
 
 ## Status
 
-- **Component A** — the injected modding runtime + launcher — is merged as
+- [**Runtime**](runtime) — the injected modding runtime + launcher — is merged as
   the production seed: a Rust discovery engine + C shell, validated
   end-to-end (the game reaches the main menu, the Lua VM hook fires, all 16
   LuaJIT functions are discovered in-process).
-- **Component B** — the mod manager app (UI, staging, load order, profiles,
+- [**Darktide Magos (Mod Manager)**](mod-manager) — the mod manager app (UI, staging, load order, profiles,
   dependency resolution) — is planned, not yet built.
 - The `poc` branch holds the historical proof-of-concept (reference only).
 
 ## Directory layout
 
 ```
-runtime/        Component A — the injected modding runtime + injector
+runtime/        the injected modding runtime + injector
   discovery/      Rust: discovers Darktide's LuaJIT functions at runtime
   shell/          C: the injected DLL (hooks the game's Lua VM)
   launcher/       C: launches the game modded (injects the DLL)
   tests/          C unit tests
-mod-manager/    Component B — the mod manager app (planned, not yet built)
+mod-manager/    Darktide Magos — the mod manager app (planned, not yet built)
 docs/           architecture, reference, and POC record
 .github/        CI workflows
 ```

@@ -84,8 +84,23 @@ void test_injection_fails_no_such_exe(void) {
     ASSERT_EQ(1, rc);
 }
 
+void test_injection_fails_no_such_dll(void) {
+    /* A valid game exe but a nonexistent DLL must fail fast at the path
+     * pre-check (GetFileAttributesA), before CreateProcess — not after a
+     * hook-ready timeout that would never fire. Reuse stub_target.exe as
+     * the "valid" game exe. */
+    char stub_exe[MAX_PATH];
+    if (resolve_path("stub_target.exe", stub_exe, sizeof(stub_exe)) != 0) {
+        ASSERT_FAIL("could not resolve stub_target.exe path");
+    }
+    int rc = inject_and_resume(stub_exe,
+                               "C:\\nonexistent_path\\no_such_shell.dll", 5000);
+    ASSERT_EQ(1, rc);
+}
+
 int main(void) {
     test_register("injection_stub", test_injection_stub);
     test_register("injection_fails_no_such_exe", test_injection_fails_no_such_exe);
+    test_register("injection_fails_no_such_dll", test_injection_fails_no_such_dll);
     return test_summary();
 }

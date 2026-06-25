@@ -16,6 +16,13 @@ use crate::scan::{find_callers, find_lea_xrefs};
 /// All 16 target function addresses (RVAs) plus the bonus Method-A engine
 /// anchors. `lua_newstate` appears as both the CFG thunk callers invoke and
 /// the real body after the thunk follow.
+///
+/// The two `probe_*` fields are Phase-1 engine-context-probe additions (not
+/// part of the canonical 16): `lua_getfield` is the C-API reader a C detour
+/// uses to inspect globals (`lua_getglobal` is a macro over it), and
+/// `lua_resource_bytecode` is the engine's bundle-script loader function (the
+/// `stingray::lua_resource::bytecode` string-anchor's containing function that
+/// calls `luaL_loadbuffer`).
 #[derive(Debug, Clone, Default)]
 pub struct AddressTable {
     // --- the 16 (matches docs/poc/production-spec.md §"Confirmed function
@@ -39,6 +46,23 @@ pub struct AddressTable {
     // --- bonus Method-A engine anchors (not part of the 16) ---
     pub luaenvironment_init_begin: u32,
     pub luaenvironment_init_end: u32,
+    // --- Phase-1 engine-context-probe additions (not part of the 16) ---
+    /// `lua_getfield(L, idx, k)` — the C-API table-get used to read globals
+    /// (`lua_getglobal(L, s)` is `lua_getfield(L, LUA_GLOBALSINDEX, s)`).
+    pub lua_getfield: u32,
+    /// Primary engine function whose body references the
+    /// `stingray::lua_resource::bytecode` string and calls `luaL_loadbuffer`
+    /// — i.e. the bundle-script loader (the `lua_resource::bytecode` anchor).
+    pub lua_resource_bytecode: u32,
+    // --- Phase-3 mechanism-cracker additions (not part of the 16) ---
+    /// `lua_getfenv(L, idx)` — pushes the env table of the func/udata/thread
+    /// at `idx`. Used by the probe to read a chunk's *actual* env (vs
+    /// `LUA_GLOBALSINDEX`).
+    pub lua_getfenv: u32,
+    /// `lua_setfenv(L, idx)` — sets the env of the func/udata/thread at `idx`
+    /// to the table at `L->top-1`. Hooked by the probe to reveal what env the
+    /// engine assigns to scripts (and whether it rebinds a thread's globals).
+    pub lua_setfenv: u32,
 }
 
 impl AddressTable {
@@ -153,6 +177,24 @@ pub fn discover_with(
     let lua_setfield =
         find_unique(dis, image, pe, &candidates, |i| patterns::match_lua_setfield(i, cluster))
             .map_err(|e| DiscoverError::Match("lua_setfield", e))?;
+    // `lua_getfield` is the symmetric sibling of `lua_setfield` (same prologue
+    // + key-intern tag, but a `top++` epilogue instead of `top--`). It is a
+    // Phase-1 probe enabler: the C shell reads globals via
+    // `lua_getfield(L, LUA_GLOBALSINDEX, name)` (`lua_getglobal` is a macro
+    // over it), so it must be discovered alongside the 16.
+    let lua_getfield =
+        find_unique(dis, image, pe, &candidates, |i| patterns::match_lua_getfield(i, cluster))
+            .map_err(|e| DiscoverError::Match("lua_getfield", e))?;
+    // `lua_getfenv` / `lua_setfenv` are lapi.c siblings of `lua_getfield` /
+    // `lua_setfield` (same `index2adr(L, idx)` prologue + the func/udata/thread
+    // type-check triple), discriminated by their `top++`/`top--` epilogues.
+    // Phase-3 probe enablers: `lua_setfenv` is hooked (known LuaJIT signature
+    // `int (lua_State*, int)`) to reveal what env the engine assigns scripts;
+    // `lua_getfenv` reads a chunk's actual env to test the setfenv hypothesis.
+    let lua_getfenv = find_unique(dis, image, pe, &candidates, patterns::match_lua_getfenv)
+        .map_err(|e| DiscoverError::Match("lua_getfenv", e))?;
+    let lua_setfenv = find_unique(dis, image, pe, &candidates, patterns::match_lua_setfenv)
+        .map_err(|e| DiscoverError::Match("lua_setfenv", e))?;
     let lua_pushstring =
         find_unique(dis, image, pe, &candidates, |i| patterns::match_lua_pushstring(i, cluster))
             .map_err(|e| DiscoverError::Match("lua_pushstring", e))?;
@@ -167,11 +209,11 @@ pub fn discover_with(
             .map_err(|e| DiscoverError::Match("luaL_openlibs", e))?;
     let lual_loadbuffer = find_loadbuffer_via_bytecode(dis, image, pe, cluster)
         .ok_or(DiscoverError::Match("luaL_loadbuffer", MatchError::NoCandidate))
-        .and_then(|t| {
-            if t == 0 {
+        .and_then(|(lb, loader)| {
+            if lb == 0 {
                 Err(DiscoverError::Match("luaL_loadbuffer", MatchError::NoCandidate))
             } else {
-                Ok(t)
+                Ok((lb, loader))
             }
         })?;
     let lua_settop = find_unique(dis, image, pe, &candidates, patterns::match_lua_settop)
@@ -186,6 +228,8 @@ pub fn discover_with(
     let (lua_newstate_thunk, lua_newstate_body) =
         find_newstate_via_trace(dis, image, pe, init_begin, init_end, lua_atpanic)
             .ok_or(DiscoverError::Match("lua_newstate_body", MatchError::NoCandidate))?;
+
+    let (lual_loadbuffer, lua_resource_bytecode) = lual_loadbuffer;
 
     Ok(AddressTable {
         lua_newstate_thunk,
@@ -206,6 +250,10 @@ pub fn discover_with(
         lua_panic_body: panic_body,
         luaenvironment_init_begin: init_begin,
         luaenvironment_init_end: init_end,
+        lua_getfield,
+        lua_resource_bytecode,
+        lua_getfenv,
+        lua_setfenv,
     })
 }
 
@@ -286,17 +334,26 @@ fn containing_function_of_anchor(pe: &Pe, image: &[u8], needle: &[u8]) -> Option
 /// loading path), enumerate their direct calls, and return the unique call
 /// target whose body satisfies the lua_load-wrapper signature. That target is
 /// `luaL_loadbuffer` — the bytecode path loads buffers, not files/strings.
+///
+/// Returns `(luaL_loadbuffer_rva, primary_loader_rva)`. `primary_loader` is
+/// the first (lowest-address) `.pdata` function that both references the
+/// `stingray::lua_resource::bytecode` string AND calls `luaL_loadbuffer` —
+/// the engine's bundle-script loader (the `lua_resource::bytecode` anchor
+/// function). The Phase-1 probe logs this address; it is not hooked directly
+/// (unknown C++ signature — the probe hooks `luaL_loadbuffer`, the known-sig
+/// callee, as the safe bytecode-load proxy).
 fn find_loadbuffer_via_bytecode(
     dis: &mut Disassembler,
     image: &[u8],
     pe: &Pe,
     cluster: Cluster,
-) -> Option<u32> {
+) -> Option<(u32, u32)> {
     let anchor = b"stingray::lua_resource::bytecode\x00";
     let rva = string_rva(pe, image, anchor)?;
     let mut sites = Vec::new();
     find_lea_xrefs(pe, image, rva, &mut sites);
-    // Distinct .pdata functions containing a bytecode-string reference.
+    // Distinct .pdata functions containing a bytecode-string reference, sorted
+    // by start address so the "primary loader" pick is deterministic.
     let mut containing: Vec<(u32, u32)> = Vec::new();
     for site in &sites {
         if let Some(rf) = pe.find_runtime_function(*site) {
@@ -306,9 +363,13 @@ fn find_loadbuffer_via_bytecode(
             }
         }
     }
+    containing.sort_unstable();
     // Enumerate direct calls from each containing function; collect call
-    // targets whose body matches the lua_load-wrapper shape.
+    // targets whose body matches the lua_load-wrapper shape. The first
+    // containing function (lowest address) that yields such a call is the
+    // primary loader.
     let mut hits: Vec<u32> = Vec::new();
+    let mut primary_loader: Option<u32> = None;
     for (begin, end) in &containing {
         let insns = dis.disasm_range(image, *begin, *end);
         for ins in &insns {
@@ -325,13 +386,16 @@ fn find_loadbuffer_via_bytecode(
                 && patterns::match_lual_loadbuffer(&body, pe, image, cluster)
             {
                 hits.push(t);
+                if primary_loader.is_none() {
+                    primary_loader = Some(*begin);
+                }
             }
         }
     }
     hits.sort_unstable();
     hits.dedup();
     if hits.len() == 1 {
-        Some(hits[0])
+        Some((hits[0], primary_loader?))
     } else {
         None
     }

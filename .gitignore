@@ -82,8 +82,9 @@ _local/
 /target/
 **/*.rs.bk
 
-# Mixed-DLL build outputs (shell + launcher)
+# Mixed-DLL build outputs (shell + launcher), launch batch file
 /magos_shell.dll
 /magos_shell.lib
 /magos_launcher.exe
+/launch.bat
 *.obj

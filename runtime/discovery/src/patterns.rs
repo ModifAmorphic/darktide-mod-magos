@@ -245,6 +245,63 @@ pub fn match_lua_setfield(insns: &[DecodedInsn], _c: Cluster) -> bool {
     prologue && prologue2 && str_tag && top_dec
 }
 
+/// `lua_getfield(L, idx, k)`: the symmetric sibling of `lua_setfield` — same
+/// prologue (`mov rsi, rcx` saves L, `mov rbx, r8` saves k) and same
+/// `0xfffffffb` (LJ_TSTR key tag) from `setstrV(&key, luaS_new(L, k))`, but
+/// ends with `api_incr_top` (`L->top++`) instead of `L->top--`. The `top++`
+/// epilogue (and the absence of setfield's `top--`) is the discriminator vs
+/// `lua_setfield`.
+///
+/// This is a Phase-1 probe enabler: the C shell reads globals via
+/// `lua_getfield(L, LUA_GLOBALSINDEX, name)` (`lua_getglobal` is a macro over
+/// it), so `lua_getfield` must be discoverable alongside the 16.
+pub fn match_lua_getfield(insns: &[DecodedInsn], _c: Cluster) -> bool {
+    if insns.len() < 8 {
+        return false;
+    }
+    let prologue = insns[..8]
+        .iter()
+        .any(|i| i.is_mnemonic("mov") && i.op_str.trim() == "rsi, rcx");
+    let prologue2 = insns[..8]
+        .iter()
+        .any(|i| i.is_mnemonic("mov") && i.op_str.trim() == "rbx, r8");
+    let str_tag = has_const_in_op(insns, "0xfffffffb");
+    // setfield's L->top-- epilogue: `lea rcx,[rdx - 8]; mov [rsi + 0x18],rcx`.
+    // getfield must NOT exhibit this (it increments top instead).
+    let mut has_top_dec = false;
+    // getfield's api_incr_top (L->top++) — load-add-store compile shape:
+    // `lea <reg>,[<topreg> + 8]; mov [rsi + 0x18],<reg>`.
+    let mut has_top_inc_lea = false;
+    for i in 0..insns.len().saturating_sub(1) {
+        let a = &insns[i];
+        let b = &insns[i + 1];
+        if a.id == X86_INS_LEA
+            && (a.op_contains("[rdx - 8]") || a.op_contains("[rdx - 0x8]"))
+            && b.is_mnemonic("mov")
+            && b.op_contains("[rsi + 0x18]")
+        {
+            has_top_dec = true;
+        }
+        if a.id == X86_INS_LEA
+            && (a.op_contains("+ 8]") || a.op_contains("+ 0x8]"))
+            && !a.op_contains(" - 8]")
+            && !a.op_contains(" - 0x8]")
+            && b.is_mnemonic("mov")
+            && b.op_contains("[rsi + 0x18]")
+        {
+            has_top_inc_lea = true;
+        }
+    }
+    // getfield's api_incr_top — direct-add compile shape:
+    // `add qword [rsi + 0x18], 8`.
+    let has_top_inc_add = insns.iter().any(|i| {
+        i.is_mnemonic("add")
+            && i.op_contains("[rsi + 0x18]")
+            && (i.op_contains(", 8") || i.op_contains(", 0x8"))
+    });
+    prologue && prologue2 && str_tag && !has_top_dec && (has_top_inc_add || has_top_inc_lea)
+}
+
 /// `lua_pushstring(L, s)`: `test rdx, rdx` + `jne` (the `if (str==NULL)` check),
 /// then the NULL branch writes the NIL tag via `mov dword [reg+4], 0xffffffff`
 /// (setnilV) and the else branch writes the STR tag `0xfffffffb` (setstrV).
@@ -503,6 +560,108 @@ fn callee_body_size(pe: &Pe, image: &[u8], rva: u32) -> u32 {
         }
     }
     0
+}
+
+/// `lua_getfenv(L, idx)`: the symmetric sibling of `lua_setfenv` — same
+/// `index2adr(L, idx)` prologue and the same func/udata/thread type-check
+/// triple (LJ_TFUNC/LJ_TUDATA/LJ_TTHREAD), but it *pushes* the object's env
+/// table (settabV → `0xfffffff4` LJ_TTAB), or NIL (`0xffffffff`, setnilV) for
+/// any other type, then `api_incr_top` (`L->top++`). The `top++` epilogue (and
+/// the absence of setfenv's `top--`) is the discriminator vs `lua_setfenv`.
+///
+/// This is a Phase-3 probe enabler: the C shell reads a chunk's *actual* env
+/// via `lua_getfenv(L, chunk_idx)` to test whether an injected chunk's env
+/// differs from `LUA_GLOBALSINDEX` (i.e. whether the chunk is `setfenv`'d to a
+/// sandbox table). `lua_getfenv` must be discoverable alongside the 16.
+///
+/// Source (LuaJIT 2.1 `lj_api.c`): for func → `tabref(funcV(o)->c.env)`,
+/// udata → `tabref(udataV(o)->env)`, thread → `tabref(threadV(o)->env)` (the
+/// thread `env` field, offset 0x2c in this build — the thread's globals
+/// table). The thread-globals read at `+0x2c` is the clinching discriminator:
+/// it is the only `(L, idx)` API function that reads `obj + 0x2c`.
+pub fn match_lua_getfenv(insns: &[DecodedInsn]) -> bool {
+    // Pushes the env as a TABLE (settabV writes the LJ_TTAB tag 0xfffffff4 to
+    // the pushed TValue's tag byte at +4) — and pushes NIL (0xffffffff) for the
+    // non-func/udata/thread else branch. This TAB-or-NIL push pair is unique to
+    // getfenv: createtable pushes only TAB (never NIL); pushnil/pushstring push
+    // only NIL-type tags (never TAB).
+    let pushes_tab = insns.iter().any(|i| {
+        i.is_mnemonic("mov") && i.op_contains("0xfffffff4") && i.op_contains("4]")
+    });
+    let pushes_nil = insns.iter().any(|i| {
+        i.is_mnemonic("mov") && i.op_contains("0xffffffff") && i.op_contains("4]")
+    });
+    // api_incr_top (L->top++): `add qword [reg + 0x18], 8`.
+    let incr_top = insns.iter().any(|i| {
+        i.is_mnemonic("add")
+            && i.op_contains("+ 0x18]")
+            && (i.op_contains(", 8") || i.op_contains(", 0x8"))
+    });
+    // Reads the thread globals from obj + 0x2c (threadV(o)->env): a `mov` whose
+    // SOURCE contains `0x2c]`. getfenv reads this; setfenv WRITES it (the dest
+    // contains 0x2c). The read alone is shared with setfenv, but combined with
+    // the TAB+NIL push + incr_top it is unique to getfenv.
+    let reads_thread_env = insns.iter().any(|i| {
+        i.is_mnemonic("mov") && i.op_contains("0x2c]")
+    });
+    // Exactly one direct call (index2adr). The stack-grow path is a tail `jmp`,
+    // not a `call`, so the direct-call count is 1.
+    let calls = direct_call_targets(insns);
+    pushes_tab && pushes_nil && incr_top && reads_thread_env && calls.len() == 1
+}
+
+/// `lua_setfenv(L, idx)`: the symmetric sibling of `lua_getfenv` — same
+/// `index2adr(L, idx)` prologue and func/udata/thread type-check triple, but
+/// it *reads* the env table from `L->top-1` (the value the caller pushed),
+/// writes it into the object's env field (func/udata → `+0x8`, thread →
+/// `+0x2c` = `threadV(o)->env`, the thread's globals), runs a GC write
+/// barrier, then `L->top--` (pops the env) and returns 1 (set) or 0 (type
+/// didn't match). The `top--` epilogue (and the `+0x2c` *write*) is the
+/// discriminator vs `lua_getfenv`.
+///
+/// This is a Phase-3 probe enabler: hooking `lua_setfenv` reveals what
+/// environment the engine assigns to scripts — in particular whether the
+/// engine `setfenv`s a *thread* to a sandbox table (which rebinds that
+/// thread's globals, since `LUA_GLOBALSINDEX` resolves to `tabref(L->env)`).
+/// `lua_setfenv` has the known LuaJIT signature `int (lua_State*, int)`, so it
+/// is safe to MinHook (unlike the unknown-sig `lua_resource::bytecode`).
+///
+/// Source (LuaJIT 2.1 `lj_api.c`): `lua_setfenv` stores `obj2gco(t)` into
+/// `funcV(o)->c.env` / `udataV(o)->env` / `threadV(o)->env`, calls
+/// `lj_gc_objbarrier`, does `L->top--`, returns `(o != NULL)`.
+pub fn match_lua_setfenv(insns: &[DecodedInsn]) -> bool {
+    // WRITES the env into the thread globals field obj + 0x2c
+    // (`setgcref(threadV(o)->env, ...)`): a `mov` whose DESTINATION (before the
+    // comma) contains `0x2c]`. This is the clinching discriminator — getfenv
+    // only *reads* +0x2c (source, not dest), and `lua_setmetatable` writes the
+    // metatable at +0x10, not +0x2c.
+    let writes_thread_env = insns.iter().any(|i| {
+        if !i.is_mnemonic("mov") {
+            return false;
+        }
+        let dest = i.op_str.split(',').next().unwrap_or("");
+        dest.contains("0x2c]")
+    });
+    // L->top-- (pops the env the caller pushed): `add qword [reg + 0x18], -8`.
+    let top_dec = insns.iter().any(|i| {
+        i.is_mnemonic("add")
+            && i.op_contains("+ 0x18]")
+            && (i.op_contains(", -8") || i.op_contains(", -0x8"))
+    });
+    // Reads the env from L->top-1: a `mov` reading `[reg + 0x18]` (L->top) into
+    // a register, then that register is adjusted by -8 to point at the env
+    // TValue. We key on the L->top read + a reg-relative `-8` adjust.
+    let reads_top = insns.iter().any(|i| {
+        i.is_mnemonic("mov") && i.op_contains("+ 0x18]")
+    });
+    // Returns int: the matched branch sets `mov eax, 1`; the else branch
+    // `xor eax, eax`. Both appear (two return paths).
+    let ret_one = insns.iter().any(|i| i.is_mnemonic("mov") && i.op_str.trim() == "eax, 1");
+    let ret_zero = insns.iter().any(|i| i.is_mnemonic("xor") && i.op_str.trim() == "eax, eax");
+    // 2 direct calls: index2adr + lj_gc_objbarrier. Allow 1..=3 for build
+    // variance (barrier may be inlined); uniqueness comes from the features above.
+    let calls = direct_call_targets(insns);
+    writes_thread_env && top_dec && reads_top && ret_one && ret_zero && (1..=3).contains(&calls.len())
 }
 
 // ============================ candidate scanning ============================

@@ -56,6 +56,20 @@ int inject_and_resume(const char *game_exe, const char *dll_path,
     PROCESS_INFORMATION pi = {0};
     char cmdline[1024];
 
+    /* 0. Fail-fast pre-checks: verify both paths exist before creating any
+     *    process. A bad path would otherwise have CreateRemoteThread run
+     *    LoadLibraryA on a NULL/missing module (LoadLibraryA returns NULL
+     *    fast) and then wait out hook_timeout on the hook-ready event, which
+     *    never fires. Catch typos / bad paths up front instead. */
+    if (GetFileAttributesA(game_exe) == INVALID_FILE_ATTRIBUTES) {
+        fprintf(stderr, "[launcher] error: game exe not found: %s\n", game_exe);
+        return 1;
+    }
+    if (GetFileAttributesA(dll_path) == INVALID_FILE_ATTRIBUTES) {
+        fprintf(stderr, "[launcher] error: DLL not found: %s\n", dll_path);
+        return 1;
+    }
+
     /* 1. CreateProcess(SUSPENDED). The hook (lua_newstate) must be installed
      *    before the engine's main() runs; SUSPENDED + inject + wait-hook-ready
      *    + resume gives that timing guarantee. */
@@ -123,6 +137,26 @@ int inject_and_resume(const char *game_exe, const char *dll_path,
         fprintf(stderr, "[launcher] error: LoadLibraryA thread %s (GetLastError=%lu)\n",
                 lt == WAIT_TIMEOUT ? "timed out (DllMain hung)" : "wait failed",
                 GetLastError());
+        CloseHandle(th);
+        goto kill;
+    }
+    /* LoadLibraryA returned: the remote thread's exit code is its return
+     * value — the loaded module handle, or 0 on failure. A 0 here means the
+     * DLL exists but failed to load (missing dependencies, wrong arch, etc.).
+     * Fail fast instead of waiting out the hook-ready timeout, which would
+     * never fire for a DLL whose DllMain never ran. Must read before
+     * CloseHandle(th) — the exit code is gone once the handle is. */
+    DWORD exit_code = 0;
+    if (!GetExitCodeThread(th, &exit_code)) {
+        fprintf(stderr, "[launcher] error: GetExitCodeThread "
+                "(GetLastError=%lu)\n", GetLastError());
+        CloseHandle(th);
+        goto kill;
+    }
+    if (exit_code == 0) {
+        fprintf(stderr, "[launcher] error: DLL load failed: %s "
+                "(LoadLibraryA returned NULL — missing dependencies? "
+                "wrong architecture?)\n", dll_path);
         CloseHandle(th);
         goto kill;
     }

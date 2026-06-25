@@ -10,9 +10,9 @@ launches the game modded via DLL injection (no game-directory footprint, no
 bundle-database patching) and stays out of the way for vanilla play (launch
 from Steam = unmodified game).
 
-Architecture: a **Hybrid** Component A — a Rust discovery pure-library
+Architecture: a **Hybrid** — the runtime: a Rust discovery pure-library
 (C-ABI staticlib) + a C live-game shell, linked into one DLL, delivered by
-`CreateRemoteThread`. Component B (the mod-manager app) is planned, not yet
+`CreateRemoteThread`. Darktide Magos (the mod-manager app) is planned, not yet
 built. See `docs/architecture/` for the full architecture.
 
 ## Baseline (read before planning)
@@ -27,8 +27,8 @@ Requirements, architecture, and technology choices are made fresh.
 
 ## Repository state
 
-- **`main`** — production. Component A (the injected runtime + launcher) is
-  merged as the production seed; Component B is not yet built.
+- **`main`** — production. The runtime (the injected modding runtime + launcher) is
+  merged as the production seed; Darktide Magos is not yet built.
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -36,17 +36,18 @@ Requirements, architecture, and technology choices are made fresh.
 ## Directory structure (current `main`)
 
 ```
-runtime/            Component A — the injected modding runtime + injector
+runtime/            the injected modding runtime + injector
   discovery/        Rust crate: LuaJIT discovery engine (pure library, C-ABI staticlib)
   shell/            C shell — the injected DLL (DllMain, MinHook, lua_newstate hook)
   launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
+  enginseer/        Enginseer (aka the Mod Loader) — user-staged loader entry (enginseer.lua)
   tests/            C unit tests (run via wine)
-mod-manager/        Component B — the mod manager app (not yet built; placeholder)
+mod-manager/        Darktide Magos — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference
 .github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
 Cargo.toml          workspace root (members = ["runtime/discovery"])
 Cargo.lock
-Makefile            builds Component A: make build / check / test / clean
+Makefile            builds the runtime: make build / check / test / clean
 .gitignore          ignores /target, build artifacts, _local/
 ```
 
@@ -87,6 +88,24 @@ make test     # C tests (via wine) + Rust tests
 - **Conventional Commits** (`type(scope): subject`); commit freely on feature
   branches. Branch + PR flow; no unreviewed merges to `main`.
 - Don't commit secrets, the game binary, or anything under `_local/`.
+
+## Naming convention
+
+User-facing names — anything a user sees, hears, or interacts with (log
+prefixes, component names, UI text) — use **Warhammer 40k / pseudo-gothic**
+naming, fitting the Adeptus Mechanicus / Tech-Priest theme of "Magos."
+Internal technical names (Rust crates, C modules, functions) keep plain
+descriptive names.
+
+The boundary is the **Enginseer** (aka the Mod Loader): everything before
+it (injection, discovery, hooks, the shell, the launcher) is internal;
+everything from the Enginseer onward (the loader itself, log entries users
+see, mod management) is user-facing.
+
+- **Folders/filenames:** lowercase (`runtime/enginseer/enginseer.lua`).
+- **Prose/docs:** proper case ("Enginseer"). First mention in a doc:
+  "Enginseer (aka the Mod Loader)"; thereafter just "Enginseer."
+- Don't obscure — names should be evocative but accessible, not cryptic.
 
 ## Before opening a PR — keep docs current
 
