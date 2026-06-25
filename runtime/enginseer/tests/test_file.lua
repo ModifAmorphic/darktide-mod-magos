@@ -196,6 +196,18 @@ return function(runner)
             "traversal in file_name must be rejected")
     end)
 
+    -- The extension is appended as "." .. file_extension, so a traversal
+    -- extension (e.g. "../../etc/passwd") would otherwise yield a path with
+    -- resolvable ".." segments and bypass the local_path/file_name confinement.
+    -- Covers all three exec variants that take an explicit extension.
+    runner.register("file: exec rejects traversal in file_extension (append-bypass hole)", function()
+        local sb = setup({})
+        runner.assert_eq(false, sb.Mods.file.exec("x", "y", "../../evil"),
+            "exec must reject traversal in file_extension (not append it)")
+        runner.assert_eq(false, sb.Mods.file.exec_with_return("x", "y", "../../etc/passwd"),
+            "exec_with_return must reject traversal in file_extension")
+    end)
+
     runner.register("file: legitimate nested path still resolves after traversal check", function()
         -- The DMF bootstrap caller path must NOT regress.
         local sb = setup({ ["/staging/dmf/scripts/mods/dmf/dmf_loader.lua"] = "return 42" })

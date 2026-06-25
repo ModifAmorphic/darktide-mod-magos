@@ -47,13 +47,15 @@ end
 --     -> "<staging>/<local_path>/<file_name>.<file_extension or 'lua'>"
 -- nil/empty components are skipped. file_extension defaults to "lua".
 --
--- Staging-confinement check: if any path segment in local_path or file_name
--- is exactly "..", the request escapes the staging root (e.g.
--- Mods.file.dofile("../../etc/passwd")) and is rejected -> returns nil so the
--- caller's io.open fails cleanly (handle_io short-circuits to false). This is
--- the future-sandbox boundary; today a malicious mod already has full Lua via
--- Mods.lua.io, so this grants no new capability, but the surface is locked
--- down now while it's cheap.
+-- Staging-confinement check: if any path segment in local_path, file_name, OR
+-- file_extension is exactly "..", the request escapes the staging root (e.g.
+-- Mods.file.dofile("../../etc/passwd"), or Mods.file.exec("x","y","../../evil")
+-- — the extension is appended as "." .. file_extension, so an unchecked ".."
+-- there yields a path with resolvable traversal segments) and is rejected ->
+-- returns nil so the caller's io.open fails cleanly (handle_io short-circuits
+-- to false). This is the future-sandbox boundary; today a malicious mod already
+-- has full Lua via Mods.lua.io, so this grants no new capability, but the
+-- surface is locked down now while it's cheap.
 --
 -- A single trailing "/" or "\" on the staging base is stripped so the join
 -- never produces a doubled separator ("<base>//foo").
@@ -74,8 +76,11 @@ local function get_file_path(local_path, file_name, file_extension)
         base = base:gsub("[/\\]$", "")
     end
 
-    -- Reject any path that would escape the staging root.
-    if has_traversal(local_path) or has_traversal(file_name) then
+    -- Reject any path that would escape the staging root. All three components
+    -- are checked: file_extension is appended as "." .. file_extension, so an
+    -- unchecked traversal there (e.g. "../../etc/passwd") would bypass the
+    -- local_path/file_name confinement.
+    if has_traversal(local_path) or has_traversal(file_name) or has_traversal(file_extension) then
         return nil
     end
 
