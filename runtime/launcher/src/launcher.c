@@ -16,10 +16,13 @@
  * (The production-summary's CreateProcess→inject→ResumeThread is incomplete
  * without the hook-ready wait.)
  *
- * Usage: magos_launcher <game_exe> <dll_path>
- *   e.g. magos_launcher \
- *          "/games/steamapps/common/Warhammer 40,000 DARKTIDE/binaries/Darktide.exe" \
- *          "/path/to/magos_shell.dll"
+ * Configuration model: every setting is flag > env > default.
+ *   --game-binary <path>   [MAGOS_ENGINSEER_GAME_BINARY]     REQUIRED
+ *   --magos-shell <path>   [MAGOS_ENGINSEER_SHELL]           <launcher-dir>\magos_shell.dll
+ *   --mod-path <path>      [DARKTIDE_MOD_PATH]               (optional; trampoline skips if unset)
+ *   --log-file <path>      [MAGOS_ENGINSEER_LOG_FILE]        <launcher-dir>\magos_enginseer.log
+ *   --log-level <level>    [MAGOS_ENGINSEER_LOG_LEVEL]       info
+ *   --steam-app-id <id>    [MAGOS_ENGINSEER_STEAM_APP_ID]    1361210
  *
  * Windows native: build with cl.exe or x86_64-w64-mingw32-gcc.
  * Proton: build the launcher for Windows (mingw) and run it under Wine inside
@@ -29,12 +32,19 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Darktide's Steam appID. Set in the launcher env (inherited by the child via
- * CreateProcess) so the correct appID reaches steamclient. When launched via a
- * Steam non-Steam-game shortcut the shortcut's *hashed* SteamAppId is
- * inherited instead and SteamAPI_Init is denied. Currently: constant; production:
- * configured. */
-#define DARKTIDE_STEAM_APPID "1361210"
+/* ---- config: defaults + env var names ------------------------------------ */
+
+#define MAGOS_DEFAULT_STEAM_APPID "1361210"
+#define MAGOS_DEFAULT_LOG_LEVEL   "info"
+#define MAGOS_DEFAULT_SHELL_NAME  "magos_shell.dll"
+#define MAGOS_DEFAULT_LOG_NAME    "magos_enginseer.log"
+
+#define ENV_GAME_BINARY  "MAGOS_ENGINSEER_GAME_BINARY"
+#define ENV_SHELL        "MAGOS_ENGINSEER_SHELL"
+#define ENV_MOD_PATH     "DARKTIDE_MOD_PATH"
+#define ENV_LOG_FILE     "MAGOS_ENGINSEER_LOG_FILE"
+#define ENV_LOG_LEVEL    "MAGOS_ENGINSEER_LOG_LEVEL"
+#define ENV_STEAM_APP_ID "MAGOS_ENGINSEER_STEAM_APP_ID"
 
 /* Named event for the launcher<->shell hook-ready handshake. Created
  * session-local (no Global\ prefix — avoids SeCreateGlobalPrivilege; launcher
@@ -42,11 +52,23 @@
  * after MH_EnableHook succeeds. Must match shell/src/dllmain.c. */
 #define MAGOS_HOOK_READY_EVENT "magos_hook_ready"
 
+/* Buffer size for a resolved path. Generously above MAX_PATH (260) so long
+ * staging paths and extended-length paths don't silently truncate. */
+#define MAGOS_PATH_MAX 1024
+
+/* testable helpers get external linkage under the test build so unit tests
+ * can call them; production keeps them file-static. */
+#ifdef MAGOS_TEST_BUILD
+#define MAGOS_INTERNAL
+#else
+#define MAGOS_INTERNAL static
+#endif
+
 /* ---- testable seams (extracted for unit testing) ---- */
 
-void set_steam_env(void) {
-    SetEnvironmentVariableA("SteamAppId", DARKTIDE_STEAM_APPID);
-    SetEnvironmentVariableA("SteamGameId", DARKTIDE_STEAM_APPID);
+void set_steam_env(const char *app_id) {
+    SetEnvironmentVariableA("SteamAppId", app_id);
+    SetEnvironmentVariableA("SteamGameId", app_id);
 }
 
 int inject_and_resume(const char *game_exe, const char *dll_path,
@@ -184,8 +206,19 @@ int inject_and_resume(const char *game_exe, const char *dll_path,
         goto kill;
     }
 
-    printf("[launcher] resumed; game should reach main menu. "
-           "Logs -> magos_spike.log\n");
+    /* The resolved log file is published to the child env by main() before
+     * this call; read it back so the "where are the logs" hint is accurate. */
+    {
+        char log_buf[MAGOS_PATH_MAX];
+        DWORD ln = GetEnvironmentVariableA(ENV_LOG_FILE, log_buf,
+                                           sizeof(log_buf));
+        if (ln > 0 && ln < sizeof(log_buf)) {
+            printf("[launcher] resumed; game should reach main menu. "
+                   "Logs -> %s\n", log_buf);
+        } else {
+            printf("[launcher] resumed; game should reach main menu.\n");
+        }
+    }
     CloseHandle(hook_ready);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -199,15 +232,216 @@ kill:
     return 1;
 }
 
+/* ---- config resolution (flag > env > default) ---------------------------- */
+
+/* Resolver-owned stable storage for values not sourced from argv. One buffer
+ * per setting so a resolve never clobbers another setting mid-call. Reused
+ * across resolve_config() calls — callers must copy out before re-resolving. */
+static char g_game_binary_buf[MAGOS_PATH_MAX];
+static char g_shell_buf[MAGOS_PATH_MAX];
+static char g_mod_path_buf[MAGOS_PATH_MAX];
+static char g_log_file_buf[MAGOS_PATH_MAX];
+static char g_log_level_buf[32];
+static char g_steam_app_id_buf[32];
+
+/* Reads env_name into out. Returns 1 if the var is set and fit in outsz, 0 if
+ * unset, empty, too long, or errored (treated as "not provided" so the next
+ * precedence level — default — applies). */
+static int read_env(const char *env_name, char *out, size_t outsz) {
+    DWORD n = GetEnvironmentVariableA(env_name, out, (DWORD)outsz);
+    if (n == 0 || n >= outsz) return 0;  /* unset/error, or truncated */
+    return 1;
+}
+
+/* Fills dir_buf with the launcher exe's directory (no trailing backslash), or
+ * "." if it can't be determined (GetModuleFileNameA failed/truncated, or no
+ * path separator present). */
+static void get_launcher_dir(char *dir_buf, size_t dir_sz) {
+    char self[MAGOS_PATH_MAX];
+    DWORD n = GetModuleFileNameA(NULL, self, sizeof(self));
+    if (n == 0 || n >= sizeof(self)) {
+        snprintf(dir_buf, dir_sz, ".");
+        return;
+    }
+    char *slash = strrchr(self, '\\');
+    if (!slash) {
+        snprintf(dir_buf, dir_sz, ".");
+        return;
+    }
+    size_t dirlen = (size_t)(slash - self);
+    if (dirlen + 1 > dir_sz) {
+        snprintf(dir_buf, dir_sz, ".");
+        return;
+    }
+    memcpy(dir_buf, self, dirlen);
+    dir_buf[dirlen] = '\0';
+}
+
+/* Builds "<launcher-dir>\<leaf>" into out (the default for path settings). */
+static void build_default_path(char *out, size_t outsz, const char *leaf) {
+    char dir[MAGOS_PATH_MAX];
+    get_launcher_dir(dir, sizeof(dir));
+    snprintf(out, outsz, "%s\\%s", dir, leaf);
+}
+
+MAGOS_INTERNAL int magos_parse_args(int argc, char **argv,
+                                    magos_parsed_args *out) {
+    memset(out, 0, sizeof(*out));
+    for (int i = 1; i < argc; i++) {
+        const char *flag = argv[i];
+        const char **target;
+
+        if (strcmp(flag, "-h") == 0 || strcmp(flag, "--help") == 0) return -2;
+
+        if      (strcmp(flag, "--game-binary")  == 0) target = &out->game_binary;
+        else if (strcmp(flag, "--magos-shell")  == 0) target = &out->magos_shell;
+        else if (strcmp(flag, "--mod-path")     == 0) target = &out->mod_path;
+        else if (strcmp(flag, "--log-file")     == 0) target = &out->log_file;
+        else if (strcmp(flag, "--log-level")    == 0) target = &out->log_level;
+        else if (strcmp(flag, "--steam-app-id") == 0) target = &out->steam_app_id;
+        else {
+            fprintf(stderr, "[launcher] error: unknown flag: %s\n", flag);
+            return -1;
+        }
+
+        if (i + 1 >= argc) {
+            fprintf(stderr, "[launcher] error: missing value for %s\n", flag);
+            return -1;
+        }
+        *target = argv[++i];
+    }
+    return 0;
+}
+
+MAGOS_INTERNAL void magos_resolve_config(const magos_parsed_args *args,
+                                         magos_config *cfg) {
+    /* game_binary: required — no default, NULL if both flag and env are unset
+     * (main() rejects this with usage). */
+    cfg->game_binary = args->game_binary
+        ? args->game_binary
+        : (read_env(ENV_GAME_BINARY, g_game_binary_buf, sizeof(g_game_binary_buf))
+              ? g_game_binary_buf : NULL);
+
+    /* magos_shell: default <launcher-dir>\magos_shell.dll */
+    if (args->magos_shell) {
+        cfg->magos_shell = args->magos_shell;
+    } else if (read_env(ENV_SHELL, g_shell_buf, sizeof(g_shell_buf))) {
+        cfg->magos_shell = g_shell_buf;
+    } else {
+        build_default_path(g_shell_buf, sizeof(g_shell_buf),
+                           MAGOS_DEFAULT_SHELL_NAME);
+        cfg->magos_shell = g_shell_buf;
+    }
+
+    /* mod_path: optional — NULL (unset) means the trampoline skips. */
+    if (args->mod_path) {
+        cfg->mod_path = args->mod_path;
+    } else if (read_env(ENV_MOD_PATH, g_mod_path_buf, sizeof(g_mod_path_buf))) {
+        cfg->mod_path = g_mod_path_buf;
+    } else {
+        cfg->mod_path = NULL;
+    }
+
+    /* log_file: default <launcher-dir>\magos_enginseer.log */
+    if (args->log_file) {
+        cfg->log_file = args->log_file;
+    } else if (read_env(ENV_LOG_FILE, g_log_file_buf, sizeof(g_log_file_buf))) {
+        cfg->log_file = g_log_file_buf;
+    } else {
+        build_default_path(g_log_file_buf, sizeof(g_log_file_buf),
+                           MAGOS_DEFAULT_LOG_NAME);
+        cfg->log_file = g_log_file_buf;
+    }
+
+    /* log_level: default info */
+    cfg->log_level = args->log_level
+        ? args->log_level
+        : (read_env(ENV_LOG_LEVEL, g_log_level_buf, sizeof(g_log_level_buf))
+              ? g_log_level_buf : MAGOS_DEFAULT_LOG_LEVEL);
+
+    /* steam_app_id: default 1361210 */
+    cfg->steam_app_id = args->steam_app_id
+        ? args->steam_app_id
+        : (read_env(ENV_STEAM_APP_ID, g_steam_app_id_buf, sizeof(g_steam_app_id_buf))
+              ? g_steam_app_id_buf : MAGOS_DEFAULT_STEAM_APPID);
+}
+
+/* ---- usage --------------------------------------------------------------- */
+
+static void print_usage(FILE *out, const char *prog) {
+    fprintf(out,
+        "Usage: %s --game-binary <path> [options]\n"
+        "\n"
+        "Create Darktide.exe in a suspended state, inject magos_shell.dll via\n"
+        "CreateRemoteThread, wait for the lua_newstate hook to arm, then resume.\n"
+        "Zero files land in the game directory.\n"
+        "\n"
+        "Every setting follows: flag > env var > default.\n"
+        "\n"
+        "Required:\n"
+        "  --game-binary <path>   Darktide.exe\n"
+        "                         [env: MAGOS_ENGINSEER_GAME_BINARY]\n"
+        "\n"
+        "Optional:\n"
+        "  --magos-shell <path>   magos_shell.dll to inject\n"
+        "                         [env: MAGOS_ENGINSEER_SHELL]\n"
+        "                         [default: <launcher-dir>\\magos_shell.dll]\n"
+        "  --mod-path <path>      staged mods dir; if unset the trampoline skips\n"
+        "                         [env: DARKTIDE_MOD_PATH] [default: unset]\n"
+        "  --log-file <path>      launcher/shell log file\n"
+        "                         [env: MAGOS_ENGINSEER_LOG_FILE]\n"
+        "                         [default: <launcher-dir>\\magos_enginseer.log]\n"
+        "  --log-level <level>    one of: error warn info debug trace\n"
+        "                         [env: MAGOS_ENGINSEER_LOG_LEVEL] [default: info]\n"
+        "  --steam-app-id <id>    Steam app id\n"
+        "                         [env: MAGOS_ENGINSEER_STEAM_APP_ID]\n"
+        "                         [default: 1361210]\n"
+        "\n"
+        "  -h, --help             show this help and exit\n"
+        "\n"
+        "<launcher-dir> is the directory of this exe (fall back to '.' if the\n"
+        "launcher path can't be resolved).\n",
+        prog);
+}
+
 /* ---- entry point (excluded when building test objects) ---- */
 
 #ifndef MAGOS_TEST_BUILD
 int main(int argc, char **argv) {
-    if (argc < 3) {
-        fprintf(stderr, "usage: %s <game_exe> <dll_path>\n", argv[0]);
+    magos_parsed_args args;
+    int pr = magos_parse_args(argc, argv, &args);
+    if (pr == -2) {
+        print_usage(stdout, argv[0]);
+        return 0;
+    }
+    if (pr == -1) {
+        print_usage(stderr, argv[0]);
         return 2;
     }
-    set_steam_env();
-    return inject_and_resume(argv[1], argv[2], 60000);
+
+    magos_config cfg;
+    magos_resolve_config(&args, &cfg);
+
+    if (!cfg.game_binary) {
+        fprintf(stderr, "[launcher] error: --game-binary is required "
+                "(or set %s)\n", ENV_GAME_BINARY);
+        print_usage(stderr, argv[0]);
+        return 2;
+    }
+
+    /* Publish the resolved config to the child env so CreateProcessA(NULL
+     * env) inherits it: Steam identity, shell logging, and the staged mod
+     * path. DARKTIDE_MOD_PATH is set only when configured — leaving it unset
+     * means the shell's trampoline skips (same as today). */
+    set_steam_env(cfg.steam_app_id);
+    SetEnvironmentVariableA(ENV_LOG_FILE, cfg.log_file);
+    SetEnvironmentVariableA(ENV_LOG_LEVEL, cfg.log_level);
+    if (cfg.mod_path) {
+        SetEnvironmentVariableA(ENV_MOD_PATH, cfg.mod_path);
+    }
+
+    /* Existence of game_binary + magos_shell is validated by the fail-fast
+     * pre-checks inside inject_and_resume. */
+    return inject_and_resume(cfg.game_binary, cfg.magos_shell, 60000);
 }
 #endif /* MAGOS_TEST_BUILD */

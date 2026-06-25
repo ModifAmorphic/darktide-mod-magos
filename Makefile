@@ -51,7 +51,8 @@ STUB_TARGET := runtime/tests/stub_target.exe
 STUB_SHELL  := runtime/tests/stub_shell.dll
 
 # Test executables
-TEST_EXES := runtime/tests/test_steam_env.exe runtime/tests/test_injection.exe runtime/tests/test_trampoline.exe
+TEST_EXES := runtime/tests/test_steam_env.exe runtime/tests/test_injection.exe \
+             runtime/tests/test_config.exe runtime/tests/test_trampoline.exe
 
 .PHONY: all build dll launcher check test c-tests clean rust-staticlib
 
@@ -108,6 +109,11 @@ runtime/tests/test_injection.exe: runtime/tests/test_injection.c runtime/tests/t
 	$(TEST_CC) $(TEST_CFLAGS) $(TEST_INCLUDES) -o $@ $< \
 	  $(TEST_RUNNER_OBJ) runtime/tests/launcher.o $(TEST_LIBS)
 
+runtime/tests/test_config.exe: runtime/tests/test_config.c runtime/tests/test_runner.h \
+                          $(TEST_RUNNER_OBJ) runtime/tests/launcher.o
+	$(TEST_CC) $(TEST_CFLAGS) $(TEST_INCLUDES) -DMAGOS_TEST_BUILD -o $@ $< \
+	  $(TEST_RUNNER_OBJ) runtime/tests/launcher.o $(TEST_LIBS)
+
 # test_trampoline compiles the pure trampoline.c inline (via #include), so it
 # needs only the test runner + kernel32 (no Lua/hook deps).
 runtime/tests/test_trampoline.exe: runtime/tests/test_trampoline.c \
@@ -120,6 +126,7 @@ c-tests: $(TEST_EXES) $(STUB_TARGET) $(STUB_SHELL)
 	@echo "=== C unit tests (via wine) ==="
 	$(WINE) runtime/tests/test_steam_env.exe
 	$(WINE) runtime/tests/test_injection.exe
+	$(WINE) runtime/tests/test_config.exe
 	$(WINE) runtime/tests/test_trampoline.exe
 
 test: c-tests
