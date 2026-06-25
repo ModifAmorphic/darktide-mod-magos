@@ -105,7 +105,7 @@ Mods.install_lifecycle_hooks = function()
             local ok, err = pcall(function()
                 -- Load + run the rite (the Enginseer's mod loader).
                 -- mod_manager.lua is loaded via Mods.file.dofile (rooted at
-                -- MAGOS_STAGING), NOT the entry's bootstrap_load, because it
+                -- MAGOS_MOD_PATH), NOT the entry's bootstrap_load, because it
                 -- calls class("ModManager") — which only exists after the class
                 -- patch installs at boot (the require-wrap), not at the entry's
                 -- pcall#1. :init() reads mod_load_order, prepends "dmf", and

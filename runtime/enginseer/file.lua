@@ -1,7 +1,7 @@
--- file.lua — Mods.file.* helpers, rooted at MAGOS_STAGING.
+-- file.lua — Mods.file.* helpers, rooted at MAGOS_MOD_PATH.
 --
 -- Adapts DML's mods/base/function file IO helpers (read_or_execute, handle_io,
--- get_file_path) but roots every path at MAGOS_STAGING (set by the C trampoline
+-- get_file_path) but roots every path at MAGOS_MOD_PATH (set by the C trampoline
 -- and captured into Mods._staging_base by the Enginseer entry) instead of
 -- DML's hardcoded "./../mods". Uses Mods.lua.io + Mods.lua.loadstring for all
 -- file access (the engine's real io/loadstring, captured before they're
@@ -9,7 +9,7 @@
 --
 -- DMF's expected entry surface (called from DMF's mod_manager / loader):
 --   Mods.file.dofile("dmf/scripts/mods/dmf/dmf_loader")
---     -> <MAGOS_STAGING>/dmf/scripts/mods/dmf/dmf_loader.lua  (.lua appended)
+--     -> <MAGOS_MOD_PATH>/dmf/scripts/mods/dmf/dmf_loader.lua  (.lua appended)
 --
 -- All produced paths use forward slashes (works on Windows + Proton).
 
@@ -31,9 +31,9 @@ local function _lua()
 end
 
 local function _staging_base()
-    -- Mods._staging_base is set by the entry; fall back to MAGOS_STAGING (which
+    -- Mods._staging_base is set by the entry; fall back to MAGOS_MOD_PATH (which
     -- the trampoline sets as a real global before the entry runs).
-    return Mods._staging_base or MAGOS_STAGING
+    return Mods._staging_base or MAGOS_MOD_PATH
 end
 
 -- Normalize backslashes to forward slashes (Windows/Proton path-compat).
@@ -42,7 +42,7 @@ local function _to_forward_slashes(p)
 end
 
 -- Build a staging-rooted path. Mirrors DML's get_file_path but with
--- MAGOS_STAGING as the base and always-forward-slash output.
+-- MAGOS_MOD_PATH as the base and always-forward-slash output.
 --   get_file_path(local_path, file_name, file_extension)
 --     -> "<staging>/<local_path>/<file_name>.<file_extension or 'lua'>"
 -- nil/empty components are skipped. file_extension defaults to "lua".
@@ -203,7 +203,7 @@ Mods.file.read_content_to_table = function(file_path, file_extension)
 end
 
 -- exists(name): probe a path with io.open. NOTE: unlike the other Mods.file.*
--- helpers, `name` is NOT rooted at MAGOS_STAGING — it's opened as-is (absolute
+-- helpers, `name` is NOT rooted at MAGOS_MOD_PATH — it's opened as-is (absolute
 -- or engine-relative). This matches DML's surface; callers pass fully-qualified
 -- paths. Use dofile/exec/read_content for staging-relative access (those route
 -- through get_file_path and its confinement check).

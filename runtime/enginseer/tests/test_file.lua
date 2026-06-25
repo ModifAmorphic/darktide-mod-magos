@@ -13,12 +13,12 @@ return function(runner)
     -- in-memory io map and the sandbox-aware loadstring.
     local function setup(files)
         local sb = mock.new_sandbox()
-        sb.MAGOS_STAGING = "/staging"
+        sb.MAGOS_MOD_PATH = "/staging"
         local io = mock.make_io(files)
         sb.Mods = {
             lua = { io = io, loadstring = sb.loadstring },
             file = {},
-            _staging_base = sb.MAGOS_STAGING,
+            _staging_base = sb.MAGOS_MOD_PATH,
         }
         sb.io = io  -- in case a chunk falls back to bare io
         mock.run_module("file", sb)
@@ -36,7 +36,7 @@ return function(runner)
         -- Capture the path the module asks for so we can assert the join.
         local real_io = mock.make_io(files)
         local sb = mock.new_sandbox()
-        sb.MAGOS_STAGING = "/staging"
+        sb.MAGOS_MOD_PATH = "/staging"
         local capturing_io = {
             open = function(path, mode)
                 seen_path = path
@@ -60,7 +60,7 @@ return function(runner)
     runner.register("file: backslash staging base is normalized to forward slash", function()
         local seen_path
         local sb = mock.new_sandbox()
-        sb.MAGOS_STAGING = "C:\\users\\me\\staging"
+        sb.MAGOS_MOD_PATH = "C:\\users\\me\\staging"
         local real_io = mock.make_io({})
         sb.Mods = {
             lua = {
@@ -135,7 +135,7 @@ return function(runner)
         local seen_path
         local real_io = mock.make_io({})
         local sb = mock.new_sandbox()
-        sb.MAGOS_STAGING = "/staging/"
+        sb.MAGOS_MOD_PATH = "/staging/"
         sb.Mods = {
             lua = {
                 io = {
@@ -157,7 +157,7 @@ return function(runner)
         local seen_path
         local real_io = mock.make_io({})
         local sb = mock.new_sandbox()
-        sb.MAGOS_STAGING = "C:\\staging\\"
+        sb.MAGOS_MOD_PATH = "C:\\staging\\"
         sb.Mods = {
             lua = {
                 io = {

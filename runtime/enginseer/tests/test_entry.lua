@@ -17,7 +17,7 @@ return function(runner)
     -- main.lua loading modules (class.lua, etc.).
     local function build(engine_require)
         local sb = mock.new_sandbox()
-        sb.MAGOS_STAGING = "/staging"
+        sb.MAGOS_MOD_PATH = "/staging"
 
         local files = {}
         for _, name in ipairs({ "file", "hook", "class_patch", "require_wrap", "lifecycle" }) do
@@ -81,7 +81,7 @@ return function(runner)
         )
     end)
 
-    runner.register("entry: __print logs the v2 loaded message; MAGOS_STAGING captured", function()
+    runner.register("entry: __print logs the v2 loaded message; MAGOS_MOD_PATH captured", function()
         local sb = build()
         local logged = {}
         sb.__print = function(msg) table.insert(logged, msg) end
@@ -96,7 +96,7 @@ return function(runner)
 
     runner.register("entry: bootstrap aborts cleanly when a module file is missing", function()
         local sb = mock.new_sandbox()
-        sb.MAGOS_STAGING = "/staging"
+        sb.MAGOS_MOD_PATH = "/staging"
         -- Only provide the entry; no helper modules staged.
         local files = { ["/staging/enginseer.lua"] = mock.read_module("enginseer") }
         sb.io = mock.make_io(files)

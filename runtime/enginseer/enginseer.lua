@@ -50,7 +50,7 @@ Mods.lua.table = table
 Mods.lua.string = string
 Mods.file = Mods.file or {}
 Mods._deferred_hooks = {}
-Mods._staging_base = MAGOS_STAGING
+Mods._staging_base = MAGOS_MOD_PATH
 __print = print
 
 -- 2. Bootstrap-load the helper modules from the staging dir. We use io.open +
@@ -63,8 +63,8 @@ local _io = io
 local _pcall = pcall
 
 local function bootstrap_load(name)
-    -- Forward-slash join: <MAGOS_STAGING>/<name>.lua (works on Windows + Proton).
-    local base = Mods._staging_base or MAGOS_STAGING or ""
+    -- Forward-slash join: <MAGOS_MOD_PATH>/<name>.lua (works on Windows + Proton).
+    local base = Mods._staging_base or MAGOS_MOD_PATH or ""
     local path = base .. "/" .. name .. ".lua"
 
     local f, err = _io.open(path, "r")
