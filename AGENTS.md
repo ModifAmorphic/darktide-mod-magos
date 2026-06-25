@@ -40,14 +40,18 @@ runtime/            the injected modding runtime + injector
   discovery/        Rust crate: LuaJIT discovery engine (pure library, C-ABI staticlib)
   shell/            C shell — the injected DLL (DllMain, MinHook, lua_newstate hook)
   launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
-  enginseer/        Enginseer (aka the Mod Loader) — user-staged loader entry (enginseer.lua)
+  enginseer/        Enginseer (aka the Mod Loader) — the staged loader (LuaJIT):
+                      enginseer.lua entry + v2 modules (file/hook/class_patch/
+                      require_wrap/lifecycle/mod_manager) + enginseer.v1.lua +
+                      tests/ (offline LuaJIT harness, run via `make enginseer-test`).
+                      Vendored DMF + test-mod fixtures are gitignored (local only).
   tests/            C unit tests (run via wine)
 mod-manager/        Darktide Magos — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference
 .github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
 Cargo.toml          workspace root (members = ["runtime/discovery"])
 Cargo.lock
-Makefile            builds the runtime: make build / check / test / clean
+Makefile            builds the runtime: make build / check / test / enginseer-test / clean
 .gitignore          ignores /target, build artifacts, _local/
 ```
 
@@ -57,9 +61,10 @@ Build + test (Linux dev box):
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"   # system rust lacks the windows-gnu target
 source _local/DARKTIDE.env             # sets DARKTIDE_GAME_DIR (for oracle tests)
-make build    # cross-compile DLL + launcher (x86_64-pc-windows-gnu)
-make check    # verify valid PE DLL with DllMain
-make test     # C tests (via wine) + Rust tests
+make build          # cross-compile DLL + launcher (x86_64-pc-windows-gnu)
+make check          # verify valid PE DLL with DllMain
+make test           # C tests (via wine) + Rust tests
+make enginseer-test # Enginseer Lua tests (offline LuaJIT harness, 84 tests; no game/wine)
 ```
 - **Oracle tests** run discovery against the real `Darktide.exe` (resolved via
   `DARKTIDE_GAME_DIR`). The engine is build-agnostic (Tier-2 self-validation
@@ -69,6 +74,14 @@ make test     # C tests (via wine) + Rust tests
   release builds. Tests use it: `cargo test --features test-hooks -p
   magos-discovery`. `make test` handles this; clippy too
   (`cargo clippy --all-targets --features test-hooks -- -D warnings`).
+- **Launcher CLI** is flag-based (**flag > env var > default**; `--game-binary`
+  is the only required flag; shell DLL + log default next to the launcher). See
+  `docs/architecture/RUNTIME.md` → `launcher/` for the full flag/env/default
+  table + the env-var contract.
+- **Shell log** is `magos_enginseer.log`, structured + level-filtered via
+  `MAGOS_ENGINSEER_LOG_LEVEL` (default `info`; recon at `debug`/`trace`). The
+  Enginseer's Lua-side `print` lines go to the engine's console log, not the
+  shell log — see RUNTIME.md → Logging.
 - **`_local/`** is gitignored (local env, e.g. `DARKTIDE.env`). Never commit
   it or the game binary.
 - **CI** runs on push/PR to `main`: mingw (Linux cross-compile + wine tests)
