@@ -7,7 +7,7 @@
 # Usage:
 #   make build          # cross-compile the DLL + launcher (x86_64-pc-windows-gnu)
 #   make check          # verify the DLL is a valid PE with a DllMain entry
-#   make test           # cargo test + C unit tests (via wine)
+#   make test           # cargo test + C unit tests (wine) + Enginseer Lua tests
 #   make clean
 
 CARGO     ?= cargo
@@ -54,7 +54,7 @@ STUB_SHELL  := runtime/tests/stub_shell.dll
 TEST_EXES := runtime/tests/test_steam_env.exe runtime/tests/test_injection.exe \
              runtime/tests/test_config.exe runtime/tests/test_trampoline.exe
 
-.PHONY: all build dll launcher check test c-tests clean rust-staticlib
+.PHONY: all build dll launcher check test c-tests enginseer-test clean rust-staticlib
 
 all: build
 
@@ -129,17 +129,17 @@ c-tests: $(TEST_EXES) $(STUB_TARGET) $(STUB_SHELL)
 	$(WINE) runtime/tests/test_config.exe
 	$(WINE) runtime/tests/test_trampoline.exe
 
-test: c-tests
+test: c-tests enginseer-test
 	$(CARGO) test --features test-hooks -p magos-discovery
 
 # ---- Enginseer Lua tests (offline LuaJIT harness) ----
 # Runs the v2 Enginseer loader's offline test harness via luajit. Pure-Lua;
-# no game binary or wine needed. Kept out of `test` for now (new infra — wire
-# into CI once the harness is reviewed). Requires /usr/bin/luajit (LuaJIT 2.1).
+# no game binary or wine needed. Wired into `test` (runs alongside the C +
+# Rust tests) AND kept as a standalone target for fast Lua-only iteration.
+# Requires /usr/bin/luajit (LuaJIT 2.1); if absent, the target fails clearly.
 LUAJIT ?= luajit
 ENGINSER_TESTS := runtime/enginseer/tests/runner.lua
 
-.PHONY: enginseer-test
 enginseer-test:
 	@echo "=== Enginseer Lua tests (LuaJIT) ==="
 	$(LUAJIT) $(ENGINSER_TESTS)
