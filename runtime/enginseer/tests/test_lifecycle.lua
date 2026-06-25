@@ -213,4 +213,48 @@ return function(runner)
         runner.assert_eq("enter", notifications[2].status)
         runner.assert_eq("NewState", notifications[2].name)
     end)
+
+    -- Degradation contract: a bootstrap failure (missing DMF, ModManager:new()
+    -- raising, etc.) must NOT crash the game. The hook returns the original
+    -- state_update result, Managers.mod stays nil (vanilla), and __print logs
+    -- the failure. The original _state_update still runs (unguarded).
+    local function bootstrap_failure_setup(sb, dofile_return)
+        local logged = {}
+        sb.__print = function(msg) table.insert(logged, msg) end
+        sb.Mods.file.dofile = function(path) return dofile_return end
+        sb.CLASS = {
+            BootStateRequireGameScripts = {
+                _state_update = function(self, ...) return "state-result" end,
+            },
+            StateGame = { update = function() return "u" end },
+            GameStateMachine = { _change_state = function() return "c" end },
+        }
+        sb.Mods.install_lifecycle_hooks()
+        sb.Mods.flush_deferred_hooks()
+        return logged
+    end
+
+    runner.register("lifecycle: bootstrap degrades cleanly when DMF load fails (dofile returns false)", function()
+        local sb = setup()
+        local logged = bootstrap_failure_setup(sb, false)
+
+        local r = sb.CLASS.BootStateRequireGameScripts._state_update(sb.CLASS.BootStateRequireGameScripts)
+        runner.assert_eq("state-result", r, "must still return the original state_update result, not raise")
+        runner.assert_nil(sb.Managers.mod, "Managers.mod must stay nil when DMF load fails")
+        runner.assert_truthy(logged[1] and logged[1]:find("lifecycle bootstrap failed") ~= nil,
+            "the failure must be logged via __print")
+    end)
+
+    runner.register("lifecycle: bootstrap degrades cleanly when ModManager:new() raises", function()
+        local sb = setup()
+        -- dofile returns a class whose :new() raises (simulates DMF init blowup).
+        local BoomModManager = { new = function(self) error("dmf init exploded") end }
+        local logged = bootstrap_failure_setup(sb, BoomModManager)
+
+        local r = sb.CLASS.BootStateRequireGameScripts._state_update(sb.CLASS.BootStateRequireGameScripts)
+        runner.assert_eq("state-result", r, "must return the original result, not raise")
+        runner.assert_nil(sb.Managers.mod, "Managers.mod must stay nil when :new() raises")
+        runner.assert_truthy(logged[1] and logged[1]:find("lifecycle bootstrap failed") ~= nil,
+            "the failure must be logged via __print")
+    end)
 end

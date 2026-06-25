@@ -48,6 +48,10 @@ end
 -- (e.g. CLASS or an intermediate is nil) are caught by pcall and treated as
 -- "not ready" so the hook stays queued.
 --
+-- PERF NOTE: Mods.hook._patch re-patches ALL installed hooks on each dequeue
+-- (it's called via Mods.hook.set once per resolved deferred hook). Re-patches
+-- all hooks on each dequeue; measure during live boot, batch if hot.
+-- (LIVE-VALIDATE / measure-later.)
 Mods.flush_deferred_hooks = function()
     if not Mods.hook then return end
     local i = 1
@@ -86,44 +90,54 @@ Mods.install_lifecycle_hooks = function()
     Mods.queue_deferred_hook(
         "CLASS.BootStateRequireGameScripts._state_update",
         function(state_update_func, self, ...)
-            -- Run the original first: this requires the game scripts, which
-            -- creates StateGame and registers it in CLASS.
+            -- Run the original first (UNGUARDED — it's the engine's function):
+            -- this requires the game scripts, which creates StateGame and
+            -- registers it in CLASS.
             local state_update_result = state_update_func(self, ...)
 
-            -- Load DMF's ModManager and assign Managers.mod. DMF then reads
-            -- mod_load_order.txt and loads mods.
-            -- LIVE-VALIDATE: the dmf_loader path resolves in our staging layout
-            -- and returns DMF's ModManager class.
-            local ModManager = Mods.file.dofile("dmf/scripts/mods/dmf/dmf_loader")
-            Managers = Managers or {}
-            Managers.mod = Managers.mod or ModManager:new()
+            -- Everything below is Enginseer's bootstrap. Guard it so a failure
+            -- (missing/mis-pathed DMF, ModManager:new() raising, an inner hook
+            -- not resolving) degrades cleanly to vanilla + a log line instead
+            -- of propagating through the engine's _state_update and crashing
+            -- the game at boot. Always return the original's result regardless.
+            local ok, err = pcall(function()
+                -- Load DMF's ModManager and assign Managers.mod. DMF then reads
+                -- mod_load_order.txt and loads mods.
+                -- LIVE-VALIDATE: the dmf_loader path resolves in our staging
+                -- layout and returns DMF's ModManager class.
+                local ModManager = Mods.file.dofile("dmf/scripts/mods/dmf/dmf_loader")
+                Managers = Managers or {}
+                Managers.mod = Managers.mod or ModManager:new()
 
-            -- Per-frame update hook on StateGame: pump the ModManager each frame.
-            Mods.hook.set("Enginseer", "CLASS.StateGame.update", function(func, self_obj, dt, ...)
-                Managers.mod:update(dt)
-                return func(self_obj, dt, ...)
+                -- Per-frame update hook on StateGame: pump the ModManager each frame.
+                Mods.hook.set("Enginseer", "CLASS.StateGame.update", function(func, self_obj, dt, ...)
+                    Managers.mod:update(dt)
+                    return func(self_obj, dt, ...)
+                end)
+
+                -- State-change hook on GameStateMachine: fan out enter/exit
+                -- events to mods (on_game_state_changed).
+                Mods.hook.set("Enginseer", "CLASS.GameStateMachine._change_state", function(func, self_obj, ...)
+                    local old_state = self_obj._state
+                    local old_state_name = old_state and self_obj:current_state_name()
+                    if old_state_name then
+                        Managers.mod:on_game_state_changed("exit", old_state_name, old_state)
+                    end
+
+                    local result = func(self_obj, ...)
+
+                    local new_state = self_obj._state
+                    local new_state_name = new_state and self_obj:current_state_name()
+                    if new_state_name then
+                        Managers.mod:on_game_state_changed("enter", new_state_name, new_state)
+                    end
+
+                    return result
+                end)
             end)
-
-            -- State-change hook on GameStateMachine: fan out enter/exit events
-            -- to mods (on_game_state_changed).
-            Mods.hook.set("Enginseer", "CLASS.GameStateMachine._change_state", function(func, self_obj, ...)
-                local old_state = self_obj._state
-                local old_state_name = old_state and self_obj:current_state_name()
-                if old_state_name then
-                    Managers.mod:on_game_state_changed("exit", old_state_name, old_state)
-                end
-
-                local result = func(self_obj, ...)
-
-                local new_state = self_obj._state
-                local new_state_name = new_state and self_obj:current_state_name()
-                if new_state_name then
-                    Managers.mod:on_game_state_changed("enter", new_state_name, new_state)
-                end
-
-                return result
-            end)
-
+            if not ok then
+                __print("[Enginseer] lifecycle bootstrap failed: " .. tostring(err))
+            end
             return state_update_result
         end,
         "Enginseer"
