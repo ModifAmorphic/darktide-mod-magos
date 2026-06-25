@@ -33,6 +33,12 @@ Mods.require_store = {}
 Mods.lua = Mods.lua or {}
 Mods.lua.loadstring = loadstring
 Mods.lua.io = io
+-- os + ffi are captured here (before the engine strips stdlib ~pcall#6) because
+-- DMF's debug modules (table_dump uses Mods.lua.os; dev_console uses
+-- Mods.lua.ffi) deep-copy them at dmf init. `or` so they're nil-safe if the
+-- global isn't present in this engine build (ffi is LuaJIT-only).
+Mods.lua.os = Mods.lua.os or os
+Mods.lua.ffi = Mods.lua.ffi or ffi
 Mods.lua.pcall = pcall
 Mods.lua.print = print
 Mods.lua.pairs = pairs
