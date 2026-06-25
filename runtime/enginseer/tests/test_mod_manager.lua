@@ -536,4 +536,144 @@ return function(runner)
         runner.assert_nil(sb.Managers.mod._mod_load_index,
             "_mod_load_index must be cleared after the load loop completes")
     end)
+
+    -- DMF io_* re-rooting: DMF hardcodes "./../mods" (DML heritage) for its
+    -- mod-facing IO surface; Magos stages mods under MAGOS_STAGING. The
+    -- Enginseer overrides DMFMod:io_* to delegate to Mods.file.* (staging-
+    -- rooted) right after DMF's init(), so a user mod's resource load
+    -- (new_mod -> resolve_resource -> safe_call_io_dofile -> mod:io_dofile_unsafe)
+    -- resolves from staging instead of ./../mods. This was the last gap: the
+    -- whole chain reached StateMainMenu but the user mod's script missed
+    -- ("Error opening './../mods/<mod>/script.lua'").
+    runner.register("mod_manager: DMF io_dofile_unsafe override routes mod-resource loads to Mods.file (staging)", function()
+        local staging_reads = {}     -- paths Mods.file.dofile opened
+        local dmf_orig_reads = {}    -- paths DMF's original ./../mods method opened
+
+        local sb = setup({ order = { "usermod" } })
+        -- The staging-rooted delegate target. Records the read + returns a
+        -- sentinel proving the load hit staging (not ./../mods).
+        sb.Mods.file.dofile = function(fp)
+            table.insert(staging_reads, fp)
+            return "STAGED:" .. fp
+        end
+
+        -- Fake DMF: init() defines DMFMod + the io_* surface (mirrors
+        -- dmf/modules/core/io.lua loaded during DMF's init, rooted at ./../mods)
+        -- AND installs new_mod (mirrors dmf_mod_manager.create_mod +
+        -- load_mod_resource -> resolve_resource -> safe_call_io_dofile ->
+        -- mod:io_dofile_unsafe).
+        local dmf_object = {
+            init = function()
+                sb.DMFMod = {}
+                function sb.DMFMod:io_dofile_unsafe(fp)
+                    table.insert(dmf_orig_reads, "./../mods/" .. fp .. ".lua")
+                    return "DMF_ORIG:" .. fp
+                end
+                sb.new_mod = function(name, resources)
+                    local mod = setmetatable({ name = name }, { __index = sb.DMFMod })
+                    if type(resources.mod_script) == "string" then
+                        -- THE call that failed pre-fix. With the override it
+                        -- routes through Mods.file.dofile (staging).
+                        mod._loaded_script = mod:io_dofile_unsafe(resources.mod_script)
+                    end
+                    mod.init = function() end
+                    return mod
+                end
+            end,
+        }
+
+        local usermod_object
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            return ({
+                dmf = { run = function() return dmf_object end },
+                usermod = {
+                    run = function()
+                        usermod_object = sb.new_mod("usermod", { mod_script = "usermod/script" })
+                        return usermod_object
+                    end,
+                },
+            })[local_path]
+        end
+
+        runner.assert_nil(sb.DMFMod, "precondition: DMFMod not defined until DMF's init")
+
+        local ModManager = load_driver(sb)
+        local mm = ModManager:new()
+
+        -- The override routed the resource load through Mods.file.dofile
+        -- (staging-rooted), NOT DMF's hardcoded "./../mods".
+        runner.assert_eq({ "usermod/script" }, staging_reads,
+            "mod-resource load must route through Mods.file.dofile (staging-rooted)")
+        runner.assert_eq(0, #dmf_orig_reads,
+            "DMF's original ./../mods io_dofile_unsafe must NOT be called after the override")
+        runner.assert_eq("STAGED:usermod/script", usermod_object._loaded_script,
+            "the resource load must return the staging file's content")
+        runner.assert_truthy(mm._dmf_io_adapted,
+            "the DMF IO adaptation flag must be set once DMF defined DMFMod")
+    end)
+
+    -- One-shot: the override lands once (after the first mod whose init surfaces
+    -- a DMFMod) and is never re-applied within the same rite, even if a later
+    -- mod also surfaces DMFMod. Verified by tracking the io_dofile_unsafe
+    -- function identity across the two inits + post-rite.
+    runner.register("mod_manager: DMF IO adaptation is one-shot — two DMF-like mods don't double-apply", function()
+        local sb = setup({ order = { "dmf2" } })  -- dmf + dmf2 both surface DMFMod
+        sb.Mods.file.dofile = function(fp) return "STAGED:" .. fp end
+
+        -- Capture io_dofile_unsafe's identity during each mod's init. dmf's init
+        -- captures the ORIGINAL (adapt runs AFTER init); dmf2's init captures
+        -- whatever is current by then (the delegate). If the one-shot holds,
+        -- dmf2's init sees the delegate AND post-rite the ref is unchanged.
+        local seen_refs = {}
+        local function make_dmf_like()
+            return {
+                init = function()
+                    -- dmf creates DMFMod; dmf2 re-surfaces the same one.
+                    sb.DMFMod = sb.DMFMod or {
+                        io_dofile_unsafe = function(self, fp) return "DMF_ORIG" end,
+                    }
+                    table.insert(seen_refs, sb.DMFMod.io_dofile_unsafe)
+                end,
+            }
+        end
+
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            return ({
+                dmf = { run = function() return make_dmf_like() end },
+                dmf2 = { run = function() return make_dmf_like() end },
+            })[local_path]
+        end
+
+        local ModManager = load_driver(sb)
+        local mm = ModManager:new()
+
+        runner.assert_eq(2, #seen_refs, "both DMF-like mods ran init")
+        -- seen_refs[1]: original, captured during dmf's init (adapt runs after).
+        -- seen_refs[2]: delegate, captured during dmf2's init (already adapted).
+        runner.assert_truthy(seen_refs[1] ~= sb.DMFMod.io_dofile_unsafe,
+            "after dmf's init, the original must have been replaced by the delegate")
+        runner.assert_eq(seen_refs[2], sb.DMFMod.io_dofile_unsafe,
+            "after dmf2's init, adaptation must NOT re-run (one-shot): delegate ref unchanged")
+        runner.assert_truthy(mm._dmf_io_adapted, "flag set after the rite")
+    end)
+
+    -- No-op when DMFMod is absent: a rite whose mods never surface a DMFMod
+    -- (every other test in this file, and any non-DMF bootstrap) must be
+    -- undisturbed — _adapt_dmf_io no-ops, fabricates nothing, flag stays false.
+    runner.register("mod_manager: DMF IO adaptation is a no-op when DMFMod is absent", function()
+        local sb = setup({ order = {} })  -- dmf-only, but dmf doesn't surface DMFMod
+        sb.Mods.file.dofile = function(fp) return "STAGED" end
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            return ({ dmf = mod_file("dmf", { init = function() end }) })[local_path]
+        end
+        runner.assert_nil(sb.DMFMod, "precondition: no DMFMod in this sandbox")
+
+        local ModManager = load_driver(sb)
+        local mm = ModManager:new()
+
+        runner.assert_nil(sb.DMFMod, "adaptation must not fabricate a DMFMod")
+        runner.assert_eq(false, mm._dmf_io_adapted,
+            "flag stays false when there's no DMFMod to adapt (no-op never landed)")
+        runner.assert_eq("done", mm._state, "rite still completes normally")
+    end)
 end

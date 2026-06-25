@@ -79,6 +79,60 @@ local function _call_mod(object, phase, name, method, ...)
     return true
 end
 
+-- _adapt_dmf_io — re-root DMF's mod-facing IO at the Magos staging dir.
+--
+-- WHY: DMF (kept stock — no vendored edits) hardcodes its mod directory as
+-- "./../mods" in dmf/scripts/mods/dmf/modules/core/io.lua:14 (DML heritage).
+-- Magos stages the user's mods under MAGOS_STAGING instead, so a user mod's
+-- resources (mod_script / mod_data) would otherwise miss: DMF loads them via
+-- dmf_mod_manager.resolve_resource -> dmf.safe_call_io_dofile -> mod:io_dofile_unsafe,
+-- which routes through that hardcoded local. Replacing each DMFMod:io_* method
+-- with a thin delegate to the matching Mods.file.* (staging-rooted) intercepts
+-- that path and makes mod resources resolve from staging.
+--
+-- SCOPE: this overrides ONLY the mod-facing IO surface (DMFMod:io_*). DMF's OWN
+-- internal module loads use a staging-rooted local `io_dofile = Mods.file.dofile`
+-- (captured in dmf_loader), NOT these methods — so this cannot break DMF's
+-- internal loads. Targets the stable DMFMod:io_* API, so it survives DMF updates.
+--
+-- Idempotent + guarded: a no-op (returns false) if DMFMod isn't a table yet or
+-- Mods.file is missing; otherwise installs all 8 delegates and returns true.
+-- The `self` arg DMF passes is dropped — Mods.file.* don't take it. Our dofile
+-- is already pcall-safe, so pointing io_dofile_unsafe at it is a harmless double
+-- pcall (DMF's safe_call re-wraps it).
+local function _adapt_dmf_io()
+    if type(DMFMod) ~= "table" then return false end
+    if type(Mods) ~= "table" or type(Mods.file) ~= "table" then return false end
+    local file = Mods.file
+
+    DMFMod.io_dofile = function(self, fp)
+        return file.dofile(fp)
+    end
+    DMFMod.io_dofile_unsafe = function(self, fp)
+        return file.dofile(fp)
+    end
+    DMFMod.io_exec = function(self, lp, fn, ext, args)
+        return file.exec(lp, fn, ext, args)
+    end
+    DMFMod.io_exec_unsafe = function(self, lp, fn, ext, args)
+        return file.exec_unsafe(lp, fn, ext, args)
+    end
+    DMFMod.io_exec_with_return = function(self, lp, fn, ext, args)
+        return file.exec_with_return(lp, fn, ext, args)
+    end
+    DMFMod.io_exec_unsafe_with_return = function(self, lp, fn, ext, args)
+        return file.exec_unsafe_with_return(lp, fn, ext, args)
+    end
+    DMFMod.io_read_content = function(self, fp, ext)
+        return file.read_content(fp, ext)
+    end
+    DMFMod.io_read_content_to_table = function(self, fp, ext)
+        return file.read_content_to_table(fp, ext)
+    end
+
+    return true
+end
+
 -- ModManager:init — the rite.
 --
 -- State machine: "scanning" (read order + build _mods) -> "loading" (load each
@@ -96,6 +150,10 @@ function ModManager:init()
     self._mods = {}
     self._settings = { log_level = 1, developer_mode = false }
     self._state = "scanning"
+    -- One-shot guard for the DMF IO adaptation (see _adapt_dmf_io + the load
+    -- loop). False until the first mod's init() surfaces a DMFMod table to
+    -- re-root; once it lands, never re-attempted this rite.
+    self._dmf_io_adapted = false
 
     -- SCAN: read the user's load order and build the full _mods table up front
     -- (id/name/handle/enabled/state/object), so every entry exists before any
@@ -144,6 +202,16 @@ function ModManager:init()
                 -- init() runs BEFORE the next mod loads — that ordering is what
                 -- lets DMF's init() define new_mod/get_mod before user mods run.
                 _call_mod(object, "init", entry.name, "init")
+                -- Re-root DMF's mod-facing IO at staging: land it AFTER DMF's
+                -- init() defines the DMFMod:io_* methods, but BEFORE the next
+                -- mod's run() (which calls new_mod -> resolve_resource ->
+                -- mod:io_dofile_unsafe). Checking after every init + gating on
+                -- _dmf_io_adapted lands the override at exactly the right slot
+                -- (right after DMF, mod #1) without hard-coding "dmf" by name.
+                -- _adapt_dmf_io is a no-op until DMFMod exists.
+                if not self._dmf_io_adapted and _adapt_dmf_io() then
+                    self._dmf_io_adapted = true
+                end
             end
         end
     end
