@@ -10,7 +10,7 @@ launches the game modded via DLL injection (no game-directory footprint, no
 bundle-database patching) and stays out of the way for vanilla play (launch
 from Steam = unmodified game).
 
-Architecture: a **Hybrid** the runtime — a Rust discovery pure-library
+Architecture: a **Hybrid** — the runtime: a Rust discovery pure-library
 (C-ABI staticlib) + a C live-game shell, linked into one DLL, delivered by
 `CreateRemoteThread`. Darktide Magos (the mod-manager app) is planned, not yet
 built. See `docs/architecture/` for the full architecture.
@@ -27,7 +27,7 @@ Requirements, architecture, and technology choices are made fresh.
 
 ## Repository state
 
-- **`main`** — production. the runtime (the injected runtime + launcher) is
+- **`main`** — production. The runtime (the injected modding runtime + launcher) is
   merged as the production seed; Darktide Magos is not yet built.
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +

@@ -6,7 +6,7 @@ way for vanilla play (launch from Steam = the unmodified game).
 
 ## Component model
 
-- **the runtime — `runtime/`** (built): the injected modding runtime + its
+- **The runtime (`runtime/`)** (built): the injected modding runtime + its
   launcher. A Rust discovery pure-library + a C live-game shell, linked into
   one DLL, delivered by `CreateRemoteThread`.
 - **Darktide Magos — `mod-manager/`** (planned, not built): the user-facing app —

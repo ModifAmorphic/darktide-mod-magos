@@ -11,7 +11,7 @@ bundle-database patching — and stays out of the way for vanilla play
   the production seed: a Rust discovery engine + C shell, validated
   end-to-end (the game reaches the main menu, the Lua VM hook fires, all 16
   LuaJIT functions are discovered in-process).
-- [**Mod Magos (Mod Manager)**](mod-manager) — the mod manager app (UI, staging, load order, profiles,
+- [**Darktide Magos (Mod Manager)**](mod-manager) — the mod manager app (UI, staging, load order, profiles,
   dependency resolution) — is planned, not yet built.
 - The `poc` branch holds the historical proof-of-concept (reference only).
 
