@@ -35,9 +35,10 @@ return function(runner)
         sb.MAGOS_MOD_PATH = mock.MOD_ROOT
 
         local files = mock.stage_enginseer()
-        -- Stage a fake rite at the Enginseer root. The real loader opens + runs
-        -- this when the bootstrap fires; it yields __FAKE_MOD_MANAGER (set
-        -- per-test) so the real return-value path is exercised, not mocked over.
+        -- Stage a fake loader at the Enginseer root. The real loader opens +
+        -- runs this when the bootstrap fires; it yields __FAKE_MOD_MANAGER
+        -- (set per-test) so the real return-value path is exercised, not
+        -- mocked over.
         files[mock.ENGINSEER_ROOT .. "/mod_manager.lua"] = "return __FAKE_MOD_MANAGER"
 
         sb.io = mock.make_io(files)
@@ -122,10 +123,10 @@ return function(runner)
         runner.assert_eq(1, #sb.Mods._deferred_hooks, "must stay queued pre-target")
     end)
 
-    -- Full bootstrap simulation: stand up the boot target + the rite driver +
+    -- Full bootstrap simulation: stand up the boot target + the loader driver +
     -- the inner hook targets, then verify the bootstrap hook installs, runs,
     -- assigns Managers.mod, and installs the StateGame.update / GameStateMachine
-    -- _change_state inner hooks. The rite loads via the REAL loader from the
+    -- _change_state inner hooks. The loader loads via the REAL loader from the
     -- staged fake mod_manager.lua (returns sb.__FAKE_MOD_MANAGER), exercising
     -- the real return-value path.
     runner.register("lifecycle: bootstrap installs + runs original first + assigns Managers.mod", function()

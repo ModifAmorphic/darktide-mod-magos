@@ -73,7 +73,7 @@ source ../_local/DARKTIDE.env          # sets DARKTIDE_GAME_DIR (for oracle test
 make build          # cross-compile DLL + launcher (x86_64-pc-windows-gnu)
 make check          # verify valid PE DLL with DllMain
 make test           # C tests (via wine) + Rust tests
-make enginseer-test # Enginseer Lua tests (offline LuaJIT harness, 86 tests; no game/wine)
+make enginseer-test # Enginseer Lua tests (offline LuaJIT harness, 93 tests; no game/wine)
 ```
 Build outputs land in `runtime/bin/`; cargo's artifacts in `runtime/target/`.
 - **Oracle tests** run discovery against the real `Darktide.exe` (resolved via
@@ -118,21 +118,16 @@ Build outputs land in `runtime/bin/`; cargo's artifacts in `runtime/target/`.
 
 ## Naming convention
 
-User-facing names — anything a user sees, hears, or interacts with (log
-prefixes, component names, UI text) — use **Warhammer 40k / pseudo-gothic**
-naming, fitting the Adeptus Mechanicus / Tech-Priest theme of "Magos."
-Internal technical names (Rust crates, C modules, functions) keep plain
-descriptive names.
-
-The boundary is the **Enginseer** (aka the Mod Loader): everything before
-it (injection, discovery, hooks, the shell, the launcher) is internal;
-everything from the Enginseer onward (the loader itself, log entries users
-see, mod management) is user-facing.
+Keep the existing thematic names that are already established (Enginseer for the
+mod loader, Magos for the app) — don't rename them. Going forward, use plain,
+descriptive names for new components/modules (Rust crates, C modules, Lua
+modules, functions). Reserve any Warhammer 40k / Adeptus Mechanicus flavor for
+the UI (Darktide Magos); docs and code read as plain engineering documentation.
 
 - **Folders/filenames:** lowercase (`runtime/enginseer/enginseer.lua`).
-- **Prose/docs:** proper case ("Enginseer"). First mention in a doc:
-  "Enginseer (aka the Mod Loader)"; thereafter just "Enginseer."
-- Don't obscure — names should be evocative but accessible, not cryptic.
+- **Prose/docs:** "Enginseer" is the established name for the loader; first
+  mention in a doc is "Enginseer (aka the Mod Loader)", thereafter "Enginseer".
+- Don't obscure — names should be descriptive and accessible, not cryptic.
 
 ## Before opening a PR — keep docs current
 

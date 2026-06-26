@@ -79,7 +79,7 @@ Testing/
 _local/
 
 # Rust / cargo build artifacts
-/runtime/target/
+/**/target/
 **/*.rs.bk
 
 # Mixed-DLL build outputs (all build outputs land in runtime/bin/), launch

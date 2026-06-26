@@ -342,7 +342,10 @@ static void open_log(void) {
             snprintf(path, sizeof(path), "%s", logname);
         }
     }
-    g_log = fopen(path, "a");
+    /* "w" (not "a"): truncate so each game start gets a fresh log. The worker
+     * opens the log once per game process (DllMain -> worker thread), so this
+     * recreates the file on every launch — no unbounded growth across runs. */
+    g_log = fopen(path, "w");
     magos_log(MAGOS_LOG_INFO, "shell", "log -> %s\n", path);
 }
 

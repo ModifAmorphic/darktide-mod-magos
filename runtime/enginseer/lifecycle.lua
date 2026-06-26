@@ -14,13 +14,18 @@
 -- init_mod_framework: a deferred hook on
 -- CLASS.BootStateRequireGameScripts._state_update that runs AFTER the original
 -- (which requires game scripts -> StateGame created), then loads the Enginseer's
--- mod_manager (the rite — our driver), assigns Managers.mod (whose :init() reads
--- mod_load_order, prepends "dmf", and loads DMF + every user mod), and installs
--- the per-frame + state-change hooks. DMF loads as the first mod inside the
--- rite; it is NOT loaded here directly.
+-- mod_manager (the loader driver), assigns Managers.mod (whose :init() reads
+-- mod_load_order, prepends "dmf", and builds the _mods table — the SCAN), and
+-- installs the per-frame + state-change hooks. The LOAD itself (per-mod
+-- run()/init()) does NOT happen here: it is deferred to the first
+-- StateGame.update tick (driven by the per-frame hook below), where
+-- boot-complete globals like Managers.input exist — loading inside
+-- _state_update was too early and broke mods whose init reads Managers.input.
+-- DMF loads as the first mod on that first tick; it is NOT loaded here directly.
 --
 -- LIVE-VALIDATE: that BootStateRequireGameScripts._state_update resolves + fires
--- at the right boot point and that the DMF load succeeds.
+-- at the right boot point, that StateGame.update drives the load on its first
+-- tick (after boot, Managers.input present), and that the DMF load succeeds.
 
 local _loadstring = Mods.lua.loadstring
 local pcall = pcall
@@ -103,7 +108,7 @@ Mods.install_lifecycle_hooks = function()
             -- of propagating through the engine's _state_update and crashing
             -- the game at boot. Always return the original's result regardless.
             local ok, err = pcall(function()
-                -- Load + run the rite (the Enginseer's mod loader).
+                -- Load the loader driver (the Enginseer's mod loader).
                 -- mod_manager.lua is an Enginseer module, so it loads from the
                 -- Enginseer root (MAGOS_ENGINSEER_PATH) via
                 -- Mods.load_enginseer_module, NOT Mods.file.dofile (which is
@@ -111,16 +116,24 @@ Mods.install_lifecycle_hooks = function()
                 -- bootstrap_load — because it calls class("ModManager"), which
                 -- only exists after the class patch installs at boot (the
                 -- require-wrap), not at the entry's pcall#1. :init() reads
-                -- mod_load_order, prepends "dmf", and loads DMF + every user
-                -- mod synchronously (DMF/mods/mod_load_order root at the MOD
-                -- dir via Mods.file.*); _state -> "done".
-                -- LIVE-VALIDATE: the full rite end-to-end (DMF init loads all
-                -- its modules; user mods' run/init work) against the real engine.
+                -- mod_load_order, prepends "dmf", and builds the _mods table
+                -- (the SCAN); it loads NO mod. The LOAD runs on the first
+                -- StateGame.update tick (the per-frame hook installed below),
+                -- where Managers.input exists. DMF/mods/mod_load_order root at
+                -- the MOD dir via Mods.file.* (MAGOS_MOD_PATH); _state reaches
+                -- "done" once the load completes.
+                -- LIVE-VALIDATE: the full load end-to-end (DMF init loads all
+                -- its Phase-1 + Phase-2 modules from the mod root; user mods'
+                -- run/init work with Managers.input ready) against the real
+                -- engine.
                 local ModManager = Mods.load_enginseer_module("mod_manager")
                 Managers = Managers or {}
                 Managers.mod = Managers.mod or ModManager:new()
 
-                -- Per-frame update hook on StateGame: pump the ModManager each frame.
+                -- Per-frame update hook on StateGame: drive the ModManager each
+                -- frame. The FIRST tick runs the LOAD (Managers.mod:update
+                -- loads DMF + every user mod, then sets _state="done"); every
+                -- tick (including the first) pumps each loaded mod's update(dt).
                 Mods.hook.set("Enginseer", "CLASS.StateGame.update", function(func, self_obj, dt, ...)
                     Managers.mod:update(dt)
                     return func(self_obj, dt, ...)
