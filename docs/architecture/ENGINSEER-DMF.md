@@ -37,11 +37,32 @@ own `dmf_mod_object` is driven by the rite like any other top-level mod object;
 DMF then drives *its* registered user mods through its inner update loop (see
 [Two-level driving](#two-level-driving) below).
 
+### Two roots (runtime-controlled vs user-controlled)
+
+The Enginseer and the mods live in **separate** directories, set as two globals
+by the C trampoline before the entry opens:
+
+- **Enginseer root** (`MAGOS_ENGINSEER_PATH`, `--enginseer-path`; default
+  `<launcher-dir>\enginseer`) — runtime-controlled. Holds `enginseer.lua` + its
+  modules (`file`, `hook`, `class_patch`, `require_wrap`, `lifecycle`,
+  `mod_manager`). `make build` stages these into `runtime/bin/enginseer/`. The
+  entry's `bootstrap_load` (exposed as `Mods.load_enginseer_module`) roots here.
+- **Mod root** (`MAGOS_MOD_PATH`, from `--mod-path` / `DARKTIDE_MOD_PATH`;
+  user/mod-manager-controlled) — holds DMF + user mods + `mod_load_order.txt`.
+  `Mods.file.*` roots here (via `Mods._staging_base`). DMF and the mods never
+  live under the Enginseer root.
+
+So the loader's own code is runtime-owned (ships with the build), while the
+mods it loads are user-owned — the split keeps a DMF/mod update from requiring a
+runtime rebuild and vice versa.
+
 ## The rite (`runtime/enginseer/mod_manager.lua`)
 
 The rite is `ModManager:init()` (a `class("ModManager")`, loaded via
-`Mods.file.dofile("mod_manager")` from the deferred bootstrap hook — see
-`lifecycle.lua`). It runs in two phases:
+`Mods.load_enginseer_module("mod_manager")` from the deferred bootstrap hook —
+see `lifecycle.lua`; `mod_manager.lua` is an Enginseer module, so it loads from
+the **Enginseer root** `MAGOS_ENGINSEER_PATH`, not the mod root). It runs in
+two phases:
 
 1. **SCAN** — read `mod_load_order.txt` (`Mods.file.read_content_to_table`),
    prepend `"dmf"`, and build the **entire** `_mods` table up front. Each entry
@@ -234,8 +255,10 @@ shell/ subsection. The bootstrap hook body (in `lifecycle.lua`) is:
 
 1. call the original `_state_update` (requires game scripts → `StateGame`
    created and registered in `CLASS`);
-2. `Mods.file.dofile("mod_manager")` → `Managers.mod = ModManager:new()` → the
-   rite loads DMF + every user mod;
+2. `Mods.load_enginseer_module("mod_manager")` → `Managers.mod = ModManager:new()`
+   → the rite loads DMF + every user mod (DMF/mods/mod_load_order root at the
+   **mod root** via `Mods.file.*` / `MAGOS_MOD_PATH`; the rite itself is an
+   Enginseer module loaded from the Enginseer root);
 3. install `CLASS.StateGame.update` hook → drives `Managers.mod:update(dt)`;
 4. install `CLASS.GameStateMachine._change_state` hook → drives
    `on_game_state_changed` enter/exit.
@@ -252,9 +275,11 @@ DMF (modules init) + the test mod → the test mod's hook fires in-game → the
 game reaches `StateMainMenu`. No crashes; one bad mod degrades cleanly.
 
 **Production DMF acquisition is future work.** Today DMF is vendored locally
-under `runtime/enginseer/dmf/` (gitignored — local only). In production, the
-mod manager (Darktide Magos) will download DMF and pass the staging path; the
-runtime side of the integration described here is unchanged.
+at the **mod root** (gitignored — local only; for live validation it lives in a
+repo-root `mods/` dir pointed at by `--mod-path`). In production, the mod
+manager (Darktide Magos) will download DMF into the mod root and pass that path
+via `--mod-path`; the runtime side of the integration described here is
+unchanged.
 
 ## References
 

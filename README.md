@@ -44,18 +44,23 @@ make check    # verify the DLL
 make test     # run the C + Rust tests
 ```
 
-`make build` produces two artifacts in `runtime/bin/`:
+`make build` produces the runtime artifacts in `runtime/bin/`:
 
 - **`magos_launcher.exe`** — the C injector (`runtime/launcher/`). The host
   process Darktide Magos invokes: `CreateProcess(Darktide.exe, SUSPENDED)` →
   injects `magos_shell.dll` via `CreateRemoteThread` → waits for the
   hook-ready signal → resumes. Sets the Steam app id and the runtime's env
-  vars (log file/level, mod path).
+  vars (log file/level, the Enginseer root, the mod path).
 - **`magos_shell.dll`** — the injected DLL (`runtime/shell/`): the C shell
   linked with the Rust **discovery** staticlib (`libmagos_discovery.a`) +
   MinHook, into one PE DLL. Hooks the game's Lua VM (`lua_newstate` → the
   production trampoline), discovers the LuaJIT function addresses in-process,
   and loads the Enginseer.
+- **`enginseer/`** — the Enginseer Lua (`runtime/enginseer/`), staged next to
+  the launcher/DLL. This is the runtime-controlled root the launcher publishes
+  as `MAGOS_ENGINSEER_PATH` (default `<launcher-dir>/enginseer/`); the
+  trampoline loads `enginseer.lua` from here. User mods (DMF + mods) live in a
+  separate mod root pointed at by `--mod-path`.
 
 Full build/test setup (including the local Steam/game-path config) is in
 [`AGENTS.md`](AGENTS.md).

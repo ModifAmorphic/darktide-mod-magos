@@ -54,16 +54,21 @@ The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
   remain as recon tooling; they are not the production path.
 - **Built (production trampoline + Enginseer v2).** The production trampoline
   is wired in `dllmain.c`: on the first `lua_pcall` (one-shot, before the
-  engine's pcall) it injects the proven Phase-4 chunk — set the `MAGOS_MOD_PATH`
-  global, `io.open` the staged entry (`<DARKTIDE_MOD_PATH>/enginseer.lua`) →
-  read → `loadstring` → run. The staging dir is read from `DARKTIDE_MOD_PATH`
-  (the launcher sets it in the child env); if unset the trampoline is SKIPPED
+  engine's pcall) it injects the proven Phase-4 chunk — set the two root
+  globals (`MAGOS_ENGINSEER_PATH` + `MAGOS_MOD_PATH`), `io.open` the staged
+  entry (`<MAGOS_ENGINSEER_PATH>/enginseer.lua`) → read → `loadstring` → run.
+  The Enginseer Lua is **packaged with the runtime** (staged into
+  `<launcher-dir>/enginseer/` by `make build`; the launcher publishes that dir
+  as `MAGOS_ENGINSEER_PATH`). The mod root is read from `DARKTIDE_MOD_PATH`
+  (the launcher sets it in the child env from `--mod-path`); if unset the
+  chunk emits an empty `MAGOS_MOD_PATH` (mods won't load, the rite degrades
+  gracefully). If `MAGOS_ENGINSEER_PATH` is unset the trampoline is SKIPPED
   (logged) and the build degrades to the recon probes. The chunk template and
   safety discipline (one-shot, stack-clean, `g_in_probe` guard) carry over
   unchanged from the Phase-4 prototype that validated the mechanism.
 - **Built + live-validated (Enginseer v2 — the full modding chain).** The
-  Enginseer (`runtime/enginseer/enginseer.lua`, the user-staged entry) runs in
-  engine-context at pcall#1, captures the engine's real
+  Enginseer (`runtime/enginseer/enginseer.lua`, the runtime-staged entry) runs
+  in engine-context at pcall#1, captures the engine's real
   `io`/`loadstring`/`require`/`print`/`os`/`ffi` into the `Mods` table **before
   the engine removes `io`/`loadstring` (~pcall#6)**, and bridges pcall#1 to the
   engine's late boot via a **deferred bootstrap**:
@@ -113,17 +118,18 @@ SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
   | --- | --- | --- |
   | `--game-binary <path>` | `MAGOS_ENGINSEER_GAME_BINARY` | — **(required)** |
   | `--magos-shell <path>` | `MAGOS_ENGINSEER_SHELL` | `<launcher-dir>\magos_shell.dll` |
-  | `--mod-path <path>` | `DARKTIDE_MOD_PATH` | unset (trampoline skips) |
+  | `--enginseer-path <dir>` | `MAGOS_ENGINSEER_PATH` | `<launcher-dir>\enginseer` |
+  | `--mod-path <path>` | `DARKTIDE_MOD_PATH` | unset (mods won't load) |
   | `--log-file <path>` | `MAGOS_ENGINSEER_LOG_FILE` | `<launcher-dir>\magos_enginseer.log` |
   | `--log-level <level>` | `MAGOS_ENGINSEER_LOG_LEVEL` | `info` (`error`/`warn`/`info`/`debug`/`trace`) |
   | `--steam-app-id <id>` | `MAGOS_ENGINSEER_STEAM_APP_ID` | `1361210` |
 
   The launcher resolves the config, then publishes the shell-contract values
-  (`SteamAppId`/`SteamGameId`, `DARKTIDE_MOD_PATH`, `MAGOS_ENGINSEER_LOG_FILE`,
-  `MAGOS_ENGINSEER_LOG_LEVEL`) into the child env before `CreateProcess`, so the
-  injected shell inherits them. `-h`/`--help` prints the full table. Darktide
-  Magos reads the launcher's stdout; the shell→launcher channel is internal to
-  the runtime.
+  (`SteamAppId`/`SteamGameId`, `MAGOS_ENGINSEER_PATH`, `DARKTIDE_MOD_PATH`,
+  `MAGOS_ENGINSEER_LOG_FILE`, `MAGOS_ENGINSEER_LOG_LEVEL`) into the child env
+  before `CreateProcess`, so the injected shell inherits them. `-h`/`--help`
+  prints the full table. Darktide Magos reads the launcher's stdout; the
+  shell→launcher channel is internal to the runtime.
 
 ## Contracts
 
@@ -131,12 +137,16 @@ SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
 
 - **Invocation:** Darktide Magos calls the launcher (subprocess) with the
   flag-based CLI above (`--game-binary` required; the rest flag > env > default).
-- **Staging dir:** Darktide Magos writes it (DMF, mods, `mod_load_order.txt`);
-  the runtime bootstraps the staged Enginseer entry point with engine-equivalent
-  Lua semantics. `mod_load_order.txt` is a Darktide Magos artifact, but the
-  **Enginseer reads it** (the rite — it is the mod loader); DMF does not. The
-  runtime is the conduit; it does not compute the load order or resolve
-  dependencies (that's Darktide Magos's job).
+- **Staging dirs (two roots):** the Enginseer Lua (`enginseer.lua` + its
+  modules) ships WITH the runtime — `make build` stages it into
+  `<launcher-dir>/enginseer/`, and the launcher publishes that dir as
+  `MAGOS_ENGINSEER_PATH` (`--enginseer-path`). The **mod** root (`--mod-path` /
+  `DARKTIDE_MOD_PATH`) is Darktide-Magos-controlled: it writes DMF, user mods,
+  and `mod_load_order.txt` there; the runtime bootstraps the runtime-staged
+  Enginseer entry, which loads DMF + mods from the mod root. `mod_load_order.txt`
+  is a Darktide Magos artifact, but the **Enginseer reads it** (the rite — it is
+  the mod loader); DMF does not. The runtime is the conduit; it does not compute
+  the load order or resolve dependencies (that's Darktide Magos's job).
 - **Status:** the launcher relays the shell's status via stdout (launch
   progress, mod-load outcome, errors, game exit). Game-update detection
   (discovery mismatch) rides this channel.
@@ -162,7 +172,8 @@ in the CLI table above; these are the *contract* the shell depends on.)
 
 | Env var | Set by | Read by | Meaning |
 | --- | --- | --- | --- |
-| `DARKTIDE_MOD_PATH` | launcher (only when `--mod-path`/env configured) | shell trampoline | staging dir for mods + `enginseer.lua`. Unset ⇒ trampoline SKIPPED (degrades to recon probes / vanilla) |
+| `MAGOS_ENGINSEER_PATH` | launcher | shell trampoline + Enginseer entry | Enginseer dir — where `enginseer.lua` + its modules live (runtime-controlled; `<launcher-dir>\enginseer` by default). The trampoline joins it + `enginseer.lua` into the entry path; the entry's `bootstrap_load` roots its own module loads here. Unset ⇒ trampoline SKIPPED (degrades to recon probes / vanilla). |
+| `DARKTIDE_MOD_PATH` | launcher (only when `--mod-path`/env configured) | shell trampoline + Enginseer | mod dir — where DMF + user mods + `mod_load_order.txt` live. The trampoline sets `MAGOS_MOD_PATH` from it; the rite/DMF/mods root here (`Mods.file.*`). Unset ⇒ empty `MAGOS_MOD_PATH` (mods won't load; vanilla). |
 | `MAGOS_ENGINSEER_LOG_FILE` | launcher | shell | shell log file path |
 | `MAGOS_ENGINSEER_LOG_LEVEL` | launcher | shell | shell log level (`error`/`warn`/`info`/`debug`/`trace`) |
 | `SteamAppId` / `SteamGameId` | launcher | Steam | the real Darktide app id (`1361210`); without it `SteamAPI_Init` is denied under a non-Steam shortcut |

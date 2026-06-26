@@ -41,16 +41,20 @@ runtime/            the injected modding runtime + injector
   Cargo.lock
   Makefile          builds the runtime: make build / check / test / enginseer-test / clean
                     (run from runtime/ — all commands below assume CWD = runtime/)
-  bin/              ALL build outputs land here (gitignored)
+  bin/              ALL build outputs land here (gitignored): magos_launcher.exe,
+                      magos_shell.dll + enginseer/ (the staged Enginseer Lua)
   target/           cargo build artifacts (gitignored)
   discovery/        Rust crate: LuaJIT discovery engine (pure library, C-ABI staticlib)
   shell/            C shell — the injected DLL (DllMain, MinHook, lua_newstate hook)
   launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
-  enginseer/        Enginseer (aka the Mod Loader) — the staged loader (LuaJIT):
+  enginseer/        Enginseer (aka the Mod Loader) — the runtime-staged loader (LuaJIT):
                       enginseer.lua entry + v2 modules (file/hook/class_patch/
                       require_wrap/lifecycle/mod_manager) + enginseer.v1.lua +
                       tests/ (offline LuaJIT harness, run via `make enginseer-test`).
-                      Vendored DMF + test-mod fixtures are gitignored (local only).
+                      `make build` stages the entry + v2 modules into bin/enginseer/
+                      (the runtime-controlled root, published as MAGOS_ENGINSEER_PATH).
+                      Vendored DMF/test-mod/mod_load_order live in a repo-root mods/
+                      dir (gitignored — the mod root, pointed at by --mod-path).
   tests/            C unit tests (run via wine)
 mod-manager/        Darktide Magos — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference
@@ -81,7 +85,11 @@ Build outputs land in `runtime/bin/`; cargo's artifacts in `runtime/target/`.
   magos-discovery`. `make test` handles this; clippy too
   (`cargo clippy --all-targets --features test-hooks -- -D warnings`).
 - **Launcher CLI** is flag-based (**flag > env var > default**; `--game-binary`
-  is the only required flag; shell DLL + log default next to the launcher). See
+  is the only required flag; shell DLL + log default next to the launcher).
+  `--enginseer-path` (env `MAGOS_ENGINSEER_PATH`, default
+  `<launcher-dir>/enginseer/`) is the runtime-controlled Enginseer root —
+  `make build` stages the Enginseer Lua there; `--mod-path` (env
+  `DARKTIDE_MOD_PATH`) is the user-controlled mod root. See
   `docs/architecture/RUNTIME.md` → `launcher/` for the full flag/env/default
   table + the env-var contract.
 - **Shell log** is `magos_enginseer.log`, structured + level-filtered via
