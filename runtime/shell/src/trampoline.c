@@ -2,29 +2,35 @@
  * trampoline.c — pure helpers for the runtime trampoline.
  *
  * Implementation of the helpers declared in trampoline.h. The trampoline chunk
- * (set MAGOS_MOD_PATH -> io.open a staged file -> read -> loadstring -> run) is
- * the proven engine-context mechanism (see dllmain.c's Phase-4 + production
- * notes). The production path joins DARKTIDE_MOD_PATH + enginseer.lua into
- * the entry path and feeds both the raw mod path AND the joined entry path
- * to trampoline_build_chunk; the chunk sets MAGOS_MOD_PATH first, then opens the
- * entry file. This file has NO Windows, Lua, or hook dependencies — only string
- * ops — so it compiles directly into both the shell DLL and the C unit-test exes.
+ * (set MAGOS_ENGINSEER_PATH + MAGOS_MOD_PATH -> io.open the staged entry ->
+ * read -> loadstring -> run) is the proven engine-context mechanism (see
+ * dllmain.c's Phase-4 + production notes). The production path uses two roots:
+ * the Enginseer root (enginseer.lua + its modules — runtime-controlled) joined
+ * with enginseer.lua into the entry path, plus the mod root (DMF + user mods —
+ * user/mod-manager-controlled, optional). trampoline_build_chunk takes all
+ * three: it sets MAGOS_ENGINSEER_PATH from the Enginseer root, MAGOS_MOD_PATH
+ * from the mod root (empty string if NULL/empty), and bakes the joined entry
+ * path into the io.open call. This file has NO Windows, Lua, or hook
+ * dependencies — only string ops — so it compiles directly into both the shell
+ * DLL and the C unit-test exes.
  */
 #include "trampoline.h"
 
 #include <stdio.h>
 #include <string.h>
 
-/* The trampoline chunk template. The first `%s` receives the escaped mod path
- * (set as MAGOS_MOD_PATH); the second `%s` receives the escaped entry-file
- * path (opened + loaded + run). The chunk returns "OK" or a "FAIL <step>:
- * <err>" status string. Verbatim step order from the Phase-4 spec (io.open ->
- * read -> loadstring -> run), guarded at each step so the only way it
- * propagates an error is an unguarded step (e.g. f:read, which the outer
- * pcall then catches and reports as CHUNK PCALL FAILED). The MAGOS_MOD_PATH
- * assignment is the only addition over the Phase-4 prototype — a path handoff
- * to the Enginseer, not a Lua-facility shim. */
+/* The trampoline chunk template. The three `%s` receive, in order: the escaped
+ * Enginseer root (set as MAGOS_ENGINSEER_PATH), the escaped mod root (set as
+ * MAGOS_MOD_PATH — the empty string when the mod root is unset), and the
+ * escaped entry-file path (opened + loaded + run). The chunk returns "OK" or a
+ * "FAIL <step>: <err>" status string. Verbatim step order from the Phase-4 spec
+ * (io.open -> read -> loadstring -> run), guarded at each step so the only way
+ * it propagates an error is an unguarded step (e.g. f:read, which the outer
+ * pcall then catches and reports as CHUNK PCALL FAILED). The two globals are
+ * the only addition over the Phase-4 prototype — a path handoff to the
+ * Enginseer, not a Lua-facility shim. */
 static const char TRAMPOLINE_CHUNK_FMT[] =
+    "MAGOS_ENGINSEER_PATH = \"%s\"\n"
     "MAGOS_MOD_PATH = \"%s\"\n"
     "local f, err = io.open(\"%s\", \"r\")\n"
     "if not f then return \"FAIL io.open: \" .. tostring(err) end\n"
@@ -50,23 +56,35 @@ int trampoline_escape_path(const char *path, size_t path_len,
     return (int)off;
 }
 
-int trampoline_build_chunk(const char *staging, const char *entry_path,
-                           char *out, size_t out_cap) {
-    if (!staging || !entry_path || !out || out_cap == 0) return -1;
-    size_t staging_len = strlen(staging);
+int trampoline_build_chunk(const char *enginseer_path, const char *mod_path,
+                           const char *entry_path, char *out, size_t out_cap) {
+    if (!enginseer_path || !entry_path || !out || out_cap == 0) return -1;
+    size_t enginseer_len = strlen(enginseer_path);
     size_t entry_len = strlen(entry_path);
-    if (staging_len == 0 || entry_len == 0) return -1;  /* empty is a misconfig */
+    if (enginseer_len == 0 || entry_len == 0) return -1;  /* empty is a misconfig */
 
-    /* Escape both args for a Lua double-quoted string. */
-    char esc_staging[2048];
-    int sn = trampoline_escape_path(staging, staging_len, esc_staging, sizeof(esc_staging));
-    if (sn < 0) return -1;
-
-    char esc_entry[2048];
-    int en = trampoline_escape_path(entry_path, entry_len, esc_entry, sizeof(esc_entry));
+    /* Escape the Enginseer root + the entry path for a Lua double-quoted string. */
+    char esc_enginseer[2048];
+    int en = trampoline_escape_path(enginseer_path, enginseer_len,
+                                    esc_enginseer, sizeof(esc_enginseer));
     if (en < 0) return -1;
 
-    int n = snprintf(out, out_cap, TRAMPOLINE_CHUNK_FMT, esc_staging, esc_entry);
+    char esc_entry[2048];
+    int xn = trampoline_escape_path(entry_path, entry_len, esc_entry, sizeof(esc_entry));
+    if (xn < 0) return -1;
+
+    /* The mod root is optional: NULL/empty yields the empty-string global so
+     * the rite treats it as "no mods" gracefully (it does not abort the chunk). */
+    char esc_mod[2048];
+    esc_mod[0] = '\0';
+    if (mod_path && mod_path[0] != '\0') {
+        int mn = trampoline_escape_path(mod_path, strlen(mod_path),
+                                        esc_mod, sizeof(esc_mod));
+        if (mn < 0) return -1;
+    }
+
+    int n = snprintf(out, out_cap, TRAMPOLINE_CHUNK_FMT,
+                     esc_enginseer, esc_mod, esc_entry);
     if (n < 0 || (size_t)n >= out_cap) return -1;  /* encoding error or overflow */
     return n;
 }

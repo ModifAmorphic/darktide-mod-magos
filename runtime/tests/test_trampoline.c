@@ -57,17 +57,21 @@ void test_escape_null_args(void) {
 
 /* ---- trampoline_build_chunk ---- */
 
-void test_build_chunk_sets_mod_path_global(void) {
-    /* The chunk sets MAGOS_MOD_PATH (escaped mod path) then opens the entry
-     * file (escaped joined path). Both must appear. */
+void test_build_chunk_sets_both_path_globals_and_opens_entry(void) {
+    /* The chunk sets MAGOS_ENGINSEER_PATH (escaped Enginseer root) +
+     * MAGOS_MOD_PATH (escaped mod root), then opens the entry file (escaped
+     * joined path). All three must appear. */
     char out[1024];
-    int n = trampoline_build_chunk("Z:\\staging", "Z:\\staging\\t.lua", out, sizeof(out));
+    int n = trampoline_build_chunk("Z:\\enginseer", "Z:\\mods",
+                                   "Z:\\enginseer\\t.lua", out, sizeof(out));
     ASSERT_TRUE(n > 0);
 
-    /* MAGOS_MOD_PATH global set from the mod path, escaped. */
-    ASSERT_NOTNULL(strstr(out, "MAGOS_MOD_PATH = \"Z:\\\\staging\""));
+    /* Enginseer-root global, escaped. */
+    ASSERT_NOTNULL(strstr(out, "MAGOS_ENGINSEER_PATH = \"Z:\\\\enginseer\""));
+    /* Mod-root global, escaped. */
+    ASSERT_NOTNULL(strstr(out, "MAGOS_MOD_PATH = \"Z:\\\\mods\""));
     /* Entry path baked into io.open(...), escaped. */
-    ASSERT_NOTNULL(strstr(out, "io.open(\"Z:\\\\staging\\\\t.lua\", \"r\")"));
+    ASSERT_NOTNULL(strstr(out, "io.open(\"Z:\\\\enginseer\\\\t.lua\", \"r\")"));
     /* Each FAIL step label is present (defines the status vocabulary). */
     ASSERT_NOTNULL(strstr(out, "FAIL io.open:"));
     ASSERT_NOTNULL(strstr(out, "FAIL loadstring:"));
@@ -76,46 +80,76 @@ void test_build_chunk_sets_mod_path_global(void) {
     ASSERT_NOTNULL(strstr(out, "return \"OK\""));
 }
 
-void test_build_chunk_plain_entry_path(void) {
-    /* Forward-slash mod path + entry need no escaping. */
+void test_build_chunk_plain_paths(void) {
+    /* Forward-slash roots + entry need no escaping. */
     char out[1024];
-    int n = trampoline_build_chunk("/tmp", "/tmp/x.lua", out, sizeof(out));
+    int n = trampoline_build_chunk("/enginseer", "/mods", "/enginseer/x.lua",
+                                   out, sizeof(out));
     ASSERT_TRUE(n > 0);
-    ASSERT_NOTNULL(strstr(out, "MAGOS_MOD_PATH = \"/tmp\""));
-    ASSERT_NOTNULL(strstr(out, "io.open(\"/tmp/x.lua\", \"r\")"));
+    ASSERT_NOTNULL(strstr(out, "MAGOS_ENGINSEER_PATH = \"/enginseer\""));
+    ASSERT_NOTNULL(strstr(out, "MAGOS_MOD_PATH = \"/mods\""));
+    ASSERT_NOTNULL(strstr(out, "io.open(\"/enginseer/x.lua\", \"r\")"));
 }
 
-void test_build_chunk_empty_staging_rejected(void) {
+void test_build_chunk_null_mod_path_emits_empty_global(void) {
+    /* mod_path NULL is the "no mods" case: the chunk emits MAGOS_MOD_PATH = ""
+     * and is still valid (entry loads from the Enginseer root). */
+    char out[1024];
+    int n = trampoline_build_chunk("Z:\\enginseer", NULL,
+                                   "Z:\\enginseer\\t.lua", out, sizeof(out));
+    ASSERT_TRUE(n > 0);
+    ASSERT_NOTNULL(strstr(out, "MAGOS_ENGINSEER_PATH = \"Z:\\\\enginseer\""));
+    ASSERT_NOTNULL(strstr(out, "MAGOS_MOD_PATH = \"\""));
+    ASSERT_NOTNULL(strstr(out, "io.open(\"Z:\\\\enginseer\\\\t.lua\", \"r\")"));
+}
+
+void test_build_chunk_empty_mod_path_emits_empty_global(void) {
+    /* An empty-string mod path is treated the same as NULL (no mods). */
+    char out[1024];
+    int n = trampoline_build_chunk("Z:\\enginseer", "",
+                                   "Z:\\enginseer\\t.lua", out, sizeof(out));
+    ASSERT_TRUE(n > 0);
+    ASSERT_NOTNULL(strstr(out, "MAGOS_MOD_PATH = \"\""));
+}
+
+void test_build_chunk_empty_enginseer_path_rejected(void) {
     char out[64];
-    ASSERT_EQ(-1, trampoline_build_chunk("", "Z:\\t.lua", out, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_build_chunk("", "Z:\\mods", "Z:\\t.lua", out, sizeof(out)));
 }
 
 void test_build_chunk_empty_entry_rejected(void) {
     char out[64];
-    ASSERT_EQ(-1, trampoline_build_chunk("Z:\\staging", "", out, sizeof(out)));
+    ASSERT_EQ(-1, trampoline_build_chunk("Z:\\enginseer", "Z:\\mods", "", out, sizeof(out)));
 }
 
 void test_build_chunk_null_args(void) {
     char out[64];
-    ASSERT_EQ(-1, trampoline_build_chunk(NULL, "Z:\\t.lua", out, sizeof(out)));
-    ASSERT_EQ(-1, trampoline_build_chunk("Z:\\staging", NULL, out, sizeof(out)));
-    ASSERT_EQ(-1, trampoline_build_chunk("Z:\\staging", "Z:\\t.lua", NULL, sizeof(out)));
-    ASSERT_EQ(-1, trampoline_build_chunk("Z:\\staging", "Z:\\t.lua", out, 0));
+    /* enginseer_path NULL -> rejected. */
+    ASSERT_EQ(-1, trampoline_build_chunk(NULL, "Z:\\mods", "Z:\\t.lua", out, sizeof(out)));
+    /* entry_path NULL -> rejected. */
+    ASSERT_EQ(-1, trampoline_build_chunk("Z:\\enginseer", "Z:\\mods", NULL, out, sizeof(out)));
+    /* out NULL -> rejected. */
+    ASSERT_EQ(-1, trampoline_build_chunk("Z:\\enginseer", "Z:\\mods", "Z:\\t.lua", NULL, sizeof(out)));
+    /* zero cap -> rejected. */
+    ASSERT_EQ(-1, trampoline_build_chunk("Z:\\enginseer", "Z:\\mods", "Z:\\t.lua", out, 0));
+    /* (mod_path NULL is NOT an error — covered by the empty-global tests.) */
 }
 
 void test_build_chunk_overflow(void) {
     /* A tiny buffer cannot hold the chunk -> reject, no partial write relied on. */
     char out[8];
-    int n = trampoline_build_chunk("Z:\\staging", "Z:\\staging\\t.lua", out, sizeof(out));
+    int n = trampoline_build_chunk("Z:\\enginseer", "Z:\\mods",
+                                   "Z:\\enginseer\\t.lua", out, sizeof(out));
     ASSERT_EQ(-1, n);
 }
 
-void test_build_chunk_round_trips_long_path(void) {
-    /* A realistically long Windows staging + entry still fits the default cap. */
-    const char *staging = "Z:\\very\\deep\\path\\to\\a\\staged\\mod\\dir";
-    const char *entry   = "Z:\\very\\deep\\path\\to\\a\\staged\\mod\\dir\\file.lua";
+void test_build_chunk_round_trips_long_paths(void) {
+    /* Realistically long Windows roots + entry still fit the default cap. */
+    const char *enginseer = "Z:\\very\\deep\\path\\to\\the\\enginseer\\root";
+    const char *mods       = "Z:\\very\\deep\\path\\to\\the\\user\\mods\\dir";
+    const char *entry      = "Z:\\very\\deep\\path\\to\\the\\enginseer\\root\\file.lua";
     char out[1024];
-    int n = trampoline_build_chunk(staging, entry, out, sizeof(out));
+    int n = trampoline_build_chunk(enginseer, mods, entry, out, sizeof(out));
     ASSERT_TRUE(n > 0);
     /* Every backslash in the original is doubled in the baked chunk. */
     ASSERT_NOTNULL(strstr(out, "Z:\\\\very\\\\deep\\\\path"));
@@ -172,17 +206,20 @@ void test_join_overflow_returns_neg1(void) {
 }
 
 void test_join_feeds_build_chunk(void) {
-    /* End-to-end: join -> build_chunk must bake the joined, escaped entry path.
-     * The staging dir is passed separately (and is also the join prefix of the
-     * entry path — intentional). */
+    /* End-to-end: join the Enginseer root + entry filename, then build_chunk
+     * with (enginseer root, mod root, joined entry). The Enginseer root is
+     * passed both as the global + as the join prefix of the entry path —
+     * intentional (it's the same dir). */
     char path[128];
-    int jn = trampoline_join_path("Z:\\staging", "dml.lua", path, sizeof(path));
+    int jn = trampoline_join_path("Z:\\enginseer", "enginseer.lua", path, sizeof(path));
     ASSERT_TRUE(jn > 0);
 
     char chunk[1024];
-    int cn = trampoline_build_chunk("Z:\\staging", path, chunk, sizeof(chunk));
+    int cn = trampoline_build_chunk("Z:\\enginseer", "Z:\\mods", path, chunk, sizeof(chunk));
     ASSERT_TRUE(cn > 0);
-    ASSERT_NOTNULL(strstr(chunk, "io.open(\"Z:\\\\staging\\\\dml.lua\", \"r\")"));
+    ASSERT_NOTNULL(strstr(chunk, "MAGOS_ENGINSEER_PATH = \"Z:\\\\enginseer\""));
+    ASSERT_NOTNULL(strstr(chunk, "MAGOS_MOD_PATH = \"Z:\\\\mods\""));
+    ASSERT_NOTNULL(strstr(chunk, "io.open(\"Z:\\\\enginseer\\\\enginseer.lua\", \"r\")"));
 }
 
 int main(void) {
@@ -192,13 +229,20 @@ int main(void) {
     test_register("escape_empty_path", test_escape_empty_path);
     test_register("escape_overflow_returns_neg1", test_escape_overflow_returns_neg1);
     test_register("escape_null_args", test_escape_null_args);
-    test_register("build_chunk_sets_mod_path_global", test_build_chunk_sets_mod_path_global);
-    test_register("build_chunk_plain_entry_path", test_build_chunk_plain_entry_path);
-    test_register("build_chunk_empty_staging_rejected", test_build_chunk_empty_staging_rejected);
-    test_register("build_chunk_empty_entry_rejected", test_build_chunk_empty_entry_rejected);
+    test_register("build_chunk_sets_both_path_globals_and_opens_entry",
+                  test_build_chunk_sets_both_path_globals_and_opens_entry);
+    test_register("build_chunk_plain_paths", test_build_chunk_plain_paths);
+    test_register("build_chunk_null_mod_path_emits_empty_global",
+                  test_build_chunk_null_mod_path_emits_empty_global);
+    test_register("build_chunk_empty_mod_path_emits_empty_global",
+                  test_build_chunk_empty_mod_path_emits_empty_global);
+    test_register("build_chunk_empty_enginseer_path_rejected",
+                  test_build_chunk_empty_enginseer_path_rejected);
+    test_register("build_chunk_empty_entry_rejected",
+                  test_build_chunk_empty_entry_rejected);
     test_register("build_chunk_null_args", test_build_chunk_null_args);
     test_register("build_chunk_overflow", test_build_chunk_overflow);
-    test_register("build_chunk_round_trips_long_path", test_build_chunk_round_trips_long_path);
+    test_register("build_chunk_round_trips_long_paths", test_build_chunk_round_trips_long_paths);
     test_register("join_basic_no_trailing_sep", test_join_basic_no_trailing_sep);
     test_register("join_trailing_backslash_idempotent", test_join_trailing_backslash_idempotent);
     test_register("join_trailing_fwdslash_accepted", test_join_trailing_fwdslash_accepted);
