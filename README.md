@@ -1,70 +1,110 @@
 # darktide-mod-magos
 
-A mod manager for **Warhammer 40,000: Darktide**. It launches the game
-modded via DLL injection — no files in the game directory, no
-bundle-database patching — and stays out of the way for vanilla play
-(launch the game from Steam and it runs unmodified).
+**Magos** is a mod manager for **Warhammer 40,000: Darktide**. It launches the
+game modded via DLL injection — no files in the game directory, no
+bundle-database patching — and stays out of the way for vanilla play: launch
+the game from Steam and it runs unmodified.
 
-## Status
+## Components
 
-- [**Runtime**](runtime) — the injected modding runtime + launcher — is merged as
-  the production seed: a Rust discovery engine + C shell, validated
-  end-to-end (the game reaches the main menu, the Lua VM hook fires, all 16
-  LuaJIT functions are discovered in-process).
-- [**Darktide Magos (Mod Manager)**](mod-manager) — the mod manager app (UI, staging, load order, profiles,
-  dependency resolution) — is planned, not yet built.
-- The `poc` branch holds the historical proof-of-concept (reference only).
+Magos has two components:
 
-## Directory layout
+- **The Runtime (Enginseer)** — the injected mod loader + its launcher. Built,
+  and the production seed of this repo. See
+  [`runtime/README.md`](runtime/README.md) for build + developer details.
+- **Mod Magos** — the mod-manager app (UI, staging, load order, profiles,
+  dependency resolution). Planned, not yet built.
+
+## Getting started
+
+> **Early-access / manual setup.** Mod Magos (the app) is not built yet, so for
+> now setup is manual: you run the launcher directly with a mod directory you
+> assemble by hand. This will be replaced by Mod Magos when it ships.
+
+### 1. Get the runtime
+
+There are no releases yet. To get the runtime artifacts, download them from the
+**latest CI run**:
+
+1. Go to the **Actions** tab → **mingw-build** → the latest green run →
+   **Artifacts** → **`magos-shell-mingw`**.
+2. That artifact contains the complete runtime:
+   - `magos_launcher.exe` — the launcher/injector.
+   - `magos_shell.dll` — the injected DLL.
+   - `enginseer/` — the Enginseer Lua (the mod loader).
+
+When laid out, your runtime directory should look like:
 
 ```
-runtime/        the injected modding runtime + injector
-  discovery/      Rust: discovers Darktide's LuaJIT functions at runtime
-  shell/          C: the injected DLL (hooks the game's Lua VM)
-  launcher/       C: launches the game modded (injects the DLL)
-  enginseer/      Lua: the staged loader (Enginseer) — loads DMF + mods into the game's Lua VM
-  tests/          C unit tests
-mod-manager/    Darktide Magos — the mod manager app (planned, not yet built)
-docs/           architecture, reference, and POC record
-.github/        CI workflows
+<runtime-dir>/
+  magos_launcher.exe
+  magos_shell.dll
+  enginseer/
+    enginseer.lua
+    file.lua, hook.lua, class_patch.lua, require_wrap.lua, lifecycle.lua, mod_manager.lua
 ```
 
-How it all works is documented under [`docs/`](docs/) — start with
-[`docs/architecture/`](docs/architecture/).
+### 2. Run it
 
-## Building
+The launcher starts the game modded. The only required flag is the game binary;
+the shell DLL and Enginseer root default to next to the launcher exe:
 
-From a Linux box with Rust + MinGW installed. The build files live under
-`runtime/`, so commands run from there:
-
-```sh
-cd runtime
-make build    # cross-compile the DLL + launcher for Windows
-make check    # verify the DLL
-make test     # run the C + Rust tests
+```bat
+magos_launcher.exe --game-binary "C:\Path\To\Darktide.exe" --mod-path "C:\Path\To\mods"
 ```
 
-`make build` produces the runtime artifacts in `runtime/bin/`:
+A minimal `launch.bat` (next to the launcher) makes this easier:
 
-- **`magos_launcher.exe`** — the C injector (`runtime/launcher/`). The host
-  process Darktide Magos invokes: `CreateProcess(Darktide.exe, SUSPENDED)` →
-  injects `magos_shell.dll` via `CreateRemoteThread` → waits for the
-  hook-ready signal → resumes. Sets the Steam app id and the runtime's env
-  vars (log file/level, the Enginseer root, the mod path).
-- **`magos_shell.dll`** — the injected DLL (`runtime/shell/`): the C shell
-  linked with the Rust **discovery** staticlib (`libmagos_discovery.a`) +
-  MinHook, into one PE DLL. Hooks the game's Lua VM (`lua_newstate` → the
-  production trampoline), discovers the LuaJIT function addresses in-process,
-  and loads the Enginseer.
-- **`enginseer/`** — the Enginseer Lua (`runtime/enginseer/`), staged next to
-  the launcher/DLL. This is the runtime-controlled root the launcher publishes
-  as `MAGOS_ENGINSEER_PATH` (default `<launcher-dir>/enginseer/`); the
-  trampoline loads `enginseer.lua` from here. User mods (DMF + mods) live in a
-  separate mod root pointed at by `--mod-path`.
+```bat
+magos_launcher.exe ^
+  --game-binary "C:\Games\Steam\steamapps\common\Warhammer 40,000 DARKTIDE\binaries\Darktide.exe" ^
+  --mod-path "C:\Path\To\mods"
+```
 
-Full build/test setup (including the local Steam/game-path config) is in
-[`AGENTS.md`](AGENTS.md).
+> On Linux/Proton, use Windows-style `Z:\` paths (the Proton `Z:` drive maps to
+> your Linux filesystem).
+
+### 3. Configure Steam (Linux/Proton)
+
+The cleanest way to launch modded is as a **Steam non-Steam game**, so Steam's
+Proton layer handles the Windows runtime:
+
+1. In Steam, **Add a non-Steam game** → browse to your `launch.bat`.
+2. Open its **Properties**:
+   - **Target:** the full path to `launch.bat`.
+   - **Start In:** the runtime directory (where the launcher + DLL live).
+   - **Launch options:**
+     ```
+     PROTON_LOG=1 STEAM_COMPAT_DATA_PATH=<path-to-compatdata-for-darktide> %command%
+     ```
+   - **Compatibility:** check **"Force the use of a specific Steam Play
+     compatibility tool"** and pick a Proton version.
+3. Launch it. The launcher creates the game suspended, injects the DLL, waits
+   for the hook to arm, and resumes — Steam UX + zero game-directory footprint
+   in one step.
+
+`PROTON_LOG=1` is handy while verifying setup: the launcher's shell log lands
+in `magos_enginseer.log` next to the launcher, and the engine's own Lua-side
+output lands in the Proton log (`steam-1361210-proton-log`). The trampoline's
+one-line `OK`/`FAIL` in `magos_enginseer.log` is the reliable bootstrap check.
+
+### 4. Where mods go
+
+Mods live in the **mod directory** you point `--mod-path` at. Lay it out as:
+
+```
+<mod-path>/
+  mod_load_order.txt   one mod name per line, in load order (dmf is always first)
+  dmf/                 the Darktide Mod Framework (DMF) — the API mods are built against
+  <your-mod>/          your mod(s)
+```
+
+- **DMF** (the Darktide Mod Framework) is the framework mods are built against;
+  place it at `<mod-path>/dmf/`.
+- **`mod_load_order.txt`** lists the mods to load, one name per line, in the
+  order they load (DMF is loaded first automatically). When Mod Magos ships it
+  will manage this for you.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+GNU General Public License v3 — see [`LICENSE`](LICENSE).

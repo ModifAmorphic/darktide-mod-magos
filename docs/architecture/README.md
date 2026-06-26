@@ -8,13 +8,18 @@ way for vanilla play (launch from Steam = the unmodified game).
 
 - **The runtime (`runtime/`)** (built): the injected modding runtime + its
   launcher. A Rust discovery pure-library + a C live-game shell, linked into
-  one DLL, delivered by `CreateRemoteThread`.
+  one DLL, delivered by `CreateRemoteThread`; the C shell stages the
+  **Enginseer (aka the Mod Loader)** — the runtime-controlled Lua loader that
+  loads DMF + user mods. See `docs/architecture/RUNTIME.md` for the full
+  subcomponent breakdown.
 - **Darktide Magos — `mod-manager/`** (planned, not built): the user-facing app —
   staging-directory management, load order, profiles, dependency resolution,
   the "Launch Modded" button.
 - **DMF + user mods** (Lua, not our code): the Darktide-Mod-Framework Lua
-  files, preserved as-is; only the harness is replaced. Loaded by the runtime
-  at runtime.
+  files, preserved as-is; only the harness is replaced. Loaded by the Enginseer
+  at runtime, from the user-controlled mod root (`--mod-path`) — distinct from
+  the runtime-controlled Enginseer root (the two-path split; see
+  `docs/architecture/ENGINSEER-DMF.md`).
 
 ## The runtime — the Hybrid
 
@@ -87,6 +92,9 @@ static Stingray code).
   error path; synthetic-PE parsing).
 - **C** (`make test`, via wine): SteamAppId env-setting; CreateRemoteThread
   injection + hook-ready handshake + resume against a benign stub process.
+- **Enginseer Lua** (`make enginseer-test`, offline LuaJIT harness — no
+  game/wine): the loader + the deferred bootstrap, the IO re-rooting, the
+  scan/load split, the `Managers.mod` surface.
 - **Live** (validated end-to-end on Linux/Proton): game reaches the main menu,
   `lua_newstate` hook fires, `L` captured, `lua_gettop(L)=0` (confirms the
   struct offsets in-process), all 16 discovered in-process matching the
@@ -112,6 +120,10 @@ Windows (CI). Both gate on `cargo clippy --all-targets --features test-hooks --
 
 ## References
 
+- `docs/architecture/RUNTIME.md` — the runtime architecture: the subcomponents,
+  the Rust↔C seam, the launcher flow, the env-var contract, logging.
+- `docs/architecture/ENGINSEER-DMF.md` — the Enginseer↔DMF integration: the
+  loader, the IO re-rooting, the load timing, the two-path split.
 - `docs/reference/darktide-binary.md` — the validated game-binary constraints
   (addresses, struct offsets, sandboxed `_G`, discovery methodology).
 - `docs/reference/darktide-framework-analysis.md` — the existing modding
