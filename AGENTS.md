@@ -93,7 +93,8 @@ Build outputs land in `runtime/bin/`; cargo's artifacts in `runtime/target/`.
   `docs/architecture/RUNTIME.md` → `launcher/` for the full flag/env/default
   table + the env-var contract.
 - **Shell log** is `magos_enginseer.log`, structured + level-filtered via
-  `MAGOS_ENGINSEER_LOG_LEVEL` (default `info`; recon at `debug`/`trace`). The
+  `MAGOS_ENGINSEER_LOG_LEVEL` (default `info`; crank to `debug`/`trace` for
+  verbose output). The
   Enginseer's Lua-side `print` lines go to the engine's console log, not the
   shell log — see RUNTIME.md → Logging.
 - **`_local/`** is gitignored (local env, e.g. `DARKTIDE.env`). Never commit
