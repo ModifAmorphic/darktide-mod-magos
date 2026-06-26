@@ -302,9 +302,6 @@ runtime-command work.
 - **Dependency resolution / load-order computation** — Darktide Magos's job
   (it writes `mod_load_order.txt`); the runtime bootstraps the staged Enginseer
   entry point, and the Enginseer's loader reads the load order (DMF does not).
-- **Multi-shot injection** — not needed for v1/v2. The runtime's injection is
-  one-shot (bootstrap); DMF's own hook system handles ongoing mod execution.
-  Multi-shot (hot-reload, runtime commands) is a future capability.
 - **The mod manager UI / staging-dir management** — Darktide Magos.
 
 ## Build + test
