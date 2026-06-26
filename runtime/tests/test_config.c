@@ -21,6 +21,7 @@
  * only to clean up state between resolve tests). */
 #define ENV_GAME_BINARY  "MAGOS_ENGINSEER_GAME_BINARY"
 #define ENV_SHELL        "MAGOS_ENGINSEER_SHELL"
+#define ENV_ENGINSEER_PATH "MAGOS_ENGINSEER_PATH"
 #define ENV_MOD_PATH     "DARKTIDE_MOD_PATH"
 #define ENV_LOG_FILE     "MAGOS_ENGINSEER_LOG_FILE"
 #define ENV_LOG_LEVEL    "MAGOS_ENGINSEER_LOG_LEVEL"
@@ -29,6 +30,7 @@
 static void clear_env(void) {
     SetEnvironmentVariableA(ENV_GAME_BINARY, NULL);
     SetEnvironmentVariableA(ENV_SHELL, NULL);
+    SetEnvironmentVariableA(ENV_ENGINSEER_PATH, NULL);
     SetEnvironmentVariableA(ENV_MOD_PATH, NULL);
     SetEnvironmentVariableA(ENV_LOG_FILE, NULL);
     SetEnvironmentVariableA(ENV_LOG_LEVEL, NULL);
@@ -39,12 +41,14 @@ static void clear_env(void) {
 
 void test_parse_all_flags(void) {
     char *argv[] = {"prog",
-        "--game-binary", "G", "--magos-shell", "S", "--mod-path", "M",
-        "--log-file", "L", "--log-level", "trace", "--steam-app-id", "42"};
+        "--game-binary", "G", "--magos-shell", "S", "--enginseer-path", "E",
+        "--mod-path", "M", "--log-file", "L", "--log-level", "trace",
+        "--steam-app-id", "42"};
     magos_parsed_args a;
-    ASSERT_EQ(0, magos_parse_args(13, argv, &a));
+    ASSERT_EQ(0, magos_parse_args(15, argv, &a));
     ASSERT_STREQ("G", a.game_binary);
     ASSERT_STREQ("S", a.magos_shell);
+    ASSERT_STREQ("E", a.enginseer_path);
     ASSERT_STREQ("M", a.mod_path);
     ASSERT_STREQ("L", a.log_file);
     ASSERT_STREQ("trace", a.log_level);
@@ -57,6 +61,7 @@ void test_parse_none(void) {
     ASSERT_EQ(0, magos_parse_args(1, argv, &a));
     ASSERT_TRUE(a.game_binary == NULL);
     ASSERT_TRUE(a.magos_shell == NULL);
+    ASSERT_TRUE(a.enginseer_path == NULL);
     ASSERT_TRUE(a.mod_path == NULL);
     ASSERT_TRUE(a.log_file == NULL);
     ASSERT_TRUE(a.log_level == NULL);
@@ -92,11 +97,13 @@ void test_parse_missing_value(void) {
 void test_resolve_flag_wins(void) {
     clear_env();
     SetEnvironmentVariableA(ENV_SHELL, "ENV_SHELL");
+    SetEnvironmentVariableA(ENV_ENGINSEER_PATH, "ENV_EI");
     SetEnvironmentVariableA(ENV_LOG_LEVEL, "warn");
     SetEnvironmentVariableA(ENV_STEAM_APP_ID, "111");
 
     magos_parsed_args a = {0};
     a.magos_shell = "FLAG_SHELL";
+    a.enginseer_path = "FLAG_EI";
     a.log_level = "FLAG_LEVEL";
     a.steam_app_id = "FLAG_ID";
     a.game_binary = "FLAG_GAME";
@@ -105,6 +112,7 @@ void test_resolve_flag_wins(void) {
     magos_resolve_config(&a, &cfg);
     ASSERT_STREQ("FLAG_GAME", cfg.game_binary);
     ASSERT_STREQ("FLAG_SHELL", cfg.magos_shell);
+    ASSERT_STREQ("FLAG_EI", cfg.enginseer_path);
     ASSERT_STREQ("FLAG_LEVEL", cfg.log_level);
     ASSERT_STREQ("FLAG_ID", cfg.steam_app_id);
 
@@ -115,6 +123,7 @@ void test_resolve_env_when_no_flag(void) {
     clear_env();
     SetEnvironmentVariableA(ENV_GAME_BINARY, "ENV_GAME");
     SetEnvironmentVariableA(ENV_SHELL, "ENV_SHELL");
+    SetEnvironmentVariableA(ENV_ENGINSEER_PATH, "ENV_EI");
     SetEnvironmentVariableA(ENV_MOD_PATH, "ENV_MOD");
     SetEnvironmentVariableA(ENV_LOG_FILE, "ENV_LOG");
     SetEnvironmentVariableA(ENV_LOG_LEVEL, "debug");
@@ -125,6 +134,7 @@ void test_resolve_env_when_no_flag(void) {
     magos_resolve_config(&a, &cfg);
     ASSERT_STREQ("ENV_GAME", cfg.game_binary);
     ASSERT_STREQ("ENV_SHELL", cfg.magos_shell);
+    ASSERT_STREQ("ENV_EI", cfg.enginseer_path);
     ASSERT_STREQ("ENV_MOD", cfg.mod_path);
     ASSERT_STREQ("ENV_LOG", cfg.log_file);
     ASSERT_STREQ("debug", cfg.log_level);
@@ -153,6 +163,39 @@ void test_resolve_defaults_when_nothing_set(void) {
     ASSERT_TRUE(cfg.log_file != NULL);
     ASSERT_TRUE(strlen(cfg.log_file) > 0);
     ASSERT_TRUE(strstr(cfg.log_file, "magos_enginseer.log") != NULL);
+    /* enginseer_path defaults to <launcher-dir>\enginseer (the runtime root). */
+    ASSERT_TRUE(cfg.enginseer_path != NULL);
+    ASSERT_TRUE(strlen(cfg.enginseer_path) > 0);
+    ASSERT_TRUE(strstr(cfg.enginseer_path, "enginseer") != NULL);
+    clear_env();
+}
+
+/* Dedicated precedence check for the Enginseer-path setting: flag wins over
+ * env wins over the <launcher-dir>\enginseer default. The resolver writes
+ * env/default values into a shared static buffer, so copy the default out
+ * before re-resolving with env/flag set. */
+void test_resolve_enginseer_path_flag_env_default(void) {
+    clear_env();
+    magos_parsed_args a = {0};
+    magos_config cfg;
+
+    /* default */
+    magos_resolve_config(&a, &cfg);
+    ASSERT_TRUE(cfg.enginseer_path != NULL);
+    ASSERT_TRUE(strstr(cfg.enginseer_path, "enginseer") != NULL);
+    char default_path[1024];
+    snprintf(default_path, sizeof(default_path), "%s", cfg.enginseer_path);
+
+    /* env wins over default */
+    SetEnvironmentVariableA(ENV_ENGINSEER_PATH, "ENV_EI");
+    magos_resolve_config(&a, &cfg);
+    ASSERT_STREQ("ENV_EI", cfg.enginseer_path);
+
+    /* flag wins over env */
+    a.enginseer_path = "FLAG_EI";
+    magos_resolve_config(&a, &cfg);
+    ASSERT_STREQ("FLAG_EI", cfg.enginseer_path);
+
     clear_env();
 }
 
@@ -178,6 +221,8 @@ int main(void) {
     test_register("resolve_env_when_no_flag", test_resolve_env_when_no_flag);
     test_register("resolve_defaults_when_nothing_set",
                   test_resolve_defaults_when_nothing_set);
+    test_register("resolve_enginseer_path_flag_env_default",
+                  test_resolve_enginseer_path_flag_env_default);
     test_register("resolve_mod_path_unset_is_null_with_flag_present",
                   test_resolve_mod_path_unset_is_null_with_flag_present);
     return test_summary();
