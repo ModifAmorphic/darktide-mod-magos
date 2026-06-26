@@ -8,26 +8,52 @@
 --     verify the bootstrap hook attaches; then exercise the bootstrap body to
 --     confirm Managers.mod assignment + the StateGame.update / GameStateMachine
 --     _change_state inner hooks install and fire.
+--
+-- IMPORTANT: the bootstrap path exercises the REAL Mods.load_enginseer_module
+-- (the dofile-style loader the entry exposes), NOT a mock. A fake mod_manager.lua
+-- is staged at the Enginseer mock root that returns whatever the sandbox global
+-- __FAKE_MOD_MANAGER points to at load time — so each test can drive the real
+-- loader -> real return value -> ModManager:new() path (the exact path the
+-- boolean-vs-value regression broke) by setting __FAKE_MOD_MANAGER, without
+-- mocking the loader itself. (Regression: load_enginseer_module was aliased to
+-- bootstrap_load and returned true, so ModManager:new() raised "attempt to index
+-- local 'ModManager' (a boolean value)".)
 
 local mock = require("mock")
 
 return function(runner)
-    -- Set up a sandbox with hook + lifecycle loaded (lifecycle depends on
-    -- Mods.hook for install + Mods.lua.loadstring for the resolution eval).
-    -- The bootstrap body loads the rite via Mods.load_enginseer_module (the
-    -- entry exposes bootstrap_load under that name so mod_manager loads from
-    -- the Enginseer root, not the mod root). The harness doesn't run the entry,
-    -- so default it here; success-path tests override.
+    -- Build a sandbox with the REAL entry loaded (so Mods.load_enginseer_module
+    -- is the real dofile-style loader, not a mock). The entry also wires
+    -- hook/lifecycle/require-wrap; we clear the bootstrap hook it queues so each
+    -- test starts clean. A fake mod_manager.lua is staged at the Enginseer root
+    -- returning __FAKE_MOD_MANAGER, so the bootstrap tests drive the real
+    -- loader's return-value path by setting that global. The default is a benign
+    -- ModManager; tests override it (or nil it out) per case.
     local function setup()
         local sb = mock.new_sandbox()
-        sb.Mods = {
-            file = {},
-            lua = { loadstring = sb.loadstring },
-            require_store = {},
-            load_enginseer_module = function() return nil end,
+        sb.MAGOS_ENGINSEER_PATH = mock.ENGINSEER_ROOT
+        sb.MAGOS_MOD_PATH = mock.MOD_ROOT
+
+        local files = mock.stage_enginseer()
+        -- Stage a fake rite at the Enginseer root. The real loader opens + runs
+        -- this when the bootstrap fires; it yields __FAKE_MOD_MANAGER (set
+        -- per-test) so the real return-value path is exercised, not mocked over.
+        files[mock.ENGINSEER_ROOT .. "/mod_manager.lua"] = "return __FAKE_MOD_MANAGER"
+
+        sb.io = mock.make_io(files)
+        sb.require = function() return {} end
+        sb.print = function() end  -- silence the entry's v2-loaded chatter
+        -- Default fake: a benign ModManager whose :new() returns empty callbacks.
+        sb.__FAKE_MOD_MANAGER = {
+            new = function(self)
+                return { update = function() end, on_game_state_changed = function() end }
+            end,
         }
-        mock.run_module("hook", sb)
-        mock.run_module("lifecycle", sb)
+
+        mock.load_module("enginseer", sb)()
+        -- The entry queues the bootstrap lifecycle hook; clear so each test
+        -- starts from an empty deferred-hook queue.
+        sb.Mods._deferred_hooks = {}
         return sb
     end
 
@@ -99,22 +125,19 @@ return function(runner)
     -- Full bootstrap simulation: stand up the boot target + the rite driver +
     -- the inner hook targets, then verify the bootstrap hook installs, runs,
     -- assigns Managers.mod, and installs the StateGame.update / GameStateMachine
-    -- _change_state inner hooks.
+    -- _change_state inner hooks. The rite loads via the REAL loader from the
+    -- staged fake mod_manager.lua (returns sb.__FAKE_MOD_MANAGER), exercising
+    -- the real return-value path.
     runner.register("lifecycle: bootstrap installs + runs original first + assigns Managers.mod", function()
         local sb = setup()
 
         local dmf_calls = 0
-        local FakeModManager = {
+        sb.__FAKE_MOD_MANAGER = {
             new = function(self)
                 dmf_calls = dmf_calls + 1
                 return { update = function() end, on_game_state_changed = function() end }
             end,
         }
-        sb.Mods.load_enginseer_module = function(name)
-            runner.assert_eq("mod_manager", name,
-                "bootstrap must load the rite via Mods.load_enginseer_module('mod_manager')")
-            return FakeModManager
-        end
 
         local state_update_ran = 0
         sb.CLASS = {
@@ -133,11 +156,13 @@ return function(runner)
         runner.assert_eq(0, #sb.Mods._deferred_hooks, "bootstrap must dequeue once target resolves")
 
         -- Invoke the boot target: the chain runs original first, then the
-        -- bootstrap body (DMF load, Managers.mod assignment, inner hook install).
+        -- bootstrap body (real mod_manager load via the real loader, Managers.mod
+        -- assignment, inner hook install).
         local r = sb.CLASS.BootStateRequireGameScripts._state_update(sb.CLASS.BootStateRequireGameScripts)
         runner.assert_eq("state-result", r, "bootstrap must return the original's result")
         runner.assert_eq(1, state_update_ran, "original _state_update must run exactly once")
-        runner.assert_eq(1, dmf_calls, "DMF ModManager:new() must be called once")
+        runner.assert_eq(1, dmf_calls,
+            "FakeModManager:new() must be called once — proves the real loader returned the class, not a boolean")
         runner.assert_type("table", sb.Managers, "Managers must be created")
         runner.assert_not_nil(sb.Managers.mod, "Managers.mod must be assigned")
     end)
@@ -145,7 +170,7 @@ return function(runner)
     runner.register("lifecycle: StateGame.update per-frame hook fires Managers.mod:update", function()
         local sb = setup()
         local update_calls = {}
-        local FakeModManager = {
+        sb.__FAKE_MOD_MANAGER = {
             new = function(self)
                 return {
                     update = function(inner, dt) table.insert(update_calls, dt) end,
@@ -153,7 +178,6 @@ return function(runner)
                 }
             end,
         }
-        sb.Mods.load_enginseer_module = function(name) return FakeModManager end
 
         sb.CLASS = {
             BootStateRequireGameScripts = { _state_update = function() return "s" end },
@@ -174,7 +198,7 @@ return function(runner)
     runner.register("lifecycle: GameStateMachine._change_state hook fires on_game_state_changed", function()
         local sb = setup()
         local notifications = {}
-        local FakeModManager = {
+        sb.__FAKE_MOD_MANAGER = {
             new = function(self)
                 return {
                     update = function() end,
@@ -184,7 +208,6 @@ return function(runner)
                 }
             end,
         }
-        sb.Mods.load_enginseer_module = function(name) return FakeModManager end
 
         -- The engine's _change_state flips self._state from old to new across
         -- the call (we model that: func flips it to NewState).
@@ -219,14 +242,18 @@ return function(runner)
         runner.assert_eq("NewState", notifications[2].name)
     end)
 
-    -- Degradation contract: a bootstrap failure (missing DMF, ModManager:new()
-    -- raising, etc.) must NOT crash the game. The hook returns the original
-    -- state_update result, Managers.mod stays nil (vanilla), and __print logs
-    -- the failure. The original _state_update still runs (unguarded).
-    local function bootstrap_failure_setup(sb, dofile_return)
+    -- Degradation contract: a bootstrap failure (mod_manager load yielding nil,
+    -- ModManager:new() raising, etc.) must NOT crash the game. The hook returns
+    -- the original state_update result, Managers.mod stays nil (vanilla), and
+    -- __print logs the failure. The original _state_update still runs (unguarded).
+    --
+    -- `fake_mod_manager` is set onto sb.__FAKE_MOD_MANAGER so the staged fake
+    -- mod_manager.lua returns it via the REAL loader (nil -> the loader returns
+    -- nil -> ModManager:new() on nil raises, caught by the bootstrap pcall).
+    local function bootstrap_failure_setup(sb, fake_mod_manager)
         local logged = {}
         sb.__print = function(msg) table.insert(logged, msg) end
-        sb.Mods.load_enginseer_module = function(name) return dofile_return end
+        sb.__FAKE_MOD_MANAGER = fake_mod_manager
         sb.CLASS = {
             BootStateRequireGameScripts = {
                 _state_update = function(self, ...) return "state-result" end,
@@ -239,20 +266,23 @@ return function(runner)
         return logged
     end
 
-    runner.register("lifecycle: bootstrap degrades cleanly when DMF load fails (dofile returns false)", function()
+    runner.register("lifecycle: bootstrap degrades cleanly when mod_manager returns nil", function()
         local sb = setup()
-        local logged = bootstrap_failure_setup(sb, false)
+        -- __FAKE_MOD_MANAGER = nil -> staged mod_manager.lua returns nil -> real
+        -- loader returns nil -> `local ModManager = nil` -> ModManager:new() raises
+        -- -> bootstrap pcall catches it -> degrades to vanilla.
+        local logged = bootstrap_failure_setup(sb, nil)
 
         local r = sb.CLASS.BootStateRequireGameScripts._state_update(sb.CLASS.BootStateRequireGameScripts)
         runner.assert_eq("state-result", r, "must still return the original state_update result, not raise")
-        runner.assert_nil(sb.Managers.mod, "Managers.mod must stay nil when DMF load fails")
+        runner.assert_nil(sb.Managers.mod, "Managers.mod must stay nil when mod_manager yields nil")
         runner.assert_truthy(logged[1] and logged[1]:find("lifecycle bootstrap failed") ~= nil,
             "the failure must be logged via __print")
     end)
 
     runner.register("lifecycle: bootstrap degrades cleanly when ModManager:new() raises", function()
         local sb = setup()
-        -- dofile returns a class whose :new() raises (simulates DMF init blowup).
+        -- Real loader returns the class; :new() raises (simulates DMF init blowup).
         local BoomModManager = { new = function(self) error("dmf init exploded") end }
         local logged = bootstrap_failure_setup(sb, BoomModManager)
 

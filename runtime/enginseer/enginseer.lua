@@ -75,7 +75,22 @@ local _loadstring = loadstring
 local _io = io
 local _pcall = pcall
 
-local function bootstrap_load(name)
+-- _load_enginseer_module — the shared dofile-style loader for Enginseer modules,
+-- rooted at MAGOS_ENGINSEER_PATH. Reads + compiles + runs the chunk in the
+-- entry's env (setfenv(fn, getfenv(1)) so modules share _G), then returns
+-- (ok, result): ok is true/false, result is the chunk's return value on success
+-- or nil on failure. Logs the FATAL line on open/parse/run failure so a
+-- mis-staged module is diagnosable in the shell log.
+--
+-- Two callers, two contracts (both rooted at the Enginseer root):
+--   - bootstrap_load(name) collapses to ok (true/false) — the entry's
+--     `if not bootstrap_load(mod)` loop depends on that boolean contract for the
+--     5 install-only modules (file/hook/class_patch/require_wrap/lifecycle).
+--   - Mods.load_enginseer_module(name) returns the chunk's RESULT (dofile-style)
+--     or nil on failure — lifecycle.lua does `local ModManager = Mods.
+--     load_enginseer_module("mod_manager")` and mod_manager.lua ends in
+--     `return ModManager`, so the loader MUST yield the class, not a boolean.
+local function _load_enginseer_module(name)
     -- Forward-slash join: <MAGOS_ENGINSEER_PATH>/<name>.lua (works on Windows + Proton).
     local base = MAGOS_ENGINSEER_PATH or ""
     local path = base .. "/" .. name .. ".lua"
@@ -83,7 +98,7 @@ local function bootstrap_load(name)
     local f, err = _io.open(path, "r")
     if not f then
         __print("[Enginseer] FATAL: cannot open " .. path .. ": " .. tostring(err))
-        return false
+        return false, nil
     end
     local data = f:read("*all")
     f:close()
@@ -91,22 +106,36 @@ local function bootstrap_load(name)
     local fn, lerr = _loadstring(data, path)
     if not fn then
         __print("[Enginseer] FATAL: cannot parse " .. path .. ": " .. tostring(lerr))
-        return false
+        return false, nil
     end
     setfenv(fn, getfenv(1))  -- share the entry's env with the loaded module
 
     local ok, rerr = _pcall(fn)
     if not ok then
         __print("[Enginseer] FATAL: error running " .. path .. ": " .. tostring(rerr))
-        return false
+        return false, nil
     end
-    return true
+    return true, rerr  -- rerr holds the chunk's return value on success
 end
 
--- Expose bootstrap_load so lifecycle.lua can load mod_manager from the Enginseer
--- root AFTER class() exists (mod_manager calls class("ModManager"), which only
--- appears once the class patch installs at boot — not at this entry's pcall#1).
-Mods.load_enginseer_module = bootstrap_load
+-- bootstrap_load — install-only contract for the entry's bootstrap loop. Returns
+-- true on success, false on failure (open/parse/run). Used for the 5 helper
+-- modules the entry loads at pcall#1.
+local function bootstrap_load(name)
+    local ok = _load_enginseer_module(name)
+    return ok
+end
+
+-- Expose a dofile-style loader so lifecycle.lua can load mod_manager from the
+-- Enginseer root AFTER class() exists (mod_manager calls class("ModManager"),
+-- which only appears once the class patch installs at boot — not at this entry's
+-- pcall#1). Returns the chunk's result (e.g. the ModManager class) on success or
+-- nil on failure — NOT a boolean, so `local ModManager = Mods.
+-- load_enginseer_module("mod_manager")` yields the class for ModManager:new().
+Mods.load_enginseer_module = function(name)
+    local ok, result = _load_enginseer_module(name)
+    return ok and result or nil
+end
 
 -- Dependency order: file -> hook -> class_patch -> require_wrap -> lifecycle.
 local modules = { "file", "hook", "class_patch", "require_wrap", "lifecycle" }

@@ -172,4 +172,69 @@ return function(runner)
         runner.assert_eq(1, #sb.MODS_HOOKS,
             "bootstrap hook must be installed into MODS_HOOKS")
     end)
+
+    -- Mods.load_enginseer_module must return the loaded chunk's RETURN VALUE
+    -- (dofile-style), NOT a boolean. Regression: it was previously aliased
+    -- directly to bootstrap_load (true/false), so lifecycle.lua's
+    -- `local ModManager = Mods.load_enginseer_module("mod_manager")` got `true`
+    -- and `ModManager:new()` raised "attempt to index local 'ModManager'
+    -- (a boolean value)". These exercise the REAL loader (no mock) against
+    -- staged fake modules at the Enginseer root.
+    local function build_with_extra(extra_files)
+        local sb = mock.new_sandbox()
+        sb.MAGOS_ENGINSEER_PATH = mock.ENGINSEER_ROOT
+        sb.MAGOS_MOD_PATH = mock.MOD_ROOT
+        local files = mock.stage_enginseer()
+        for path, content in pairs(extra_files or {}) do
+            files[path] = content
+        end
+        sb.io = mock.make_io(files)
+        sb.require = function() return {} end
+        sb.print = function() end  -- silence the entry's v2-loaded chatter
+        mock.load_module("enginseer", sb)()
+        return sb
+    end
+
+    runner.register("entry: load_enginseer_module returns the chunk's return value (not a boolean)", function()
+        local sb = build_with_extra({
+            [mock.ENGINSEER_ROOT .. "/returns_table.lua"] = "return { hello = 'world' }",
+        })
+        local result = sb.Mods.load_enginseer_module("returns_table")
+        runner.assert_type("table", result,
+            "must return the chunk's table, not a boolean")
+        runner.assert_eq("world", result.hello,
+            "must return the chunk's actual content")
+        runner.assert_truthy(result ~= true and result ~= false,
+            "regression: must NOT be a boolean (was aliased to bootstrap_load)")
+    end)
+
+    runner.register("entry: load_enginseer_module returns nil for a missing module (no raise)", function()
+        local sb = build_with_extra()
+        local ok, result = pcall(sb.Mods.load_enginseer_module, "does_not_exist")
+        runner.assert_truthy(ok, "missing module must not raise")
+        runner.assert_nil(result, "missing module must return nil")
+    end)
+
+    runner.register("entry: load_enginseer_module returns nil for a syntax-error module (no raise)", function()
+        local sb = build_with_extra({
+            [mock.ENGINSEER_ROOT .. "/broken.lua"] = "this is not valid lua",
+        })
+        local ok, result = pcall(sb.Mods.load_enginseer_module, "broken")
+        runner.assert_truthy(ok,
+            "syntax error must not raise — loader catches it internally and returns nil")
+        runner.assert_nil(result, "broken module must return nil")
+    end)
+
+    -- bootstrap_load (the entry's internal install-only loader for the 5 helper
+    -- modules) keeps its true/false contract: it reports success even when the
+    -- chunk returns nil. Several staged modules (e.g. lifecycle.lua) end without
+    -- a return statement, so a successful entry bootstrap here proves the loop's
+    -- `if not bootstrap_load(mod)` did NOT see the chunk's nil result.
+    runner.register("entry: bootstrap_load keeps true/false contract (entry bootstraps nil-returning modules)", function()
+        local sb = build_with_extra()
+        runner.assert_truthy(sb.Mods._v2_loaded,
+            "entry must complete bootstrap (lifecycle.lua returns nil; if bootstrap_load returned the chunk's nil, the loop would abort)")
+        runner.assert_type("function", sb.Mods.install_lifecycle_hooks,
+            "lifecycle loaded despite returning nil -> bootstrap_load reported true")
+    end)
 end
