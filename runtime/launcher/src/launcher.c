@@ -17,12 +17,13 @@
  * without the hook-ready wait.)
  *
  * Configuration model: every setting is flag > env > default.
- *   --game-binary <path>   [MAGOS_ENGINSEER_GAME_BINARY]     REQUIRED
- *   --magos-shell <path>   [MAGOS_ENGINSEER_SHELL]           <launcher-dir>\magos_shell.dll
- *   --mod-path <path>      [DARKTIDE_MOD_PATH]               (optional; trampoline skips if unset)
- *   --log-file <path>      [MAGOS_ENGINSEER_LOG_FILE]        <launcher-dir>\magos_enginseer.log
- *   --log-level <level>    [MAGOS_ENGINSEER_LOG_LEVEL]       info
- *   --steam-app-id <id>    [MAGOS_ENGINSEER_STEAM_APP_ID]    1361210
+ *   --game-binary <path>    [MAGOS_ENGINSEER_GAME_BINARY]     REQUIRED
+ *   --magos-shell <path>    [MAGOS_ENGINSEER_SHELL]           <launcher-dir>\magos_shell.dll
+ *   --enginseer-path <dir>  [MAGOS_ENGINSEER_PATH]            <launcher-dir>\enginseer
+ *   --mod-path <path>       [DARKTIDE_MOD_PATH]               (optional; trampoline skips if unset)
+ *   --log-file <path>       [MAGOS_ENGINSEER_LOG_FILE]        <launcher-dir>\magos_enginseer.log
+ *   --log-level <level>     [MAGOS_ENGINSEER_LOG_LEVEL]       info
+ *   --steam-app-id <id>     [MAGOS_ENGINSEER_STEAM_APP_ID]    1361210
  *
  * Windows native: build with cl.exe or x86_64-w64-mingw32-gcc.
  * Proton: build the launcher for Windows (mingw) and run it under Wine inside
@@ -37,10 +38,12 @@
 #define MAGOS_DEFAULT_STEAM_APPID "1361210"
 #define MAGOS_DEFAULT_LOG_LEVEL   "info"
 #define MAGOS_DEFAULT_SHELL_NAME  "magos_shell.dll"
+#define MAGOS_DEFAULT_ENGINSEER_DIR "enginseer"
 #define MAGOS_DEFAULT_LOG_NAME    "magos_enginseer.log"
 
 #define ENV_GAME_BINARY  "MAGOS_ENGINSEER_GAME_BINARY"
 #define ENV_SHELL        "MAGOS_ENGINSEER_SHELL"
+#define ENV_ENGINSEER_PATH "MAGOS_ENGINSEER_PATH"
 #define ENV_MOD_PATH     "DARKTIDE_MOD_PATH"
 #define ENV_LOG_FILE     "MAGOS_ENGINSEER_LOG_FILE"
 #define ENV_LOG_LEVEL    "MAGOS_ENGINSEER_LOG_LEVEL"
@@ -239,6 +242,7 @@ kill:
  * across resolve_config() calls — callers must copy out before re-resolving. */
 static char g_game_binary_buf[MAGOS_PATH_MAX];
 static char g_shell_buf[MAGOS_PATH_MAX];
+static char g_enginseer_path_buf[MAGOS_PATH_MAX];
 static char g_mod_path_buf[MAGOS_PATH_MAX];
 static char g_log_file_buf[MAGOS_PATH_MAX];
 static char g_log_level_buf[32];
@@ -293,12 +297,13 @@ MAGOS_INTERNAL int magos_parse_args(int argc, char **argv,
 
         if (strcmp(flag, "-h") == 0 || strcmp(flag, "--help") == 0) return -2;
 
-        if      (strcmp(flag, "--game-binary")  == 0) target = &out->game_binary;
-        else if (strcmp(flag, "--magos-shell")  == 0) target = &out->magos_shell;
-        else if (strcmp(flag, "--mod-path")     == 0) target = &out->mod_path;
-        else if (strcmp(flag, "--log-file")     == 0) target = &out->log_file;
-        else if (strcmp(flag, "--log-level")    == 0) target = &out->log_level;
-        else if (strcmp(flag, "--steam-app-id") == 0) target = &out->steam_app_id;
+        if      (strcmp(flag, "--game-binary")   == 0) target = &out->game_binary;
+        else if (strcmp(flag, "--magos-shell")   == 0) target = &out->magos_shell;
+        else if (strcmp(flag, "--enginseer-path")== 0) target = &out->enginseer_path;
+        else if (strcmp(flag, "--mod-path")      == 0) target = &out->mod_path;
+        else if (strcmp(flag, "--log-file")      == 0) target = &out->log_file;
+        else if (strcmp(flag, "--log-level")     == 0) target = &out->log_level;
+        else if (strcmp(flag, "--steam-app-id")  == 0) target = &out->steam_app_id;
         else {
             fprintf(stderr, "[launcher] error: unknown flag: %s\n", flag);
             return -1;
@@ -333,7 +338,20 @@ MAGOS_INTERNAL void magos_resolve_config(const magos_parsed_args *args,
         cfg->magos_shell = g_shell_buf;
     }
 
-    /* mod_path: optional — NULL (unset) means the trampoline skips. */
+    /* enginseer_path: default <launcher-dir>\enginseer (the runtime-controlled
+     * root — enginseer.lua + its modules ship next to the launcher/DLL). */
+    if (args->enginseer_path) {
+        cfg->enginseer_path = args->enginseer_path;
+    } else if (read_env(ENV_ENGINSEER_PATH, g_enginseer_path_buf, sizeof(g_enginseer_path_buf))) {
+        cfg->enginseer_path = g_enginseer_path_buf;
+    } else {
+        build_default_path(g_enginseer_path_buf, sizeof(g_enginseer_path_buf),
+                           MAGOS_DEFAULT_ENGINSEER_DIR);
+        cfg->enginseer_path = g_enginseer_path_buf;
+    }
+
+    /* mod_path: optional — NULL (unset) means the trampoline emits an empty
+     * MAGOS_MOD_PATH (mods just won't load). */
     if (args->mod_path) {
         cfg->mod_path = args->mod_path;
     } else if (read_env(ENV_MOD_PATH, g_mod_path_buf, sizeof(g_mod_path_buf))) {
@@ -386,7 +404,10 @@ static void print_usage(FILE *out, const char *prog) {
         "  --magos-shell <path>   magos_shell.dll to inject\n"
         "                         [env: MAGOS_ENGINSEER_SHELL]\n"
         "                         [default: <launcher-dir>\\magos_shell.dll]\n"
-        "  --mod-path <path>      staged mods dir; if unset the trampoline skips\n"
+        "  --enginseer-path <dir> Enginseer dir (enginseer.lua + its modules)\n"
+        "                         [env: MAGOS_ENGINSEER_PATH]\n"
+        "                         [default: <launcher-dir>\\enginseer]\n"
+        "  --mod-path <path>      staged mods dir; mods won't load if unset\n"
         "                         [env: DARKTIDE_MOD_PATH] [default: unset]\n"
         "  --log-file <path>      launcher/shell log file\n"
         "                         [env: MAGOS_ENGINSEER_LOG_FILE]\n"
@@ -430,12 +451,14 @@ int main(int argc, char **argv) {
     }
 
     /* Publish the resolved config to the child env so CreateProcessA(NULL
-     * env) inherits it: Steam identity, shell logging, and the staged mod
-     * path. DARKTIDE_MOD_PATH is set only when configured — leaving it unset
-     * means the shell's trampoline skips (same as today). */
+     * env) inherits it: Steam identity, shell logging, the Enginseer root, and
+     * the mod root. DARKTIDE_MOD_PATH is set only when configured — leaving it
+     * unset means the shell's trampoline emits an empty MAGOS_MOD_PATH (mods
+     * won't load, same as today). */
     set_steam_env(cfg.steam_app_id);
     SetEnvironmentVariableA(ENV_LOG_FILE, cfg.log_file);
     SetEnvironmentVariableA(ENV_LOG_LEVEL, cfg.log_level);
+    SetEnvironmentVariableA(ENV_ENGINSEER_PATH, cfg.enginseer_path);
     if (cfg.mod_path) {
         SetEnvironmentVariableA(ENV_MOD_PATH, cfg.mod_path);
     }

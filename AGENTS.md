@@ -37,35 +37,45 @@ Requirements, architecture, and technology choices are made fresh.
 
 ```
 runtime/            the injected modding runtime + injector
+  Cargo.toml        workspace root (members = ["discovery"])
+  Cargo.lock
+  Makefile          builds the runtime: make build / check / test / enginseer-test / clean
+                    (run from runtime/ — all commands below assume CWD = runtime/)
+  bin/              ALL build outputs land here (gitignored): magos_launcher.exe,
+                      magos_shell.dll + enginseer/ (the staged Enginseer Lua)
+  target/           cargo build artifacts (gitignored)
   discovery/        Rust crate: LuaJIT discovery engine (pure library, C-ABI staticlib)
   shell/            C shell — the injected DLL (DllMain, MinHook, lua_newstate hook)
   launcher/         C launcher — CreateRemoteThread injector + hook-ready handshake
-  enginseer/        Enginseer (aka the Mod Loader) — the staged loader (LuaJIT):
+  enginseer/        Enginseer (aka the Mod Loader) — the runtime-staged loader (LuaJIT):
                       enginseer.lua entry + v2 modules (file/hook/class_patch/
                       require_wrap/lifecycle/mod_manager) + enginseer.v1.lua +
                       tests/ (offline LuaJIT harness, run via `make enginseer-test`).
-                      Vendored DMF + test-mod fixtures are gitignored (local only).
+                      `make build` stages the entry + v2 modules into bin/enginseer/
+                      (the runtime-controlled root, published as MAGOS_ENGINSEER_PATH).
+                      Vendored DMF/test-mod/mod_load_order live in a repo-root mods/
+                      dir (gitignored — the mod root, pointed at by --mod-path).
   tests/            C unit tests (run via wine)
 mod-manager/        Darktide Magos — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference
 .github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
-Cargo.toml          workspace root (members = ["runtime/discovery"])
-Cargo.lock
-Makefile            builds the runtime: make build / check / test / enginseer-test / clean
-.gitignore          ignores /target, build artifacts, _local/
+.gitignore          ignores runtime/target, runtime/bin, build artifacts, _local/
 ```
+The workspace root (`Cargo.toml`/`Cargo.lock`/`Makefile`) lives under
+`runtime/`, not the repo root — all build/test commands run from there.
 
 ## Agent ops
 
-Build + test (Linux dev box):
+Build + test (Linux dev box) — run from `runtime/`:
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"   # system rust lacks the windows-gnu target
-source _local/DARKTIDE.env             # sets DARKTIDE_GAME_DIR (for oracle tests)
+source ../_local/DARKTIDE.env          # sets DARKTIDE_GAME_DIR (for oracle tests)
 make build          # cross-compile DLL + launcher (x86_64-pc-windows-gnu)
 make check          # verify valid PE DLL with DllMain
 make test           # C tests (via wine) + Rust tests
-make enginseer-test # Enginseer Lua tests (offline LuaJIT harness, 84 tests; no game/wine)
+make enginseer-test # Enginseer Lua tests (offline LuaJIT harness, 86 tests; no game/wine)
 ```
+Build outputs land in `runtime/bin/`; cargo's artifacts in `runtime/target/`.
 - **Oracle tests** run discovery against the real `Darktide.exe` (resolved via
   `DARKTIDE_GAME_DIR`). The engine is build-agnostic (Tier-2 self-validation
   passes on any build; Tier-1 exact-match skips if the SHA differs from the
@@ -75,7 +85,11 @@ make enginseer-test # Enginseer Lua tests (offline LuaJIT harness, 84 tests; no 
   magos-discovery`. `make test` handles this; clippy too
   (`cargo clippy --all-targets --features test-hooks -- -D warnings`).
 - **Launcher CLI** is flag-based (**flag > env var > default**; `--game-binary`
-  is the only required flag; shell DLL + log default next to the launcher). See
+  is the only required flag; shell DLL + log default next to the launcher).
+  `--enginseer-path` (env `MAGOS_ENGINSEER_PATH`, default
+  `<launcher-dir>/enginseer/`) is the runtime-controlled Enginseer root —
+  `make build` stages the Enginseer Lua there; `--mod-path` (env
+  `DARKTIDE_MOD_PATH`) is the user-controlled mod root. See
   `docs/architecture/RUNTIME.md` → `launcher/` for the full flag/env/default
   table + the env-var contract.
 - **Shell log** is `magos_enginseer.log`, structured + level-filtered via

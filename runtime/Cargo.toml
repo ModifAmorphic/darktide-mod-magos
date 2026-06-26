@@ -5,7 +5,7 @@
 # built with their own Makefiles; they are not cargo crates.
 [workspace]
 resolver = "2"
-members = ["runtime/discovery"]
+members = ["discovery"]
 
 [workspace.package]
 version = "0.1.0"

@@ -21,12 +21,13 @@
  * live in resolver-owned static buffers (valid until the next resolve).
  */
 typedef struct {
-    const char *game_binary;  /* required: no default (NULL if unresolved) */
-    const char *magos_shell;  /* default: <launcher-dir>\magos_shell.dll   */
-    const char *mod_path;     /* optional: NULL => trampoline skips        */
-    const char *log_file;     /* default: <launcher-dir>\magos_enginseer.log */
-    const char *log_level;    /* default: info                              */
-    const char *steam_app_id; /* default: 1361210                           */
+    const char *game_binary;   /* required: no default (NULL if unresolved)  */
+    const char *magos_shell;   /* default: <launcher-dir>\magos_shell.dll   */
+    const char *enginseer_path;/* default: <launcher-dir>\enginseer         */
+    const char *mod_path;      /* optional: NULL => trampoline skips        */
+    const char *log_file;      /* default: <launcher-dir>\magos_enginseer.log */
+    const char *log_level;     /* default: info                              */
+    const char *steam_app_id;  /* default: 1361210                           */
 } magos_config;
 
 /*
@@ -37,6 +38,7 @@ typedef struct {
 typedef struct {
     const char *game_binary;
     const char *magos_shell;
+    const char *enginseer_path;
     const char *mod_path;
     const char *log_file;
     const char *log_level;

@@ -1,29 +1,30 @@
 -- test_entry.lua — end-to-end smoke test of the Enginseer v2 entry.
 --
--- Stages all 5 helper modules + the entry in an in-memory io map (mirroring the
--- deployment contract: <staging>/{file,hook,class_patch,require_wrap,lifecycle,
--- enginseer}.lua), runs the entry in a sandbox, and verifies it bootstraps
--- every surface, wraps require, and queues the bootstrap lifecycle hook. The
--- per-module contracts are covered by the other test files; this test covers
--- the entry's assembly + ordering + the deferred-bridge end-to-end behavior
--- (require-wrap fires the class patch + flushes the bootstrap once targets
--- materialize).
+-- Stages all 5 helper modules + the entry in an in-memory io map under the
+-- Enginseer root (mirroring the deployment contract: <enginseer-root>/{file,hook,
+-- class_patch,require_wrap,lifecycle,enginseer}.lua), with a SEPARATE mod root
+-- holding DMF/mods/mod_load_order. Runs the entry in a sandbox and verifies it
+-- bootstraps every surface, wraps require, and queues the bootstrap lifecycle
+-- hook. The per-module contracts are covered by the other test files; this test
+-- covers the entry's assembly + ordering + the deferred-bridge end-to-end
+-- behavior (require-wrap fires the class patch + flushes the bootstrap once
+-- targets materialize).
 
 local mock = require("mock")
 
 return function(runner)
-    -- Build a sandbox with the staging layout populated from real module
-    -- sources. `engine_require` is the fake engine require used to simulate
-    -- main.lua loading modules (class.lua, etc.).
+    -- Build a sandbox with the two-root staging layout populated from real
+    -- module sources. The Enginseer root (MAGOS_ENGINSEER_PATH) holds the
+    -- entry + modules; the mod root (MAGOS_MOD_PATH) is where DMF/mods/
+    -- mod_load_order live (Mods.file.* roots there via Mods._staging_base).
+    -- `engine_require` is the fake engine require used to simulate main.lua
+    -- loading modules (class.lua, etc.).
     local function build(engine_require)
         local sb = mock.new_sandbox()
-        sb.MAGOS_MOD_PATH = "/staging"
+        sb.MAGOS_ENGINSEER_PATH = mock.ENGINSEER_ROOT
+        sb.MAGOS_MOD_PATH = mock.MOD_ROOT
 
-        local files = {}
-        for _, name in ipairs({ "file", "hook", "class_patch", "require_wrap", "lifecycle" }) do
-            files["/staging/" .. name .. ".lua"] = mock.read_module(name)
-        end
-        files["/staging/enginseer.lua"] = mock.read_module("enginseer")
+        local files = mock.stage_enginseer()
 
         local io = mock.make_io(files)
         sb.io = io
@@ -60,6 +61,8 @@ return function(runner)
         runner.assert_type("function", sb.Mods.install_lifecycle_hooks)
         runner.assert_type("function", sb.Mods.flush_deferred_hooks)
         runner.assert_type("function", sb.Mods.queue_deferred_hook)
+        runner.assert_type("function", sb.Mods.load_enginseer_module,
+            "entry must expose bootstrap_load as Mods.load_enginseer_module")
     end)
 
     runner.register("entry: wraps global require + marks _require_wrapped", function()
@@ -81,7 +84,7 @@ return function(runner)
         )
     end)
 
-    runner.register("entry: __print logs the v2 loaded message; MAGOS_MOD_PATH captured", function()
+    runner.register("entry: __print logs the v2 loaded message; mod root captured into _staging_base", function()
         local sb = build()
         local logged = {}
         sb.__print = function(msg) table.insert(logged, msg) end
@@ -91,14 +94,17 @@ return function(runner)
         sb.print = function(msg) table.insert(logged, msg) end
         mock.load_module("enginseer", sb)()
         runner.assert_truthy(#logged >= 1, "entry should log at least the v2-loaded line")
-        runner.assert_eq("/staging", sb.Mods._staging_base)
+        -- _staging_base roots at the MOD root (Mods.file.* surface), NOT the
+        -- Enginseer root the entry's own modules load from.
+        runner.assert_eq(mock.MOD_ROOT, sb.Mods._staging_base)
     end)
 
     runner.register("entry: bootstrap aborts cleanly when a module file is missing", function()
         local sb = mock.new_sandbox()
-        sb.MAGOS_MOD_PATH = "/staging"
-        -- Only provide the entry; no helper modules staged.
-        local files = { ["/staging/enginseer.lua"] = mock.read_module("enginseer") }
+        sb.MAGOS_ENGINSEER_PATH = mock.ENGINSEER_ROOT
+        sb.MAGOS_MOD_PATH = mock.MOD_ROOT
+        -- Only provide the entry at the Enginseer root; no helper modules staged.
+        local files = { [mock.ENGINSEER_ROOT .. "/enginseer.lua"] = mock.read_module("enginseer") }
         sb.io = mock.make_io(files)
         sb.require = function() return {} end
         local fn = mock.load_module("enginseer", sb)
@@ -165,5 +171,70 @@ return function(runner)
             "bootstrap must dequeue once BootStateRequireGameScripts._state_update resolves")
         runner.assert_eq(1, #sb.MODS_HOOKS,
             "bootstrap hook must be installed into MODS_HOOKS")
+    end)
+
+    -- Mods.load_enginseer_module must return the loaded chunk's RETURN VALUE
+    -- (dofile-style), NOT a boolean. Regression: it was previously aliased
+    -- directly to bootstrap_load (true/false), so lifecycle.lua's
+    -- `local ModManager = Mods.load_enginseer_module("mod_manager")` got `true`
+    -- and `ModManager:new()` raised "attempt to index local 'ModManager'
+    -- (a boolean value)". These exercise the REAL loader (no mock) against
+    -- staged fake modules at the Enginseer root.
+    local function build_with_extra(extra_files)
+        local sb = mock.new_sandbox()
+        sb.MAGOS_ENGINSEER_PATH = mock.ENGINSEER_ROOT
+        sb.MAGOS_MOD_PATH = mock.MOD_ROOT
+        local files = mock.stage_enginseer()
+        for path, content in pairs(extra_files or {}) do
+            files[path] = content
+        end
+        sb.io = mock.make_io(files)
+        sb.require = function() return {} end
+        sb.print = function() end  -- silence the entry's v2-loaded chatter
+        mock.load_module("enginseer", sb)()
+        return sb
+    end
+
+    runner.register("entry: load_enginseer_module returns the chunk's return value (not a boolean)", function()
+        local sb = build_with_extra({
+            [mock.ENGINSEER_ROOT .. "/returns_table.lua"] = "return { hello = 'world' }",
+        })
+        local result = sb.Mods.load_enginseer_module("returns_table")
+        runner.assert_type("table", result,
+            "must return the chunk's table, not a boolean")
+        runner.assert_eq("world", result.hello,
+            "must return the chunk's actual content")
+        runner.assert_truthy(result ~= true and result ~= false,
+            "regression: must NOT be a boolean (was aliased to bootstrap_load)")
+    end)
+
+    runner.register("entry: load_enginseer_module returns nil for a missing module (no raise)", function()
+        local sb = build_with_extra()
+        local ok, result = pcall(sb.Mods.load_enginseer_module, "does_not_exist")
+        runner.assert_truthy(ok, "missing module must not raise")
+        runner.assert_nil(result, "missing module must return nil")
+    end)
+
+    runner.register("entry: load_enginseer_module returns nil for a syntax-error module (no raise)", function()
+        local sb = build_with_extra({
+            [mock.ENGINSEER_ROOT .. "/broken.lua"] = "this is not valid lua",
+        })
+        local ok, result = pcall(sb.Mods.load_enginseer_module, "broken")
+        runner.assert_truthy(ok,
+            "syntax error must not raise — loader catches it internally and returns nil")
+        runner.assert_nil(result, "broken module must return nil")
+    end)
+
+    -- bootstrap_load (the entry's internal install-only loader for the 5 helper
+    -- modules) keeps its true/false contract: it reports success even when the
+    -- chunk returns nil. Several staged modules (e.g. lifecycle.lua) end without
+    -- a return statement, so a successful entry bootstrap here proves the loop's
+    -- `if not bootstrap_load(mod)` did NOT see the chunk's nil result.
+    runner.register("entry: bootstrap_load keeps true/false contract (entry bootstraps nil-returning modules)", function()
+        local sb = build_with_extra()
+        runner.assert_truthy(sb.Mods._v2_loaded,
+            "entry must complete bootstrap (lifecycle.lua returns nil; if bootstrap_load returned the chunk's nil, the loop would abort)")
+        runner.assert_type("function", sb.Mods.install_lifecycle_hooks,
+            "lifecycle loaded despite returning nil -> bootstrap_load reported true")
     end)
 end

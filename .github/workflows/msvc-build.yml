@@ -20,6 +20,9 @@ on:
 jobs:
   msvc:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: runtime
     steps:
       - uses: actions/checkout@v4
 
@@ -34,8 +37,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: msvc-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+            runtime/target
+          key: msvc-${{ runner.os }}-${{ hashFiles('runtime/Cargo.lock') }}
 
       - name: Lint with clippy (deny warnings)
         run: cargo clippy --all-targets --features test-hooks -- -D warnings
@@ -49,70 +52,72 @@ jobs:
       - name: Build mixed DLL + launcher (cl/link)
         shell: cmd
         run: |
+          if not exist bin mkdir bin
           set REL=target\x86_64-pc-windows-msvc\release
           :: Compile the C shell + MinHook to objects.
-          cl /nologo /O2 /c /I runtime\shell\include /I runtime\shell\vendor\minhook\include ^
-             runtime\shell\src\dllmain.c ^
-             runtime\shell\vendor\minhook\src\buffer.c ^
-             runtime\shell\vendor\minhook\src\hook.c ^
-             runtime\shell\vendor\minhook\src\trampoline.c ^
-             runtime\shell\vendor\minhook\src\hde\hde64.c
+          cl /nologo /O2 /c /I shell\include /I shell\vendor\minhook\include ^
+             shell\src\dllmain.c ^
+             shell\vendor\minhook\src\buffer.c ^
+             shell\vendor\minhook\src\hook.c ^
+             shell\vendor\minhook\src\trampoline.c ^
+             shell\vendor\minhook\src\hde\hde64.c
           :: Our trampoline helpers (path escape/build/join) — separate object
           :: to avoid name clash with MinHook's trampoline.obj.
-          cl /nologo /O2 /c /I runtime\shell\include runtime\shell\src\trampoline.c /Fo:magos_trampoline.obj
+          cl /nologo /O2 /c /I shell\include shell\src\trampoline.c /Fo:magos_trampoline.obj
           :: Link the DLL against the Rust staticlib + system libs.
-          link /nologo /DLL /OUT:magos_shell.dll ^
+          link /nologo /DLL /OUT:bin\magos_shell.dll ^
              dllmain.obj buffer.obj hook.obj trampoline.obj hde64.obj magos_trampoline.obj ^
              %REL%\magos_discovery.lib ^
              psapi.lib kernel32.lib user32.lib ws2_32.lib userenv.lib bcrypt.lib ntdll.lib ^
              /NODEFAULTLIB:libgcc.lib
           :: Launcher.
-          cl /nologo /O2 /Fe:magos_launcher.exe runtime\launcher\src\launcher.c /link kernel32.lib
+          cl /nologo /O2 /Fe:bin\magos_launcher.exe launcher\src\launcher.c /link kernel32.lib
 
       - name: Build C tests (cl/link)
         shell: cmd
         run: |
+          if not exist bin mkdir bin
           set REL=target\x86_64-pc-windows-msvc\release
           :: Test runner object.
-          cl /nologo /O2 /c runtime\tests\test_runner.c
+          cl /nologo /O2 /c tests\test_runner.c
           :: Launcher object for test linking — compiled with MAGOS_TEST_BUILD so
           :: launcher.c's main() is excluded (each test exe provides its own main).
-          :: Mirrors the Makefile's runtime/tests/launcher.o rule. The production
+          :: Mirrors the Makefile's bin/launcher.o rule. The production
           :: magos_launcher.exe (built above) is compiled WITHOUT the guard.
-          cl /nologo /O2 /I runtime\launcher\src /DMAGOS_TEST_BUILD /c runtime\launcher\src\launcher.c /Fo:launcher_test.obj
+          cl /nologo /O2 /I launcher\src /DMAGOS_TEST_BUILD /c launcher\src\launcher.c /Fo:launcher_test.obj
           :: Stub target — minimal GUI exe (/SUBSYSTEM:WINDOWS is a linker flag,
           :: so it goes after /link, not on the cl compile line).
-          cl /nologo /O2 /Fe:runtime\tests\stub_target.exe runtime\tests\stub_target.c /link /SUBSYSTEM:WINDOWS
+          cl /nologo /O2 /Fe:bin\stub_target.exe tests\stub_target.c /link /SUBSYSTEM:WINDOWS
           :: Stub shell — minimal DLL.
-          cl /nologo /O2 /c runtime\tests\stub_shell.c
-          link /nologo /DLL /OUT:runtime\tests\stub_shell.dll stub_shell.obj kernel32.lib
+          cl /nologo /O2 /c tests\stub_shell.c
+          link /nologo /DLL /OUT:bin\stub_shell.dll stub_shell.obj kernel32.lib
           :: test_steam_env.exe — links the guarded launcher_test.obj (no main).
-          cl /nologo /O2 /I runtime\launcher\src /Fe:runtime\tests\test_steam_env.exe ^
-             runtime\tests\test_steam_env.c test_runner.obj launcher_test.obj kernel32.lib
+          cl /nologo /O2 /I launcher\src /Fe:bin\test_steam_env.exe ^
+             tests\test_steam_env.c test_runner.obj launcher_test.obj kernel32.lib
           :: test_injection.exe — links the guarded launcher_test.obj (no main).
-          cl /nologo /O2 /I runtime\launcher\src /Fe:runtime\tests\test_injection.exe ^
-             runtime\tests\test_injection.c test_runner.obj launcher_test.obj kernel32.lib
+          cl /nologo /O2 /I launcher\src /Fe:bin\test_injection.exe ^
+             tests\test_injection.c test_runner.obj launcher_test.obj kernel32.lib
           :: test_trampoline.exe — path escape/build/join tests (20 tests).
           :: test_trampoline.c #includes trampoline.c directly (to access internal helpers).
-          cl /nologo /O2 /I runtime\shell\include /Fe:runtime\tests\test_trampoline.exe ^
-             runtime\tests\test_trampoline.c test_runner.obj kernel32.lib
+          cl /nologo /O2 /I shell\include /Fe:bin\test_trampoline.exe ^
+             tests\test_trampoline.c test_runner.obj kernel32.lib
 
       - name: Run C unit tests (native)
         shell: cmd
         run: |
           echo === C unit tests ===
-          runtime\tests\test_steam_env.exe
-          runtime\tests\test_injection.exe
-          runtime\tests\test_trampoline.exe
+          bin\test_steam_env.exe
+          bin\test_injection.exe
+          bin\test_trampoline.exe
 
       - name: Verify valid PE with DllMain
         shell: pwsh
         run: |
-          $pe = [System.IO.BinaryReader]::new([System.IO.File]::OpenRead("magos_shell.dll"))
+          $pe = [System.IO.BinaryReader]::new([System.IO.File]::OpenRead("bin\magos_shell.dll"))
           $mz = $pe.ReadBytes(2); if (($mz[0] -ne 0x4D) -or ($mz[1] -ne 0x5A)) { throw "not MZ" }
-          Write-Host "magos_shell.dll is a valid PE (MZ header)"
+          Write-Host "bin\magos_shell.dll is a valid PE (MZ header)"
           $pe.Close()
-          & dumpbin /exports magos_shell.dll | Select-String "DllMain|magos_discover"
+          & dumpbin /exports bin\magos_shell.dll | Select-String "DllMain|magos_discover"
           if ($LASTEXITCODE -ne 0) { throw "dumpbin failed" }
 
       - name: Run host-side discovery tests (cargo test)
@@ -125,5 +130,5 @@ jobs:
         with:
           name: magos-shell-msvc
           path: |
-            magos_shell.dll
-            magos_launcher.exe
+            runtime/bin/magos_shell.dll
+            runtime/bin/magos_launcher.exe
