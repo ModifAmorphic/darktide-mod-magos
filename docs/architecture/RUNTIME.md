@@ -61,7 +61,7 @@ The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
   `<launcher-dir>/enginseer/` by `make build`; the launcher publishes that dir
   as `MAGOS_ENGINSEER_PATH`). The mod root is read from `DARKTIDE_MOD_PATH`
   (the launcher sets it in the child env from `--mod-path`); if unset the
-  chunk emits an empty `MAGOS_MOD_PATH` (mods won't load, the rite degrades
+  chunk emits an empty `MAGOS_MOD_PATH` (mods won't load; the loader degrades
   gracefully). If `MAGOS_ENGINSEER_PATH` is unset the trampoline is SKIPPED
   (logged) and the build degrades to the recon probes. The chunk template and
   safety discipline (one-shot, stack-clean, `g_in_probe` guard) carry over
@@ -77,17 +77,22 @@ The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
     `_G.class` appears (building `CLASS` — the only handle on engine state
     classes), and flushes a deferred-hook queue after every `require`;
   - the bootstrap hook (`lifecycle.lua`) attaches (deferred) to
-    `CLASS.BootStateRequireGameScripts._state_update`, loads the **rite**
+    `CLASS.BootStateRequireGameScripts._state_update`, loads the loader
     (`mod_manager.lua` — the Enginseer IS the mod loader), and installs the
     per-frame (`CLASS.StateGame.update`) + state-change
     (`CLASS.GameStateMachine._change_state`) hooks that drive `Managers.mod`.
-  The rite reads `mod_load_order.txt`, prepends `dmf`, and loads each mod's
-  `.mod` (`run()` → object → `init()`), exposing itself as `Managers.mod`. The
-  whole bootstrap is pcall-wrapped so a DMF/mod failure degrades to vanilla +
-  a log line, not a crash. **Live-validated end-to-end** (DMF loads, runs to
-  `StateMainMenu`, a test mod's hook fires). See
-  `docs/architecture/ENGINSEER-DMF.md` for the DMF integration + the IO
-  re-rooting.
+  The loader splits load into two phases: `init()` SCANs (reads
+    `mod_load_order.txt`, prepends `dmf`, builds the `_mods` table, installs the
+    DMF IO watch — no mod loaded), and the first `StateGame.update` tick LOADs
+    (per-mod `run()` → object → `init()`, then `_state="done"`) — deferred so
+    boot-complete globals like `Managers.input` exist. The IO watch re-roots
+    DMF's mod-facing IO at the mod root mid-DMF-init. The loader exposes itself
+    as `Managers.mod`. The whole bootstrap is pcall-wrapped so a DMF/mod failure
+    degrades to vanilla + a log line, not a crash. **Live-validated to
+    `StateMainMenu`** (DMF loads, a test mod's hook fires); the scan/load split
+    + IO-watch re-root are offline-tested, live validation pending. See
+    `docs/architecture/ENGINSEER-DMF.md` for the DMF integration + the IO
+    re-rooting + the load timing.
 - **To build (the production shell):**
   - **Status reporting** — report discovery results, Enginseer/DMF/mod load,
     errors to the launcher (via the file-backed status channel).
@@ -144,9 +149,9 @@ SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
   `DARKTIDE_MOD_PATH`) is Darktide-Magos-controlled: it writes DMF, user mods,
   and `mod_load_order.txt` there; the runtime bootstraps the runtime-staged
   Enginseer entry, which loads DMF + mods from the mod root. `mod_load_order.txt`
-  is a Darktide Magos artifact, but the **Enginseer reads it** (the rite — it is
-  the mod loader); DMF does not. The runtime is the conduit; it does not compute
-  the load order or resolve dependencies (that's Darktide Magos's job).
+  is a Darktide Magos artifact, but the **Enginseer reads it** (the loader — it
+  is the mod loader); DMF does not. The runtime is the conduit; it does not
+  compute the load order or resolve dependencies (that's Darktide Magos's job).
 - **Status:** the launcher relays the shell's status via stdout (launch
   progress, mod-load outcome, errors, game exit). Game-update detection
   (discovery mismatch) rides this channel.
@@ -173,7 +178,7 @@ in the CLI table above; these are the *contract* the shell depends on.)
 | Env var | Set by | Read by | Meaning |
 | --- | --- | --- | --- |
 | `MAGOS_ENGINSEER_PATH` | launcher | shell trampoline + Enginseer entry | Enginseer dir — where `enginseer.lua` + its modules live (runtime-controlled; `<launcher-dir>\enginseer` by default). The trampoline joins it + `enginseer.lua` into the entry path; the entry's `bootstrap_load` roots its own module loads here. Unset ⇒ trampoline SKIPPED (degrades to recon probes / vanilla). |
-| `DARKTIDE_MOD_PATH` | launcher (only when `--mod-path`/env configured) | shell trampoline + Enginseer | mod dir — where DMF + user mods + `mod_load_order.txt` live. The trampoline sets `MAGOS_MOD_PATH` from it; the rite/DMF/mods root here (`Mods.file.*`). Unset ⇒ empty `MAGOS_MOD_PATH` (mods won't load; vanilla). |
+| `DARKTIDE_MOD_PATH` | launcher (only when `--mod-path`/env configured) | shell trampoline + Enginseer | mod dir — where DMF + user mods + `mod_load_order.txt` live. The trampoline sets `MAGOS_MOD_PATH` from it; the loader/DMF/mods root here (`Mods.file.*`). Unset ⇒ empty `MAGOS_MOD_PATH` (mods won't load; vanilla). |
 | `MAGOS_ENGINSEER_LOG_FILE` | launcher | shell | shell log file path |
 | `MAGOS_ENGINSEER_LOG_LEVEL` | launcher | shell | shell log level (`error`/`warn`/`info`/`debug`/`trace`) |
 | `SteamAppId` / `SteamGameId` | launcher | Steam | the real Darktide app id (`1361210`); without it `SteamAPI_Init` is denied under a non-Steam shortcut |
@@ -296,7 +301,7 @@ runtime-command work.
 
 - **Dependency resolution / load-order computation** — Darktide Magos's job
   (it writes `mod_load_order.txt`); the runtime bootstraps the staged Enginseer
-  entry point, and the Enginseer's rite reads the load order (DMF does not).
+  entry point, and the Enginseer's loader reads the load order (DMF does not).
 - **Multi-shot injection** — not needed for v1/v2. The runtime's injection is
   one-shot (bootstrap); DMF's own hook system handles ongoing mod execution.
   Multi-shot (hot-reload, runtime commands) is a future capability.
@@ -311,7 +316,8 @@ gate.
 ## References
 
 - `docs/architecture/ENGINSEER-DMF.md` — the Enginseer↔DMF integration + IO
-  re-rooting (the rite, the loader surfaces, the `Managers.mod` shape contract).
+  re-rooting (the loader, the loader surfaces, the `Managers.mod` shape contract,
+  the load timing).
 - `docs/architecture/README.md` — project architecture + the runtime↔mod-manager contract.
 - `docs/reference/darktide-binary.md` — the validated game-binary constraints.
 - `docs/poc/` — frozen POC handoff (the discovery methodology + DMF bootstrap approach are validated here).
