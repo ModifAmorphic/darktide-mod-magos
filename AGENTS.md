@@ -73,7 +73,7 @@ source ../_local/DARKTIDE.env          # sets DARKTIDE_GAME_DIR (for oracle test
 make build          # cross-compile DLL + launcher (x86_64-pc-windows-gnu)
 make check          # verify valid PE DLL with DllMain
 make test           # C tests (via wine) + Rust tests
-make enginseer-test # Enginseer Lua tests (offline LuaJIT harness, 93 tests; no game/wine)
+make enginseer-test # Enginseer Lua tests (offline LuaJIT harness, 96 tests; no game/wine)
 ```
 Build outputs land in `runtime/bin/`; cargo's artifacts in `runtime/target/`.
 - **Oracle tests** run discovery against the real `Darktide.exe` (resolved via
@@ -130,13 +130,32 @@ the UI (Darktide Magos); docs and code read as plain engineering documentation.
   mention in a doc is "Enginseer (aka the Mod Loader)", thereafter "Enginseer".
 - Don't obscure — names should be descriptive and accessible, not cryptic.
 
+## README pattern
+
+Docs follow a two-tier README pattern:
+
+- **Root `README.md`** — audience is the **general / end user**: what Magos is,
+  its components, and how to get it running. **No build internals.**
+- **Component-dir `README.md`** (e.g. `runtime/README.md`) — audience is
+  **developers / power users**: build instructions, sub-component details,
+  testing, links to the architecture specs.
+
+The **root README links to** the component READMEs — it does **not** duplicate
+their content. When a component gets (or changes) a README, ensure the root
+links to it and that the split holds (user-facing up top, dev detail under the
+component).
+
 ## Before opening a PR — keep docs current
 
 Docs must reflect the code in the PR. Before opening a PR for any change that
 affects repo structure, build, architecture, or ops, update:
 - **`AGENTS.md`** (this file) — directory structure, ops, architecture
   pointers — to reflect the change.
-- **`README.md`** if the user-facing structure/status changed.
+- **`README.md`** (root) — if the **user-facing** structure/status changed.
+  Keep it user-facing (see [README pattern](#readme-pattern)); dev/build detail
+  goes in the relevant component README, and the root must link to it.
+- **Component-dir `README.md`** (e.g. `runtime/README.md`) — for build/dev
+  detail under that component; ensure the root links to it.
 - **`docs/architecture/`** for any architecture change; `docs/reference/` for
   game/ecosystem facts.
 
