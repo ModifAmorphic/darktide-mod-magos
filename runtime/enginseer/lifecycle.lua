@@ -104,15 +104,19 @@ Mods.install_lifecycle_hooks = function()
             -- the game at boot. Always return the original's result regardless.
             local ok, err = pcall(function()
                 -- Load + run the rite (the Enginseer's mod loader).
-                -- mod_manager.lua is loaded via Mods.file.dofile (rooted at
-                -- MAGOS_MOD_PATH), NOT the entry's bootstrap_load, because it
-                -- calls class("ModManager") — which only exists after the class
-                -- patch installs at boot (the require-wrap), not at the entry's
-                -- pcall#1. :init() reads mod_load_order, prepends "dmf", and
-                -- loads DMF + every user mod synchronously; _state -> "done".
+                -- mod_manager.lua is an Enginseer module, so it loads from the
+                -- Enginseer root (MAGOS_ENGINSEER_PATH) via
+                -- Mods.load_enginseer_module, NOT Mods.file.dofile (which is
+                -- mod-rooted). It must load here — not at the entry's
+                -- bootstrap_load — because it calls class("ModManager"), which
+                -- only exists after the class patch installs at boot (the
+                -- require-wrap), not at the entry's pcall#1. :init() reads
+                -- mod_load_order, prepends "dmf", and loads DMF + every user
+                -- mod synchronously (DMF/mods/mod_load_order root at the MOD
+                -- dir via Mods.file.*); _state -> "done".
                 -- LIVE-VALIDATE: the full rite end-to-end (DMF init loads all
                 -- its modules; user mods' run/init work) against the real engine.
-                local ModManager = Mods.file.dofile("mod_manager")
+                local ModManager = Mods.load_enginseer_module("mod_manager")
                 Managers = Managers or {}
                 Managers.mod = Managers.mod or ModManager:new()
 

@@ -14,12 +14,17 @@ local mock = require("mock")
 return function(runner)
     -- Set up a sandbox with hook + lifecycle loaded (lifecycle depends on
     -- Mods.hook for install + Mods.lua.loadstring for the resolution eval).
+    -- The bootstrap body loads the rite via Mods.load_enginseer_module (the
+    -- entry exposes bootstrap_load under that name so mod_manager loads from
+    -- the Enginseer root, not the mod root). The harness doesn't run the entry,
+    -- so default it here; success-path tests override.
     local function setup()
         local sb = mock.new_sandbox()
         sb.Mods = {
             file = {},
             lua = { loadstring = sb.loadstring },
             require_store = {},
+            load_enginseer_module = function() return nil end,
         }
         mock.run_module("hook", sb)
         mock.run_module("lifecycle", sb)
@@ -105,9 +110,9 @@ return function(runner)
                 return { update = function() end, on_game_state_changed = function() end }
             end,
         }
-        sb.Mods.file.dofile = function(path)
-            runner.assert_eq("mod_manager", path,
-                "bootstrap must load the rite via Mods.file.dofile('mod_manager')")
+        sb.Mods.load_enginseer_module = function(name)
+            runner.assert_eq("mod_manager", name,
+                "bootstrap must load the rite via Mods.load_enginseer_module('mod_manager')")
             return FakeModManager
         end
 
@@ -148,7 +153,7 @@ return function(runner)
                 }
             end,
         }
-        sb.Mods.file.dofile = function(path) return FakeModManager end
+        sb.Mods.load_enginseer_module = function(name) return FakeModManager end
 
         sb.CLASS = {
             BootStateRequireGameScripts = { _state_update = function() return "s" end },
@@ -179,7 +184,7 @@ return function(runner)
                 }
             end,
         }
-        sb.Mods.file.dofile = function(path) return FakeModManager end
+        sb.Mods.load_enginseer_module = function(name) return FakeModManager end
 
         -- The engine's _change_state flips self._state from old to new across
         -- the call (we model that: func flips it to NewState).
@@ -221,7 +226,7 @@ return function(runner)
     local function bootstrap_failure_setup(sb, dofile_return)
         local logged = {}
         sb.__print = function(msg) table.insert(logged, msg) end
-        sb.Mods.file.dofile = function(path) return dofile_return end
+        sb.Mods.load_enginseer_module = function(name) return dofile_return end
         sb.CLASS = {
             BootStateRequireGameScripts = {
                 _state_update = function(self, ...) return "state-result" end,

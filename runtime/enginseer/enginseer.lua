@@ -3,9 +3,17 @@
 -- Runs at pcall#1 in engine-context (injected by the runtime trampoline), BEFORE
 -- main.lua executes. Captures the engine's Lua facilities (before they're
 -- stripped from globals ~pcall#6), bootstrap-loads the helper modules from the
--- staging dir, wraps global require, and queues the bootstrap lifecycle hook.
+-- Enginseer root, wraps global require, and queues the bootstrap lifecycle hook.
 -- The class patch + bootstrap hook fire LATER, deferred via the require-wrap as
 -- main.lua executes.
+--
+-- Two roots (set as globals by the C trampoline before opening this entry):
+--   - MAGOS_ENGINSEER_PATH — the Enginseer dir (runtime-controlled). THIS file
+--     + its helper modules (file/hook/class_patch/require_wrap/lifecycle +
+--     mod_manager) live here. bootstrap_load roots here.
+--   - MAGOS_MOD_PATH — the mod dir (user/mod-manager-controlled). DMF + user
+--     mods + mod_load_order live here. Mods.file.* roots here (via
+--     Mods._staging_base, set below).
 --
 -- Supersedes enginseer.v1.lua (which only captured the stdlib into Mods). The
 -- v1 file is kept alongside for recovery.
@@ -50,21 +58,26 @@ Mods.lua.table = table
 Mods.lua.string = string
 Mods.file = Mods.file or {}
 Mods._deferred_hooks = {}
+-- The MOD root (DMF + user mods + mod_load_order). Mods.file.* roots here
+-- (file.lua reads Mods._staging_base, falling back to MAGOS_MOD_PATH). Kept
+-- distinct from the Enginseer root (below) so the loader's own modules load
+-- from the runtime root regardless of where mods are staged.
 Mods._staging_base = MAGOS_MOD_PATH
 __print = print
 
--- 2. Bootstrap-load the helper modules from the staging dir. We use io.open +
--- loadstring (NOT the engine's require) since these files live in our staging
--- dir, not the bundle search path. setfenv(fn, getfenv(1)) gives each loaded
--- chunk the entry's env so the modules share _G with the entry (in production
--- this is the engine's globals; in tests it's the test sandbox).
+-- 2. Bootstrap-load the helper modules from the Enginseer root. We use io.open +
+-- loadstring (NOT the engine's require) since these files live in the Enginseer
+-- dir (runtime-controlled, via MAGOS_ENGINSEER_PATH), not the bundle search path
+-- or the mod dir. setfenv(fn, getfenv(1)) gives each loaded chunk the entry's
+-- env so the modules share _G with the entry (in production this is the
+-- engine's globals; in tests it's the test sandbox).
 local _loadstring = loadstring
 local _io = io
 local _pcall = pcall
 
 local function bootstrap_load(name)
-    -- Forward-slash join: <MAGOS_MOD_PATH>/<name>.lua (works on Windows + Proton).
-    local base = Mods._staging_base or MAGOS_MOD_PATH or ""
+    -- Forward-slash join: <MAGOS_ENGINSEER_PATH>/<name>.lua (works on Windows + Proton).
+    local base = MAGOS_ENGINSEER_PATH or ""
     local path = base .. "/" .. name .. ".lua"
 
     local f, err = _io.open(path, "r")
@@ -89,6 +102,11 @@ local function bootstrap_load(name)
     end
     return true
 end
+
+-- Expose bootstrap_load so lifecycle.lua can load mod_manager from the Enginseer
+-- root AFTER class() exists (mod_manager calls class("ModManager"), which only
+-- appears once the class patch installs at boot — not at this entry's pcall#1).
+Mods.load_enginseer_module = bootstrap_load
 
 -- Dependency order: file -> hook -> class_patch -> require_wrap -> lifecycle.
 local modules = { "file", "hook", "class_patch", "require_wrap", "lifecycle" }
