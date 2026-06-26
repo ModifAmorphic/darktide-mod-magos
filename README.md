@@ -28,16 +28,10 @@ There are no releases yet. To get the runtime artifacts, download them from the
 
 1. Go to the **Actions** tab → **mingw-build** → the latest green run →
    **Artifacts** → **`magos-shell-mingw`**.
-2. That artifact contains the two Windows binaries:
+2. That artifact contains the complete runtime:
    - `magos_launcher.exe` — the launcher/injector.
    - `magos_shell.dll` — the injected DLL.
-
-> **You also need the Enginseer Lua.** The artifact ships only the binaries;
-> the loader itself (the `enginseer/` directory) is **not** in it. Get it from
-> the repo's [`runtime/enginseer/`](runtime/enginseer) tree and place it next to
-> the launcher as `enginseer/` (i.e. so `<your-dir>/enginseer/enginseer.lua`
-> exists). Or build everything yourself — see
-> [`runtime/README.md`](runtime/README.md).
+   - `enginseer/` — the Enginseer Lua (the mod loader).
 
 When laid out, your runtime directory should look like:
 

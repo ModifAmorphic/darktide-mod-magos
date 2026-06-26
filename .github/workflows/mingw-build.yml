@@ -72,3 +72,4 @@ jobs:
           path: |
             runtime/bin/magos_shell.dll
             runtime/bin/magos_launcher.exe
+            runtime/bin/enginseer/
