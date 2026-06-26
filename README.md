@@ -107,4 +107,4 @@ Mods live in the **mod directory** you point `--mod-path` at. Lay it out as:
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+GNU General Public License v3 — see [`LICENSE`](LICENSE).
