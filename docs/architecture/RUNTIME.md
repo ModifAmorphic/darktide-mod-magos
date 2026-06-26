@@ -17,12 +17,8 @@ offline-testable against a binary fixture. Compiled to a C-ABI staticlib.
 - **Interface (the seam):** `magos_discover` / `magos_discover_detail`
   (C-ABI). Shared contract: `MagosAddressTable` (`#[repr(C)]`, mirrored in
   `shell/include/magos_discovery.h`) + return codes.
-- **State:** production-quality (the the runtime seed). The canonical 16
-  addresses are stable; two bonus Phase-1 probe fields are also exposed —
-  `lua_getfield` (the C-API table-get the shell uses to read globals;
-  `lua_getglobal` is a macro over it) and `lua_resource_bytecode` (the engine
-  bundle-script loader, resolved via the `stingray::lua_resource::bytecode`
-  string anchor).
+- **State:** production-quality (the runtime seed). The canonical 16
+  engine/LuaJIT function addresses are stable.
 
 ### `shell/` — C live-game shell (the injected DLL)  *(built; live-validated)*
 
@@ -31,30 +27,22 @@ staticlib (`libmagos_discovery.a`) + MinHook, into one PE DLL.
 
 The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
 (via the seam) → installs the `lua_newstate` hook → loads the staged Enginseer
-(aka the Mod Loader) in engine context → reports status.
+(aka the Mod Loader) in engine context.
 
 - **Built (minimal validation slice):** discovery call, `lua_newstate` MinHook
   + `L` capture, `lua_gettop` call, hook-ready signal.
-- **Built (engine-context validation — PROVEN).** Probes (Phase 1-3) + a
-  trampoline prototype (Phase 4) established the engine-context mechanism:
-  - The engine's globals table has the full stdlib (`io`, `loadstring`,
-    `require`, `print`, …) from `luaL_openlibs` through `lua_pcall` #1.
-  - The engine **removes `io` + `loadstring` from the globals between pcall#1
-    and pcall#10** (after the initial script-compilation phase). Gone
-    thereafter.
-  - **No `setfenv` sandbox** — a chunk's env *is* the globals table (confirmed
-    at every measured point). The only "sandboxing" is that removal.
-  - **`Managers`** is an engine global (appears ~pcall#16). **`CLASS`** is
-    never engine-set (mod-loader-provided — our Enginseer sets it, as today).
-  - **Trampoline (PROVEN live):** a chunk injected at pcall#1 used the
-    engine's real `io.open` + `loadstring` to read, compile, and run staged
-    Lua → `OK`. **Engine-context is achievable via DLL injection.**
-  The probe hooks (detours on `lua_newstate`/`luaL_openlibs`/
-  `luaL_loadbuffer`/`lua_pcall`/`lua_setfenv`, read-only globals inspection)
-  remain as recon tooling; they are not the production path.
+- **Engine-context mechanism (proven).** A chunk injected at the first
+  `lua_pcall` (after `luaL_openlibs`, while `io`/`loadstring` are still in
+  globals) sees the engine's real facilities and can `io.open` + `loadstring`
+  staged Lua — validated end-to-end in the live game. The engine removes
+  `io`/`loadstring` from globals by ~pcall#10, so the trampoline runs in the
+  pcall#1 → pcall#10 window and captures them first. There is no `setfenv`
+  sandbox (a chunk's env *is* the globals table). **`Managers`** is an engine
+  global (appears late in boot); **`CLASS`** is never engine-set, so the
+  Enginseer sets it.
 - **Built (production trampoline + Enginseer v2).** The production trampoline
   is wired in `dllmain.c`: on the first `lua_pcall` (one-shot, before the
-  engine's pcall) it injects the proven Phase-4 chunk — set the two root
+  engine's pcall) it injects the proven chunk — set the two root
   globals (`MAGOS_ENGINSEER_PATH` + `MAGOS_MOD_PATH`), `io.open` the staged
   entry (`<MAGOS_ENGINSEER_PATH>/enginseer.lua`) → read → `loadstring` → run.
   The Enginseer Lua is **packaged with the runtime** (staged into
@@ -63,9 +51,8 @@ The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
   (the launcher sets it in the child env from `--mod-path`); if unset the
   chunk emits an empty `MAGOS_MOD_PATH` (mods won't load; the loader degrades
   gracefully). If `MAGOS_ENGINSEER_PATH` is unset the trampoline is SKIPPED
-  (logged) and the build degrades to the recon probes. The chunk template and
-  safety discipline (one-shot, stack-clean, `g_in_probe` guard) carry over
-  unchanged from the Phase-4 prototype that validated the mechanism.
+  (logged) and the game runs **vanilla**. The chunk template and game-safety
+  discipline (one-shot, stack-clean) are unchanged.
 - **Built + live-validated (Enginseer v2 — the full modding chain).** The
   Enginseer (`runtime/enginseer/enginseer.lua`, the runtime-staged entry) runs
   in engine-context at pcall#1, captures the engine's real
@@ -93,28 +80,20 @@ The DLL injected into Darktide. `DllMain` spawns a worker that: runs discovery
     + IO-watch re-root are offline-tested, live validation pending. See
     `docs/architecture/ENGINSEER-DMF.md` for the DMF integration + the IO
     re-rooting + the load timing.
-- **To build (the production shell):**
-  - **Status reporting** — report discovery results, Enginseer/DMF/mod load,
-    errors to the launcher (via the file-backed status channel).
 - **Bootstrap-only C helpers.** C functions are acceptable only at the
   bootstrap boundary (crossing from DLL injection into the Lua lifecycle) or
   for runtime-private plumbing (status/log) — never as Enginseer/DMF/mod-visible
   replacements for engine Lua facilities (`require`, `io`, …). See the
   compatibility section below.
 
-### `launcher/` — C injector + session host  *(injection built; session-host mode planned)*
+### `launcher/` — C injector  *(built)*
 
 This is **`magos_launcher.exe`** — the C injector (`runtime/launcher/`), the
-host process Darktide Magos invokes.
-
-The host process Darktide Magos invokes. `CreateProcess(Darktide.exe,
-SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
-`ResumeThread`. Sets `SteamAppId`/`SteamGameId`.
+host process Darktide Magos invokes. `CreateProcess(Darktide.exe, SUSPENDED)`
+→ inject `magos_shell.dll` → wait for `magos_hook_ready` → `ResumeThread` →
+exit. Sets `SteamAppId`/`SteamGameId`.
 
 - **Built:** injection + hook-ready handshake + Steam appID.
-- **To build (session-host mode):** stay alive after resume, relay the
-  shell's status to Darktide Magos via structured stdout, wait for Darktide
-  to exit, then exit. (Today the launcher exits after `ResumeThread`.)
 - **Interface (to Darktide Magos):** a **flag-based CLI**, where every setting
   follows **flag > env var > default**. `--game-binary` is the only required
   flag; the shell DLL + log file default next to the launcher exe.
@@ -133,8 +112,7 @@ SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
   (`SteamAppId`/`SteamGameId`, `MAGOS_ENGINSEER_PATH`, `DARKTIDE_MOD_PATH`,
   `MAGOS_ENGINSEER_LOG_FILE`, `MAGOS_ENGINSEER_LOG_LEVEL`) into the child env
   before `CreateProcess`, so the injected shell inherits them. `-h`/`--help`
-  prints the full table. Darktide Magos reads the launcher's stdout; the
-  shell→launcher channel is internal to the runtime.
+  prints the full table.
 
 ## Contracts
 
@@ -152,11 +130,6 @@ SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
   is a Darktide Magos artifact, but the **Enginseer reads it** (the loader — it
   is the mod loader); DMF does not. The runtime is the conduit; it does not
   compute the load order or resolve dependencies (that's Darktide Magos's job).
-- **Status:** the launcher relays the shell's status via stdout (launch
-  progress, mod-load outcome, errors, game exit). Game-update detection
-  (discovery mismatch) rides this channel.
-- **Lifecycle:** the launcher manages Darktide; exits on game exit; Darktide
-  Magos returns to the UI. Cancel = terminate the launcher.
 - **Platform:** Windows — Darktide Magos runs directly, Steam in the
   background. Linux — Steam → Darktide Magos (Proton, Darktide's compatdata)
   → launcher → Darktide, one prefix/context.
@@ -167,7 +140,7 @@ SUSPENDED)` → inject `magos_shell.dll` → wait for `magos_hook_ready` →
   `magos_discover_detail`); the panic boundary (`catch_unwind` at every
   `extern "C"` entry, `panic = "abort"` fail-safe).
 - **launcher ↔ shell:** the `magos_hook_ready` named-event handshake (hook
-  armed before `main`); the file-backed status channel (shell→launcher).
+  armed before `main`).
 
 ### Env-var contract (shell ↔ launcher ↔ mod-manager)
 
@@ -177,7 +150,7 @@ in the CLI table above; these are the *contract* the shell depends on.)
 
 | Env var | Set by | Read by | Meaning |
 | --- | --- | --- | --- |
-| `MAGOS_ENGINSEER_PATH` | launcher | shell trampoline + Enginseer entry | Enginseer dir — where `enginseer.lua` + its modules live (runtime-controlled; `<launcher-dir>\enginseer` by default). The trampoline joins it + `enginseer.lua` into the entry path; the entry's `bootstrap_load` roots its own module loads here. Unset ⇒ trampoline SKIPPED (degrades to recon probes / vanilla). |
+| `MAGOS_ENGINSEER_PATH` | launcher | shell trampoline + Enginseer entry | Enginseer dir — where `enginseer.lua` + its modules live (runtime-controlled; `<launcher-dir>\enginseer` by default). The trampoline joins it + `enginseer.lua` into the entry path; the entry's `bootstrap_load` roots its own module loads here. Unset ⇒ trampoline SKIPPED (logged) and the game runs **vanilla**. |
 | `DARKTIDE_MOD_PATH` | launcher (only when `--mod-path`/env configured) | shell trampoline + Enginseer | mod dir — where DMF + user mods + `mod_load_order.txt` live. The trampoline sets `MAGOS_MOD_PATH` from it; the loader/DMF/mods root here (`Mods.file.*`). Unset ⇒ empty `MAGOS_MOD_PATH` (mods won't load; vanilla). |
 | `MAGOS_ENGINSEER_LOG_FILE` | launcher | shell | shell log file path |
 | `MAGOS_ENGINSEER_LOG_LEVEL` | launcher | shell | shell log level (`error`/`warn`/`info`/`debug`/`trace`) |
@@ -190,15 +163,15 @@ The shell's C-side log is **`magos_enginseer.log`** (supersedes the old
 `<UTC ts> <LEVEL> <component>: <msg>` (e.g.
 `2026-06-25T13:01:07Z INFO  trampoline: @ pcall#1: OK`) and goes to both
 `OutputDebugString` and the log file. Level-filtered via
-`MAGOS_ENGINSEER_LOG_LEVEL` (default `info`; the probe recon runs at
-`debug`/`trace`). Default location is next to the launcher exe (resolved by the
+`MAGOS_ENGINSEER_LOG_LEVEL` (default `info`; crank to `debug`/`trace` for
+verbose detail). Default location is next to the launcher exe (resolved by the
 launcher from `--log-file`/`MAGOS_ENGINSEER_LOG_FILE`); the shell itself opens
 `MAGOS_ENGINSEER_LOG_FILE` if set, otherwise falls back to beside the game exe.
 
 **Log split to be aware of:** the Enginseer's Lua-side `print`/`__print` output
 (the `[Enginseer] …` lines) goes to the **engine's** print destination —
 Fatshark's console log (under Proton, the Proton/steam log) — **not** to
-`magos_enginseer.log`. `magos_enginseer.log` carries the C-side shell + probe +
+`magos_enginseer.log`. `magos_enginseer.log` carries the C-side shell +
 trampoline lines (including the trampoline's one-line `OK`/`FAIL` status, which
 is the reliable bootstrap validation).
 
@@ -232,7 +205,6 @@ The shell's C bootstrap is responsible for:
 
 - finding/capturing the live Lua state at the correct lifecycle point;
 - getting the staged runtime patch into that state without the bundle database;
-- reporting bootstrap/discovery/load status to the launcher;
 - handing off to staged Enginseer/DMF Lua in an engine-equivalent environment.
 
 After that handoff, Enginseer/DMF-visible surfaces such as `require`, `io`,
@@ -283,19 +255,6 @@ Magos preserves this behavior. `Mods.lua.io` is the engine-visible Lua `io` tabl
 or a behaviorally equivalent engine wrapper. A C/Win32 file API may exist for the
 bootstrap or runtime-private helpers, but not as the Enginseer/DMF-visible production
 replacement for Lua `io`.
-
-### Status channel (shell→launcher)
-
-The runtime must move status from the injected shell back to the launcher so the
-launcher can relay structured progress, mod-load outcomes, and errors to
-Darktide Magos over stdout. This internal shell→launcher mechanism is separate
-from the already-settled launcher→Darktide Magos stdout contract.
-
-For v1, the internal status channel is file-backed. The shell writes structured
-status records to a session-owned file; the launcher tails/reads that file and
-relays normalized events to Darktide Magos over stdout. The file-backed channel
-keeps the injected shell simple and leaves real-time control channels for future
-runtime-command work.
 
 ## Out of scope for the runtime
 
