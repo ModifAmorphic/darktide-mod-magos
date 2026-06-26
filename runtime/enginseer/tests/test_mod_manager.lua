@@ -504,6 +504,82 @@ return function(runner)
         runner.assert_truthy(logged[1]:find("mod 'boom' on_game_state_changed failed") ~= nil)
     end)
 
+    -- ModManager:destroy — provides the method DMF hooks (dmf_loader.lua:53) so
+    -- its unload-event hook attaches. destroy() fans on_unload out to each
+    -- loaded mod that has one, pcall-guarded so one failure doesn't stop the
+    -- rest (mirrors update/on_game_state_changed). Mirrors DML's
+    -- ModManager:destroy -> unload intent, minimal.
+    runner.register("mod_manager: destroy() calls on_unload on each loaded mod that has one (in order)", function()
+        local unloaded = {}
+        local sb = setup({ order = { "alpha", "beta" } })
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            return ({
+                dmf = mod_file("dmf", {
+                    init = function() end,
+                    on_unload = function(self) table.insert(unloaded, "dmf") end,
+                }),
+                alpha = mod_file("alpha", {
+                    init = function() end,
+                    on_unload = function(self) table.insert(unloaded, "alpha") end,
+                }),
+                beta = mod_file("beta", {
+                    init = function() end,
+                    on_unload = function(self) table.insert(unloaded, "beta") end,
+                }),
+            })[local_path]
+        end
+        local mm = new_loaded(sb)
+        mm:destroy()
+        runner.assert_eq({ "dmf", "alpha", "beta" }, unloaded,
+            "destroy() must call on_unload on every loaded mod that has one, in load order")
+    end)
+
+    runner.register("mod_manager: destroy() skips mods without on_unload (no error, not logged)", function()
+        local logged = {}
+        local sb = setup({ order = { "noul" } })
+        sb.__print = function(msg) table.insert(logged, msg) end
+        local dmf_unloaded = false
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            return ({
+                dmf = mod_file("dmf", {
+                    init = function() end,
+                    on_unload = function() dmf_unloaded = true end,
+                }),
+                noul = mod_file("noul", { init = function() end }),  -- no on_unload
+            })[local_path]
+        end
+        local mm = new_loaded(sb)
+        local ok, err = pcall(function() mm:destroy() end)
+        runner.assert_truthy(ok, "destroy() must not raise for mods without on_unload(): " .. tostring(err))
+        runner.assert_eq(0, #logged, "a missing on_unload must not be logged as a failure")
+        runner.assert_truthy(dmf_unloaded, "the mod with on_unload must still unload")
+    end)
+
+    runner.register("mod_manager: destroy() failure in one mod is logged, others still unload", function()
+        local logged = {}
+        local sb = setup({ order = { "boom", "good" } })
+        sb.__print = function(msg) table.insert(logged, msg) end
+        local good_unloaded = false
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            return ({
+                dmf = mod_file("dmf", { init = function() end, on_unload = function() end }),
+                boom = mod_file("boom", {
+                    init = function() end,
+                    on_unload = function() error("unload boom") end,
+                }),
+                good = mod_file("good", {
+                    init = function() end,
+                    on_unload = function() good_unloaded = true end,
+                }),
+            })[local_path]
+        end
+        local mm = new_loaded(sb)
+        mm:destroy()
+        runner.assert_truthy(good_unloaded, "good mod's on_unload must still run after boom's fails")
+        runner.assert_truthy(logged[1]:find("mod 'boom' on_unload failed") ~= nil,
+            "boom's on_unload failure must be logged with phase 'on_unload'")
+    end)
+
     -- DMF-as-first-mod + user-mod ordering: dmf's run() returns a plain
     -- singleton object (mirrors real dmf_mod_object — NOT a class); the user
     -- mod's run() calls the global new_mod() (which DMF's init() would have

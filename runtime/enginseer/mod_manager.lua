@@ -342,4 +342,28 @@ function ModManager:on_game_state_changed(status, state_name, state_object)
     end
 end
 
+-- ModManager:destroy — unload each loaded mod that opted into on_unload.
+--
+-- DMF hooks CLASS.ModManager.destroy (dmf_loader.lua:53) to fire its
+-- mods_unload_event when the mod manager is destroyed. Without a destroy()
+-- here, DMF can't attach that hook — it queues a delayed hook that never
+-- resolves (the live "[MOD][DMF][ERROR] (hook): trying to hook function or
+-- method that doesn't exist: [ModManager.destroy]"). With destroy() present,
+-- DMF's hook attaches; when destroy() is invoked (game shutdown), DMF's
+-- wrapped hook fires mods_unload_event FIRST, then this body unloads the mods.
+--
+-- For each loaded mod (entry.object non-nil) that has an on_unload callback,
+-- pcalls it. Mirrors the update/on_game_state_changed fault-isolation pattern
+-- via _call_mod: one bad mod's on_unload logs + doesn't stop the others. Mods
+-- without on_unload (the common case) are skipped silently — not a failure.
+-- Entries without an object (failed mods + DMF-driven mods whose run() returned
+-- nil) are skipped, as in update/on_game_state_changed.
+function ModManager:destroy()
+    for _, entry in ipairs(self._mods) do
+        if entry.object then
+            _call_mod(entry.object, "on_unload", entry.name, "on_unload")
+        end
+    end
+end
+
 return ModManager
