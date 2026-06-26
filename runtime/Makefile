@@ -10,6 +10,7 @@
 #
 # Usage (from runtime/):
 #   make build          # cross-compile the DLL + launcher (x86_64-pc-windows-gnu)
+#                       # + stage the Enginseer Lua into bin/enginseer/
 #   make check          # verify the DLL is a valid PE with a DllMain entry
 #   make test           # cargo test + C unit tests (wine) + Enginseer Lua tests
 #   make clean
@@ -40,6 +41,19 @@ MINHOOK_SRC := shell/vendor/minhook/src/buffer.c \
                shell/vendor/minhook/src/hde/hde64.c
 INCLUDES  := -I shell/include -I shell/vendor/minhook/include
 
+# The Enginseer Lua shipped WITH the runtime: the entry + its active modules.
+# This is the runtime-controlled root (MAGOS_ENGINSEER_PATH), staged next to
+# the launcher/DLL so the default `<launcher-dir>/enginseer/` resolves. The
+# v1 fallback (enginseer.v1.lua) + the tests/ harness are NOT runtime code.
+ENGINSEER_LUA := enginseer/enginseer.lua \
+                 enginseer/file.lua \
+                 enginseer/hook.lua \
+                 enginseer/class_patch.lua \
+                 enginseer/require_wrap.lua \
+                 enginseer/lifecycle.lua \
+                 enginseer/mod_manager.lua
+ENGINSEER_DIR := $(BIN)/enginseer
+
 # Rust std's Windows system-lib dependencies (mingw).
 RUST_SYS  := -lpsapi -lkernel32 -luser32 -lws2_32 -lbcrypt -luserenv -lntdll -lgcc
 
@@ -60,7 +74,7 @@ STUB_SHELL  := $(BIN)/stub_shell.dll
 TEST_EXES := $(BIN)/test_steam_env.exe $(BIN)/test_injection.exe \
              $(BIN)/test_config.exe $(BIN)/test_trampoline.exe
 
-.PHONY: all build dll launcher check test c-tests enginseer-test clean rust-staticlib
+.PHONY: all build dll launcher stage-enginseer check test c-tests enginseer-test clean rust-staticlib
 
 all: build
 
@@ -73,7 +87,7 @@ rust-staticlib: $(RUST_LIB)
 $(RUST_LIB): $(RUST_SRCS) discovery/Cargo.toml Cargo.toml Cargo.lock
 	$(CARGO) build --$(PROFILE) -p magos-discovery --target $(TARGET)
 
-build: dll launcher
+build: dll launcher stage-enginseer
 
 dll: $(DLL)
 $(DLL): $(RUST_LIB) $(SHELL_SRC) $(MINHOOK_SRC) shell/include/magos_discovery.h shell/include/trampoline.h | $(BIN)
@@ -85,6 +99,17 @@ $(DLL): $(RUST_LIB) $(SHELL_SRC) $(MINHOOK_SRC) shell/include/magos_discovery.h 
 launcher: $(LAUNCHER)
 $(LAUNCHER): launcher/src/launcher.c launcher/src/launcher.h | $(BIN)
 	$(CROSS_CC) -static-libgcc -O2 -o $@ launcher/src/launcher.c -lkernel32
+
+# Stage the active Enginseer Lua (entry + modules) into bin/enginseer/, next to
+# the launcher + DLL. This is the default <launcher-dir>/enginseer/ the launcher
+# publishes as MAGOS_ENGINSEER_PATH. Order-only-depends on $(ENGINSEER_DIR) so
+# the dir exists before cp writes into it (mirrors the $(BIN) idiom). The sources
+# are the real dependency so edits to a module re-stage on the next build.
+stage-enginseer: $(ENGINSEER_LUA) | $(ENGINSEER_DIR)
+	cp $(ENGINSEER_LUA) $(ENGINSEER_DIR)/
+
+$(ENGINSEER_DIR): | $(BIN)
+	mkdir -p $@
 
 check: $(DLL)
 	@echo "--- file type ---"; file $(DLL)
