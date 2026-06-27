@@ -9,37 +9,36 @@
 --     confirm Managers.mod assignment + the StateGame.update / GameStateMachine
 --     _change_state inner hooks install and fire.
 --
--- IMPORTANT: the bootstrap path exercises the REAL Mods.load_enginseer_module
--- (the dofile-style loader the entry exposes), NOT a mock. A fake mod_manager.lua
--- is staged at the Enginseer mock root that returns whatever the sandbox global
+-- IMPORTANT: the bootstrap path exercises the REAL Mods.load_module (the
+-- dofile-style loader the entry exposes), NOT a mock. A fake mod_manager.lua is
+-- staged at the loader mock root that returns whatever the sandbox global
 -- __FAKE_MOD_MANAGER points to at load time — so each test can drive the real
 -- loader -> real return value -> ModManager:new() path (the exact path the
 -- boolean-vs-value regression broke) by setting __FAKE_MOD_MANAGER, without
--- mocking the loader itself. (Regression: load_enginseer_module was aliased to
+-- mocking the loader itself. (Regression: load_module was aliased to
 -- bootstrap_load and returned true, so ModManager:new() raised "attempt to index
 -- local 'ModManager' (a boolean value)".)
 
 local mock = require("mock")
 
 return function(runner)
-    -- Build a sandbox with the REAL entry loaded (so Mods.load_enginseer_module
-    -- is the real dofile-style loader, not a mock). The entry also wires
-    -- hook/lifecycle/require-wrap; we clear the bootstrap hook it queues so each
-    -- test starts clean. A fake mod_manager.lua is staged at the Enginseer root
-    -- returning __FAKE_MOD_MANAGER, so the bootstrap tests drive the real
-    -- loader's return-value path by setting that global. The default is a benign
+    -- Build a sandbox with the REAL entry loaded (so Mods.load_module is the
+    -- real dofile-style loader, not a mock). The entry also wires hook/lifecycle/
+    -- require-wrap; we clear the bootstrap hook it queues so each test starts
+    -- clean. A fake mod_manager.lua is staged at the loader root returning
+    -- __FAKE_MOD_MANAGER, so the bootstrap tests drive the real loader's
+    -- return-value path by setting that global. The default is a benign
     -- ModManager; tests override it (or nil it out) per case.
     local function setup()
         local sb = mock.new_sandbox()
-        sb.MAGOS_ENGINSEER_PATH = mock.ENGINSEER_ROOT
+        sb.MOD_LOADER_DIR = mock.MOD_LOADER_ROOT
         sb.MAGOS_MOD_PATH = mock.MOD_ROOT
 
-        local files = mock.stage_enginseer()
-        -- Stage a fake loader at the Enginseer root. The real loader opens +
-        -- runs this when the bootstrap fires; it yields __FAKE_MOD_MANAGER
-        -- (set per-test) so the real return-value path is exercised, not
-        -- mocked over.
-        files[mock.ENGINSEER_ROOT .. "/mod_manager.lua"] = "return __FAKE_MOD_MANAGER"
+        local files = mock.stage_mod_loader()
+        -- Stage a fake loader at the loader root. The real loader opens + runs
+        -- this when the bootstrap fires; it yields __FAKE_MOD_MANAGER (set
+        -- per-test) so the real return-value path is exercised, not mocked over.
+        files[mock.MOD_LOADER_ROOT .. "/mod_manager.lua"] = "return __FAKE_MOD_MANAGER"
 
         sb.io = mock.make_io(files)
         sb.require = function() return {} end
@@ -51,7 +50,7 @@ return function(runner)
             end,
         }
 
-        mock.load_module("enginseer", sb)()
+        mock.load_module("init", sb)()
         -- The entry queues the bootstrap lifecycle hook; clear so each test
         -- starts from an empty deferred-hook queue.
         sb.Mods._deferred_hooks = {}
@@ -98,7 +97,7 @@ return function(runner)
         local sb = setup()
         sb.CLASS = setmetatable({}, { __index = function(_, k) return k end })
         sb.Mods.queue_deferred_hook("CLASS.BootStateRequireGameScripts._state_update",
-            function() end, "Enginseer")
+            function() end, "mod_loader")
         sb.Mods.flush_deferred_hooks()
         runner.assert_eq(1, #sb.Mods._deferred_hooks,
             "half-materialized path must stay queued, not error")
@@ -113,7 +112,7 @@ return function(runner)
             sb.Mods._deferred_hooks[1].func_name
         )
         runner.assert_type("function", sb.Mods._deferred_hooks[1].hook_func)
-        runner.assert_eq("Enginseer", sb.Mods._deferred_hooks[1].mod_name)
+        runner.assert_eq("mod_loader", sb.Mods._deferred_hooks[1].mod_name)
     end)
 
     runner.register("lifecycle: flush keeps the bootstrap hook queued until the target exists", function()

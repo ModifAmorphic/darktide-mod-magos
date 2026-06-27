@@ -1,6 +1,6 @@
--- test_mod_manager.lua — the loader driver (runtime/enginseer/mod_manager.lua).
+-- test_mod_manager.lua — the loader driver (enginseer/mod_loader/mod_manager.lua).
 --
--- The Enginseer IS the mod loader; ModManager is the driver class. These tests
+-- ModManager is the mod loader's driver class. These tests
 -- validate the driver's CONTRACT offline by mocking class, Mods.file.* (the
 -- order reader + .mod loader), and the mod objects themselves. They do NOT load
 -- real DMF or the real engine — that the load succeeds end-to-end against the

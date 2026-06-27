@@ -1,20 +1,21 @@
 /*
  * trampoline.h — pure helpers for the runtime trampoline.
  *
- * The trampoline chunk (set MAGOS_ENGINSEER_PATH + MAGOS_MOD_PATH -> io.open
- * the staged entry -> read -> loadstring -> run) is the proven engine-context
+ * The trampoline chunk (set MOD_LOADER_DIR + MAGOS_MOD_PATH -> io.open the
+ * staged entry -> read -> loadstring -> run) is the proven engine-context
  * mechanism (see dllmain.c's Phase-4 + production notes). The production path
  * uses TWO roots:
- *   - the Enginseer root (`enginseer_path`) — where enginseer.lua + its
- *     modules live (runtime-controlled; `<launcher-dir>\enginseer` by default);
+ *   - the mod loader root (`mod_loader_dir`) — where init.lua + its modules
+ *     live (runtime-controlled; self-located by the shell next to the DLL at
+ *     <dll-dir>\mod_loader);
  *   - the mod root (`mod_path`) — where DMF + user mods + mod_load_order live
  *     (user/mod-manager-controlled; optional — mods just won't load if unset).
- * The entry path is `<enginseer_path>\enginseer.lua`. trampoline_build_chunk
- * bakes all three into the chunk: it sets MAGOS_ENGINSEER_PATH from the
- * Enginseer root, MAGOS_MOD_PATH from the mod root (empty string if unset),
- * and opens the joined entry path. Kept separate from the hook-heavy
- * dllmain.c so the pure logic is unit-testable (compiled directly into the C
- * test exes, like launcher.c's testable seams).
+ * The entry path is `<mod_loader_dir>\init.lua`. trampoline_build_chunk bakes
+ * all three into the chunk: it sets MOD_LOADER_DIR from the mod loader root,
+ * MAGOS_MOD_PATH from the mod root (empty string if unset), and opens the
+ * joined entry path. Kept separate from the hook-heavy dllmain.c so the pure
+ * logic is unit-testable (compiled directly into the C test exes, like
+ * launcher.c's testable seams).
  */
 #ifndef MAGOS_TRAMPOLINE_H
 #define MAGOS_TRAMPOLINE_H
@@ -50,13 +51,13 @@ int trampoline_escape_path(const char *path, size_t path_len,
                            char *out, size_t out_cap);
 
 /*
- * Build the trampoline Lua chunk. Sets MAGOS_ENGINSEER_PATH from
- * `enginseer_path` (escaped) and MAGOS_MOD_PATH from `mod_path` (escaped, or
- * the empty string when `mod_path` is NULL/empty — the rite treats an empty
- * mod root as "no mods", gracefully), then opens + loads + runs `entry_path`
- * (escaped). The chunk:
+ * Build the trampoline Lua chunk. Sets MOD_LOADER_DIR from `mod_loader_dir`
+ * (escaped) and MAGOS_MOD_PATH from `mod_path` (escaped, or the empty string
+ * when `mod_path` is NULL/empty — the rite treats an empty mod root as "no
+ * mods", gracefully), then opens + loads + runs `entry_path` (escaped). The
+ * chunk:
  *
- *   MAGOS_ENGINSEER_PATH = "<enginseer_path>"
+ *   MOD_LOADER_DIR = "<mod_loader_dir>"
  *   MAGOS_MOD_PATH = "<mod_path>"
  *   local f, err = io.open("<entry_path>", "r")
  *   if not f then return "FAIL io.open: " .. tostring(err) end
@@ -67,20 +68,22 @@ int trampoline_escape_path(const char *path, size_t path_len,
  *   if not ok then return "FAIL run: " .. tostring(rerr) end
  *   return "OK"
  *
- * The two globals hand the roots to the Enginseer: MAGOS_ENGINSEER_PATH roots
- * its own module loads (bootstrap_load); MAGOS_MOD_PATH roots Mods.file.*
- * (DMF/mods/mod_load_order). (In the production call site `enginseer_path` is
- * also the prefix of `entry_path`, so it appears twice in the chunk — once as
- * the global, once inside the io.open path. That is intended.)
+ * The two globals hand the roots to the mod loader: MOD_LOADER_DIR roots its
+ * own module loads (bootstrap_load); MAGOS_MOD_PATH roots Mods.file.*
+ * (DMF/mods/mod_load_order). MOD_LOADER_DIR is an INTERNAL global set by the
+ * trampoline (not a user env var/flag). (In the production call site
+ * `mod_loader_dir` is also the prefix of `entry_path`, so it appears twice in
+ * the chunk — once as the global, once inside the io.open path. That is
+ * intended.)
  *
  * It returns a status string: "OK" if every step succeeded, else "FAIL <step>:
  * <err>" identifying which step broke. Writes the NUL-terminated chunk to `out`.
- * Returns the chunk length (excluding NUL), or -1 on a NULL arg (`enginseer_path`,
- * `entry_path`, or `out`), zero cap, empty `enginseer_path`, empty
- * `entry_path`, or overflow. (`mod_path` NULL/empty is NOT an error — it yields
- * the empty-string global.) Pure and side-effect-free.
+ * Returns the chunk length (excluding NUL), or -1 on a NULL arg
+ * (`mod_loader_dir`, `entry_path`, or `out`), zero cap, empty `mod_loader_dir`,
+ * empty `entry_path`, or overflow. (`mod_path` NULL/empty is NOT an error — it
+ * yields the empty-string global.) Pure and side-effect-free.
  */
-int trampoline_build_chunk(const char *enginseer_path, const char *mod_path,
+int trampoline_build_chunk(const char *mod_loader_dir, const char *mod_path,
                            const char *entry_path, char *out, size_t out_cap);
 
 #ifdef __cplusplus

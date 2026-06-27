@@ -1,6 +1,6 @@
 -- lifecycle.lua — the deferred-hook queue + the bootstrap lifecycle hook.
 --
--- The deferred mechanism bridges pcall#1 (where the Enginseer runs, before
+-- The deferred mechanism bridges pcall#1 (where the mod loader runs, before
 -- main.lua) to the engine's late boot (where the targets we need to hook
 -- finally appear). We can't hook Main.init — it's a plain-table method defined
 -- and invoked once during pcall#2, after we've already returned. Instead, the
@@ -13,7 +13,7 @@
 -- The bootstrap hook (Mods.install_lifecycle_hooks) mirrors DML's
 -- init_mod_framework: a deferred hook on
 -- CLASS.BootStateRequireGameScripts._state_update that runs AFTER the original
--- (which requires game scripts -> StateGame created), then loads the Enginseer's
+-- (which requires game scripts -> StateGame created), then loads the mod loader's
 -- mod_manager (the loader driver), assigns Managers.mod (whose :init() reads
 -- mod_load_order, prepends "dmf", and builds the _mods table — the SCAN), and
 -- installs the per-frame + state-change hooks. The LOAD itself (per-mod
@@ -44,7 +44,7 @@ Mods.queue_deferred_hook = function(func_name, hook_func, mod_name)
     table.insert(Mods._deferred_hooks, {
         func_name = func_name,
         hook_func = hook_func,
-        mod_name = mod_name or "Enginseer",
+        mod_name = mod_name or "mod_loader",
     })
 end
 
@@ -102,31 +102,31 @@ Mods.install_lifecycle_hooks = function()
             -- registers it in CLASS.
             local state_update_result = state_update_func(self, ...)
 
-            -- Everything below is Enginseer's bootstrap. Guard it so a failure
+            -- Everything below is the mod loader's bootstrap. Guard it so a failure
             -- (missing/mis-pathed mod_manager, ModManager:new() raising, an inner
             -- hook not resolving) degrades cleanly to vanilla + a log line instead
             -- of propagating through the engine's _state_update and crashing
             -- the game at boot. Always return the original's result regardless.
             local ok, err = pcall(function()
-                -- Load the loader driver (the Enginseer's mod loader).
-                -- mod_manager.lua is an Enginseer module, so it loads from the
-                -- Enginseer root (MAGOS_ENGINSEER_PATH) via
-                -- Mods.load_enginseer_module, NOT Mods.file.dofile (which is
-                -- mod-rooted). It must load here — not at the entry's
-                -- bootstrap_load — because it calls class("ModManager"), which
-                -- only exists after the class patch installs at boot (the
-                -- require-wrap), not at the entry's pcall#1. :init() reads
-                -- mod_load_order, prepends "dmf", and builds the _mods table
-                -- (the SCAN); it loads NO mod. The LOAD runs on the first
-                -- StateGame.update tick (the per-frame hook installed below),
-                -- where Managers.input exists. DMF/mods/mod_load_order root at
-                -- the MOD dir via Mods.file.* (MAGOS_MOD_PATH); _state reaches
-                -- "done" once the load completes.
+                -- Load the loader driver (the mod loader's mod manager).
+                -- mod_manager.lua is a loader module, so it loads from the
+                -- loader root (MOD_LOADER_DIR) via Mods.load_module, NOT
+                -- Mods.file.dofile (which is mod-rooted). It must load here —
+                -- not at the entry's bootstrap_load — because it calls
+                -- class("ModManager"), which only exists after the class patch
+                -- installs at boot (the require-wrap), not at the entry's
+                -- pcall#1. :init() reads mod_load_order, prepends "dmf", and
+                -- builds the _mods table (the SCAN); it loads NO mod. The LOAD
+                -- runs on the first StateGame.update tick (the per-frame hook
+                -- installed below), where Managers.input exists. DMF/mods/
+                -- mod_load_order root at the MOD dir via Mods.file.*
+                -- (MAGOS_MOD_PATH); _state reaches "done" once the load
+                -- completes.
                 -- LIVE-VALIDATE: the full load end-to-end (DMF init loads all
                 -- its Phase-1 + Phase-2 modules from the mod root; user mods'
                 -- run/init work with Managers.input ready) against the real
                 -- engine.
-                local ModManager = Mods.load_enginseer_module("mod_manager")
+                local ModManager = Mods.load_module("mod_manager")
                 Managers = Managers or {}
                 Managers.mod = Managers.mod or ModManager:new()
 
@@ -134,14 +134,14 @@ Mods.install_lifecycle_hooks = function()
                 -- frame. The FIRST tick runs the LOAD (Managers.mod:update
                 -- loads DMF + every user mod, then sets _state="done"); every
                 -- tick (including the first) pumps each loaded mod's update(dt).
-                Mods.hook.set("Enginseer", "CLASS.StateGame.update", function(func, self_obj, dt, ...)
+                Mods.hook.set("mod_loader", "CLASS.StateGame.update", function(func, self_obj, dt, ...)
                     Managers.mod:update(dt)
                     return func(self_obj, dt, ...)
                 end)
 
                 -- State-change hook on GameStateMachine: fan out enter/exit
                 -- events to mods (on_game_state_changed).
-                Mods.hook.set("Enginseer", "CLASS.GameStateMachine._change_state", function(func, self_obj, ...)
+                Mods.hook.set("mod_loader", "CLASS.GameStateMachine._change_state", function(func, self_obj, ...)
                     local old_state = self_obj._state
                     local old_state_name = old_state and self_obj:current_state_name()
                     if old_state_name then
@@ -160,10 +160,10 @@ Mods.install_lifecycle_hooks = function()
                 end)
             end)
             if not ok then
-                __print("[Enginseer] lifecycle bootstrap failed: " .. tostring(err))
+                __print("[mod_loader] lifecycle bootstrap failed: " .. tostring(err))
             end
             return state_update_result
         end,
-        "Enginseer"
+        "mod_loader"
     )
 end

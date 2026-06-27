@@ -9,11 +9,11 @@
 -- this tests/ dir) and loaded into a sandbox with mock.load_module.
 --
 -- TWO-ROOT MODEL (mirrors the production split the C trampoline sets up):
---   - Enginseer root  (MAGOS_ENGINSEER_PATH) — runtime-controlled; holds
---     enginseer.lua + its active modules. bootstrap_load roots here. The mock
---     default is mock.ENGINSEER_ROOT ("/enginseer"); mock.stage_enginseer()
---     builds the files map a test io mock serves for it.
---   - Mod root        (MAGOS_MOD_PATH) — user/mod-manager-controlled; holds
+--   - Loader root  (MOD_LOADER_DIR) — runtime-controlled, INTERNAL (trampoline-
+--     set); holds init.lua + its active modules. bootstrap_load roots here.
+--     The mock default is mock.MOD_LOADER_ROOT ("/mod_loader");
+--     mock.stage_mod_loader() builds the files map a test io mock serves for it.
+--   - Mod root     (MAGOS_MOD_PATH) — user/mod-manager-controlled; holds
 --     mod_load_order.txt + dmf/ + user mods. Mods.file.* roots here. The mock
 --     default is mock.MOD_ROOT ("/mods"); each test stages its own mods/DMF.
 
@@ -30,14 +30,14 @@ local tostring = tostring
 local M = {}
 
 -- The two mock roots (production split). Tests set these onto the sandbox as
--- MAGOS_ENGINSEER_PATH / MAGOS_MOD_PATH; the entry's bootstrap_load roots at
--- the Enginseer root, Mods.file.* at the mod root.
-M.ENGINSEER_ROOT = "/enginseer"
+-- MOD_LOADER_DIR / MAGOS_MOD_PATH; the entry's bootstrap_load roots at the
+-- loader root, Mods.file.* at the mod root.
+M.MOD_LOADER_ROOT = "/mod_loader"
 M.MOD_ROOT = "/mods"
 
--- The Enginseer's active modules (the entry bootstraps them in this order).
--- Excludes enginseer.v1.lua (fallback) + tests/ (harness) — neither is runtime.
-M.ENGINSEER_MODULES = { "file", "hook", "class_patch", "require_wrap", "lifecycle" }
+-- The loader's active modules (the entry bootstraps them in this order).
+-- Excludes init.v1.lua (fallback) + tests/ (harness) — neither is runtime.
+M.MOD_LOADER_MODULES = { "file", "hook", "class_patch", "require_wrap", "lifecycle" }
 
 -- stdlib globals every sandbox starts with (so the modules' locals like
 -- `local pairs = pairs` resolve).
@@ -168,22 +168,22 @@ function M.read_file(path)
     return data
 end
 
--- Read a module source from runtime/enginseer/<name>.lua.
+-- Read a module source from enginseer/mod_loader/<name>.lua.
 function M.read_module(name)
     return M.read_file(M.module_dir .. name .. ".lua")
 end
 
--- Build the Enginseer-root files map (the runtime-controlled root): enginseer.lua
--- + every active module, keyed at <ENGINSEER_ROOT>/<name>.lua. Mirrors the
--- deployment contract (bin/enginseer/) and what bootstrap_load expects to open.
--- A test merges this into its io-mock files map (and adds its own mod-root
--- files under MOD_ROOT for DMF/mods/mod_load_order).
-function M.stage_enginseer()
+-- Build the loader-root files map (the runtime-controlled root): init.lua +
+-- every active module, keyed at <MOD_LOADER_ROOT>/<name>.lua. Mirrors the
+-- deployment contract (bin/mod_loader/) and what bootstrap_load expects to
+-- open. A test merges this into its io-mock files map (and adds its own
+-- mod-root files under MOD_ROOT for DMF/mods/mod_load_order).
+function M.stage_mod_loader()
     local files = {}
-    for _, name in ipairs(M.ENGINSEER_MODULES) do
-        files[M.ENGINSEER_ROOT .. "/" .. name .. ".lua"] = M.read_module(name)
+    for _, name in ipairs(M.MOD_LOADER_MODULES) do
+        files[M.MOD_LOADER_ROOT .. "/" .. name .. ".lua"] = M.read_module(name)
     end
-    files[M.ENGINSEER_ROOT .. "/enginseer.lua"] = M.read_module("enginseer")
+    files[M.MOD_LOADER_ROOT .. "/init.lua"] = M.read_module("init")
     return files
 end
 

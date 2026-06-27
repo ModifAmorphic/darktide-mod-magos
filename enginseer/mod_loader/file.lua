@@ -2,7 +2,7 @@
 --
 -- Adapts DML's mods/base/function file IO helpers (read_or_execute, handle_io,
 -- get_file_path) but roots every path at MAGOS_MOD_PATH (set by the C trampoline
--- and captured into Mods._staging_base by the Enginseer entry) instead of
+-- and captured into Mods._staging_base by the mod loader entry) instead of
 -- DML's hardcoded "./../mods". Uses Mods.lua.io + Mods.lua.loadstring for all
 -- file access (the engine's real io/loadstring, captured before they're
 -- stripped from globals ~pcall#6).

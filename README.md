@@ -9,9 +9,10 @@ the game from Steam and it runs unmodified.
 
 Magos has two components:
 
-- **The Runtime (Enginseer)** — the injected mod loader + its launcher. Built,
-  and the production seed of this repo. See
-  [`runtime/README.md`](runtime/README.md) for build + developer details.
+- **Enginseer (runtime)** — the injected modding runtime + its launcher (the
+  runtime includes the mod loader that loads DMF + user mods). Built, and the
+  production seed of this repo. See
+  [`enginseer/README.md`](enginseer/README.md) for build + developer details.
 - **Mod Magos** — the mod-manager app (UI, staging, load order, profiles,
   dependency resolution). Planned, not yet built.
 
@@ -28,10 +29,10 @@ There are no releases yet. To get the runtime artifacts, download them from the
 
 1. Go to the **Actions** tab → **mingw-build** → the latest green run →
    **Artifacts** → **`magos-shell-mingw`**.
-2. That artifact contains the complete runtime:
+2. That artifact contains the complete Enginseer runtime:
    - `magos_launcher.exe` — the launcher/injector.
    - `magos_shell.dll` — the injected DLL.
-   - `enginseer/` — the Enginseer Lua (the mod loader).
+   - `mod_loader/` — the mod loader Lua (loaded by the shell at runtime).
 
 When laid out, your runtime directory should look like:
 
@@ -39,15 +40,17 @@ When laid out, your runtime directory should look like:
 <runtime-dir>/
   magos_launcher.exe
   magos_shell.dll
-  enginseer/
-    enginseer.lua
+  mod_loader/
+    init.lua
     file.lua, hook.lua, class_patch.lua, require_wrap.lua, lifecycle.lua, mod_manager.lua
 ```
 
 ### 2. Run it
 
 The launcher starts the game modded. The only required flag is the game binary;
-the shell DLL and Enginseer root default to next to the launcher exe:
+the shell DLL and mod loader root default to next to the launcher exe (the shell
+self-locates the mod loader from its own path), so you only point it at your
+mods:
 
 ```bat
 magos_launcher.exe --game-binary "C:\Path\To\Darktide.exe" --mod-path "C:\Path\To\mods"

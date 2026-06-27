@@ -1,33 +1,35 @@
-# Enginseer ↔ DMF — integration
+# mod_loader ↔ DMF — integration
 
 > **Audience:** a future dev (or the operator) who needs to understand and
-> maintain the integration between the Enginseer (aka the Mod Loader) and DMF
+> maintain the integration between the mod loader and DMF
 > (the Darktide Mod Framework). This is the dedicated reference for *how the
 > two fit together*, especially the IO re-rooting and the load timing.
 >
-> **Prereq reading:** `docs/architecture/RUNTIME.md` (the runtime architecture +
-> the engine-context mechanism + the deferred bootstrap), then this doc.
+> **Prereq reading:** `docs/architecture/ENGINSEER.md` (the Enginseer runtime
+> architecture + the engine-context mechanism + the deferred bootstrap), then
+> this doc.
 
 ## The core model: who loads what
 
-**The Enginseer IS the mod loader.** DMF is *just a mod* — a bag of helper APIs
+**The mod loader loads mods.** DMF is *just a mod* — a bag of helper APIs
 (hooks, options, keybinds, `new_mod`/`get_mod`, …) that other mods opt into.
-**DMF does not load mods; the Enginseer does.**
+**DMF does not load mods; the mod loader does.**
 
 This is the single most important thing to keep straight when reading either
 codebase. The community's old chain was:
 
 ```text
 patch_999 -> mod_loader  ->  DMF  ->  user mods
-              (loads mods)    (a mod)
+               (loads mods)    (a mod)
 ```
 
-Magos replaces `patch_999` + `mod_loader` with the Enginseer, but keeps DMF in
-exactly the same role — the first mod loaded, nothing more:
+Magos replaces `patch_999` + the community `mod_loader` with its own mod loader
+(shipped inside the Enginseer runtime), but keeps DMF in exactly the same role —
+the first mod loaded, nothing more:
 
 ```text
-DLL injection -> Enginseer (mod loader)  ->  DMF (mod #1)  ->  user mods
-                 (loads mods)               (a mod)
+DLL injection -> mod loader  ->  DMF (mod #1)  ->  user mods
+                 (loads mods)    (a mod)
 ```
 
 Concretely, the loader — not DMF — reads `mod_load_order.txt`, decides the order
@@ -37,32 +39,33 @@ own `dmf_mod_object` is driven by the loader like any other top-level mod object
 DMF then drives *its* registered user mods through its inner update loop (see
 [Two-level driving](#two-level-driving) below).
 
-### Two roots (runtime-controlled vs user-controlled)
+### Two roots (Enginseer-controlled vs user-controlled)
 
-The Enginseer and the mods live in **separate** directories, set as two globals
+The mod loader and the mods live in **separate** directories, set as two globals
 by the C trampoline before the entry opens:
 
-- **Enginseer root** (`MAGOS_ENGINSEER_PATH`, `--enginseer-path`; default
-  `<launcher-dir>\enginseer`) — runtime-controlled. Holds `enginseer.lua` + its
-  modules (`file`, `hook`, `class_patch`, `require_wrap`, `lifecycle`,
-  `mod_manager`). `make build` stages these into `runtime/bin/enginseer/`. The
-  entry's `bootstrap_load` (exposed as `Mods.load_enginseer_module`) roots here.
+- **Loader root** (`MOD_LOADER_DIR`; self-located by the shell from its own DLL
+  path as `<dll-dir>\mod_loader\`, set as an **internal** global — not an env
+  var/flag) — Enginseer-controlled. Holds `init.lua` + its modules (`file`,
+  `hook`, `class_patch`, `require_wrap`, `lifecycle`, `mod_manager`).
+  `make build` stages these into `bin/mod_loader/`. The entry's `bootstrap_load`
+  (exposed as `Mods.load_module`) roots here.
 - **Mod root** (`MAGOS_MOD_PATH`, from `--mod-path` / `DARKTIDE_MOD_PATH`;
   user/mod-manager-controlled) — holds DMF + user mods + `mod_load_order.txt`.
   `Mods.file.*` roots here (via `Mods._staging_base`). DMF and the mods never
-  live under the Enginseer root.
+  live under the loader root.
 
-So the loader's own code is runtime-owned (ships with the build), while the
-mods it loads are user-owned — the split keeps a DMF/mod update from requiring a
-runtime rebuild and vice versa.
+So the loader's own code is Enginseer-owned (ships with the build), while the
+mods it loads are user-owned — the split keeps a DMF/mod update from requiring an
+Enginseer rebuild and vice versa.
 
-## The loader (`runtime/enginseer/mod_manager.lua`)
+## The loader (`enginseer/mod_loader/mod_manager.lua`)
 
 The loader is the `ModManager` class (a `class("ModManager")`, loaded via
-`Mods.load_enginseer_module("mod_manager")` from the deferred bootstrap hook —
-see `lifecycle.lua`; `mod_manager.lua` is an Enginseer module, so it loads from
-the **Enginseer root** `MAGOS_ENGINSEER_PATH`, not the mod root). Loading is
-split across two entry points:
+`Mods.load_module("mod_manager")` from the deferred bootstrap hook —
+see `lifecycle.lua`; `mod_manager.lua` is a loader module, so it loads from the
+**loader root** `MOD_LOADER_DIR`, not the mod root). Loading is split across two
+entry points:
 
 - **`ModManager:init()`** — **SCAN only.** Read `mod_load_order.txt`
   (`Mods.file.read_content_to_table`), prepend `"dmf"`, and build the **entire**
@@ -85,7 +88,7 @@ That per-mod run+init ordering (inside the LOAD loop) is what makes DMF's
 **exactly once** — `"done"` — when the load completes, and is `nil` before that
 (DMF doesn't read any other value; nil-before-done is fine). The loader's own
 "have I loaded?" flag is the **separate** instance field `_mods_loaded`
-(Enginseer-internal; DMF never reads it). Clean separation: `_state` = DMF's,
+(loader-internal; DMF never reads it). Clean separation: `_state` = DMF's,
 written once; `_mods_loaded` = the loader's.
 
 `Managers.mod:update(dt)` and `Managers.mod:on_game_state_changed(status,
@@ -108,7 +111,7 @@ reads it (see [The `Managers.mod` shape contract](#the-managersmod-shape-contrac
 ### Fault isolation
 
 Every mod's `run()`/`init()`/`update()`/`on_game_state_changed()` is
-pcall-guarded. One bad mod logs (`[Enginseer] mod '<name>' <phase> failed: …`)
+pcall-guarded. One bad mod logs (`[mod_loader] mod '<name>' <phase> failed: …`)
 and the load continues to the next; a missing/unreadable `.mod` or a `.mod`
 without `run()` is logged and skipped. The whole bootstrap is itself wrapped in
 a pcall in `lifecycle.lua`, so a DMF/mod failure degrades to vanilla + a log
@@ -117,14 +120,14 @@ line, never a boot crash.
 ## Control flow
 
 Lua runs **single-threaded**; the engine drives it at fixed points — a state's
-`init()` once on entry, and `update(dt)` once per frame. The Enginseer attaches
+`init()` once on entry, and `update(dt)` once per frame. The mod loader attaches
 to two of those points and otherwise waits:
 
 ```text
 boot:
   BootStateRequireGameScripts._state_update  (hooked)
     -> original runs (requires game scripts -> StateGame registered)
-    -> Enginseer bootstrap:
+    -> loader bootstrap:
          load mod_manager, Managers.mod = ModManager:new()  -> init() SCANs
          install StateGame.update hook
          install GameStateMachine._change_state hook
@@ -152,12 +155,12 @@ Same thread, frame by frame. `_state` is the **loader↔DMF hand-off**: the load
 writes `"done"` once the load finishes; DMF reads it on a later frame and reacts.
 Nothing polls off-thread.
 
-## Surfaces the Enginseer provides for DMF/mods
+## Surfaces the mod loader provides for DMF/mods
 
 DMF expects the loader's surfaces to already exist when it loads (it is not a
-standalone guest). The Enginseer builds all of these in Lua at pcall#1 (entry
-`enginseer.lua`) and during the deferred boot. They are the **loader API**; the
-load logic is the loader **logic**.
+standalone guest). The mod loader builds all of these in Lua at pcall#1 (entry
+`init.lua`) and during the deferred boot. They are the **loader API**; the load
+logic is the loader **logic**.
 
 | Surface | Provided by | Purpose |
 | --- | --- | --- |
@@ -342,12 +345,12 @@ require-wrap + class-patch deferred-queue mechanism; LOAD runs on the first
 
 The full engine-context + deferral mechanism (the require-wrap, the class
 monkey-patch, the deferred-hook queue, the pcall#1 → boot bridge) is documented
-in `docs/architecture/RUNTIME.md` → "Engine-equivalent loader path" and the
+in `docs/architecture/ENGINSEER.md` → "Engine-equivalent loader path" and the
 shell/ subsection. The bootstrap hook body (in `lifecycle.lua`) is:
 
 1. call the original `_state_update` (requires game scripts → `StateGame`
    created and registered in `CLASS`);
-2. `Mods.load_enginseer_module("mod_manager")` →
+2. `Mods.load_module("mod_manager")` →
    `Managers.mod = ModManager:new()` → `init()` SCANs (reads `mod_load_order`,
    prepends `dmf`, builds `_mods`; installs the IO watch). **No mod loads here.**
 3. install `CLASS.StateGame.update` hook → drives `Managers.mod:update(dt)` —
@@ -357,15 +360,15 @@ shell/ subsection. The bootstrap hook body (in `lifecycle.lua`) is:
    `on_game_state_changed` enter/exit.
 
 DMF and the mods root at the **mod root** via `Mods.file.*` / `MAGOS_MOD_PATH`;
-the loader itself is an Enginseer module loaded from the Enginseer root.
+the loader itself is a loader module loaded from the loader root.
 
 Steps 2–4 are wrapped in a `pcall` so a bootstrap failure degrades to vanilla +
-a log line (`[Enginseer] lifecycle bootstrap failed: …`), never a boot crash.
+a log line (`[mod_loader] lifecycle bootstrap failed: …`), never a boot crash.
 
 ## Status
 
 **Live-validated to StateMainMenu (pre-fix).** The full chain runs in the real
-game: injection → trampoline `OK` at pcall#1 → Enginseer v2 loaded → class patch
+game: injection → trampoline `OK` at pcall#1 → the mod loader loads → class patch
 + deferred bootstrap fire at `BootStateRequireGameScripts._state_update` → the
 loader scans + loads DMF + the test mod → the test mod's hook fires in-game →
 the game reaches `StateMainMenu`. No crashes; one bad mod degrades cleanly.
@@ -383,18 +386,18 @@ engine/managers.
 at the **mod root** (gitignored — local only; for live validation it lives in a
 repo-root `mods/` dir pointed at by `--mod-path`). In production, the mod
 manager (Darktide Magos) will download DMF into the mod root and pass that path
-via `--mod-path`; the runtime side of the integration described here is
+via `--mod-path`; the Enginseer-runtime side of the integration described here is
 unchanged.
 
 ## References
 
-- `runtime/enginseer/mod_manager.lua` — the loader (`ModManager:init` scan +
+- `enginseer/mod_loader/mod_manager.lua` — the loader (`ModManager:init` scan +
   IO-watch install, `ModManager:update` load + per-frame drive), the DMF shape
   contract, `_adapt_dmf_io`, and `_install_dmf_io_watch`.
-- `runtime/enginseer/lifecycle.lua` — the deferred bootstrap hook.
-- `runtime/enginseer/{file,hook,class_patch,require_wrap}.lua` — the loader API.
-- `docs/architecture/RUNTIME.md` — the engine-context mechanism + the deferred
+- `enginseer/mod_loader/lifecycle.lua` — the deferred bootstrap hook.
+- `enginseer/mod_loader/{file,hook,class_patch,require_wrap}.lua` — the loader API.
+- `docs/architecture/ENGINSEER.md` — the engine-context mechanism + the deferred
   bootstrap bridge + the launcher/shell contracts.
 - `docs/reference/darktide-framework-analysis.md` — how the existing community
   toolchain (`patch_999` → `mod_loader` → DMF → mods) works; the loader
-  replicates the `mod_loader` role.
+  replicates the community `mod_loader` role.

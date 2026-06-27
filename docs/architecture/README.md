@@ -6,32 +6,31 @@ way for vanilla play (launch from Steam = the unmodified game).
 
 ## Component model
 
-- **The runtime (`runtime/`)** (built): the injected modding runtime + its
-  launcher. A Rust discovery pure-library + a C live-game shell, linked into
+- **Enginseer (runtime) (`enginseer/`)** (built): the injected modding runtime +
+  its launcher. A Rust discovery pure-library + a C live-game shell, linked into
   one DLL, delivered by `CreateRemoteThread`; the C shell stages the
-  **Enginseer (aka the Mod Loader)** — the runtime-controlled Lua loader that
-  loads DMF + user mods. See `docs/architecture/RUNTIME.md` for the full
-  subcomponent breakdown.
+  **mod loader** — the runtime-controlled Lua loader that loads DMF + user mods.
+  See `docs/architecture/ENGINSEER.md` for the full subcomponent breakdown.
 - **Darktide Magos — `mod-manager/`** (planned, not built): the user-facing app —
   staging-directory management, load order, profiles, dependency resolution,
   the "Launch Modded" button.
 - **DMF + user mods** (Lua, not our code): the Darktide-Mod-Framework Lua
-  files, preserved as-is; only the harness is replaced. Loaded by the Enginseer
+  files, preserved as-is; only the harness is replaced. Loaded by the mod loader
   at runtime, from the user-controlled mod root (`--mod-path`) — distinct from
-  the runtime-controlled Enginseer root (the two-path split; see
-  `docs/architecture/ENGINSEER-DMF.md`).
+  the Enginseer-controlled loader root (the two-path split; see
+  `docs/architecture/MOD_LOADER-DMF.md`).
 
-## The runtime — the Hybrid
+## The Enginseer runtime — the Hybrid
 
-the runtime is a **Hybrid**: a Rust pure-library for discovery + a C shell for
-everything that touches the live game, linked into one DLL. Each language is
-placed where its benefit holds:
+The Enginseer runtime is a **Hybrid**: a Rust pure-library for discovery + a C
+shell for everything that touches the live game, linked into one DLL. Each
+language is placed where its benefit holds:
 
-- **Rust discovery (`runtime/discovery/`)** — a pure library (no I/O, no global
+- **Rust discovery (`enginseer/discovery/`)** — a pure library (no I/O, no global
   state) that takes a PE image as `&[u8]` and returns the 16 LuaJIT function
   addresses. 100% safe Rust in core logic; offline-testable against a binary
   fixture. Compiled to a C-ABI staticlib.
-- **C shell (`runtime/shell/`)** — the injected DLL: `DllMain` worker, MinHook
+- **C shell (`enginseer/shell/`)** — the injected DLL: `DllMain` worker, MinHook
   on `lua_newstate`, the `lua_gettop` call, the C-ABI seam call into Rust. The
   irreducibly-unsafe live-game bits, where C's native ergonomics + domain
   track record apply.
@@ -43,7 +42,7 @@ The Rust↔C boundary is a tiny C-ABI surface: `magos_discover` /
 behind the `test-hooks` feature). It's held at the safety boundary — Rust owns
 stateless computation; C owns everything touching the live game. The shared
 contract is the `MagosAddressTable` struct (`#[repr(C)]`, mirrored in
-`runtime/shell/include/magos_discovery.h`) + return codes.
+`enginseer/shell/include/magos_discovery.h`) + return codes.
 
 ### Panic boundary
 
@@ -54,7 +53,7 @@ separate `panic-abort` profile is the fail-safe backstop. (`catch_unwind` and
 `panic=abort` are mutually exclusive per-build, so the unwind build links and
 the abort profile is a separate demonstration.)
 
-### Launcher flow (`runtime/launcher/`)
+### Launcher flow (`enginseer/launcher/`)
 
 `CreateProcess(Darktide.exe, CREATE_SUSPENDED)` → `VirtualAllocEx` +
 `WriteProcessMemory` (DLL path) → `CreateRemoteThread(LoadLibraryA, dllpath)`
@@ -92,7 +91,7 @@ static Stingray code).
   error path; synthetic-PE parsing).
 - **C** (`make test`, via wine): SteamAppId env-setting; CreateRemoteThread
   injection + hook-ready handshake + resume against a benign stub process.
-- **Enginseer Lua** (`make enginseer-test`, offline LuaJIT harness — no
+- **Mod loader Lua** (`make mod-loader-test`, offline LuaJIT harness — no
   game/wine): the loader + the deferred bootstrap, the IO re-rooting, the
   scan/load split, the `Managers.mod` surface.
 - **Live** (validated end-to-end on Linux/Proton): game reaches the main menu,
@@ -120,9 +119,10 @@ Windows (CI). Both gate on `cargo clippy --all-targets --features test-hooks --
 
 ## References
 
-- `docs/architecture/RUNTIME.md` — the runtime architecture: the subcomponents,
-  the Rust↔C seam, the launcher flow, the env-var contract, logging.
-- `docs/architecture/ENGINSEER-DMF.md` — the Enginseer↔DMF integration: the
+- `docs/architecture/ENGINSEER.md` — the Enginseer runtime architecture: the
+  subcomponents, the Rust↔C seam, the launcher flow, the env-var contract,
+  logging.
+- `docs/architecture/MOD_LOADER-DMF.md` — the mod_loader↔DMF integration: the
   loader, the IO re-rooting, the load timing, the two-path split.
 - `docs/reference/darktide-binary.md` — the validated game-binary constraints
   (addresses, struct offsets, sandboxed `_G`, discovery methodology).

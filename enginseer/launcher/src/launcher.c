@@ -18,12 +18,13 @@
  *
  * Configuration model: every setting is flag > env > default.
  *   --game-binary <path>    [MAGOS_ENGINSEER_GAME_BINARY]     REQUIRED
- *   --magos-shell <path>    [MAGOS_ENGINSEER_SHELL]           <launcher-dir>\magos_shell.dll
- *   --enginseer-path <dir>  [MAGOS_ENGINSEER_PATH]            <launcher-dir>\enginseer
  *   --mod-path <path>       [DARKTIDE_MOD_PATH]               (optional; trampoline skips if unset)
  *   --log-file <path>       [MAGOS_ENGINSEER_LOG_FILE]        <launcher-dir>\magos_enginseer.log
  *   --log-level <level>     [MAGOS_ENGINSEER_LOG_LEVEL]       info
  *   --steam-app-id <id>     [MAGOS_ENGINSEER_STEAM_APP_ID]    1361210
+ *
+ * The injected DLL is hardcoded to <launcher-dir>\magos_shell.dll (the shell
+ * self-locates the mod loader from its own path) — NOT configurable.
  *
  * Windows native: build with cl.exe or x86_64-w64-mingw32-gcc.
  * Proton: build the launcher for Windows (mingw) and run it under Wine inside
@@ -38,12 +39,9 @@
 #define MAGOS_DEFAULT_STEAM_APPID "1361210"
 #define MAGOS_DEFAULT_LOG_LEVEL   "info"
 #define MAGOS_DEFAULT_SHELL_NAME  "magos_shell.dll"
-#define MAGOS_DEFAULT_ENGINSEER_DIR "enginseer"
 #define MAGOS_DEFAULT_LOG_NAME    "magos_enginseer.log"
 
 #define ENV_GAME_BINARY  "MAGOS_ENGINSEER_GAME_BINARY"
-#define ENV_SHELL        "MAGOS_ENGINSEER_SHELL"
-#define ENV_ENGINSEER_PATH "MAGOS_ENGINSEER_PATH"
 #define ENV_MOD_PATH     "DARKTIDE_MOD_PATH"
 #define ENV_LOG_FILE     "MAGOS_ENGINSEER_LOG_FILE"
 #define ENV_LOG_LEVEL    "MAGOS_ENGINSEER_LOG_LEVEL"
@@ -241,8 +239,6 @@ kill:
  * per setting so a resolve never clobbers another setting mid-call. Reused
  * across resolve_config() calls — callers must copy out before re-resolving. */
 static char g_game_binary_buf[MAGOS_PATH_MAX];
-static char g_shell_buf[MAGOS_PATH_MAX];
-static char g_enginseer_path_buf[MAGOS_PATH_MAX];
 static char g_mod_path_buf[MAGOS_PATH_MAX];
 static char g_log_file_buf[MAGOS_PATH_MAX];
 static char g_log_level_buf[32];
@@ -298,8 +294,6 @@ MAGOS_INTERNAL int magos_parse_args(int argc, char **argv,
         if (strcmp(flag, "-h") == 0 || strcmp(flag, "--help") == 0) return -2;
 
         if      (strcmp(flag, "--game-binary")   == 0) target = &out->game_binary;
-        else if (strcmp(flag, "--magos-shell")   == 0) target = &out->magos_shell;
-        else if (strcmp(flag, "--enginseer-path")== 0) target = &out->enginseer_path;
         else if (strcmp(flag, "--mod-path")      == 0) target = &out->mod_path;
         else if (strcmp(flag, "--log-file")      == 0) target = &out->log_file;
         else if (strcmp(flag, "--log-level")     == 0) target = &out->log_level;
@@ -326,29 +320,6 @@ MAGOS_INTERNAL void magos_resolve_config(const magos_parsed_args *args,
         ? args->game_binary
         : (read_env(ENV_GAME_BINARY, g_game_binary_buf, sizeof(g_game_binary_buf))
               ? g_game_binary_buf : NULL);
-
-    /* magos_shell: default <launcher-dir>\magos_shell.dll */
-    if (args->magos_shell) {
-        cfg->magos_shell = args->magos_shell;
-    } else if (read_env(ENV_SHELL, g_shell_buf, sizeof(g_shell_buf))) {
-        cfg->magos_shell = g_shell_buf;
-    } else {
-        build_default_path(g_shell_buf, sizeof(g_shell_buf),
-                           MAGOS_DEFAULT_SHELL_NAME);
-        cfg->magos_shell = g_shell_buf;
-    }
-
-    /* enginseer_path: default <launcher-dir>\enginseer (the runtime-controlled
-     * root — enginseer.lua + its modules ship next to the launcher/DLL). */
-    if (args->enginseer_path) {
-        cfg->enginseer_path = args->enginseer_path;
-    } else if (read_env(ENV_ENGINSEER_PATH, g_enginseer_path_buf, sizeof(g_enginseer_path_buf))) {
-        cfg->enginseer_path = g_enginseer_path_buf;
-    } else {
-        build_default_path(g_enginseer_path_buf, sizeof(g_enginseer_path_buf),
-                           MAGOS_DEFAULT_ENGINSEER_DIR);
-        cfg->enginseer_path = g_enginseer_path_buf;
-    }
 
     /* mod_path: optional — NULL (unset) means the trampoline emits an empty
      * MAGOS_MOD_PATH (mods just won't load). */
@@ -401,12 +372,6 @@ static void print_usage(FILE *out, const char *prog) {
         "                         [env: MAGOS_ENGINSEER_GAME_BINARY]\n"
         "\n"
         "Optional:\n"
-        "  --magos-shell <path>   magos_shell.dll to inject\n"
-        "                         [env: MAGOS_ENGINSEER_SHELL]\n"
-        "                         [default: <launcher-dir>\\magos_shell.dll]\n"
-        "  --enginseer-path <dir> Enginseer dir (enginseer.lua + its modules)\n"
-        "                         [env: MAGOS_ENGINSEER_PATH]\n"
-        "                         [default: <launcher-dir>\\enginseer]\n"
         "  --mod-path <path>      staged mods dir; mods won't load if unset\n"
         "                         [env: DARKTIDE_MOD_PATH] [default: unset]\n"
         "  --log-file <path>      launcher/shell log file\n"
@@ -420,8 +385,10 @@ static void print_usage(FILE *out, const char *prog) {
         "\n"
         "  -h, --help             show this help and exit\n"
         "\n"
-        "<launcher-dir> is the directory of this exe (fall back to '.' if the\n"
-        "launcher path can't be resolved).\n",
+        "The injected DLL is hardcoded to <launcher-dir>\\magos_shell.dll (the\n"
+        "shell self-locates the mod loader from its own path); it is not\n"
+        "configurable. <launcher-dir> is the directory of this exe (fall back\n"
+        "to '.' if the launcher path can't be resolved).\n",
         prog);
 }
 
@@ -451,20 +418,23 @@ int main(int argc, char **argv) {
     }
 
     /* Publish the resolved config to the child env so CreateProcessA(NULL
-     * env) inherits it: Steam identity, shell logging, the Enginseer root, and
-     * the mod root. DARKTIDE_MOD_PATH is set only when configured — leaving it
-     * unset means the shell's trampoline emits an empty MAGOS_MOD_PATH (mods
-     * won't load, same as today). */
+     * env) inherits it: Steam identity + shell logging + the mod root.
+     * DARKTIDE_MOD_PATH is set only when configured — leaving it unset means
+     * the shell's trampoline emits an empty MAGOS_MOD_PATH (mods won't load).
+     * The shell self-locates the mod loader from its own DLL path, so no
+     * loader-path env var is published. */
     set_steam_env(cfg.steam_app_id);
     SetEnvironmentVariableA(ENV_LOG_FILE, cfg.log_file);
     SetEnvironmentVariableA(ENV_LOG_LEVEL, cfg.log_level);
-    SetEnvironmentVariableA(ENV_ENGINSEER_PATH, cfg.enginseer_path);
     if (cfg.mod_path) {
         SetEnvironmentVariableA(ENV_MOD_PATH, cfg.mod_path);
     }
 
-    /* Existence of game_binary + magos_shell is validated by the fail-fast
-     * pre-checks inside inject_and_resume. */
-    return inject_and_resume(cfg.game_binary, cfg.magos_shell, 60000);
+    /* The injected DLL is hardcoded next to the launcher. Existence of
+     * game_binary + the DLL is validated by the fail-fast pre-checks inside
+     * inject_and_resume. */
+    char dll_path[MAGOS_PATH_MAX];
+    build_default_path(dll_path, sizeof(dll_path), MAGOS_DEFAULT_SHELL_NAME);
+    return inject_and_resume(cfg.game_binary, dll_path, 60000);
 }
 #endif /* MAGOS_TEST_BUILD */

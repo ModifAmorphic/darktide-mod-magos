@@ -10,11 +10,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'runtime/**'
+      - 'enginseer/**'
   pull_request:
     branches: [main]
     paths:
-      - 'runtime/**'
+      - 'enginseer/**'
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: runtime
+        working-directory: enginseer
     steps:
       - uses: actions/checkout@v4
 
@@ -37,8 +37,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            runtime/target
-          key: msvc-${{ runner.os }}-${{ hashFiles('runtime/Cargo.lock') }}
+            enginseer/target
+          key: msvc-${{ runner.os }}-${{ hashFiles('enginseer/Cargo.lock') }}
 
       - name: Lint with clippy (deny warnings)
         run: cargo clippy --all-targets --features test-hooks -- -D warnings
@@ -130,5 +130,5 @@ jobs:
         with:
           name: magos-shell-msvc
           path: |
-            runtime/bin/magos_shell.dll
-            runtime/bin/magos_launcher.exe
+            enginseer/bin/magos_shell.dll
+            enginseer/bin/magos_launcher.exe
