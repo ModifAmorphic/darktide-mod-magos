@@ -44,7 +44,7 @@ Mods.queue_deferred_hook = function(func_name, hook_func, mod_name)
     table.insert(Mods._deferred_hooks, {
         func_name = func_name,
         hook_func = hook_func,
-        mod_name = mod_name or "Enginseer",
+        mod_name = mod_name or "mod_loader",
     })
 end
 
@@ -134,14 +134,14 @@ Mods.install_lifecycle_hooks = function()
                 -- frame. The FIRST tick runs the LOAD (Managers.mod:update
                 -- loads DMF + every user mod, then sets _state="done"); every
                 -- tick (including the first) pumps each loaded mod's update(dt).
-                Mods.hook.set("Enginseer", "CLASS.StateGame.update", function(func, self_obj, dt, ...)
+                Mods.hook.set("mod_loader", "CLASS.StateGame.update", function(func, self_obj, dt, ...)
                     Managers.mod:update(dt)
                     return func(self_obj, dt, ...)
                 end)
 
                 -- State-change hook on GameStateMachine: fan out enter/exit
                 -- events to mods (on_game_state_changed).
-                Mods.hook.set("Enginseer", "CLASS.GameStateMachine._change_state", function(func, self_obj, ...)
+                Mods.hook.set("mod_loader", "CLASS.GameStateMachine._change_state", function(func, self_obj, ...)
                     local old_state = self_obj._state
                     local old_state_name = old_state and self_obj:current_state_name()
                     if old_state_name then
@@ -164,6 +164,6 @@ Mods.install_lifecycle_hooks = function()
             end
             return state_update_result
         end,
-        "Enginseer"
+        "mod_loader"
     )
 end

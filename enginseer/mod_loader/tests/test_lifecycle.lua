@@ -97,7 +97,7 @@ return function(runner)
         local sb = setup()
         sb.CLASS = setmetatable({}, { __index = function(_, k) return k end })
         sb.Mods.queue_deferred_hook("CLASS.BootStateRequireGameScripts._state_update",
-            function() end, "Enginseer")
+            function() end, "mod_loader")
         sb.Mods.flush_deferred_hooks()
         runner.assert_eq(1, #sb.Mods._deferred_hooks,
             "half-materialized path must stay queued, not error")
@@ -112,7 +112,7 @@ return function(runner)
             sb.Mods._deferred_hooks[1].func_name
         )
         runner.assert_type("function", sb.Mods._deferred_hooks[1].hook_func)
-        runner.assert_eq("Enginseer", sb.Mods._deferred_hooks[1].mod_name)
+        runner.assert_eq("mod_loader", sb.Mods._deferred_hooks[1].mod_name)
     end)
 
     runner.register("lifecycle: flush keeps the bootstrap hook queued until the target exists", function()
