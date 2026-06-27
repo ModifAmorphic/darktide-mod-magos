@@ -1,7 +1,7 @@
--- mod_manager.lua — the Enginseer's mod loader (ModManager).
+-- mod_manager.lua — the mod loader's driver (ModManager).
 --
--- The Enginseer IS the mod loader. This module is the driver that, in the
--- deferred bootstrap hook (lifecycle.lua), reads the user's mod_load_order,
+-- This module is the mod loader's driver. In the
+-- deferred bootstrap hook (lifecycle.lua), it reads the user's mod_load_order,
 -- prepends "dmf" (DMF is just the first mod — a bag of helper APIs other mods
 -- opt into), and loads each mod: exec its `.mod` file, call its `run()`, and if
 -- it yields a mod object store it + call `object:init()`. DMF loads first; its
@@ -98,7 +98,7 @@ local function _call_mod(object, phase, name, method, ...)
     end
     local ok, err = pcall(fn, object, ...)
     if not ok then
-        _log(("[Enginseer] mod '%s' %s failed: %s"):format(name, phase, tostring(err)))
+        _log(("[mod_loader] mod '%s' %s failed: %s"):format(name, phase, tostring(err)))
         return false
     end
     return true
@@ -173,7 +173,7 @@ end
 -- _state is DMF's contract field; it is NOT set here — it's written once
 -- ("done") when the load completes (see update). nil before that is fine (DMF
 -- only reads _state == "done"). The loader's own "have I loaded?" flag is the
--- separate field _mods_loaded (Enginseer-internal; DMF never reads it).
+-- separate field _mods_loaded (loader-internal; DMF never reads it).
 --
 -- Also installs the one-shot DMF IO watch (see _install_dmf_io_watch) so the
 -- re-root lands mid-DMF-init when the LOAD eventually runs.
@@ -266,16 +266,16 @@ function ModManager:_load_mods()
         -- exec_with_return returns false/nil on missing file / parse error.
         local mod_data = Mods.file.exec_with_return(entry.name, entry.name, "mod")
         if not mod_data then
-            _log(("[Enginseer] mod '%s' load failed: .mod file missing or unreadable"):format(entry.name))
+            _log(("[mod_loader] mod '%s' load failed: .mod file missing or unreadable"):format(entry.name))
         elseif type(mod_data.run) ~= "function" then
-            _log(("[Enginseer] mod '%s' load failed: .mod has no run() function"):format(entry.name))
+            _log(("[mod_loader] mod '%s' load failed: .mod has no run() function"):format(entry.name))
         else
             -- run() yields the mod object. A run() error logs + skips this mod
             -- (must not abort the load). A successful nil return is the BENIGN
             -- DMF-managed case — see the object == nil branch below.
             local ok, object = pcall(mod_data.run)
             if not ok then
-                _log(("[Enginseer] mod '%s' run failed: %s"):format(entry.name, tostring(object)))
+                _log(("[mod_loader] mod '%s' run failed: %s"):format(entry.name, tostring(object)))
             elseif object == nil then
                 -- DMF-managed mod: run() registered the mod via new_mod() (the
                 -- typical DMF authoring pattern — call new_mod for its side
@@ -290,7 +290,7 @@ function ModManager:_load_mods()
                 -- _mods[_mod_load_index].id/.name/.handle during run()'s new_mod
                 -- call, and the scan-phase entry still resolves those.
                 entry.state = "dmf_driven"
-                _log(("[Enginseer] mod '%s' loaded (no top-level object; DMF-driven)"):format(entry.name))
+                _log(("[mod_loader] mod '%s' loaded (no top-level object; DMF-driven)"):format(entry.name))
             else
                 entry.object = object
                 entry.state = "running"

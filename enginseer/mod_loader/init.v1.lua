@@ -15,8 +15,8 @@ Mods.file = Mods.file or {}
 __print = print                       -- backup of the engine's print
 
 -- 2. Log success (using the engine's print, which is still available).
-print("[Enginseer] Mod Loader v1 — running in engine-context.")
-print("[Enginseer] Captured: require=" .. tostring(Mods.original_require)
+print("[mod_loader] Mod Loader v1 — running in engine-context.")
+print("[mod_loader] Captured: require=" .. tostring(Mods.original_require)
   .. " io=" .. tostring(Mods.lua.io)
   .. " loadstring=" .. tostring(Mods.lua.loadstring)
   .. " print=" .. tostring(__print))

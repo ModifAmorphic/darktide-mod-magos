@@ -51,7 +51,7 @@ Mods.install_require_wrap = function()
             end
         end
 
-        -- Deferred bridge (Enginseer-specific; not in DML).
+        -- Deferred bridge (loader-specific; not in DML).
         if Mods.install_class_patch then
             Mods.install_class_patch()
         end

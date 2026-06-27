@@ -1,7 +1,7 @@
--- runner.lua — Enginseer v2 offline LuaJIT test harness.
+-- runner.lua — mod loader offline LuaJIT test harness.
 --
 -- Test framework (register/run + assert_* helpers) + the entry point. Mirrors
--- the style of runtime/tests/test_runner.c: tests register by name, run in
+-- the style of enginseer/tests/test_runner.c: tests register by name, run in
 -- order, results print PASS/FAIL per test + a summary line, and the process
 -- exits non-zero on any failure.
 --

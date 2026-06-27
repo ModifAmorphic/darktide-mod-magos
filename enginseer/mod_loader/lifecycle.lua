@@ -1,6 +1,6 @@
 -- lifecycle.lua — the deferred-hook queue + the bootstrap lifecycle hook.
 --
--- The deferred mechanism bridges pcall#1 (where the Enginseer runs, before
+-- The deferred mechanism bridges pcall#1 (where the mod loader runs, before
 -- main.lua) to the engine's late boot (where the targets we need to hook
 -- finally appear). We can't hook Main.init — it's a plain-table method defined
 -- and invoked once during pcall#2, after we've already returned. Instead, the
@@ -13,7 +13,7 @@
 -- The bootstrap hook (Mods.install_lifecycle_hooks) mirrors DML's
 -- init_mod_framework: a deferred hook on
 -- CLASS.BootStateRequireGameScripts._state_update that runs AFTER the original
--- (which requires game scripts -> StateGame created), then loads the Enginseer's
+-- (which requires game scripts -> StateGame created), then loads the mod loader's
 -- mod_manager (the loader driver), assigns Managers.mod (whose :init() reads
 -- mod_load_order, prepends "dmf", and builds the _mods table — the SCAN), and
 -- installs the per-frame + state-change hooks. The LOAD itself (per-mod
@@ -102,7 +102,7 @@ Mods.install_lifecycle_hooks = function()
             -- registers it in CLASS.
             local state_update_result = state_update_func(self, ...)
 
-            -- Everything below is Enginseer's bootstrap. Guard it so a failure
+            -- Everything below is the mod loader's bootstrap. Guard it so a failure
             -- (missing/mis-pathed mod_manager, ModManager:new() raising, an inner
             -- hook not resolving) degrades cleanly to vanilla + a log line instead
             -- of propagating through the engine's _state_update and crashing
@@ -160,7 +160,7 @@ Mods.install_lifecycle_hooks = function()
                 end)
             end)
             if not ok then
-                __print("[Enginseer] lifecycle bootstrap failed: " .. tostring(err))
+                __print("[mod_loader] lifecycle bootstrap failed: " .. tostring(err))
             end
             return state_update_result
         end,

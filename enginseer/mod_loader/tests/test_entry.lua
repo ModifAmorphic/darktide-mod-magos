@@ -1,8 +1,8 @@
--- test_entry.lua — end-to-end smoke test of the Enginseer v2 entry.
+-- test_entry.lua — end-to-end smoke test of the mod loader entry.
 --
 -- Stages all 5 helper modules + the entry in an in-memory io map under the
--- Enginseer root (mirroring the deployment contract: <enginseer-root>/{file,hook,
--- class_patch,require_wrap,lifecycle,enginseer}.lua), with a SEPARATE mod root
+-- loader root (mirroring the deployment contract: <loader-root>/{file,hook,
+-- class_patch,require_wrap,lifecycle}.lua + init.lua), with a SEPARATE mod root
 -- holding DMF/mods/mod_load_order. Runs the entry in a sandbox and verifies it
 -- bootstraps every surface, wraps require, and queues the bootstrap lifecycle
 -- hook. The per-module contracts are covered by the other test files; this test
@@ -84,7 +84,7 @@ return function(runner)
         )
     end)
 
-    runner.register("entry: __print logs the v2 loaded message; mod root captured into _staging_base", function()
+    runner.register("entry: __print logs the loaded message; mod root captured into _staging_base", function()
         local sb = build()
         local logged = {}
         sb.__print = function(msg) table.insert(logged, msg) end
@@ -95,7 +95,7 @@ return function(runner)
         mock.load_module("init", sb)()
         runner.assert_truthy(#logged >= 1, "entry should log at least the v2-loaded line")
         -- _staging_base roots at the MOD root (Mods.file.* surface), NOT the
-        -- Enginseer root the entry's own modules load from.
+        -- loader root the entry's own modules load from.
         runner.assert_eq(mock.MOD_ROOT, sb.Mods._staging_base)
     end)
 
@@ -190,7 +190,7 @@ return function(runner)
         end
         sb.io = mock.make_io(files)
         sb.require = function() return {} end
-        sb.print = function() end  -- silence the entry's v2-loaded chatter
+        sb.print = function() end  -- silence the entry's loaded-message chatter
         mock.load_module("init", sb)()
         return sb
     end

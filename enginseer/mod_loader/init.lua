@@ -61,7 +61,7 @@ Mods.file = Mods.file or {}
 Mods._deferred_hooks = {}
 -- The MOD root (DMF + user mods + mod_load_order). Mods.file.* roots here
 -- (file.lua reads Mods._staging_base, falling back to MAGOS_MOD_PATH). Kept
--- distinct from the Enginseer root (below) so the loader's own modules load
+-- distinct from the loader root (below) so the loader's own modules load
 -- from the runtime root regardless of where mods are staged.
 Mods._staging_base = MAGOS_MOD_PATH
 __print = print
@@ -98,7 +98,7 @@ local function _load_module(name)
 
     local f, err = _io.open(path, "r")
     if not f then
-        __print("[Enginseer] FATAL: cannot open " .. path .. ": " .. tostring(err))
+        __print("[mod_loader] FATAL: cannot open " .. path .. ": " .. tostring(err))
         return false, nil
     end
     local data = f:read("*all")
@@ -106,14 +106,14 @@ local function _load_module(name)
 
     local fn, lerr = _loadstring(data, path)
     if not fn then
-        __print("[Enginseer] FATAL: cannot parse " .. path .. ": " .. tostring(lerr))
+        __print("[mod_loader] FATAL: cannot parse " .. path .. ": " .. tostring(lerr))
         return false, nil
     end
     setfenv(fn, getfenv(1))  -- share the entry's env with the loaded module
 
     local ok, rerr = _pcall(fn)
     if not ok then
-        __print("[Enginseer] FATAL: error running " .. path .. ": " .. tostring(rerr))
+        __print("[mod_loader] FATAL: error running " .. path .. ": " .. tostring(rerr))
         return false, nil
     end
     return true, rerr  -- rerr holds the chunk's return value on success
@@ -142,7 +142,7 @@ end
 local modules = { "file", "hook", "class_patch", "require_wrap", "lifecycle" }
 for _, mod in ipairs(modules) do
     if not bootstrap_load(mod) then
-        __print("[Enginseer] bootstrap aborted at module '" .. mod .. "'")
+        __print("[mod_loader] bootstrap aborted at module '" .. mod .. "'")
         return false
     end
 end
@@ -157,6 +157,6 @@ Mods.install_lifecycle_hooks()
 
 -- 5. Done. The class patch and bootstrap hook fire later, deferred via the
 -- require-wrap as main.lua executes.
-__print("[Enginseer] v2 loaded at pcall#1")
+__print("[mod_loader] loaded at pcall#1")
 Mods._v2_loaded = true
 return true
