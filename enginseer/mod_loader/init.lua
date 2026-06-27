@@ -1,22 +1,23 @@
--- enginseer.lua — Enginseer v2 (the Mod Loader) entry.
+-- init.lua — the mod loader entry.
 --
 -- Runs at pcall#1 in engine-context (injected by the runtime trampoline), BEFORE
 -- main.lua executes. Captures the engine's Lua facilities (before they're
 -- stripped from globals ~pcall#6), bootstrap-loads the helper modules from the
--- Enginseer root, wraps global require, and queues the bootstrap lifecycle hook.
+-- loader root, wraps global require, and queues the bootstrap lifecycle hook.
 -- The class patch + bootstrap hook fire LATER, deferred via the require-wrap as
 -- main.lua executes.
 --
 -- Two roots (set as globals by the C trampoline before opening this entry):
---   - MAGOS_ENGINSEER_PATH — the Enginseer dir (runtime-controlled). THIS file
---     + its helper modules (file/hook/class_patch/require_wrap/lifecycle +
---     mod_manager) live here. bootstrap_load roots here.
+--   - MOD_LOADER_DIR — the loader dir (runtime-controlled, INTERNAL — set by
+--     the trampoline, not a user env var/flag). THIS file + its helper modules
+--     (file/hook/class_patch/require_wrap/lifecycle + mod_manager) live here.
+--     bootstrap_load roots here.
 --   - MAGOS_MOD_PATH — the mod dir (user/mod-manager-controlled). DMF + user
 --     mods + mod_load_order live here. Mods.file.* roots here (via
 --     Mods._staging_base, set below).
 --
--- Supersedes enginseer.v1.lua (which only captured the stdlib into Mods). The
--- v1 file is kept alongside for recovery.
+-- Supersedes init.v1.lua (which only captured the stdlib into Mods). The v1
+-- file is kept alongside for recovery.
 --
 -- Module bootstrap order matters: file -> hook -> class_patch -> require_wrap
 -- -> lifecycle. Each module assumes its dependencies are already on Mods/_G.
@@ -65,9 +66,9 @@ Mods._deferred_hooks = {}
 Mods._staging_base = MAGOS_MOD_PATH
 __print = print
 
--- 2. Bootstrap-load the helper modules from the Enginseer root. We use io.open +
--- loadstring (NOT the engine's require) since these files live in the Enginseer
--- dir (runtime-controlled, via MAGOS_ENGINSEER_PATH), not the bundle search path
+-- 2. Bootstrap-load the helper modules from the loader root. We use io.open +
+-- loadstring (NOT the engine's require) since these files live in the loader
+-- dir (runtime-controlled, via MOD_LOADER_DIR), not the bundle search path
 -- or the mod dir. setfenv(fn, getfenv(1)) gives each loaded chunk the entry's
 -- env so the modules share _G with the entry (in production this is the
 -- engine's globals; in tests it's the test sandbox).
@@ -75,24 +76,24 @@ local _loadstring = loadstring
 local _io = io
 local _pcall = pcall
 
--- _load_enginseer_module — the shared dofile-style loader for Enginseer modules,
--- rooted at MAGOS_ENGINSEER_PATH. Reads + compiles + runs the chunk in the
--- entry's env (setfenv(fn, getfenv(1)) so modules share _G), then returns
--- (ok, result): ok is true/false, result is the chunk's return value on success
--- or nil on failure. Logs the FATAL line on open/parse/run failure so a
--- mis-staged module is diagnosable in the shell log.
+-- _load_module — the shared dofile-style loader for mod loader modules, rooted
+-- at MOD_LOADER_DIR. Reads + compiles + runs the chunk in the entry's env
+-- (setfenv(fn, getfenv(1)) so modules share _G), then returns (ok, result): ok
+-- is true/false, result is the chunk's return value on success or nil on
+-- failure. Logs the FATAL line on open/parse/run failure so a mis-staged module
+-- is diagnosable in the shell log.
 --
--- Two callers, two contracts (both rooted at the Enginseer root):
+-- Two callers, two contracts (both rooted at the loader root):
 --   - bootstrap_load(name) collapses to ok (true/false) — the entry's
 --     `if not bootstrap_load(mod)` loop depends on that boolean contract for the
 --     5 install-only modules (file/hook/class_patch/require_wrap/lifecycle).
---   - Mods.load_enginseer_module(name) returns the chunk's RESULT (dofile-style)
---     or nil on failure — lifecycle.lua does `local ModManager = Mods.
---     load_enginseer_module("mod_manager")` and mod_manager.lua ends in
+--   - Mods.load_module(name) returns the chunk's RESULT (dofile-style) or nil
+--     on failure — lifecycle.lua does `local ModManager = Mods.
+--     load_module("mod_manager")` and mod_manager.lua ends in
 --     `return ModManager`, so the loader MUST yield the class, not a boolean.
-local function _load_enginseer_module(name)
-    -- Forward-slash join: <MAGOS_ENGINSEER_PATH>/<name>.lua (works on Windows + Proton).
-    local base = MAGOS_ENGINSEER_PATH or ""
+local function _load_module(name)
+    -- Forward-slash join: <MOD_LOADER_DIR>/<name>.lua (works on Windows + Proton).
+    local base = MOD_LOADER_DIR or ""
     local path = base .. "/" .. name .. ".lua"
 
     local f, err = _io.open(path, "r")
@@ -122,18 +123,18 @@ end
 -- true on success, false on failure (open/parse/run). Used for the 5 helper
 -- modules the entry loads at pcall#1.
 local function bootstrap_load(name)
-    local ok = _load_enginseer_module(name)
+    local ok = _load_module(name)
     return ok
 end
 
 -- Expose a dofile-style loader so lifecycle.lua can load mod_manager from the
--- Enginseer root AFTER class() exists (mod_manager calls class("ModManager"),
+-- loader root AFTER class() exists (mod_manager calls class("ModManager"),
 -- which only appears once the class patch installs at boot — not at this entry's
 -- pcall#1). Returns the chunk's result (e.g. the ModManager class) on success or
 -- nil on failure — NOT a boolean, so `local ModManager = Mods.
--- load_enginseer_module("mod_manager")` yields the class for ModManager:new().
-Mods.load_enginseer_module = function(name)
-    local ok, result = _load_enginseer_module(name)
+-- load_module("mod_manager")` yields the class for ModManager:new().
+Mods.load_module = function(name)
+    local ok, result = _load_module(name)
     return ok and result or nil
 end
 

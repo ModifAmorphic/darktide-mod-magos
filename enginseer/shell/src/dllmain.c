@@ -80,9 +80,9 @@
  * This build proves it: on the FIRST lua_pcall (pcall #1) — one-shot — and
  * BEFORE calling g_orig_pcall (so it runs in the io-present window), inject a
  * trampoline chunk that does what patch_999's trampoline does (plus setting the
- * two root globals first so the Enginseer can root its own loads + Mods.file):
+ * two root globals first so the loader can root its own loads + Mods.file):
  *
- *   MAGOS_ENGINSEER_PATH = "<ENGINSEER_PATH>"
+ *   MOD_LOADER_DIR = "<MOD_LOADER_DIR>"
  *   MAGOS_MOD_PATH = "<MOD_PATH>"
  *   local f, err = io.open("<ENTRY_PATH>", "r")
  *   if not f then return "FAIL io.open: " .. tostring(err) end
@@ -93,14 +93,14 @@
  *   if not ok then return "FAIL run: " .. tostring(rerr) end
  *   return "OK"
  *
- * PRODUCTION PATH: <ENTRY_PATH> = <MAGOS_ENGINSEER_PATH>\enginseer.lua. The two
- * roots are read from the child env: MAGOS_ENGINSEER_PATH (the Enginseer dir —
- * runtime-controlled, REQUIRED; if unset the trampoline is SKIPPED, same as
- * today's unset behavior) and DARKTIDE_MOD_PATH (the mod dir — user/mod-manager-
- * controlled, OPTIONAL; mods just won't load if unset). The C side joins the
- * Enginseer dir + enginseer.lua into the entry path, bakes all three into the
- * chunk (luaL_loadbuffer + lua_pcall(0,1,0)), reads the returned status string
- * via lua_tolstring, and logs one line:
+ * PRODUCTION PATH: <ENTRY_PATH> = <dll-dir>\mod_loader\init.lua. The two roots:
+ * MOD_LOADER_DIR (the loader dir — runtime-controlled, self-located by the
+ * shell from its own DLL path, REQUIRED; if unresolvable the trampoline is
+ * SKIPPED) and DARKTIDE_MOD_PATH (the mod dir — user/mod-manager-controlled,
+ * OPTIONAL; mods just won't load if unset). The C side joins the DLL dir +
+ * mod_loader + init.lua into the entry path, bakes all three into the chunk
+ * (luaL_loadbuffer + lua_pcall(0,1,0)), reads the returned status string via
+ * lua_tolstring, and logs one line:
  *
  *   [trampoline] @ pcall#1: OK                       <- engine-context PROVEN
  *   [trampoline] @ pcall#1: FAIL io.open: <err>      <- io.open issue (path?)
@@ -144,9 +144,10 @@
  *
  * Out of scope: DMF bootstrap, multi-shot injection, mod-manager UI. Logging
  * goes to OutputDebugString + a log file (MAGOS_ENGINSEER_LOG_FILE env, or
- * magos_enginseer.log beside the game exe). The trampoline entry path comes from
- * MAGOS_ENGINSEER_PATH + enginseer.lua; if that env var is unset, the trampoline
- * is SKIPPED (logged) and the build degrades to the Phase-3 recon probes.
+ * magos_enginseer.log beside the game exe). The trampoline entry path is self-
+ * located from the DLL's own path (<dll-dir>\mod_loader\init.lua); if that path
+ * can't be resolved, the trampoline is SKIPPED (logged) and the build degrades
+ * to the Phase-3 recon probes.
  */
 #include <windows.h>
 #include <psapi.h>
@@ -196,6 +197,7 @@ static loadbuffer_t g_lua_loadbuffer = NULL;  /* direct (post-discovery) — fal
 static tolstring_t  g_lua_tolstring = NULL;   /* read the trampoline's status-string return */
 
 static uint8_t   *g_module_base = NULL;      /* Darktide.exe base */
+static HMODULE    g_hmodule = NULL;          /* this DLL's handle (self-locate mod_loader) */
 static FILE      *g_log = NULL;
 static lua_State *g_L = NULL;                /* the single captured VM */
 
@@ -223,17 +225,19 @@ static volatile int  g_chunk_done = 0;       /* one-shot: chunk-injection test p
  * engine's main thread, so these are only touched from that thread; the guard
  * is Interlocked anyway as the cheap Win32 one-shot idiom.
  *
- * Two roots (both read from the child env the launcher publishes):
- *   - ENGINSEER_DIR_ENV (MAGOS_ENGINSEER_PATH): the Enginseer dir — where
- *     enginseer.lua + its modules live. Runtime-controlled. REQUIRED: if unset,
- *     staging logs why and the trampoline is SKIPPED.
+ * Two roots:
+ *   - MOD_LOADER_DIRNAME (mod_loader): the loader dir — where init.lua + its
+ *     modules live. Runtime-controlled. SELF-LOCATED by the shell from its own
+ *     DLL path (<dll-dir>\mod_loader, where the DLL ships next to the
+ *     launcher). REQUIRED: if the DLL path can't be resolved, staging logs why
+ *     and the trampoline is SKIPPED.
  *   - MOD_PATH_ENV (DARKTIDE_MOD_PATH): the mod dir — where DMF + user mods +
  *     mod_load_order live. User/mod-manager-controlled. OPTIONAL: if unset, the
  *     chunk emits an empty MAGOS_MOD_PATH and mods just won't load.
- * The entry path = <ENGINSEER_DIR_ENV> + enginseer.lua (joined + baked below). */
-#define ENGINSEER_DIR_ENV    "MAGOS_ENGINSEER_PATH"  /* Enginseer dir (runtime-controlled; required) */
+ * The entry path = <dll-dir>\mod_loader\init.lua (joined + baked below). */
 #define MOD_PATH_ENV         "DARKTIDE_MOD_PATH"     /* mod root dir (user/mod-manager-controlled; optional) */
-#define ENGINSEER_ENTRY_FILENAME "enginseer.lua"     /* the Enginseer bootstrap entry (patch_999's mod_loader analogue) */
+#define MOD_LOADER_DIRNAME   "mod_loader"            /* the loader dir, self-located next to the DLL */
+#define MOD_LOADER_ENTRY     "init.lua"              /* the loader bootstrap entry (patch_999's mod_loader analogue) */
 static char            g_trampoline_chunk[4096];   /* NUL-terminated chunk; len 0 => not staged */
 static size_t          g_trampoline_chunk_len = 0;
 static volatile LONG   g_trampoline_done = 0;      /* one-shot: trampoline fired at pcall#1 */
@@ -718,42 +722,57 @@ static void probe_inject_chunk(lua_State *L, int call_num) {
 }
 
 /* ---- Production trampoline ----
- * See the file header's Phase-4 + production notes. The staging step reads the
- * Enginseer dir (required) + the mod dir (optional) from the child env, joins
- * the Enginseer dir + enginseer.lua into the entry path, and builds the chunk
- * once (worker startup); the run step executes it one-shot at pcall#1, BEFORE
- * g_orig_pcall, so it runs in the io/loadstring-present window (the engine
- * strips io/loadstring from globals between pcall #1 and #10). If the Enginseer
- * dir env var is unset, staging logs why and the run step logs SKIPPED at
- * pcall#1 — the build degrades to the recon probes. */
+ * See the file header's Phase-4 + production notes. The staging step self-
+ * locates the mod loader dir from this DLL's own path (<dll-dir>\mod_loader),
+ * reads the mod dir (optional) from the child env, joins the loader dir +
+ * init.lua into the entry path, and builds the chunk once (worker startup); the
+ * run step executes it one-shot at pcall#1, BEFORE g_orig_pcall, so it runs in
+ * the io/loadstring-present window (the engine strips io/loadstring from
+ * globals between pcall #1 and #10). If the loader dir can't be self-located,
+ * staging logs why and the run step logs SKIPPED at pcall#1 — the build
+ * degrades to the recon probes. */
 
 /*
- * Read the two roots, join the Enginseer dir + enginseer.lua into the entry
- * path, and build g_trampoline_chunk. The Enginseer dir (MAGOS_ENGINSEER_PATH)
- * is REQUIRED: on any failure (var unset/too long, join overflow, escape/
- * overflow) the chunk len stays 0 and trampoline_run will log SKIPPED. The mod
- * dir (DARKTIDE_MOD_PATH) is OPTIONAL: unset/too long is logged and treated as
- * unset (mod_path = NULL -> the chunk emits an empty MAGOS_MOD_PATH). Idempotent:
- * called once from the worker.
+ * Self-locate the mod loader dir, join it + init.lua into the entry path, and
+ * build g_trampoline_chunk. The loader dir is REQUIRED: on any failure (DLL
+ * path unreadable/too long, no dir separator, join overflow, escape/overflow)
+ * the chunk len stays 0 and trampoline_run will log SKIPPED. The mod dir
+ * (DARKTIDE_MOD_PATH) is OPTIONAL: unset/too long is logged and treated as
+ * unset (mod_path = NULL -> the chunk emits an empty MAGOS_MOD_PATH).
+ * Idempotent: called once from the worker.
  */
 static void trampoline_stage_chunk(void) {
-    /* Enginseer root (required). */
-    char enginseer_dir[1024];
-    DWORD eg = GetEnvironmentVariableA(ENGINSEER_DIR_ENV, enginseer_dir, sizeof(enginseer_dir));
-    if (eg == 0) {
-        DWORD e = GetLastError();
-        if (e == ERROR_ENVVAR_NOT_FOUND) {
-            magos_log(MAGOS_LOG_INFO, "trampoline", "%s not set; trampoline will be SKIPPED at pcall#1\n",
-                      ENGINSEER_DIR_ENV);
-        } else {
-            magos_log(MAGOS_LOG_INFO, "trampoline", "%s read error (lu=%lu); trampoline will be SKIPPED\n",
-                      ENGINSEER_DIR_ENV, e);
-        }
+    /* Mod loader root (self-located). The shell derives it from its own DLL
+     * path: the DLL ships next to the launcher, and mod_loader/ ships next to
+     * the DLL, so <dll-dir>\mod_loader is where init.lua + its modules live.
+     * On any failure the chunk len stays 0 and trampoline_run logs SKIPPED. */
+    char dll_path[1024];
+    DWORD dn = GetModuleFileNameA(g_hmodule, dll_path, sizeof(dll_path));
+    if (dn == 0) {
+        magos_log(MAGOS_LOG_INFO, "trampoline", "DLL self-path unreadable (lu=%lu); trampoline will be SKIPPED at pcall#1\n",
+                  GetLastError());
         return;
     }
-    if (eg >= sizeof(enginseer_dir)) {
-        magos_log(MAGOS_LOG_INFO, "trampoline", "%s too long (%lu chars, max %zu); trampoline will be SKIPPED\n",
-                  ENGINSEER_DIR_ENV, eg, sizeof(enginseer_dir) - 1);
+    if (dn >= sizeof(dll_path)) {
+        magos_log(MAGOS_LOG_INFO, "trampoline", "DLL self-path too long (%lu chars, max %zu); trampoline will be SKIPPED\n",
+                  dn, sizeof(dll_path) - 1);
+        return;
+    }
+    /* Strip the DLL filename at the last backslash -> the DLL directory. */
+    char *slash = strrchr(dll_path, '\\');
+    if (!slash) {
+        magos_log(MAGOS_LOG_INFO, "trampoline", "DLL self-path has no dir separator (%s); trampoline will be SKIPPED\n",
+                  dll_path);
+        return;
+    }
+    *slash = '\0';  /* dll_path is now the DLL directory */
+
+    /* <dll-dir>\mod_loader — the loader root. */
+    char mod_loader_dir[1024];
+    int jn = trampoline_join_path(dll_path, MOD_LOADER_DIRNAME,
+                                  mod_loader_dir, sizeof(mod_loader_dir));
+    if (jn < 0) {
+        magos_log(MAGOS_LOG_INFO, "trampoline", "dll-dir+mod_loader join failed (overflow); trampoline will be SKIPPED\n");
         return;
     }
 
@@ -775,24 +794,24 @@ static void trampoline_stage_chunk(void) {
         mod_path = mod_dir;
     }
 
-    /* Join <Enginseer dir> + enginseer.lua into the production entry path
+    /* Join <mod_loader_dir> + init.lua into the production entry path
      * (Windows-canonical: exactly one backslash separator, idempotent on a
      * trailing separator). */
     char path[1024];
-    int jn = trampoline_join_path(enginseer_dir, ENGINSEER_ENTRY_FILENAME, path, sizeof(path));
-    if (jn < 0) {
-        magos_log(MAGOS_LOG_INFO, "trampoline", "enginseer-path+entry join failed (overflow); trampoline will be SKIPPED\n");
+    int en = trampoline_join_path(mod_loader_dir, MOD_LOADER_ENTRY, path, sizeof(path));
+    if (en < 0) {
+        magos_log(MAGOS_LOG_INFO, "trampoline", "mod_loader+entry join failed (overflow); trampoline will be SKIPPED\n");
         return;
     }
 
-    int n = trampoline_build_chunk(enginseer_dir, mod_path, path,
+    int n = trampoline_build_chunk(mod_loader_dir, mod_path, path,
                                    g_trampoline_chunk, sizeof(g_trampoline_chunk));
     if (n < 0) {
         magos_log(MAGOS_LOG_INFO, "trampoline", "chunk build failed (escape/overflow); trampoline will be SKIPPED\n");
         return;
     }
     g_trampoline_chunk_len = (size_t)n;
-    magos_log(MAGOS_LOG_INFO, "trampoline", "%s=%s\n", ENGINSEER_DIR_ENV, enginseer_dir);
+    magos_log(MAGOS_LOG_INFO, "trampoline", "MOD_LOADER_DIR=%s\n", mod_loader_dir);
     if (mod_path) {
         magos_log(MAGOS_LOG_INFO, "trampoline", "%s=%s\n", MOD_PATH_ENV, mod_path);
     } else {
@@ -1158,13 +1177,13 @@ static DWORD WINAPI worker(LPVOID arg) {
               "(unknown C++ sig) — luaL_loadbuffer (its known-sig callee) is the proxy.\n",
               tbl.lua_resource_bytecode);
 
-    /* Production trampoline: stage the chunk from the two roots
-     * (MAGOS_ENGINSEER_PATH + DARKTIDE_MOD_PATH) now so it is ready to fire
-     * one-shot at pcall#1 (the hooks above are armed and the engine's first
-     * lua_pcall is imminent once the main thread resumes). */
+    /* Production trampoline: stage the chunk now (self-locating the mod loader
+     * dir from this DLL's path + reading DARKTIDE_MOD_PATH for the mod root) so
+     * it is ready to fire one-shot at pcall#1 (the hooks above are armed and
+     * the engine's first lua_pcall is imminent once the main thread resumes). */
     magos_log(MAGOS_LOG_DEBUG, "probe", "=== production trampoline ===\n");
-    magos_log(MAGOS_LOG_DEBUG, "probe", "fires one-shot at pcall#1 (before orig pcall); reads %s + %s + %s\n",
-              ENGINSEER_DIR_ENV, MOD_PATH_ENV, ENGINSEER_ENTRY_FILENAME);
+    magos_log(MAGOS_LOG_DEBUG, "probe", "fires one-shot at pcall#1 (before orig pcall); self-locates %s\\%s + reads %s\n",
+              MOD_LOADER_DIRNAME, MOD_LOADER_ENTRY, MOD_PATH_ENV);
     trampoline_stage_chunk();
 
     /* Production hook-ready handshake: signal the launcher that the hooks are
@@ -1188,8 +1207,9 @@ static DWORD WINAPI worker(LPVOID arg) {
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
-    (void)hinst; (void)reserved;
+    (void)reserved;
     if (reason == DLL_PROCESS_ATTACH) {
+        g_hmodule = hinst;  /* self-locate mod_loader from the DLL's own path */
         DisableThreadLibraryCalls(hinst);
         /* Run on a worker so DllMain returns promptly (the loader holds the
          * loader lock; discovery + hook install must not block on it). */

@@ -5,7 +5,7 @@
 -- order, results print PASS/FAIL per test + a summary line, and the process
 -- exits non-zero on any failure.
 --
--- Usage:  luajit runtime/enginseer/tests/runner.lua
+-- Usage:  luajit enginseer/mod_loader/tests/runner.lua
 --
 -- Each test_*.lua is a module that returns a function taking the runner; it
 -- registers its tests via runner.register inside that function.

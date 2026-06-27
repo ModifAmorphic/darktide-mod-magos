@@ -55,8 +55,8 @@ jobs:
       - name: Run C unit tests (via wine)
         run: make c-tests
 
-      - name: Run Enginseer Lua tests (LuaJIT)
-        run: make enginseer-test
+      - name: Run mod loader Lua tests (LuaJIT)
+        run: make mod-loader-test
 
       - name: Run host-side discovery tests (cargo test)
         env:
@@ -72,4 +72,4 @@ jobs:
           path: |
             enginseer/bin/magos_shell.dll
             enginseer/bin/magos_launcher.exe
-            enginseer/bin/enginseer/
+            enginseer/bin/mod_loader/

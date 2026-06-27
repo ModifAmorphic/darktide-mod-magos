@@ -10,7 +10,7 @@
 #
 # Usage (from enginseer/):
 #   make build          # cross-compile the DLL + launcher (x86_64-pc-windows-gnu)
-#                       # + stage the Enginseer Lua into bin/enginseer/
+#                       # + stage the mod loader Lua into bin/mod_loader/
 #   make check          # verify the DLL is a valid PE with a DllMain entry
 #   make test           # cargo test + C unit tests (wine) + Enginseer Lua tests
 #   make clean
@@ -41,18 +41,18 @@ MINHOOK_SRC := shell/vendor/minhook/src/buffer.c \
                shell/vendor/minhook/src/hde/hde64.c
 INCLUDES  := -I shell/include -I shell/vendor/minhook/include
 
-# The Enginseer Lua shipped WITH the runtime: the entry + its active modules.
-# This is the runtime-controlled root (MAGOS_ENGINSEER_PATH), staged next to
-# the launcher/DLL so the default `<launcher-dir>/enginseer/` resolves. The
-# v1 fallback (enginseer.v1.lua) + the tests/ harness are NOT runtime code.
-ENGINSEER_LUA := enginseer/enginseer.lua \
-                 enginseer/file.lua \
-                 enginseer/hook.lua \
-                 enginseer/class_patch.lua \
-                 enginseer/require_wrap.lua \
-                 enginseer/lifecycle.lua \
-                 enginseer/mod_manager.lua
-ENGINSEER_DIR := $(BIN)/enginseer
+# The mod loader Lua shipped WITH the runtime: the entry + its active modules.
+# This is the runtime-controlled root, staged next to the launcher/DLL so the
+# shell self-locates `<dll-dir>/mod_loader/` and opens init.lua. The v1 fallback
+# (init.v1.lua) + the tests/ harness are NOT runtime code.
+MOD_LOADER_LUA := mod_loader/init.lua \
+                  mod_loader/file.lua \
+                  mod_loader/hook.lua \
+                  mod_loader/class_patch.lua \
+                  mod_loader/require_wrap.lua \
+                  mod_loader/lifecycle.lua \
+                  mod_loader/mod_manager.lua
+MOD_LOADER_DIR := $(BIN)/mod_loader
 
 # Rust std's Windows system-lib dependencies (mingw).
 RUST_SYS  := -lpsapi -lkernel32 -luser32 -lws2_32 -lbcrypt -luserenv -lntdll -lgcc
@@ -74,7 +74,7 @@ STUB_SHELL  := $(BIN)/stub_shell.dll
 TEST_EXES := $(BIN)/test_steam_env.exe $(BIN)/test_injection.exe \
              $(BIN)/test_config.exe $(BIN)/test_trampoline.exe
 
-.PHONY: all build dll launcher stage-enginseer check test c-tests enginseer-test clean rust-staticlib
+.PHONY: all build dll launcher stage-mod_loader check test c-tests mod-loader-test clean rust-staticlib
 
 all: build
 
@@ -87,7 +87,7 @@ rust-staticlib: $(RUST_LIB)
 $(RUST_LIB): $(RUST_SRCS) discovery/Cargo.toml Cargo.toml Cargo.lock
 	$(CARGO) build --$(PROFILE) -p magos-discovery --target $(TARGET)
 
-build: dll launcher stage-enginseer
+build: dll launcher stage-mod_loader
 
 dll: $(DLL)
 $(DLL): $(RUST_LIB) $(SHELL_SRC) $(MINHOOK_SRC) shell/include/magos_discovery.h shell/include/trampoline.h | $(BIN)
@@ -100,15 +100,16 @@ launcher: $(LAUNCHER)
 $(LAUNCHER): launcher/src/launcher.c launcher/src/launcher.h | $(BIN)
 	$(CROSS_CC) -static-libgcc -O2 -o $@ launcher/src/launcher.c -lkernel32
 
-# Stage the active Enginseer Lua (entry + modules) into bin/enginseer/, next to
-# the launcher + DLL. This is the default <launcher-dir>/enginseer/ the launcher
-# publishes as MAGOS_ENGINSEER_PATH. Order-only-depends on $(ENGINSEER_DIR) so
-# the dir exists before cp writes into it (mirrors the $(BIN) idiom). The sources
-# are the real dependency so edits to a module re-stage on the next build.
-stage-enginseer: $(ENGINSEER_LUA) | $(ENGINSEER_DIR)
-	cp $(ENGINSEER_LUA) $(ENGINSEER_DIR)/
+# Stage the active mod loader Lua (entry + modules) into bin/mod_loader/, next to
+# the launcher + DLL. This is the dir the shell self-locates from its own DLL
+# path (<dll-dir>/mod_loader/, opened as <dll-dir>/mod_loader/init.lua). Order-
+# only-depends on $(MOD_LOADER_DIR) so the dir exists before cp writes into it
+# (mirrors the $(BIN) idiom). The sources are the real dependency so edits to a
+# module re-stage on the next build.
+stage-mod_loader: $(MOD_LOADER_LUA) | $(MOD_LOADER_DIR)
+	cp $(MOD_LOADER_LUA) $(MOD_LOADER_DIR)/
 
-$(ENGINSEER_DIR): | $(BIN)
+$(MOD_LOADER_DIR): | $(BIN)
 	mkdir -p $@
 
 check: $(DLL)
@@ -165,20 +166,20 @@ c-tests: $(TEST_EXES) $(STUB_TARGET) $(STUB_SHELL)
 	$(WINE) $(BIN)/test_config.exe
 	$(WINE) $(BIN)/test_trampoline.exe
 
-test: c-tests enginseer-test
+test: c-tests mod-loader-test
 	$(CARGO) test --features test-hooks -p magos-discovery
 
-# ---- Enginseer Lua tests (offline LuaJIT harness) ----
-# Runs the v2 Enginseer loader's offline test harness via luajit. Pure-Lua;
-# no game binary or wine needed. Wired into `test` (runs alongside the C +
-# Rust tests) AND kept as a standalone target for fast Lua-only iteration.
+# ---- mod loader Lua tests (offline LuaJIT harness) ----
+# Runs the v2 mod loader's offline test harness via luajit. Pure-Lua; no game
+# binary or wine needed. Wired into `test` (runs alongside the C + Rust tests)
+# AND kept as a standalone target for fast Lua-only iteration.
 # Requires /usr/bin/luajit (LuaJIT 2.1); if absent, the target fails clearly.
 LUAJIT ?= luajit
-ENGINSER_TESTS := enginseer/tests/runner.lua
+MOD_LOADER_TESTS := mod_loader/tests/runner.lua
 
-enginseer-test:
-	@echo "=== Enginseer Lua tests (LuaJIT) ==="
-	$(LUAJIT) $(ENGINSER_TESTS)
+mod-loader-test:
+	@echo "=== mod loader Lua tests (LuaJIT) ==="
+	$(LUAJIT) $(MOD_LOADER_TESTS)
 
 clean:
 	$(CARGO) clean

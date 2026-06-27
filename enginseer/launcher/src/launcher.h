@@ -16,14 +16,16 @@
  * Every setting follows the same precedence: flag > env > default.
  * See launcher.c for the full table of flags, env vars, and defaults.
  *
- * Pointers are owned by the resolver; values sourced from argv or string
- * literals are stable for the process lifetime, while env/default values
- * live in resolver-owned static buffers (valid until the next resolve).
+ * The injected DLL is NOT configurable here: it is hardcoded to
+ * <launcher-dir>\magos_shell.dll (the shell ships next to the launcher and
+ * self-locates the mod loader from its own DLL path). game_binary has no
+ * default (NULL if unresolved). Pointers are owned by the resolver; values
+ * sourced from argv or string literals are stable for the process lifetime,
+ * while env/default values live in resolver-owned static buffers (valid until
+ * the next resolve).
  */
 typedef struct {
     const char *game_binary;   /* required: no default (NULL if unresolved)  */
-    const char *magos_shell;   /* default: <launcher-dir>\magos_shell.dll   */
-    const char *enginseer_path;/* default: <launcher-dir>\enginseer         */
     const char *mod_path;      /* optional: NULL => trampoline skips        */
     const char *log_file;      /* default: <launcher-dir>\magos_enginseer.log */
     const char *log_level;     /* default: info                              */
@@ -37,8 +39,6 @@ typedef struct {
  */
 typedef struct {
     const char *game_binary;
-    const char *magos_shell;
-    const char *enginseer_path;
     const char *mod_path;
     const char *log_file;
     const char *log_level;

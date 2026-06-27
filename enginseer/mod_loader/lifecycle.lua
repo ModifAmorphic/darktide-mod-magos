@@ -108,25 +108,25 @@ Mods.install_lifecycle_hooks = function()
             -- of propagating through the engine's _state_update and crashing
             -- the game at boot. Always return the original's result regardless.
             local ok, err = pcall(function()
-                -- Load the loader driver (the Enginseer's mod loader).
-                -- mod_manager.lua is an Enginseer module, so it loads from the
-                -- Enginseer root (MAGOS_ENGINSEER_PATH) via
-                -- Mods.load_enginseer_module, NOT Mods.file.dofile (which is
-                -- mod-rooted). It must load here — not at the entry's
-                -- bootstrap_load — because it calls class("ModManager"), which
-                -- only exists after the class patch installs at boot (the
-                -- require-wrap), not at the entry's pcall#1. :init() reads
-                -- mod_load_order, prepends "dmf", and builds the _mods table
-                -- (the SCAN); it loads NO mod. The LOAD runs on the first
-                -- StateGame.update tick (the per-frame hook installed below),
-                -- where Managers.input exists. DMF/mods/mod_load_order root at
-                -- the MOD dir via Mods.file.* (MAGOS_MOD_PATH); _state reaches
-                -- "done" once the load completes.
+                -- Load the loader driver (the mod loader's mod manager).
+                -- mod_manager.lua is a loader module, so it loads from the
+                -- loader root (MOD_LOADER_DIR) via Mods.load_module, NOT
+                -- Mods.file.dofile (which is mod-rooted). It must load here —
+                -- not at the entry's bootstrap_load — because it calls
+                -- class("ModManager"), which only exists after the class patch
+                -- installs at boot (the require-wrap), not at the entry's
+                -- pcall#1. :init() reads mod_load_order, prepends "dmf", and
+                -- builds the _mods table (the SCAN); it loads NO mod. The LOAD
+                -- runs on the first StateGame.update tick (the per-frame hook
+                -- installed below), where Managers.input exists. DMF/mods/
+                -- mod_load_order root at the MOD dir via Mods.file.*
+                -- (MAGOS_MOD_PATH); _state reaches "done" once the load
+                -- completes.
                 -- LIVE-VALIDATE: the full load end-to-end (DMF init loads all
                 -- its Phase-1 + Phase-2 modules from the mod root; user mods'
                 -- run/init work with Managers.input ready) against the real
                 -- engine.
-                local ModManager = Mods.load_enginseer_module("mod_manager")
+                local ModManager = Mods.load_module("mod_manager")
                 Managers = Managers or {}
                 Managers.mod = Managers.mod or ModManager:new()
 

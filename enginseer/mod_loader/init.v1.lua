@@ -1,4 +1,4 @@
--- enginseer.lua — Enginseer (the Mod Loader) — minimal v1
+-- init.v1.lua — the mod loader — minimal v1 (legacy fallback)
 -- Runs at pcall#1 in engine-context (injected by the runtime trampoline).
 -- Captures the engine's real Lua facilities into the Mods table BEFORE
 -- the engine removes io/loadstring (~pcall#10).

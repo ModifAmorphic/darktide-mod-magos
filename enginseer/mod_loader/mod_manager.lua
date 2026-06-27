@@ -59,12 +59,12 @@
 -- whole init() — too late: Phase-2 had already used the stale method. See
 -- _adapt_dmf_io + _install_dmf_io_watch.
 --
--- Loaded via Mods.load_enginseer_module("mod_manager") (rooted at
--- MAGOS_ENGINSEER_PATH), NOT via the entry's bootstrap_load, because
--- `class("ModManager")` only exists after the class patch installs at boot time
--- (pcall#1's require-wrap), not at the entry's pcall#1. Runs in the real `_G`
--- env (loadstring chunk default), so the patched `class`, `Mods`, `CLASS`,
--- `__print`, `Managers` globals all resolve.
+-- Loaded via Mods.load_module("mod_manager") (rooted at MOD_LOADER_DIR), NOT
+-- via the entry's bootstrap_load, because `class("ModManager")` only exists
+-- after the class patch installs at boot time (pcall#1's require-wrap), not at
+-- the entry's pcall#1. Runs in the real `_G` env (loadstring chunk default), so
+-- the patched `class`, `Mods`, `CLASS`, `__print`, `Managers` globals all
+-- resolve.
 --
 -- LIVE-VALIDATE: the full load against the real engine — that DMF's Phase-1 AND
 -- Phase-2 modules load from the mod root, and that user mods' run()/init() work
