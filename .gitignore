@@ -82,10 +82,10 @@ _local/
 /**/target/
 **/*.rs.bk
 
-# Mixed-DLL build outputs (all build outputs land in runtime/bin/), launch
+# Mixed-DLL build outputs (all build outputs land in enginseer/bin/), launch
 # batch file. The global *.dll/*.exe/*.lib/*.o ignores already cover the
-# contents; the explicit /runtime/bin/ documents intent.
-/runtime/bin/
+# contents; the explicit /enginseer/bin/ documents intent.
+/enginseer/bin/
 /launch.bat
 *.obj
 

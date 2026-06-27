@@ -5,11 +5,11 @@ on:
   push:
     branches: [main, spike/001-component-a]
     paths:
-      - 'runtime/**'
+      - 'enginseer/**'
   pull_request:
     branches: [main, spike/001-component-a]
     paths:
-      - 'runtime/**'
+      - 'enginseer/**'
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: runtime
+        working-directory: enginseer
     steps:
       - uses: actions/checkout@v4
 
@@ -37,8 +37,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            runtime/target
-          key: mingw-${{ runner.os }}-${{ hashFiles('runtime/Cargo.lock') }}
+            enginseer/target
+          key: mingw-${{ runner.os }}-${{ hashFiles('enginseer/Cargo.lock') }}
 
       - name: Lint with clippy (deny warnings)
         run: cargo clippy --all-targets --features test-hooks -- -D warnings
@@ -70,6 +70,6 @@ jobs:
         with:
           name: magos-shell-mingw
           path: |
-            runtime/bin/magos_shell.dll
-            runtime/bin/magos_launcher.exe
-            runtime/bin/enginseer/
+            enginseer/bin/magos_shell.dll
+            enginseer/bin/magos_launcher.exe
+            enginseer/bin/enginseer/

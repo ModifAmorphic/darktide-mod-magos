@@ -4,11 +4,11 @@
 # -> one PE DLL (magos_shell.dll), plus the launcher exe. The MSVC-native build
 # runs in CI (.github/workflows/msvc.yml) on a Windows runner.
 #
-# This Makefile lives in runtime/, so every path below is relative to runtime/.
+# This Makefile lives in enginseer/, so every path below is relative to enginseer/.
 # ALL build outputs land in bin/ (gitignored); cargo's target/ also resolves
-# here (runtime/target/).
+# here (enginseer/target/).
 #
-# Usage (from runtime/):
+# Usage (from enginseer/):
 #   make build          # cross-compile the DLL + launcher (x86_64-pc-windows-gnu)
 #                       # + stage the Enginseer Lua into bin/enginseer/
 #   make check          # verify the DLL is a valid PE with a DllMain entry
