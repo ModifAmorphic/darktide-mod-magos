@@ -182,13 +182,15 @@ return function(runner)
         runner.assert_eq(1, mm._settings.log_level, "_settings defaults (log_level)")
     end)
 
-    runner.register("mod_manager: missing/empty mods.lst -> empty _mods, nothing loads, no crash", function()
-        -- The order file is AUTHORITATIVE; a missing/empty mods.lst means load
-        -- NOTHING (the new contract). Previously "missing -> DMF-only" because
-        -- of the prepend; now the `or {}` in init() turns read_content_to_table's
-        -- false return (handle_io's missing-file path) into an empty order, so
-        -- _mods stays empty and update() reaches _state="done" without loading
-        -- any mod. This is the intended graceful no-op.
+    runner.register("mod_manager: missing mods.lst -> empty _mods, nothing loads, no crash", function()
+        -- The order file is AUTHORITATIVE; a missing mods.lst means load NOTHING
+        -- (the new contract). Previously "missing -> DMF-only" because of the
+        -- prepend; now the `or {}` in init() turns read_content_to_table's false
+        -- return (handle_io's missing-file path) into an empty order, so _mods
+        -- stays empty and update() reaches _state="done" without loading any mod.
+        -- This is the intended graceful no-op. (The empty-file path — file
+        -- exists, zero entries — collapses through the same `or {}`; covered by
+        -- the next test.)
         local load_calls = {}
         local sb = setup({ missing_order = true })  -- read_content_to_table returns false
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
@@ -199,6 +201,32 @@ return function(runner)
         local mm = ModManager:new()
 
         runner.assert_eq(0, #mm._mods, "missing mods.lst -> empty _mods (nothing to load)")
+        runner.assert_eq(false, mm._mods_loaded, "_mods_loaded false after init")
+        runner.assert_nil(mm._state, "_state unset after init")
+
+        mm:update(0.016)  -- first tick: load (of nothing)
+
+        runner.assert_eq({}, load_calls, "no .mod load attempted with an empty order")
+        runner.assert_eq(true, mm._mods_loaded, "_mods_loaded still flips after the (empty) load")
+        runner.assert_eq("done", mm._state, "_state still reaches 'done' with no mods")
+        runner.assert_eq(0, #mm._mods, "_mods still empty after the load")
+    end)
+
+    runner.register("mod_manager: empty mods.lst (zero entries) -> empty _mods, nothing loads, no crash", function()
+        -- Companion to the missing-file test above: here mods.lst EXISTS but
+        -- lists zero entries (read_content_to_table returns {}). The same `or {}`
+        -- line passes the empty table through unchanged, so behavior is identical
+        -- to the missing case — empty _mods, no load attempted, _state="done".
+        local load_calls = {}
+        local sb = setup({ order = {} })  -- read_content_to_table returns {} (empty file)
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            table.insert(load_calls, local_path)
+            return nil
+        end
+        local ModManager = load_driver(sb)
+        local mm = ModManager:new()
+
+        runner.assert_eq(0, #mm._mods, "empty mods.lst -> empty _mods (nothing to load)")
         runner.assert_eq(false, mm._mods_loaded, "_mods_loaded false after init")
         runner.assert_nil(mm._state, "_state unset after init")
 
