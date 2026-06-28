@@ -12,7 +12,7 @@ from Steam = unmodified game).
 
 Architecture: a **Hybrid** — Enginseer (runtime): a Rust discovery pure-library
 (C-ABI staticlib) + a C live-game shell, linked into one DLL, delivered by
-`CreateRemoteThread`. Magos Modificus (the mod-manager app) is planned, not yet
+`CreateRemoteThread`. Magos Modificus (the mod manager app) is planned, not yet
 built. See `docs/architecture/` for the full architecture.
 
 ## Baseline (read before planning)
@@ -57,7 +57,7 @@ enginseer/          Enginseer (runtime) — the injected modding runtime + injec
                       Vendored DMF/test-mod/mods.lst live in a repo-root mods/
                       dir (gitignored — the mod root, pointed at by --mod-path).
   tests/            C unit tests (run via wine)
-mod-manager/        Magos Modificus — the mod manager app (not yet built; placeholder)
+magos-modificus/        Magos Modificus — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference
 .github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
 .gitignore          ignores enginseer/target, enginseer/bin, build artifacts, _local/
