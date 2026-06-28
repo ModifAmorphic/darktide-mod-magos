@@ -129,7 +129,7 @@ exit. Sets `SteamAppId`/`SteamGameId`.
   ships WITH the Enginseer runtime — `make build` stages it into `bin/mod_loader/`,
   deployed next to the launcher/DLL. The shell self-locates the loader root from
   its own DLL path (`<dll-dir>\mod_loader\`, set as the internal `MOD_LOADER_DIR`
-  global — not an env var/flag).   The **mod** root (`--mod-path` /
+  global — not an env var/flag). The **mod** root (`--mod-path` /
   `DARKTIDE_MOD_PATH`) is Darktide-Magos-controlled: it writes DMF, user mods,
   and `mods.lst` there; the trampoline sets `MAGOS_MOD_PATH` from it
   and the mod loader bootstraps DMF + mods from there. `mods.lst` is a
