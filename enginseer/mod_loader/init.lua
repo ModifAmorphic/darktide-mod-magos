@@ -13,7 +13,7 @@
 --     (file/hook/class_patch/require_wrap/lifecycle + mod_manager) live here.
 --     bootstrap_load roots here.
 --   - MAGOS_MOD_PATH — the mod dir (user/mod-manager-controlled). DMF + user
---     mods + mod_load_order live here. Mods.file.* roots here (via
+--     mods + mods.lst live here. Mods.file.* roots here (via
 --     Mods._staging_base, set below).
 --
 -- Supersedes init.v1.lua (which only captured the stdlib into Mods). The v1
@@ -59,7 +59,7 @@ Mods.lua.table = table
 Mods.lua.string = string
 Mods.file = Mods.file or {}
 Mods._deferred_hooks = {}
--- The MOD root (DMF + user mods + mod_load_order). Mods.file.* roots here
+-- The MOD root (DMF + user mods + mods.lst). Mods.file.* roots here
 -- (file.lua reads Mods._staging_base, falling back to MAGOS_MOD_PATH). Kept
 -- distinct from the loader root (below) so the loader's own modules load
 -- from the runtime root regardless of where mods are staged.

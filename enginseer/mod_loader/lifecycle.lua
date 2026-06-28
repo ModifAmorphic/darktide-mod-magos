@@ -15,7 +15,7 @@
 -- CLASS.BootStateRequireGameScripts._state_update that runs AFTER the original
 -- (which requires game scripts -> StateGame created), then loads the mod loader's
 -- mod_manager (the loader driver), assigns Managers.mod (whose :init() reads
--- mod_load_order, prepends "dmf", and builds the _mods table — the SCAN), and
+-- mods.lst and builds the _mods table — the SCAN), and
 -- installs the per-frame + state-change hooks. The LOAD itself (per-mod
 -- run()/init()) does NOT happen here: it is deferred to the first
 -- StateGame.update tick (driven by the per-frame hook below), where
@@ -115,11 +115,11 @@ Mods.install_lifecycle_hooks = function()
                 -- not at the entry's bootstrap_load — because it calls
                 -- class("ModManager"), which only exists after the class patch
                 -- installs at boot (the require-wrap), not at the entry's
-                -- pcall#1. :init() reads mod_load_order, prepends "dmf", and
-                -- builds the _mods table (the SCAN); it loads NO mod. The LOAD
-                -- runs on the first StateGame.update tick (the per-frame hook
-                -- installed below), where Managers.input exists. DMF/mods/
-                -- mod_load_order root at the MOD dir via Mods.file.*
+                -- pcall#1. :init() reads mods.lst and builds the _mods table
+                -- (the SCAN); it loads NO mod. The LOAD runs on the first
+                -- StateGame.update tick (the per-frame hook installed below),
+                -- where Managers.input exists. DMF/mods/mods.lst root at the
+                -- MOD dir via Mods.file.*
                 -- (MAGOS_MOD_PATH); _state reaches "done" once the load
                 -- completes.
                 -- LIVE-VALIDATE: the full load end-to-end (DMF init loads all

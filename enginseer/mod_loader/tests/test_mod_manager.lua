@@ -11,7 +11,8 @@
 -- most tests drive `:new()` (scan) then `:update(dt)` (load + drive).
 --
 -- Coverage (acceptance criteria from the spec):
---   - reads the order, prepends "dmf", and loads mods in order (dmf first);
+--   - reads the order (mods.lst) and loads exactly the listed mods in order
+--     (no injection — DMF is a normal first entry Magos writes);
 --   - per mod: run() -> object stored -> object:init() called BEFORE the next
 --     mod loads (verified with a sequence tracker);
 --   - _state is nil until the load completes, then "done" (DMF's contract field,
@@ -74,11 +75,13 @@ return function(runner)
 
         sb.Mods = { file = {} }
 
-        -- read_content_to_table returns the staged order (or nil to test the
-        -- missing-file path). Default: a 2-user-mod order.
+        -- read_content_to_table returns the staged order (or false to test the
+        -- missing-file path, which handle_io returns for an absent mods.lst).
+        -- Default: a 2-user-mod order.
         sb.Mods.file.read_content_to_table = function(path, ext)
-            runner.assert_eq("mod_load_order", path, "order read must target 'mod_load_order'")
-            runner.assert_eq("txt", ext, "order read must use 'txt' extension")
+            runner.assert_eq("mods", path, "order read must target 'mods'")
+            runner.assert_eq("lst", ext, "order read must use 'lst' extension")
+            if opts.missing_order then return false end  -- simulate missing mods.lst
             return opts.order ~= nil and opts.order or { "alpha", "beta" }
         end
 
@@ -167,21 +170,44 @@ return function(runner)
         runner.assert_eq({}, load_calls, "init must NOT call exec_with_return (scan only, no load)")
         runner.assert_eq(false, mm._mods_loaded, "_mods_loaded false after init")
         runner.assert_nil(mm._state, "_state must NOT be set by init")
-        runner.assert_eq(2, #mm._mods, "dmf + usermod scanned")
+        runner.assert_eq(1, #mm._mods, "exactly the listed mods scanned (no injection)")
         -- DMF-compat entry shape: id/name/handle match each entry's position +
         -- name (mirrors DML's _build_mod_table). DMF reads id/name/handle.
         runner.assert_eq(1, mm._mods[1].id)
-        runner.assert_eq("dmf", mm._mods[1].name)
-        runner.assert_eq("dmf", mm._mods[1].handle)
+        runner.assert_eq("usermod", mm._mods[1].name)
+        runner.assert_eq("usermod", mm._mods[1].handle)
         runner.assert_eq("not_loaded", mm._mods[1].state, "no mod loaded yet")
         runner.assert_nil(mm._mods[1].object)
-        runner.assert_eq(2, mm._mods[2].id)
-        runner.assert_eq("usermod", mm._mods[2].name)
-        runner.assert_eq("usermod", mm._mods[2].handle)
-        runner.assert_eq("not_loaded", mm._mods[2].state)
-        runner.assert_nil(mm._mods[2].object)
         runner.assert_eq(false, mm._settings.developer_mode, "_settings defaults (developer_mode)")
         runner.assert_eq(1, mm._settings.log_level, "_settings defaults (log_level)")
+    end)
+
+    runner.register("mod_manager: missing/empty mods.lst -> empty _mods, nothing loads, no crash", function()
+        -- The order file is AUTHORITATIVE; a missing/empty mods.lst means load
+        -- NOTHING (the new contract). Previously "missing -> DMF-only" because
+        -- of the prepend; now the `or {}` in init() turns read_content_to_table's
+        -- false return (handle_io's missing-file path) into an empty order, so
+        -- _mods stays empty and update() reaches _state="done" without loading
+        -- any mod. This is the intended graceful no-op.
+        local load_calls = {}
+        local sb = setup({ missing_order = true })  -- read_content_to_table returns false
+        sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
+            table.insert(load_calls, local_path)
+            return nil
+        end
+        local ModManager = load_driver(sb)
+        local mm = ModManager:new()
+
+        runner.assert_eq(0, #mm._mods, "missing mods.lst -> empty _mods (nothing to load)")
+        runner.assert_eq(false, mm._mods_loaded, "_mods_loaded false after init")
+        runner.assert_nil(mm._state, "_state unset after init")
+
+        mm:update(0.016)  -- first tick: load (of nothing)
+
+        runner.assert_eq({}, load_calls, "no .mod load attempted with an empty order")
+        runner.assert_eq(true, mm._mods_loaded, "_mods_loaded still flips after the (empty) load")
+        runner.assert_eq("done", mm._state, "_state still reaches 'done' with no mods")
+        runner.assert_eq(0, #mm._mods, "_mods still empty after the load")
     end)
 
     runner.register("mod_manager: _state nil after init, 'done' after first update (never set mid-load)", function()
@@ -189,7 +215,7 @@ return function(runner)
         -- completes. nil before/while loading is fine — DMF only reads "done".
         -- A DMF poll mid-load (e.g. during a mod's init) must NOT see "done".
         local state_done_during_load = false
-        local sb = setup({ order = {} })  -- dmf-only
+        local sb = setup({ order = { "dmf" } })  -- dmf loads (listed explicitly)
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return mod_file("dmf", {
                 init = function()
@@ -211,8 +237,11 @@ return function(runner)
         runner.assert_eq(true, mm._mods_loaded, "_mods_loaded true after the load")
     end)
 
-    runner.register("mod_manager: reads order, prepends 'dmf', loads dmf first", function()
-        local sb = setup({ order = { "usermod" } })
+    runner.register("mod_manager: reads order verbatim — loads exactly the listed mods in order (no injection)", function()
+        -- The order file is authoritative: the loader loads EXACTLY what's
+        -- listed, in the listed order. No injection — DMF appears here only
+        -- because Magos wrote it first; the loader treats it like any entry.
+        local sb = setup({ order = { "dmf", "usermod" } })
         local loaded = {}
         local dmf_object = { init = function() end }
         local user_object = { init = function() end }
@@ -226,7 +255,7 @@ return function(runner)
         local mm = new_loaded(sb)
 
         runner.assert_eq({ "dmf", "usermod" }, loaded,
-            "dmf must be prepended and loaded first, then user mods in order")
+            "loader loads exactly the listed mods in the listed order (no prepend)")
         runner.assert_eq(2, #mm._mods)
         runner.assert_eq(dmf_object, mm._mods[1].object)
         runner.assert_eq("running", mm._mods[1].state)
@@ -242,7 +271,6 @@ return function(runner)
         local sb = setup({ order = { "alpha", "beta" } })
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
-                dmf = mod_file("dmf", recording_mod("dmf", seq), seq),
                 alpha = mod_file("alpha", recording_mod("alpha", seq), seq),
                 beta = mod_file("beta", recording_mod("beta", seq), seq),
             })[local_path]
@@ -250,7 +278,6 @@ return function(runner)
         new_loaded(sb)
 
         runner.assert_eq({
-            "dmf:run", "dmf:init",
             "alpha:run", "alpha:init",
             "beta:run", "beta:init",
         }, seq, "each mod's run()+init() must complete before the next mod loads")
@@ -263,7 +290,6 @@ return function(runner)
         local good_init = 0
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
-                dmf = mod_file("dmf", { init = function() end }),
                 boom = mod_file("boom", nil, nil, true),  -- run() raises
                 good = mod_file("good", { init = function() good_init = good_init + 1 end }),
             })[local_path]
@@ -273,12 +299,12 @@ return function(runner)
         runner.assert_eq("done", mm._state, "load still reaches done despite a run() failure")
         -- Scan built every ordered mod's entry; boom's failed entry is retained
         -- (object == nil) so the indices of later mods stay stable.
-        runner.assert_eq(3, #mm._mods, "all ordered mods have entries; boom's failed entry is retained")
-        runner.assert_eq("boom", mm._mods[2].name)
-        runner.assert_nil(mm._mods[2].object, "boom's run() failed -> no object stored")
-        runner.assert_eq("not_loaded", mm._mods[2].state, "boom's entry stays 'not_loaded'")
-        runner.assert_eq("good", mm._mods[3].name)
-        runner.assert_truthy(mm._mods[3].object ~= nil, "the good mod after the failing one still stores its object")
+        runner.assert_eq(2, #mm._mods, "all ordered mods have entries; boom's failed entry is retained")
+        runner.assert_eq("boom", mm._mods[1].name)
+        runner.assert_nil(mm._mods[1].object, "boom's run() failed -> no object stored")
+        runner.assert_eq("not_loaded", mm._mods[1].state, "boom's entry stays 'not_loaded'")
+        runner.assert_eq("good", mm._mods[2].name)
+        runner.assert_truthy(mm._mods[2].object ~= nil, "the good mod after the failing one still stores its object")
         runner.assert_eq(1, good_init, "the good mod after the failing one still inits")
         runner.assert_truthy(#logged >= 1, "the run() failure must be logged")
         runner.assert_truthy(logged[1]:find("mod 'boom' run failed") ~= nil,
@@ -314,7 +340,6 @@ return function(runner)
         local later_init = 0
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
-                dmf = mod_file("dmf", { init = function() end }),
                 dmfmod = {
                     run = function()
                         -- Realistic DMF-mod convention: call new_mod for its
@@ -329,13 +354,13 @@ return function(runner)
         local mm = new_loaded(sb)
 
         runner.assert_eq("done", mm._state, "load reaches done despite the nil-return mod")
-        runner.assert_eq(3, #mm._mods, "all ordered mods have entries; dmfmod's entry retained")
-        runner.assert_eq("dmfmod", mm._mods[2].name)
-        runner.assert_nil(mm._mods[2].object, "DMF-driven mod has no top-level object")
-        runner.assert_eq("dmf_driven", mm._mods[2].state,
+        runner.assert_eq(2, #mm._mods, "all ordered mods have entries; dmfmod's entry retained")
+        runner.assert_eq("dmfmod", mm._mods[1].name)
+        runner.assert_nil(mm._mods[1].object, "DMF-driven mod has no top-level object")
+        runner.assert_eq("dmf_driven", mm._mods[1].state,
             "DMF-driven mod is marked 'dmf_driven' (loaded), distinct from a failed/missing 'not_loaded' entry")
-        runner.assert_eq("later", mm._mods[3].name)
-        runner.assert_truthy(mm._mods[3].object ~= nil, "a mod after the nil-return mod still loads")
+        runner.assert_eq("later", mm._mods[2].name)
+        runner.assert_truthy(mm._mods[2].object ~= nil, "a mod after the nil-return mod still loads")
         runner.assert_eq(1, later_init, "the later mod still inits")
         runner.assert_eq("dmfmod", handle_during_run,
             "DMF's new_mod must read _mods[_mod_load_index].handle during the nil-return mod's run()")
@@ -357,7 +382,6 @@ return function(runner)
         sb.__print = function(msg) table.insert(logged, msg) end
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
-                dmf = mod_file("dmf", { init = function() end }),
                 boom = mod_file("boom", recording_mod("boom", {}, "init")),
                 good = mod_file("good", { init = function() end }),
             })[local_path]
@@ -367,11 +391,11 @@ return function(runner)
         -- boom's run() succeeded -> it's stored (object kept); only its init()
         -- failed. It stays in _mods (object retained) but the load continues.
         runner.assert_eq("done", mm._state, "load reaches done despite an init() failure")
-        runner.assert_eq(3, #mm._mods, "dmf + boom + good all stored (run succeeded)")
-        runner.assert_eq("boom", mm._mods[2].name)
-        runner.assert_truthy(mm._mods[2].object ~= nil,
+        runner.assert_eq(2, #mm._mods, "boom + good both stored (run succeeded)")
+        runner.assert_eq("boom", mm._mods[1].name)
+        runner.assert_truthy(mm._mods[1].object ~= nil,
             "boom's run() succeeded -> object retained (only init failed)")
-        runner.assert_eq("good", mm._mods[3].name, "the good mod after the failing one still loaded")
+        runner.assert_eq("good", mm._mods[2].name, "the good mod after the failing one still loaded")
         runner.assert_truthy(logged[1]:find("mod 'boom' init failed") ~= nil,
             "log line must name the failing mod + 'init' phase")
     end)
@@ -383,25 +407,24 @@ return function(runner)
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             if local_path == "ghost" then return nil end
             return ({
-                dmf = mod_file("dmf", { init = function() end }),
                 real = mod_file("real", { init = function() end }),
             })[local_path]
         end
         local mm = new_loaded(sb)
 
         runner.assert_eq("done", mm._state)
-        runner.assert_eq(3, #mm._mods, "all ordered mods have entries; ghost's entry retained (no object)")
-        runner.assert_eq("ghost", mm._mods[2].name)
-        runner.assert_nil(mm._mods[2].object, "ghost has no .mod -> no object stored")
-        runner.assert_eq("real", mm._mods[3].name)
-        runner.assert_truthy(mm._mods[3].object ~= nil, "real's object stored")
+        runner.assert_eq(2, #mm._mods, "all ordered mods have entries; ghost's entry retained (no object)")
+        runner.assert_eq("ghost", mm._mods[1].name)
+        runner.assert_nil(mm._mods[1].object, "ghost has no .mod -> no object stored")
+        runner.assert_eq("real", mm._mods[2].name)
+        runner.assert_truthy(mm._mods[2].object ~= nil, "real's object stored")
         runner.assert_truthy(logged[1]:find("mod 'ghost'") ~= nil,
             "missing .mod must be logged naming the mod")
     end)
 
     runner.register("mod_manager: update(dt) calls each loaded mod's update with dt", function()
         local calls = {}
-        local sb = setup({ order = {} })
+        local sb = setup({ order = { "dmf" } })
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
                 dmf = mod_file("dmf", { update = function(self, dt) table.insert(calls, { "dmf", dt }) end }),
@@ -420,7 +443,7 @@ return function(runner)
 
     runner.register("mod_manager: update skips mods without an update() (no error)", function()
         local logged = {}
-        local sb = setup({ order = {} })
+        local sb = setup({ order = { "dmf" } })
         sb.__print = function(msg) table.insert(logged, msg) end
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return mod_file("dmf", { init = function() end })  -- no update()
@@ -440,7 +463,6 @@ return function(runner)
         local good_dt
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
-                dmf = mod_file("dmf", { init = function() end, update = function() end }),
                 boom = mod_file("boom", {
                     init = function() end,
                     update = function() error("update boom") end,
@@ -458,7 +480,7 @@ return function(runner)
     end)
 
     runner.register("mod_manager: on_game_state_changed fans out to each mod's callback", function()
-        local sb = setup({ order = {} })
+        local sb = setup({ order = { "dmf" } })
         local events = {}
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
@@ -484,7 +506,6 @@ return function(runner)
         local good_received
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
-                dmf = mod_file("dmf", { init = function() end }),
                 boom = mod_file("boom", {
                     init = function() end,
                     on_game_state_changed = function() error("gsc boom") end,
@@ -511,7 +532,7 @@ return function(runner)
     -- ModManager:destroy -> unload intent, minimal.
     runner.register("mod_manager: destroy() calls on_unload on each loaded mod that has one (in order)", function()
         local unloaded = {}
-        local sb = setup({ order = { "alpha", "beta" } })
+        local sb = setup({ order = { "dmf", "alpha", "beta" } })
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
                 dmf = mod_file("dmf", {
@@ -536,7 +557,7 @@ return function(runner)
 
     runner.register("mod_manager: destroy() skips mods without on_unload (no error, not logged)", function()
         local logged = {}
-        local sb = setup({ order = { "noul" } })
+        local sb = setup({ order = { "dmf", "noul" } })
         sb.__print = function(msg) table.insert(logged, msg) end
         local dmf_unloaded = false
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
@@ -562,7 +583,6 @@ return function(runner)
         local good_unloaded = false
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
-                dmf = mod_file("dmf", { init = function() end, on_unload = function() end }),
                 boom = mod_file("boom", {
                     init = function() end,
                     on_unload = function() error("unload boom") end,
@@ -590,7 +610,7 @@ return function(runner)
         -- with an init() so the loader's object:init() step is exercised.
         local created = {}
 
-        local sb = setup({ order = { "usermod" } })
+        local sb = setup({ order = { "dmf", "usermod" } })
         sb.__print = function() end
 
         -- DMF's init() installs new_mod/get_mod on _G (its real module does).
@@ -658,7 +678,7 @@ return function(runner)
     -- This is the read that indexed nil and died before the shape fix.
     runner.register("mod_manager: DMF read — _mods[_mod_load_index].handle resolves per mod", function()
         local seen = {}  -- phase tag -> handle read via Managers.mod
-        local sb = setup({ order = { "usermod" } })
+        local sb = setup({ order = { "dmf", "usermod" } })
 
         -- Record the handle Managers.mod._mods[_mod_load_index] points at, the
         -- same indexing DMF's DMFMod:init does. Returns a mod object whose
@@ -753,7 +773,7 @@ return function(runner)
     -- "./../mods" (the wrong base / a stale game-dir DMF); with it, it resolves
     -- against the mod root.
     runner.register("mod_manager: wrapper re-roots DMFMod:io_dofile mid-init — Phase-2 loads hit the mod root", function()
-        local sb = setup({ order = {} })  -- dmf-only
+        local sb = setup({ order = { "dmf" } })  -- dmf loads (listed explicitly)
         local dofile, mod_root_reads, wrong_base_reads = make_dmf_io_mock(sb)
         sb.Mods.file.dofile = dofile
 
@@ -804,7 +824,7 @@ return function(runner)
     -- the mod root. This exercises io_dofile_unsafe (the resource-load surface),
     -- distinct from the Phase-2 io_dofile path above.
     runner.register("mod_manager: after re-root, a user mod's resource load (io_dofile_unsafe) hits the mod root", function()
-        local sb = setup({ order = { "usermod" } })
+        local sb = setup({ order = { "dmf", "usermod" } })
         local dofile, mod_root_reads, wrong_base_reads = make_dmf_io_mock(sb)
         sb.Mods.file.dofile = dofile
 
@@ -853,7 +873,7 @@ return function(runner)
     -- no permanent wrap. A second Phase-1 dofile (still going through the
     -- captured local) is a benign pass-through.
     runner.register("mod_manager: wrapper fires once + unwraps (no permanent wrap on Mods.file.dofile)", function()
-        local sb = setup({ order = {} })
+        local sb = setup({ order = { "dmf" } })
         local dofile, mod_root_reads = make_dmf_io_mock(sb)
         local original = dofile
         sb.Mods.file.dofile = original
@@ -888,10 +908,11 @@ return function(runner)
     -- No-op when DMFMod never surfaces: if DMF isn't present or its core/io.lua
     -- never loads (so DMFMod.io_dofile never appears), the wrapper stays
     -- installed as a thin pass-through and never fires — flag stays false, the
-    -- load completes normally. (DMF is always prepended, so in practice the
-    -- wrapper always fires; this covers the degenerate case.)
+    -- load completes normally. (When DMF is listed first in mods.lst, the
+    -- wrapper fires during its init; this covers the degenerate case where
+    -- DMFMod never surfaces.)
     runner.register("mod_manager: wrapper is a no-op when DMFMod never surfaces", function()
-        local sb = setup({ order = {} })
+        local sb = setup({ order = { "dmf" } })
         sb.Mods.file.dofile = function(fp) return "STAGED:" .. fp end
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             -- dmf loads but its init never loads core/io / never defines DMFMod
@@ -917,7 +938,6 @@ return function(runner)
         local sb = setup({ order = { "usermod" } })
         sb.Mods.file.exec_with_return = function(local_path, file_name, ext)
             return ({
-                dmf = mod_file("dmf", { init = function() end }),
                 usermod = {
                     run = function()
                         run_called = true
@@ -934,7 +954,7 @@ return function(runner)
         runner.assert_eq(false, init_called, "init() must NOT call a mod's init()")
         runner.assert_eq(false, mm._mods_loaded, "_mods_loaded false after init")
         runner.assert_nil(mm._state, "_state unset after init")
-        runner.assert_eq("not_loaded", mm._mods[2].state, "usermod still 'not_loaded' after init")
+        runner.assert_eq("not_loaded", mm._mods[1].state, "usermod still 'not_loaded' after init")
 
         mm:update(0.016)  -- first tick: load
 
@@ -942,6 +962,6 @@ return function(runner)
         runner.assert_eq(true, init_called, "the first update() must call the mod's init()")
         runner.assert_eq(true, mm._mods_loaded, "_mods_loaded true after the first update")
         runner.assert_eq("done", mm._state, "_state reaches 'done' after the first update")
-        runner.assert_eq("running", mm._mods[2].state, "usermod 'running' after the first update")
+        runner.assert_eq("running", mm._mods[1].state, "usermod 'running' after the first update")
     end)
 end
