@@ -17,7 +17,7 @@ management experience around it.
 - The component's role, technology choices, and project layout.
 - The domain-library breakdown and each library's responsibilities.
 - The Enginseer contract Magos consumes (the stable surface it builds against).
-- The profiles model, mod sources, and the launch flow on Windows and Linux.
+- The profiles model, shared mod storage, mod sources, and the launch flow on Windows and Linux.
 - The v1 scope cut.
 
 ## Out of scope (handled elsewhere)
@@ -66,7 +66,7 @@ UI models.
 | Library | Owns |
 | --- | --- |
 | **Enginseer** | All interaction with the Enginseer runtime. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control — status / hot-reload / live enable-disable — is a future Enginseer contract expansion; out of v1.) |
-| **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, shared mods folder); writes `mods.lst` per profile at launch. |
+| **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, shared mods store); resolves shared-vs-diverged mod allocation by version policy; materializes the profile mod root + writes `mods.lst` at launch. |
 | **Integrations** | External-service calls: Nexus Mods (primary user-mod source), GitHub Releases, local install. Nexus API key / OIDC, version checks, downloads / updates. |
 | **Steam** | Steam operations outside Enginseer: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; add / remove non-steam shortcuts; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
 | **General** | Cross-cutting infra: DI composition, structured logging, configuration, shared primitives. |
@@ -112,8 +112,46 @@ logging, the hook-ready handshake).
   resolution puts it there. Beyond those, DMF is fully user-controllable (a
   user could remove / disable / reorder it and break dependent mods —
   sharp-tools philosophy; Magos does not hard-lock it).
-- **Cross-profile mod sharing** (deduplicate mod files where versions match):
-  deferred — out of v1.
+- Mods are stored **shared-first** across profiles — a profile uses the
+  global shared copy when its version policy is compatible, and takes a
+  profile-local copy only when policies diverge. See
+  [Shared mod storage](#shared-mod-storage).
+
+## Shared mod storage
+
+Mods are stored **shared-first**: a profile uses the global shared copy of a mod
+when its version policy is compatible, and only takes a profile-local
+(diverged) copy when the policies would diverge. This keeps one copy of each
+mod where possible while preserving per-profile version control where it's
+needed. Building this in from v1 (rather than retrofitting dedup later) keeps
+the storage model uniform.
+
+Each mod — in the shared store and in a profile — carries a version policy:
+**pinned `<version>`** (frozen at a specific release) or **latest (auto-update)**
+(tracks the newest release). A profile's mod is resolved against the shared
+copy by policy pair:
+
+| Shared | Profile | Resolution |
+| --- | --- | --- |
+| pinned `v1.0.1` | pinned `v1.0.1` | **share** — same pin |
+| pinned `v1.0.1` | pinned `v2.0.1` | **diverge** — different pins → profile copy |
+| latest (auto-update) | latest (auto-update) | **share** — both track latest; shared is updated to latest |
+| latest (auto-update) | pinned `v2.0.1` | **diverge** — shared will move, profile won't → profile copy |
+
+Rule: **share** iff both pinned to the same version OR both auto-update;
+otherwise **diverge**. The resolution is by *policy intent*, not current version
+— a shared auto-update mod and a profile pinned to today's same version still
+diverge, because the shared one will move on the next release.
+
+**Staging:** at launch (alongside regenerating `mods.lst`), Magos materializes
+the profile's mod root (the `--mod-path` dir) from the resolved set — shared
+mods linked/referenced from the shared store, diverged mods as profile-local
+copies. Like `mods.lst`, the mod root is a projection of the profile's mod-list
+metadata, regenerated each launch.
+
+**Divergence transitions:** when a profile's policy change makes a previously
+shared mod diverge, Magos creates the profile-local copy; when it converges
+again, the local copy is dropped back to a shared reference.
 
 ## Mod sources / integrations
 
@@ -133,7 +171,8 @@ logging, the hook-ready handshake).
 ## Mod list (main view)
 
 - Per-mod: enable / disable, remove, update (when the source reports a newer
-  version), pin to version, per-mod auto-update override.
+  version), pin to version, per-mod auto-update override. The pinned-vs-auto-update
+  policy drives shared-vs-local allocation (see [Shared mod storage](#shared-mod-storage)).
 - Auto-sort (dependency-driven; toggleable); manual reorder in the sequential
   view overrides auto-sort.
 - When DMF is installed, it appears as a protected first entry (locked first
@@ -219,7 +258,8 @@ TOML):
 
 - Log file location + level.
 - Profiles base folder (where profiles, mods, and settings are stored).
-- Shared mods folder (future — for cross-profile mod sharing; unused in v1).
+- Shared mods folder (the global shared mod store; see
+  [Shared mod storage](#shared-mod-storage)).
 - Enginseer runtime dir (where `magos_launcher.exe` + `magos_shell.dll` +
   `mod_loader/` live).
 
@@ -233,6 +273,7 @@ Per-profile settings live with the profile, not in the global config.
   running).
 - Mod list: enable / disable / remove, update indicators, version pinning,
   per-mod auto-update override, auto-sort + manual sequential reorder.
+- Shared mod storage (shared-first allocation by version policy).
 - Mod sources: Nexus Mods (primary) + GitHub Releases + local; DMF via GitHub.
 - Launch Darktide (Windows trivial; Linux native + Proton-at-launch +
   discovery + escape hatch).
@@ -246,7 +287,6 @@ Per-profile settings live with the profile, not in the global config.
   an Enginseer IPC contract expansion.
 - Dependency-view mod list.
 - Conflict detection.
-- Cross-profile mod sharing.
 
 ## Open / future
 
