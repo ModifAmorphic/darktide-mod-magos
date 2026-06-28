@@ -43,7 +43,7 @@ its own subfolder:
 ```
 magos-modificus/
   ui/                     the Avalonia app (UI only — no direct data access)
-  enginseer/             Enginseer-client library — the launch façade
+  enginseer-client/      Enginseer-client library — the launch façade
   profiles/              Profiles + Settings library
   integrations/          GitHub Releases + Nexus Mods client
   steam/                 Steam discovery + shortcuts
@@ -67,7 +67,7 @@ UI models.
 | --- | --- |
 | **Enginseer** | All interaction with the Enginseer runtime. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control — status / hot-reload / live enable-disable — is a future Enginseer contract expansion; out of v1.) |
 | **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, shared mods folder); writes `mods.lst` per profile at launch. |
-| **Integrations** | External-service calls: GitHub Releases (preferred mod source), Nexus Mods (fallback). API key / OIDC, version checks, downloads / updates. |
+| **Integrations** | External-service calls: Nexus Mods (primary user-mod source), GitHub Releases, local install. Nexus API key / OIDC, version checks, downloads / updates. |
 | **Steam** | Steam operations outside Enginseer: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; add / remove non-steam shortcuts; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
 | **General** | Cross-cutting infra: DI composition, structured logging, configuration, shared primitives. |
 
@@ -117,12 +117,14 @@ logging, the hook-ready handshake).
 
 ## Mod sources / integrations
 
-- **GitHub Releases** — preferred source. Used for mods that publish there
-  (incl. DMF). Version checks + auto-update.
-- **Nexus Mods** — fallback, in scope. Most Darktide user mods live on Nexus
-  only, so this is required for real-world coverage. API key or OIDC; version
-  checks; downloads / updates.
-- When a mod is on both, prefer GitHub Releases.
+- **Nexus Mods** — the primary source for user mods (most Darktide mods live
+  there). Nexus API key or OIDC; version checks; downloads / updates.
+- **GitHub Releases** — a source for mods that publish there; no auth required
+  for public releases (version checks + downloads).
+- **Local** — manually-installed mods (the user supplies the files).
+- **DMF specifically** is fetched from **GitHub Releases** at the new-profile
+  prompt — so acquiring the one framework mod every profile needs doesn't
+  require configuring a Nexus API key. (See [Profiles](#profiles).)
 - Per-mod: auto-update override (overrides the global setting); version pinning.
 - **Import / Export** — profile import / export.
 
@@ -229,7 +231,7 @@ Per-profile settings live with the profile, not in the global config.
   running).
 - Mod list: enable / disable / remove, update indicators, version pinning,
   per-mod auto-update override, auto-sort + manual sequential reorder.
-- Mod sources: GitHub Releases (preferred) + Nexus Mods (fallback).
+- Mod sources: Nexus Mods (primary) + GitHub Releases + local; DMF via GitHub.
 - Launch Darktide (Windows trivial; Linux native + Proton-at-launch +
   discovery + escape hatch).
 - Steam non-steam shortcuts.
