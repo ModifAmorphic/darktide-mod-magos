@@ -8,7 +8,7 @@
  *   - the mod loader root (`mod_loader_dir`) — where init.lua + its modules
  *     live (runtime-controlled; self-located by the shell next to the DLL at
  *     <dll-dir>\mod_loader);
- *   - the mod root (`mod_path`) — where DMF + user mods + mod_load_order live
+ *   - the mod root (`mod_path`) — where DMF + user mods + mods.lst live
  *     (user/mod-manager-controlled; optional — mods just won't load if unset).
  * The entry path is `<mod_loader_dir>\init.lua`. trampoline_build_chunk bakes
  * all three into the chunk: it sets MOD_LOADER_DIR from the mod loader root,
@@ -70,7 +70,7 @@ int trampoline_escape_path(const char *path, size_t path_len,
  *
  * The two globals hand the roots to the mod loader: MOD_LOADER_DIR roots its
  * own module loads (bootstrap_load); MAGOS_MOD_PATH roots Mods.file.*
- * (DMF/mods/mod_load_order). MOD_LOADER_DIR is an INTERNAL global set by the
+ * (DMF/mods/mods.lst). MOD_LOADER_DIR is an INTERNAL global set by the
  * trampoline (not a user env var/flag). (In the production call site
  * `mod_loader_dir` is also the prefix of `entry_path`, so it appears twice in
  * the chunk — once as the global, once inside the io.open path. That is

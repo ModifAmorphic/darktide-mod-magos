@@ -232,7 +232,7 @@ static volatile int  g_chunk_done = 0;       /* one-shot: chunk-injection test p
  *     launcher). REQUIRED: if the DLL path can't be resolved, staging logs why
  *     and the trampoline is SKIPPED.
  *   - MOD_PATH_ENV (DARKTIDE_MOD_PATH): the mod dir — where DMF + user mods +
- *     mod_load_order live. User/mod-manager-controlled. OPTIONAL: if unset, the
+ *     mods.lst live. User/mod-manager-controlled. OPTIONAL: if unset, the
  *     chunk emits an empty MAGOS_MOD_PATH and mods just won't load.
  * The entry path = <dll-dir>\mod_loader\init.lua (joined + baked below). */
 #define MOD_PATH_ENV         "DARKTIDE_MOD_PATH"     /* mod root dir (user/mod-manager-controlled; optional) */
