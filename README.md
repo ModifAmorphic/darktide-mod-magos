@@ -13,7 +13,7 @@ Magos has two components:
   runtime includes the mod loader that loads DMF + user mods). Built, and the
   production seed of this repo. See
   [`enginseer/README.md`](enginseer/README.md) for build + developer details.
-- **Mod Magos** — the mod-manager app (UI, staging, load order, profiles,
+- **Magos Modificus** — the mod-manager app (UI, staging, load order, profiles,
   dependency resolution). Planned, not yet built.
 
 ## Getting started

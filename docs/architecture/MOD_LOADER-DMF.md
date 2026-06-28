@@ -385,7 +385,7 @@ engine/managers.
 **Production DMF acquisition is future work.** Today DMF is vendored locally
 at the **mod root** (gitignored — local only; for live validation it lives in a
 repo-root `mods/` dir pointed at by `--mod-path`). In production, the mod
-manager (Darktide Magos) will download DMF into the mod root and pass that path
+manager (Magos Modificus) will download DMF into the mod root and pass that path
 via `--mod-path`; the Enginseer-runtime side of the integration described here is
 unchanged.
 

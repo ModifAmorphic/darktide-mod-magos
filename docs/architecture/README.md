@@ -11,7 +11,7 @@ way for vanilla play (launch from Steam = the unmodified game).
   one DLL, delivered by `CreateRemoteThread`; the C shell stages the
   **mod loader** — the runtime-controlled Lua loader that loads DMF + user mods.
   See `docs/architecture/ENGINSEER.md` for the full subcomponent breakdown.
-- **Darktide Magos — `mod-manager/`** (planned, not built): the user-facing app —
+- **Magos Modificus — `mod-manager/`** (planned, not built): the user-facing app —
   staging-directory management, load order, profiles, dependency resolution,
   the "Launch Modded" button.
 - **DMF + user mods** (Lua, not our code): the Darktide-Mod-Framework Lua
@@ -106,7 +106,7 @@ Windows (CI). Both gate on `cargo clippy --all-targets --features test-hooks --
 -D warnings` + tests. CI: `.github/workflows/mingw-build.yml` +
 `msvc-build.yml`.
 
-## Production launcher insights (from live testing — feed Darktide Magos)
+## Production launcher insights (from live testing — feed Magos Modificus)
 
 1. **Proton launch model**: Steam non-Steam-game (the launcher) + forced
    Proton + `STEAM_COMPAT_DATA_PATH` → launcher creates+suspends+injects. Steam
