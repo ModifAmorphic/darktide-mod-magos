@@ -91,12 +91,12 @@ in engine context.
 ### `launcher/` — C injector  *(built)*
 
 This is **`magos_launcher.exe`** — the C injector (`enginseer/launcher/`), the
-host process Darktide Magos invokes. `CreateProcess(Darktide.exe, SUSPENDED)`
+host process Magos Modificus invokes. `CreateProcess(Darktide.exe, SUSPENDED)`
 → inject `magos_shell.dll` → wait for `magos_hook_ready` → `ResumeThread` →
 exit. Sets `SteamAppId`/`SteamGameId`.
 
 - **Built:** injection + hook-ready handshake + Steam appID.
-- **Interface (to Darktide Magos):** a **flag-based CLI**, where every setting
+- **Interface (to Magos Modificus):** a **flag-based CLI**, where every setting
   follows **flag > env var > default**. `--game-binary` is the only required
   flag; the shell DLL is hardcoded next to the launcher (the shell self-locates
   the mod loader from its own path), and the log file defaults next to the
@@ -120,9 +120,9 @@ exit. Sets `SteamAppId`/`SteamGameId`.
 
 ## Contracts
 
-### Enginseer ↔ Darktide Magos (the component boundary)
+### Enginseer ↔ Magos Modificus (the component boundary)
 
-- **Invocation:** Darktide Magos calls the launcher (subprocess) with the
+- **Invocation:** Magos Modificus calls the launcher (subprocess) with the
   flag-based CLI above (`--game-binary` required; the rest flag > env > default).
 - **Staging dirs (two roots):** the mod loader Lua (`init.lua` + its modules)
   ships WITH the Enginseer runtime — `make build` stages it into `bin/mod_loader/`,
@@ -132,11 +132,11 @@ exit. Sets `SteamAppId`/`SteamGameId`.
   `DARKTIDE_MOD_PATH`) is Darktide-Magos-controlled: it writes DMF, user mods,
   and `mod_load_order.txt` there; the trampoline sets `MAGOS_MOD_PATH` from it
   and the mod loader bootstraps DMF + mods from there. `mod_load_order.txt` is a
-  Darktide Magos artifact, but the **mod loader reads it**; DMF does not. The
+  Magos Modificus artifact, but the **mod loader reads it**; DMF does not. The
   Enginseer runtime is the conduit; it does not compute the load order or
-  resolve dependencies (that's Darktide Magos's job).
-- **Platform:** Windows — Darktide Magos runs directly, Steam in the
-  background. Linux — Steam → Darktide Magos (Proton, Darktide's compatdata)
+  resolve dependencies (that's Magos Modificus's job).
+- **Platform:** Windows — Magos Modificus runs directly, Steam in the
+  background. Linux — Steam → Magos Modificus (Proton, Darktide's compatdata)
   → launcher → Darktide, one prefix/context.
 
 ### Internal
@@ -265,10 +265,10 @@ replacement for Lua `io`.
 
 ## Out of scope for the Enginseer runtime
 
-- **Dependency resolution / load-order computation** — Darktide Magos's job
+- **Dependency resolution / load-order computation** — Magos Modificus's job
   (it writes `mod_load_order.txt`); the Enginseer runtime bootstraps the staged
   mod loader entry point, and the mod loader reads the load order (DMF does not).
-- **The mod manager UI / staging-dir management** — Darktide Magos.
+- **The mod manager UI / staging-dir management** — Magos Modificus.
 
 ## Build + test
 

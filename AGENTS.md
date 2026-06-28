@@ -12,7 +12,7 @@ from Steam = unmodified game).
 
 Architecture: a **Hybrid** — Enginseer (runtime): a Rust discovery pure-library
 (C-ABI staticlib) + a C live-game shell, linked into one DLL, delivered by
-`CreateRemoteThread`. Darktide Magos (the mod-manager app) is planned, not yet
+`CreateRemoteThread`. Magos Modificus (the mod-manager app) is planned, not yet
 built. See `docs/architecture/` for the full architecture.
 
 ## Baseline (read before planning)
@@ -28,7 +28,7 @@ Requirements, architecture, and technology choices are made fresh.
 ## Repository state
 
 - **`main`** — production. Enginseer (the injected modding runtime + launcher) is
-  merged as the production seed; Darktide Magos is not yet built.
+  merged as the production seed; Magos Modificus is not yet built.
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -57,7 +57,7 @@ enginseer/          Enginseer (runtime) — the injected modding runtime + injec
                       Vendored DMF/test-mod/mod_load_order live in a repo-root mods/
                       dir (gitignored — the mod root, pointed at by --mod-path).
   tests/            C unit tests (run via wine)
-mod-manager/        Darktide Magos — the mod manager app (not yet built; placeholder)
+mod-manager/        Magos Modificus — the mod manager app (not yet built; placeholder)
 docs/               architecture, poc (frozen), reference
 .github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
 .gitignore          ignores enginseer/target, enginseer/bin, build artifacts, _local/
@@ -123,7 +123,7 @@ Keep the established thematic names — **Enginseer** (the runtime) and **Magos*
 (the app) — don't rename them. Going forward, use plain, descriptive names for
 new components/modules (Rust crates, C modules, Lua modules, functions); the
 runtime's Lua loader is `mod_loader` (descriptive), not a themed name. Reserve
-any Warhammer 40k / Adeptus Mechanicus flavor for the UI (Darktide Magos); docs
+any Warhammer 40k / Adeptus Mechanicus flavor for the UI (Magos Modificus); docs
 and code read as plain engineering documentation.
 
 - **Folders/filenames:** lowercase (`enginseer/mod_loader/init.lua`).
