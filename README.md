@@ -97,16 +97,17 @@ Mods live in the **mod directory** you point `--mod-path` at. Lay it out as:
 
 ```
 <mod-path>/
-  mod_load_order.txt   one mod name per line, in load order (dmf is always first)
+  mods.lst             one mod name per line, in load order (list dmf first)
   dmf/                 the Darktide Mod Framework (DMF) — the API mods are built against
   <your-mod>/          your mod(s)
 ```
 
 - **DMF** (the Darktide Mod Framework) is the framework mods are built against;
   place it at `<mod-path>/dmf/`.
-- **`mod_load_order.txt`** lists the mods to load, one name per line, in the
-  order they load (DMF is loaded first automatically). When Mod Magos ships it
-  will manage this for you.
+- **`mods.lst`** lists the mods to load, one name per line, in the order they
+  load (list `dmf` first). The loader loads exactly what's listed, in order — it
+  injects nothing. Magos Modificus regenerates this file each launch; until Magos
+  ships, create/edit it by hand.
 
 ## License
 

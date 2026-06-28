@@ -1,11 +1,13 @@
 -- mod_manager.lua — the mod loader's driver (ModManager).
 --
 -- This module is the mod loader's driver. In the
--- deferred bootstrap hook (lifecycle.lua), it reads the user's mod_load_order,
--- prepends "dmf" (DMF is just the first mod — a bag of helper APIs other mods
--- opt into), and loads each mod: exec its `.mod` file, call its `run()`, and if
--- it yields a mod object store it + call `object:init()`. DMF loads first; its
--- `init()` defines `new_mod`/`get_mod` that the subsequent user mods' `run()`
+-- deferred bootstrap hook (lifecycle.lua), it reads the load order (mods.lst —
+-- authored by Magos Modificus) and loads each listed mod in order: exec its
+-- `.mod` file, call its `run()`, and if it yields a mod object store it + call
+-- `object:init()`. The loader is framework-agnostic: it makes NO assumption
+-- about DMF (or any framework) and injects nothing — the order file is
+-- authoritative for both WHAT loads and the ORDER. Magos lists `dmf` first so
+-- its `init()` defines `new_mod`/`get_mod` that subsequent user mods' `run()`
 -- calls — so the per-mod ordering (run+init before the next mod loads) is what
 -- makes that dependency work.
 --
@@ -16,10 +18,10 @@
 -- DMF's inner loop, not here, so entry.object stays nil and the outer update/
 -- gsc loops skip it. Either way the scan-phase _mods entry is retained.
 --
--- SCAN vs LOAD split: init() SCANs ONLY — it reads mod_load_order, prepends
--- "dmf", and builds the full _mods table, but loads NO mod. The LOAD (per-mod
--- run()/init()) is deferred to the first StateGame.update tick (via
--- Managers.mod:update), where boot-complete globals like Managers.input exist.
+-- SCAN vs LOAD split: init() SCANs ONLY — it reads mods.lst and builds the
+-- full _mods table, but loads NO mod. The LOAD (per-mod run()/init()) is
+-- deferred to the first StateGame.update tick (via Managers.mod:update),
+-- where boot-complete globals like Managers.input exist.
 -- Mods whose new_mod/init touch those globals (e.g. Power_DI's option/keybind
 -- validation) would otherwise hit nil mid-boot. The engine drives Lua
 -- single-threaded at fixed points; the loader hooks
@@ -164,11 +166,11 @@ end
 
 -- ModManager:init — SCAN ONLY.
 --
--- Reads mod_load_order, prepends "dmf", and builds the full _mods table, but
--- loads NO mod. The LOAD happens on the first StateGame.update tick (see
--- update()), where boot-complete globals like Managers.input exist — loading
--- here (inside BootStateRequireGameScripts._state_update) was too early and
--- broke mods whose init reads Managers.input.
+-- Reads mods.lst and builds the full _mods table, but loads NO mod. The LOAD
+-- happens on the first StateGame.update tick (see update()), where
+-- boot-complete globals like Managers.input exist — loading here (inside
+-- BootStateRequireGameScripts._state_update) was too early and broke mods
+-- whose init reads Managers.input.
 --
 -- _state is DMF's contract field; it is NOT set here — it's written once
 -- ("done") when the load completes (see update). nil before that is fine (DMF
@@ -190,19 +192,21 @@ function ModManager:init()
     self._mods_loaded = false
     self._dmf_io_adapted = false
 
-    -- SCAN: read the user's load order and build the full _mods table up front
-    -- (id/name/handle/enabled/state/object), so every entry exists before any
-    -- mod's run()/init() reads it. nil (missing file) -> empty, so a bare
-    -- DMF-only bootstrap still works. Mirrors DML's _build_mod_table entry shape
-    -- (id=i, name=mod_name, handle=mod_name); DMF only reads id/name/handle.
-    local order = Mods.file.read_content_to_table("mod_load_order", "txt") or {}
-    table.insert(order, 1, "dmf")
+    -- SCAN: read the load order (mods.lst — authored by Magos Modificus) and
+    -- build the full _mods table up front (id/name/handle/state/object), so
+    -- every entry exists before any mod's run()/init() reads it. The order file
+    -- is AUTHORITATIVE: the loader loads exactly the listed mods, in the listed
+    -- order, and injects nothing (no framework assumption — DMF is a normal
+    -- entry Magos writes first). A missing/empty mods.lst -> empty _mods -> no
+    -- mod loads (graceful, no crash; the `or {}` covers a missing file's false
+    -- return). Mirrors DML's _build_mod_table entry shape (id=i, name=mod_name,
+    -- handle=mod_name); DMF only reads id/name/handle.
+    local order = Mods.file.read_content_to_table("mods", "lst") or {}
     for i, name in ipairs(order) do
         self._mods[i] = {
             id = i,
             name = name,
             handle = name,
-            enabled = true,
             state = "not_loaded",
             object = nil,
         }

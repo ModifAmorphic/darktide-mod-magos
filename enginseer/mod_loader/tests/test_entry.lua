@@ -3,7 +3,7 @@
 -- Stages all 5 helper modules + the entry in an in-memory io map under the
 -- loader root (mirroring the deployment contract: <loader-root>/{file,hook,
 -- class_patch,require_wrap,lifecycle}.lua + init.lua), with a SEPARATE mod root
--- holding DMF/mods/mod_load_order. Runs the entry in a sandbox and verifies it
+-- holding DMF/mods/mods.lst. Runs the entry in a sandbox and verifies it
 -- bootstraps every surface, wraps require, and queues the bootstrap lifecycle
 -- hook. The per-module contracts are covered by the other test files; this test
 -- covers the entry's assembly + ordering + the deferred-bridge end-to-end
@@ -15,7 +15,7 @@ local mock = require("mock")
 return function(runner)
     -- Build a sandbox with the two-root staging layout populated from real
     -- module sources. The loader root (MOD_LOADER_DIR) holds the entry +
-    -- modules; the mod root (MAGOS_MOD_PATH) is where DMF/mods/mod_load_order
+    -- modules; the mod root (MAGOS_MOD_PATH) is where DMF/mods/mods.lst
     -- live (Mods.file.* roots there via Mods._staging_base).
     -- `engine_require` is the fake engine require used to simulate main.lua
     -- loading modules (class.lua, etc.).

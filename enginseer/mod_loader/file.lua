@@ -127,7 +127,7 @@ local function read_or_execute(file_path, args, return_type)
                 -- line-comment-only; Lua block comments ("--[[ ]]") are NOT
                 -- recognized — a "--[[" opener is dropped as a comment but the
                 -- lines inside the block are kept as content. Matches DML's
-                -- behavior (these files are mod_load_order.txt-style, no block
+                -- behavior (these files are mods.lst-style, no block
                 -- comments).
                 if line ~= "" and line:sub(1, 2) ~= "--" then
                     table.insert(result, line)

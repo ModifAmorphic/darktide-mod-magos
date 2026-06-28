@@ -70,16 +70,17 @@ in engine context.
     (`mod_manager.lua` — the mod loader's driver), and installs the
     per-frame (`CLASS.StateGame.update`) + state-change
     (`CLASS.GameStateMachine._change_state`) hooks that drive `Managers.mod`.
-  The loader splits load into two phases: `init()` SCANs (reads
-    `mod_load_order.txt`, prepends `dmf`, builds the `_mods` table, installs the
-    DMF IO watch — no mod loaded), and the first `StateGame.update` tick LOADs
-    (per-mod `run()` → object → `init()`, then `_state="done"`) — deferred so
-    boot-complete globals like `Managers.input` exist. The IO watch re-roots
-    DMF's mod-facing IO at the mod root mid-DMF-init. The loader exposes itself
-    as `Managers.mod`. The whole bootstrap is pcall-wrapped so a DMF/mod failure
-    degrades to vanilla + a log line, not a crash. **Live-validated to
-    `StateMainMenu`** (DMF loads, a test mod's hook fires); the scan/load split
-    + IO-watch re-root are offline-tested, live validation pending. See
+  The loader splits load into two phases: `init()` SCANs (reads `mods.lst`,
+    builds the `_mods` table — the order file is authoritative, the loader
+    injects nothing — and installs the DMF IO watch; no mod loaded), and the
+    first `StateGame.update` tick LOADs (per-mod `run()` → object → `init()`,
+    then `_state="done"`) — deferred so boot-complete globals like
+    `Managers.input` exist. The IO watch re-roots DMF's mod-facing IO at the mod
+    root mid-DMF-init. The loader exposes itself as `Managers.mod`. The whole
+    bootstrap is pcall-wrapped so a DMF/mod failure degrades to vanilla + a log
+    line, not a crash. **Live-validated to `StateMainMenu`** (DMF loads, a test
+    mod's hook fires); the scan/load split + IO-watch re-root are
+    offline-tested, live validation pending. See
     `docs/architecture/MOD_LOADER-DMF.md` for the DMF integration + the IO
     re-rooting + the load timing.
 - **Bootstrap-only C helpers.** C functions are acceptable only at the
@@ -130,9 +131,11 @@ exit. Sets `SteamAppId`/`SteamGameId`.
   its own DLL path (`<dll-dir>\mod_loader\`, set as the internal `MOD_LOADER_DIR`
   global — not an env var/flag). The **mod** root (`--mod-path` /
   `DARKTIDE_MOD_PATH`) is Darktide-Magos-controlled: it writes DMF, user mods,
-  and `mod_load_order.txt` there; the trampoline sets `MAGOS_MOD_PATH` from it
-  and the mod loader bootstraps DMF + mods from there. `mod_load_order.txt` is a
-  Magos Modificus artifact, but the **mod loader reads it**; DMF does not. The
+  and `mods.lst` there; the trampoline sets `MAGOS_MOD_PATH` from it
+  and the mod loader bootstraps DMF + mods from there. `mods.lst` is a
+  Magos Modificus artifact (regenerated each launch), and the **mod loader reads
+  it authoritatively** — it loads exactly the listed mods in order and injects
+  nothing (DMF is a normal first entry Magos writes); DMF does not read it. The
   Enginseer runtime is the conduit; it does not compute the load order or
   resolve dependencies (that's Magos Modificus's job).
 - **Platform:** Windows — Magos Modificus runs directly, Steam in the
@@ -158,7 +161,7 @@ global, so no loader-path env var exists.
 
 | Env var | Set by | Read by | Meaning |
 | --- | --- | --- | --- |
-| `DARKTIDE_MOD_PATH` | launcher (only when `--mod-path`/env configured) | shell trampoline + mod loader | mod dir — where DMF + user mods + `mod_load_order.txt` live. The trampoline sets `MAGOS_MOD_PATH` from it; the loader/DMF/mods root here (`Mods.file.*`). Unset ⇒ empty `MAGOS_MOD_PATH` (mods won't load; graceful). |
+| `DARKTIDE_MOD_PATH` | launcher (only when `--mod-path`/env configured) | shell trampoline + mod loader | mod dir — where DMF + user mods + `mods.lst` live. The trampoline sets `MAGOS_MOD_PATH` from it; the loader/DMF/mods root here (`Mods.file.*`). Unset ⇒ empty `MAGOS_MOD_PATH` (mods won't load; graceful). |
 | `MAGOS_ENGINSEER_LOG_FILE` | launcher | shell | shell log file path |
 | `MAGOS_ENGINSEER_LOG_LEVEL` | launcher | shell | shell log level (`error`/`warn`/`info`/`debug`/`trace`) |
 | `SteamAppId` / `SteamGameId` | launcher | Steam | the real Darktide app id (`1361210`); without it `SteamAPI_Init` is denied under a non-Steam shortcut |
@@ -266,8 +269,9 @@ replacement for Lua `io`.
 ## Out of scope for the Enginseer runtime
 
 - **Dependency resolution / load-order computation** — Magos Modificus's job
-  (it writes `mod_load_order.txt`); the Enginseer runtime bootstraps the staged
-  mod loader entry point, and the mod loader reads the load order (DMF does not).
+  (it writes `mods.lst`); the Enginseer runtime bootstraps the staged
+  mod loader entry point, and the mod loader reads the load order authoritatively
+  (DMF does not).
 - **The mod manager UI / staging-dir management** — Magos Modificus.
 
 ## Build + test

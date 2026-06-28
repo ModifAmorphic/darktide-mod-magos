@@ -14,7 +14,7 @@
 --     The mock default is mock.MOD_LOADER_ROOT ("/mod_loader");
 --     mock.stage_mod_loader() builds the files map a test io mock serves for it.
 --   - Mod root     (MAGOS_MOD_PATH) — user/mod-manager-controlled; holds
---     mod_load_order.txt + dmf/ + user mods. Mods.file.* roots here. The mock
+--     mods.lst + dmf/ + user mods. Mods.file.* roots here. The mock
 --     default is mock.MOD_ROOT ("/mods"); each test stages its own mods/DMF.
 
 local _G = _G
@@ -177,7 +177,7 @@ end
 -- every active module, keyed at <MOD_LOADER_ROOT>/<name>.lua. Mirrors the
 -- deployment contract (bin/mod_loader/) and what bootstrap_load expects to
 -- open. A test merges this into its io-mock files map (and adds its own
--- mod-root files under MOD_ROOT for DMF/mods/mod_load_order).
+-- mod-root files under MOD_ROOT for DMF/mods/mods.lst).
 function M.stage_mod_loader()
     local files = {}
     for _, name in ipairs(M.MOD_LOADER_MODULES) do
