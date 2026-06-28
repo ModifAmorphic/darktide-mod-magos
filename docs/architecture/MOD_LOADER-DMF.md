@@ -32,8 +32,9 @@ DLL injection -> mod loader  ->  DMF (mod #1)  ->  user mods
                  (loads mods)    (a mod)
 ```
 
-Concretely, the loader — not DMF — reads `mod_load_order.txt`, decides the order
-(always `dmf` first), loads each `.mod`, calls `run()` / `init()`, and exposes
+Concretely, the loader — not DMF — reads `mods.lst` (authored by Magos
+Modificus), loads each listed `.mod` in the listed order (it injects nothing —
+DMF is first because Magos lists it first), calls `run()` / `init()`, and exposes
 itself as `Managers.mod` to drive the per-frame + state-change lifecycle. DMF's
 own `dmf_mod_object` is driven by the loader like any other top-level mod object;
 DMF then drives *its* registered user mods through its inner update loop (see
@@ -51,7 +52,7 @@ by the C trampoline before the entry opens:
   `make build` stages these into `bin/mod_loader/`. The entry's `bootstrap_load`
   (exposed as `Mods.load_module`) roots here.
 - **Mod root** (`MAGOS_MOD_PATH`, from `--mod-path` / `DARKTIDE_MOD_PATH`;
-  user/mod-manager-controlled) — holds DMF + user mods + `mod_load_order.txt`.
+  user/mod-manager-controlled) — holds DMF + user mods + `mods.lst`.
   `Mods.file.*` roots here (via `Mods._staging_base`). DMF and the mods never
   live under the loader root.
 
@@ -67,10 +68,13 @@ see `lifecycle.lua`; `mod_manager.lua` is a loader module, so it loads from the
 **loader root** `MOD_LOADER_DIR`, not the mod root). Loading is split across two
 entry points:
 
-- **`ModManager:init()`** — **SCAN only.** Read `mod_load_order.txt`
-  (`Mods.file.read_content_to_table`), prepend `"dmf"`, and build the **entire**
-  `_mods` table up front. Each entry is shaped
-  `{ id, name, handle, enabled, state, object }`. **No mod is loaded here** —
+- **`ModManager:init()`** — **SCAN only.** Read `mods.lst`
+  (`Mods.file.read_content_to_table`), and build the **entire** `_mods` table up
+  front. The order file is authoritative — the loader loads exactly the listed
+  mods in the listed order and injects nothing (no framework assumption; DMF is
+  a normal first entry Magos writes). Each entry is shaped
+  `{ id, name, handle, state, object }`. A missing/empty `mods.lst` → empty
+  `_mods` → no mod loads (graceful, no crash). **No mod is loaded here** —
   `init()` only scans. It also installs the one-shot DMF IO watch (see
   [IO re-rooting](#io-re-rooting)).
 - **`ModManager:update(dt)`** — **LOAD on the first call**, then drive per-frame
@@ -181,8 +185,9 @@ until late in boot.
 
 ## The DMF load sequence
 
-DMF is always the first entry in the load order (the loader prepends `"dmf"`).
-The sequence for DMF is the same as for any mod, just first — and it runs on the
+DMF is the first entry in the load order because Magos Modificus lists it first
+in `mods.lst` (the loader injects nothing — it is framework-agnostic). The
+sequence for DMF is the same as for any mod, just first — and it runs on the
 first `StateGame.update` tick (not at boot):
 
 1. The loader loads `dmf.mod` (`Mods.file.exec_with_return("dmf", "dmf", "mod")`).
@@ -351,8 +356,8 @@ shell/ subsection. The bootstrap hook body (in `lifecycle.lua`) is:
 1. call the original `_state_update` (requires game scripts → `StateGame`
    created and registered in `CLASS`);
 2. `Mods.load_module("mod_manager")` →
-   `Managers.mod = ModManager:new()` → `init()` SCANs (reads `mod_load_order`,
-   prepends `dmf`, builds `_mods`; installs the IO watch). **No mod loads here.**
+   `Managers.mod = ModManager:new()` → `init()` SCANs (reads `mods.lst`, builds
+   `_mods`; installs the IO watch). **No mod loads here.**
 3. install `CLASS.StateGame.update` hook → drives `Managers.mod:update(dt)` —
    the first tick LOADs (DMF + every user mod), every tick pumps per-mod
    `update(dt)`;

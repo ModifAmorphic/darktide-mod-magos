@@ -54,7 +54,7 @@ enginseer/          Enginseer (runtime) — the injected modding runtime + injec
                       `make build` stages the entry + modules into bin/mod_loader/
                       (the Enginseer-controlled loader root, self-located by the
                       shell from its own DLL path and set as MOD_LOADER_DIR).
-                      Vendored DMF/test-mod/mod_load_order live in a repo-root mods/
+                      Vendored DMF/test-mod/mods.lst live in a repo-root mods/
                       dir (gitignored — the mod root, pointed at by --mod-path).
   tests/            C unit tests (run via wine)
 mod-manager/        Magos Modificus — the mod manager app (not yet built; placeholder)
