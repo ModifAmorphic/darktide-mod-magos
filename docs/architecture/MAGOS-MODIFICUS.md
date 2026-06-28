@@ -43,8 +43,11 @@ its own subfolder:
 ```
 magos-modificus/
   ui/                     the Avalonia app (UI only — no direct data access)
-  libs/
-    <domain libraries>/   one subfolder per domain (see Libraries)
+  enginseer/             Enginseer-client library — the launch façade
+  profiles/              Profiles + Settings library
+  integrations/          GitHub Releases + Nexus Mods client
+  steam/                 Steam discovery + shortcuts
+  general/               cross-cutting infra (DI, logging, config, primitives)
   launcher/ (optional)    slim profile launcher — launches a profile without
                           the UI (entry point for Steam non-steam shortcuts)
   config/                 the global config schema + defaults
