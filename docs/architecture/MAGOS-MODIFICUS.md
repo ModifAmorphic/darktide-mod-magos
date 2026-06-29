@@ -30,7 +30,7 @@ management experience around it.
 
 ## Technology
 
-- **C# / .NET 10 (LTS)** + **Avalonia 11** for a native cross-platform UI.
+- **C# / .NET 10 (LTS)** + **Avalonia 12** for a native cross-platform UI.
 - **DI** via `Microsoft.Extensions.DependencyInjection`; **logging** via
   `Microsoft.Extensions.Logging` (structured). Mandated across all components.
 - SOLID / DRY; libraries namespaced by domain.
