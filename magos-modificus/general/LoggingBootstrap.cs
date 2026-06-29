@@ -11,6 +11,7 @@ namespace Magos.Modificus.General;
 /// Builds the structured-logging pipeline from <see cref="MagosConfig.Logging"/>.
 /// Uses Serilog (console + file sinks) bridged into
 /// <c>Microsoft.Extensions.Logging</c>, honoring the configured level and file.
+/// The log file is truncated on each startup (no rolling/retention/backup).
 /// </summary>
 public static class LoggingBootstrap
 {
@@ -27,15 +28,20 @@ public static class LoggingBootstrap
     public static ILoggerFactory CreateLoggerFactory(MagosConfig config)
     {
         var level = ParseLevel(config.Logging.Level);
+        var logFile = config.Logging.LogFile;
 
         // Ensure the log directory exists; the file sink does not create
         // missing parent directories reliably across versions.
-        var logFile = config.Logging.LogFile;
         var logDir = System.IO.Path.GetDirectoryName(logFile);
         if (!string.IsNullOrEmpty(logDir))
         {
             Directory.CreateDirectory(logDir);
         }
+
+        // Truncate on each startup: no rolling, retention, or backup — matches
+        // magos_launcher's magos_enginseer.log pattern. The sink then creates a
+        // fresh file for this run. File.Delete is a no-op when the file is absent.
+        File.Delete(logFile);
 
         var serilogLogger = new LoggerConfiguration()
             .MinimumLevel.Is(level)
