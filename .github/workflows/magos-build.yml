@@ -1,0 +1,45 @@
+# Magos Modificus — builds the .NET 10 + Avalonia 12 mod-manager app.
+# Scoped to magos-modificus/** so it never rebuilds the Enginseer (Rust/C)
+# stack — that has its own mingw-build.yml / msvc-build.yml.
+name: magos-build
+
+on:
+  push:
+    paths:
+      - 'magos-modificus/**'
+      - '.github/workflows/magos-build.yml'
+  pull_request:
+    paths:
+      - 'magos-modificus/**'
+      - '.github/workflows/magos-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    defaults:
+      run:
+        working-directory: magos-modificus
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore magos-modificus.sln
+
+      - name: Build (Release)
+        run: dotnet build magos-modificus.sln --configuration Release --no-restore
+
+      - name: Test (Release)
+        run: dotnet test magos-modificus.sln --configuration Release --no-build --logger trx
