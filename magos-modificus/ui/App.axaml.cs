@@ -7,7 +7,7 @@ using Magos.Modificus.Profiles;
 using Magos.Modificus.Steam;
 using Magos.Modificus.UI.ViewModels;
 using Magos.Modificus.UI.Views;
-using Magos.EnginseerClient;
+using Magos.Modificus.EnginseerClient;
 using Magos.Modificus.Launcher;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

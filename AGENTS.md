@@ -68,7 +68,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   profiles/             Magos.Modificus.Profiles — stub (interfaces + AddProfiles())
   integrations/         Magos.Modificus.Integrations — stub
   steam/                Magos.Modificus.Steam — stub
-  enginseer-client/     Magos.EnginseerClient — stub (the v1 launch façade)
+  enginseer-client/     Magos.Modificus.EnginseerClient — stub (the v1 launch façade)
   launcher/             Magos.Modificus.Launcher — stub (slim profile launcher exe;
                           the Steam non-steam-shortcut target)
   tests/

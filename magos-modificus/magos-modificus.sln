@@ -25,7 +25,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.Steam", "st
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "enginseer-client", "enginseer-client", "{EA25846F-BFB3-0631-9883-7E04004497FB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.EnginseerClient", "enginseer-client\Magos.EnginseerClient.csproj", "{3E904C9B-AD90-4E46-904D-D867D326ECEB}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.EnginseerClient", "enginseer-client\Magos.Modificus.EnginseerClient.csproj", "{3E904C9B-AD90-4E46-904D-D867D326ECEB}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "launcher", "launcher", "{740C5202-8AD2-6D86-0CA9-F95B1A2D697C}"
 EndProject

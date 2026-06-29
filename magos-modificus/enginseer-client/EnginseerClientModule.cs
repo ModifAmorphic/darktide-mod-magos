@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Magos.EnginseerClient;
+namespace Magos.Modificus.EnginseerClient;
 
 /// <summary>
 /// v1 launch façade over the Enginseer runtime: assemble launcher args, invoke

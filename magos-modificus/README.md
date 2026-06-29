@@ -35,7 +35,7 @@ magos-modificus/
   profiles/                       Magos.Modificus.Profiles          stub
   integrations/                   Magos.Modificus.Integrations      stub
   steam/                          Magos.Modificus.Steam             stub
-  enginseer-client/               Magos.EnginseerClient             stub (launch façade)
+  enginseer-client/               Magos.Modificus.EnginseerClient   stub (launch façade)
   launcher/                       Magos.Modificus.Launcher          stub (slim Steam-shortcut launcher)
   tests/
     Magos.Modificus.General.Tests/  xUnit tests for the general library

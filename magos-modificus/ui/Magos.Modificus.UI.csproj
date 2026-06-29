@@ -17,7 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\config\Magos.Modificus.Config.csproj" />
-    <ProjectReference Include="..\enginseer-client\Magos.EnginseerClient.csproj" />
+    <ProjectReference Include="..\enginseer-client\Magos.Modificus.EnginseerClient.csproj" />
     <ProjectReference Include="..\general\Magos.Modificus.General.csproj" />
     <ProjectReference Include="..\integrations\Magos.Modificus.Integrations.csproj" />
     <ProjectReference Include="..\launcher\Magos.Modificus.Launcher.csproj" />

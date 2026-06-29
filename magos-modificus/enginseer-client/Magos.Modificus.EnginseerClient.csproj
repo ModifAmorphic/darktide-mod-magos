@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <RootNamespace>Magos.EnginseerClient</RootNamespace>
-    <AssemblyName>Magos.EnginseerClient</AssemblyName>
+    <RootNamespace>Magos.Modificus.EnginseerClient</RootNamespace>
+    <AssemblyName>Magos.Modificus.EnginseerClient</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
