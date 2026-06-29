@@ -4,7 +4,6 @@
     <OutputType>WinExe</OutputType>
     <RootNamespace>Magos.Modificus.UI</RootNamespace>
     <AssemblyName>Magos.Modificus</AssemblyName>
-    <ApplicationManifest></ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>

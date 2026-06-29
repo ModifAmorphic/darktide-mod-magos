@@ -10,11 +10,8 @@ namespace Magos.Modificus.UI.ViewModels;
 /// </summary>
 public partial class MainViewModel : ObservableObject
 {
-    private readonly MagosConfig _config;
-
     public MainViewModel(MagosConfig config)
     {
-        _config = config;
         ConfigSummary =
             $"Profiles base folder:{Environment.NewLine}  {config.ProfilesBaseFolder}{Environment.NewLine}{Environment.NewLine}" +
             $"Shared mods folder:{Environment.NewLine}  {config.SharedModsFolder}{Environment.NewLine}{Environment.NewLine}" +
