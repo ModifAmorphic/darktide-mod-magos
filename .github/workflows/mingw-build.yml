@@ -3,11 +3,11 @@ name: mingw-build
 
 on:
   push:
-    branches: [main, spike/001-component-a]
+    branches: [main]
     paths:
       - 'enginseer/**'
   pull_request:
-    branches: [main, spike/001-component-a]
+    branches: [main]
     paths:
       - 'enginseer/**'
   workflow_dispatch:
