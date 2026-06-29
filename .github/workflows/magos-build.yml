@@ -5,10 +5,12 @@ name: magos-build
 
 on:
   push:
+    branches: [main]
     paths:
       - 'magos-modificus/**'
       - '.github/workflows/magos-build.yml'
   pull_request:
+    branches: [main]
     paths:
       - 'magos-modificus/**'
       - '.github/workflows/magos-build.yml'
