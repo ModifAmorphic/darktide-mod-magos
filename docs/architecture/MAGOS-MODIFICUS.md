@@ -258,7 +258,7 @@ the currently-selected profile.
 One global config file for system-level settings (structured — e.g. JSON or
 TOML):
 
-- Log file location + level.
+- Log file location + level (the log is **truncated on each manager startup** — no rolling/retention/backup, matching the `magos_launcher` pattern).
 - Profiles base folder (where profiles, mods, and settings are stored).
 - Shared mods folder (the global shared mod store; see
   [Shared mod storage](#shared-mod-storage)).
