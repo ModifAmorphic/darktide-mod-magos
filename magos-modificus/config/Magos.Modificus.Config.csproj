@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Magos.Modificus.Config</RootNamespace>
+    <AssemblyName>Magos.Modificus.Config</AssemblyName>
+  </PropertyGroup>
+
+</Project>

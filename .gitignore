@@ -91,3 +91,12 @@ _local/
 
 # Ignore local mods directory. Used for local testing and validation.
 mods/
+
+## .NET / Magos Modificus
+**/bin/
+**/obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+TestResults/
