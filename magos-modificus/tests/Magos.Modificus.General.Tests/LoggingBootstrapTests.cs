@@ -49,15 +49,13 @@ public sealed class LoggingBootstrapTests
         }
         Assert.Contains("first run content", File.ReadAllText(logFile));
 
-        // Second startup: the bootstrap deletes the existing file, so the sink
-        // starts fresh. If the file already exists at this point it must be
-        // empty; in all cases the first run's content must not survive.
+        // Second startup. We don't read the file inside this block: on Windows
+        // the Serilog writer holds the file open and File.ReadAllText throws a
+        // sharing violation. (If a future test must read a live log, open it via
+        // a FileStream with FileShare.ReadWrite.) Truncation is proven by the
+        // post-disposal assertion below instead.
         using (var factory = LoggingBootstrap.CreateLoggerFactory(config))
         {
-            if (File.Exists(logFile))
-            {
-                Assert.DoesNotContain("first run content", File.ReadAllText(logFile));
-            }
             factory.CreateLogger("run2").LogInformation("second run content");
         }
 
