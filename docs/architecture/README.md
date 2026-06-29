@@ -11,9 +11,10 @@ way for vanilla play (launch from Steam = the unmodified game).
   one DLL, delivered by `CreateRemoteThread`; the C shell stages the
   **mod loader** — the runtime-controlled Lua loader that loads DMF + user mods.
   See `docs/architecture/ENGINSEER.md` for the full subcomponent breakdown.
-- **Magos Modificus — `mod-manager/`** (planned, not built): the user-facing app —
-  staging-directory management, load order, profiles, dependency resolution,
-  the "Launch Modded" button.
+- **Magos Modificus — `magos-modificus/`** (planned, not built): the user-facing
+  app — staging-directory management, load order, profiles, dependency
+  resolution, the "Launch Modded" button. See
+  [`MAGOS-MODIFICUS.md`](MAGOS-MODIFICUS.md) for the target architecture.
 - **DMF + user mods** (Lua, not our code): the Darktide-Mod-Framework Lua
   files, preserved as-is; only the harness is replaced. Loaded by the mod loader
   at runtime, from the user-controlled mod root (`--mod-path`) — distinct from
@@ -122,6 +123,9 @@ Windows (CI). Both gate on `cargo clippy --all-targets --features test-hooks --
 - `docs/architecture/ENGINSEER.md` — the Enginseer runtime architecture: the
   subcomponents, the Rust↔C seam, the launcher flow, the env-var contract,
   logging.
+- `docs/architecture/MAGOS-MODIFICUS.md` — the Magos Modificus target
+  architecture: project layout, domain libraries, the Enginseer contract it
+  consumes, profiles, the Windows/Linux launch paths, v1 scope.
 - `docs/architecture/MOD_LOADER-DMF.md` — the mod_loader↔DMF integration: the
   loader, the IO re-rooting, the load timing, the two-path split.
 - `docs/reference/darktide-binary.md` — the validated game-binary constraints
