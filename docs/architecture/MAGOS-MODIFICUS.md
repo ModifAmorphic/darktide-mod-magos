@@ -8,9 +8,11 @@ Mods, Steam), and the "Launch Darktide" button that invokes the Enginseer
 launcher. Enginseer does the injection + mod loading; Magos Modificus owns the
 management experience around it.
 
-> **Status: target architecture (not yet built).** This document specifies the
-> architecture for the upcoming Magos Modificus build. Enginseer (the runtime
-> it builds on) is built — see `docs/architecture/ENGINSEER.md`.
+> **Status: Phase 0 scaffold in place; library implementations pending.** The
+> foundation is built (.NET 10 + Avalonia 12 layout, DI composition, structured
+> logging, global config schema/loader, a bare UI shell). Library
+> implementations come in later phases. Enginseer (the runtime it builds on) is
+> built — see `docs/architecture/ENGINSEER.md`.
 
 ## In scope for this document
 
