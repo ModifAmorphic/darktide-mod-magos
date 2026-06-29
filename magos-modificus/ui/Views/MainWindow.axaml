@@ -1,0 +1,18 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Magos.Modificus.UI.ViewModels"
+        x:Class="Magos.Modificus.UI.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Magos Modificus"
+        Width="680" Height="440"
+        WindowStartupLocation="CenterScreen">
+    <ScrollViewer Padding="20">
+        <StackPanel Orientation="Vertical" Spacing="8">
+            <TextBlock Text="Magos Modificus"
+                       FontSize="24" FontWeight="Bold" Margin="0,0,0,4" />
+            <TextBlock Text="Phase 0 scaffold"
+                       FontSize="13" Opacity="0.6" Margin="0,0,0,12" />
+            <TextBlock Text="{Binding ConfigSummary}" FontFamily="monospace" TextWrapping="Wrap" />
+        </StackPanel>
+    </ScrollViewer>
+</Window>

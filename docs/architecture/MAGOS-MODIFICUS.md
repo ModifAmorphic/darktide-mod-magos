@@ -8,9 +8,11 @@ Mods, Steam), and the "Launch Darktide" button that invokes the Enginseer
 launcher. Enginseer does the injection + mod loading; Magos Modificus owns the
 management experience around it.
 
-> **Status: target architecture (not yet built).** This document specifies the
-> architecture for the upcoming Magos Modificus build. Enginseer (the runtime
-> it builds on) is built — see `docs/architecture/ENGINSEER.md`.
+> **Status: Phase 0 scaffold in place; library implementations pending.** The
+> foundation is built (.NET 10 + Avalonia 12 layout, DI composition, structured
+> logging, global config schema/loader, a bare UI shell). Library
+> implementations come in later phases. Enginseer (the runtime it builds on) is
+> built — see `docs/architecture/ENGINSEER.md`.
 
 ## In scope for this document
 
@@ -30,7 +32,7 @@ management experience around it.
 
 ## Technology
 
-- **C# / .NET 10 (LTS)** + **Avalonia 11** for a native cross-platform UI.
+- **C# / .NET 10 (LTS)** + **Avalonia 12** for a native cross-platform UI.
 - **DI** via `Microsoft.Extensions.DependencyInjection`; **logging** via
   `Microsoft.Extensions.Logging` (structured). Mandated across all components.
 - SOLID / DRY; libraries namespaced by domain.
@@ -256,7 +258,7 @@ the currently-selected profile.
 One global config file for system-level settings (structured — e.g. JSON or
 TOML):
 
-- Log file location + level.
+- Log file location + level (the log is **truncated on each manager startup** — no rolling/retention/backup, matching the `magos_launcher` pattern).
 - Profiles base folder (where profiles, mods, and settings are stored).
 - Shared mods folder (the global shared mod store; see
   [Shared mod storage](#shared-mod-storage)).

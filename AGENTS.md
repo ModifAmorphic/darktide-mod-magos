@@ -28,7 +28,8 @@ Requirements, architecture, and technology choices are made fresh.
 ## Repository state
 
 - **`main`** — production. Enginseer (the injected modding runtime + launcher) is
-  merged as the production seed; Magos Modificus is not yet built.
+  merged as the production seed; Magos Modificus is scaffolded (Phase 0:
+  .NET 10 + Avalonia 12 foundation — libraries are stubs).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -57,10 +58,24 @@ enginseer/          Enginseer (runtime) — the injected modding runtime + injec
                       Vendored DMF/test-mod/mods.lst live in a repo-root mods/
                       dir (gitignored — the mod root, pointed at by --mod-path).
   tests/            C unit tests (run via wine)
-magos-modificus/        Magos Modificus — the mod manager app (not yet built; placeholder)
+magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalonia 12)
+  magos-modificus.sln   solution root (classic .sln)
+  Directory.Build.props  shared MSBuild props (net10.0, nullable, implicit usings)
+  ui/                   Magos.Modificus.UI — the Avalonia executable + DI composition root
+  general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
+                          config loader, AddGeneral() DI ext)
+  config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
+  profiles/             Magos.Modificus.Profiles — stub (interfaces + AddProfiles())
+  integrations/         Magos.Modificus.Integrations — stub
+  steam/                Magos.Modificus.Steam — stub
+  enginseer-client/     Magos.Modificus.EnginseerClient — stub (the v1 launch façade)
+  launcher/             Magos.Modificus.Launcher — stub (slim profile launcher exe;
+                          the Steam non-steam-shortcut target)
+  tests/
+    Magos.Modificus.General.Tests/  xUnit tests for the general library
 docs/               architecture, poc (frozen), reference
-.github/workflows/  CI: mingw-build (Linux cross-compile) + msvc-build (Windows native)
-.gitignore          ignores enginseer/target, enginseer/bin, build artifacts, _local/
+.github/workflows/  CI: mingw-build + msvc-build (Enginseer) + magos-build (Magos Modificus)
+.gitignore          ignores enginseer/target, enginseer/bin, .NET bin/obj, build artifacts, _local/
 ```
 The workspace root (`Cargo.toml`/`Cargo.lock`/`Makefile`) lives under
 `enginseer/`, not the repo root — all build/test commands run from there.
@@ -101,6 +116,27 @@ Build outputs land in `enginseer/bin/`; cargo's artifacts in `enginseer/target/`
   it or the game binary.
 - **CI** runs on push/PR to `main`: mingw (Linux cross-compile + wine tests)
   + msvc (Windows native). Both gate on clippy + tests.
+
+## Magos Modificus ops
+
+Build + test the mod-manager app — run from the repo root (.NET 10 SDK required):
+```sh
+dotnet build magos-modificus/magos-modificus.sln --configuration Release
+dotnet test  magos-modificus/magos-modificus.sln --configuration Release
+dotnet run   --project magos-modificus/ui --configuration Release   # bare Avalonia window
+```
+- The composition root is `magos-modificus/ui/MagosComposition.cs` (loads
+  config → builds the Serilog logger → wires every `Add<Library>()`).
+- **Config** is `MagosConfig` (`magos-modificus/config/`) — defaults under the
+  OS local-app-data dir; loaded from JSON by `general/ConfigLoader.cs`. Missing
+  file/dir → defaults (first-run safe).
+- **Logging** is Serilog (console + file) bridged into
+  `Microsoft.Extensions.Logging`; honors `Logging:Level` + `Logging:LogFile`.
+- Library projects are **stubs** (interfaces + `Add<Library>()` only); real
+  implementations come in later phases. See
+  `docs/architecture/MAGOS-MODIFICUS.md`.
+- **CI** (`magos-build.yml`) is scoped to `magos-modificus/**` + the workflow
+  file, matrixed on Windows + Ubuntu; gates on build + tests.
 
 ## Key docs
 

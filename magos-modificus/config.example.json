@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/json",
+  "_comment": "Sample Magos Modificus global config. Copy to <app-data>/Magos Modificus/config.json and edit. Every field has a default; specify only what you want to override.",
+  "Logging": {
+    "Level": "Information",
+    "LogFile": "<app-data>/Magos Modificus/logs/magos.log"
+  },
+  "ProfilesBaseFolder": "<app-data>/Magos Modificus/profiles",
+  "SharedModsFolder": "<app-data>/Magos Modificus/shared-mods",
+  "EnginseerRuntimeDir": "<app-data>/Magos Modificus/enginseer"
+}
