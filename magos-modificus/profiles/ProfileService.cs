@@ -161,17 +161,12 @@ internal sealed class ProfileService : IProfileService
 
         // Stable sort: listed mods by their desired position first, then
         // unmentioned mods in their existing relative order. OrderBy is stable,
-        // so equal keys keep storage order.
-        var reordered = current
+        // so equal keys keep storage order. Rebuild (immutable entries) with
+        // renumbered Order.
+        profile.Mods = current
             .OrderBy(m => desiredIndex.TryGetValue(m.Name, out var idx) ? idx : int.MaxValue)
+            .Select((m, i) => m with { Order = i })
             .ToList();
-
-        for (var i = 0; i < reordered.Count; i++)
-        {
-            reordered[i].Order = i;
-        }
-
-        profile.Mods = reordered;
         WriteProfileFile(profile);
     }
 
@@ -179,10 +174,14 @@ internal sealed class ProfileService : IProfileService
     public void SetModEnabled(Guid id, string modName, bool enabled)
     {
         var profile = GetProfile(id);
-        var entry = profile.Mods.FirstOrDefault(m => string.Equals(m.Name, modName, StringComparison.Ordinal))
+        _ = profile.Mods.FirstOrDefault(m => string.Equals(m.Name, modName, StringComparison.Ordinal))
             ?? throw UnknownMod(id, modName);
 
-        entry.Enabled = enabled;
+        // Rebuild (immutable entries): swap the matching entry for a copy with
+        // the new Enabled. Write-through persists the whole aggregate.
+        profile.Mods = profile.Mods
+            .Select(m => string.Equals(m.Name, modName, StringComparison.Ordinal) ? m with { Enabled = enabled } : m)
+            .ToList();
         WriteProfileFile(profile);
     }
 
@@ -204,10 +203,9 @@ internal sealed class ProfileService : IProfileService
         }
 
         var nextOrder = profile.Mods.Count == 0 ? 0 : profile.Mods.Max(m => m.Order) + 1;
-        var updated = profile.Mods.ToList();
-        updated.Add(new ModListEntry { Name = modName, Enabled = true, Order = nextOrder });
-
-        profile.Mods = updated;
+        profile.Mods = profile.Mods
+            .Append(new ModListEntry { Name = modName, Enabled = true, Order = nextOrder })
+            .ToList();
         WriteProfileFile(profile);
     }
 

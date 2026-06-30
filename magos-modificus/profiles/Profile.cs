@@ -22,9 +22,10 @@ public sealed class Profile
 
     /// <summary>
     /// The profile's mods, in no particular storage order — load order comes
-    /// from each entry's <see cref="ModListEntry.Order"/>. Exposed as
-    /// <see cref="IReadOnlyList{T}"/> so consumers can't mutate the aggregate
-    /// behind the service's back.
+    /// from each entry's <see cref="ModListEntry.Order"/>. Exposed as a
+    /// <see cref="IReadOnlyList{T}"/> of immutable entries: neither the list
+    /// nor its entries can be edited in place — changes go through the
+    /// <see cref="IProfileService"/> methods, which rebuild + persist.
     /// </summary>
     public IReadOnlyList<ModListEntry> Mods { get; set; } = Array.Empty<ModListEntry>();
 }
