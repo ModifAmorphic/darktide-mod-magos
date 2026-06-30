@@ -74,6 +74,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           the Steam non-steam-shortcut target)
   tests/
     Magos.Modificus.General.Tests/  xUnit tests for the general library
+    Magos.Modificus.Profiles.Tests/  xUnit tests for the profiles library
 docs/               architecture, poc (frozen), reference
 .github/workflows/  CI: mingw-build + msvc-build (Enginseer) + magos-build (Magos Modificus)
 .gitignore          ignores enginseer/target, enginseer/bin, .NET bin/obj, build artifacts, _local/

@@ -40,6 +40,7 @@ magos-modificus/
   launcher/                       Magos.Modificus.Launcher          stub (slim Steam-shortcut launcher)
   tests/
     Magos.Modificus.General.Tests/  xUnit tests for the general library
+    Magos.Modificus.Profiles.Tests/  xUnit tests for the profiles library
 ```
 
 Each library exposes an `Add<Library>()` extension method on
