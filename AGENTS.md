@@ -29,7 +29,8 @@ Requirements, architecture, and technology choices are made fresh.
 
 - **`main`** — production. Enginseer (the injected modding runtime + launcher) is
   merged as the production seed; Magos Modificus is scaffolded (Phase 0:
-  .NET 10 + Avalonia 12 foundation — libraries are stubs).
+  .NET 10 + Avalonia 12 foundation — Profiles implemented in Phase 1; the other
+  libraries are stubs).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -65,7 +66,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
-  profiles/             Magos.Modificus.Profiles — stub (interfaces + AddProfiles())
+  profiles/             Magos.Modificus.Profiles — profile data model, persistence, mods.lst generation
   integrations/         Magos.Modificus.Integrations — stub
   steam/                Magos.Modificus.Steam — stub
   enginseer-client/     Magos.Modificus.EnginseerClient — stub (the v1 launch façade)
@@ -132,9 +133,9 @@ dotnet run   --project magos-modificus/ui --configuration Release   # bare Avalo
   file/dir → defaults (first-run safe).
 - **Logging** is Serilog (console + file) bridged into
   `Microsoft.Extensions.Logging`; honors `Logging:Level` + `Logging:LogFile`.
-- Library projects are **stubs** (interfaces + `Add<Library>()` only); real
-  implementations come in later phases. See
-  `docs/architecture/MAGOS-MODIFICUS.md`.
+- Profiles is implemented (Phase 1); the other library projects are **stubs**
+  (interfaces + `Add<Library>()` only). Real implementations come in later
+  phases. See `docs/architecture/MAGOS-MODIFICUS.md`.
 - **CI** (`magos-build.yml`) is scoped to `magos-modificus/**` + the workflow
   file, matrixed on Windows + Ubuntu; gates on build + tests.
 
