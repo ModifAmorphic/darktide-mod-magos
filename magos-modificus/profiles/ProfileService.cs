@@ -75,7 +75,9 @@ internal sealed class ProfileService : IProfileService
             }
         }
 
-        return summaries;
+        // Predictable order for the UI profile picker: sort by Name, ordinal
+        // (stable, so equal names keep enumeration order).
+        return summaries.OrderBy(s => s.Name, StringComparer.Ordinal).ToList();
     }
 
     /// <inheritdoc />

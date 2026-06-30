@@ -96,6 +96,22 @@ public sealed class ProfileCrudTests
     }
 
     [Fact]
+    public void ListProfiles_is_sorted_by_name_ordinal()
+    {
+        using var fx = new ProfileServiceFixture();
+        fx.Service.CreateProfile("Charlie");
+        fx.Service.CreateProfile("alpha");
+        fx.Service.CreateProfile("Bravo");
+
+        var names = fx.Service.ListProfiles().Select(s => s.Name).ToArray();
+
+        // Ordinal sort: uppercase precedes lowercase in ASCII, so this order
+        // also distinguishes Ordinal from OrdinalIgnoreCase (which would put
+        // 'alpha' first).
+        Assert.Equal(new[] { "Bravo", "Charlie", "alpha" }, names);
+    }
+
+    [Fact]
     public void ListProfiles_is_empty_when_no_profiles_exist()
     {
         using var fx = new ProfileServiceFixture();

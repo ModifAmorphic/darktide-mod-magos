@@ -70,9 +70,8 @@ public interface IProfileService
     void AddMod(Guid id, string modName);
 
     /// <summary>
-    /// Removes the mod entry and, if present, deletes its directory under the
-    /// profile's mod root. A missing mod directory for a listed mod is graceful
-    /// (not a crash).
+    /// Removes the mod entry and the mod's local files, if any. A missing local
+    /// copy for a listed mod is graceful (not a crash).
     /// </summary>
     /// <exception cref="KeyNotFoundException">
     /// <paramref name="id"/> is unknown, or <paramref name="modName"/> is not in the profile's list.
