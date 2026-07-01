@@ -7,8 +7,9 @@ Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
 
 > **Status: Phase 0 scaffold.** The project layout, DI composition, structured
 > logging, global config schema/loader, and a bare UI window are in place.
-> Library implementations come in later phases — the domain libraries are
-> currently stubs (interfaces + DI registration only). Target architecture:
+> Library implementations come in later phases — Profiles is implemented
+> (Phase 1); the other domain libraries are currently stubs (interfaces + DI
+> registration only). Target architecture:
 > [`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md).
 
 ## Tech stack
@@ -32,13 +33,14 @@ magos-modificus/
   ui/                             Magos.Modificus.UI       Avalonia executable + DI composition root
   general/                        Magos.Modificus.General  cross-cutting infra: logging, config loader, DI
   config/                         Magos.Modificus.Config   the MagosConfig schema + defaults (POCO)
-  profiles/                       Magos.Modificus.Profiles          stub
+  profiles/                       Magos.Modificus.Profiles          implemented (Phase 1)
   integrations/                   Magos.Modificus.Integrations      stub
   steam/                          Magos.Modificus.Steam             stub
   enginseer-client/               Magos.Modificus.EnginseerClient   stub (launch façade)
   launcher/                       Magos.Modificus.Launcher          stub (slim Steam-shortcut launcher)
   tests/
     Magos.Modificus.General.Tests/  xUnit tests for the general library
+    Magos.Modificus.Profiles.Tests/  xUnit tests for the profiles library
 ```
 
 Each library exposes an `Add<Library>()` extension method on

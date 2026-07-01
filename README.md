@@ -15,9 +15,10 @@ Magos has two components:
   [`enginseer/README.md`](enginseer/README.md) for build + developer details.
 - **Magos Modificus** — the mod manager app (UI, staging, load order, profiles,
   dependency resolution). Phase 0 scaffold in place (.NET 10 + Avalonia 12
-  foundation, DI + logging + config + a bare UI window); library behavior is
-  stubbed for now. See [`magos-modificus/README.md`](magos-modificus/README.md)
-  for developer/build details.
+  foundation, DI + logging + config + a bare UI window); the Profiles library
+  is implemented (Phase 1), other library behavior is still stubbed. See
+  [`magos-modificus/README.md`](magos-modificus/README.md) for developer/build
+  details.
 
 ## Getting started
 
