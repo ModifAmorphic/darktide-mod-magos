@@ -43,6 +43,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.Profiles.Te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.Steam.Tests", "tests\Magos.Modificus.Steam.Tests\Magos.Modificus.Steam.Tests.csproj", "{2E1647E7-8D82-44EB-ADB6-FAFA9AC42200}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.Integrations.Tests", "tests\Magos.Modificus.Integrations.Tests\Magos.Modificus.Integrations.Tests.csproj", "{6DB44E7F-2EAA-484E-AFCA-22742857C817}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -185,6 +187,18 @@ Global
 		{2E1647E7-8D82-44EB-ADB6-FAFA9AC42200}.Release|x64.Build.0 = Release|Any CPU
 		{2E1647E7-8D82-44EB-ADB6-FAFA9AC42200}.Release|x86.ActiveCfg = Release|Any CPU
 		{2E1647E7-8D82-44EB-ADB6-FAFA9AC42200}.Release|x86.Build.0 = Release|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Debug|x64.Build.0 = Debug|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Debug|x86.Build.0 = Debug|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Release|x64.ActiveCfg = Release|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Release|x64.Build.0 = Release|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Release|x86.ActiveCfg = Release|Any CPU
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -201,5 +215,6 @@ Global
 		{A3D79190-AD1E-428E-A0B0-224AE2A5A2BF} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{B4E0C2A1-1F2D-4A3E-9B5C-7D6E8F901A23} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{2E1647E7-8D82-44EB-ADB6-FAFA9AC42200} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{6DB44E7F-2EAA-484E-AFCA-22742857C817} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
