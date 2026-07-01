@@ -1,5 +1,3 @@
-using System.Net;
-
 namespace Magos.Modificus.Integrations;
 
 /// <summary>
@@ -30,7 +28,8 @@ public class GitHubApiException : Exception
 /// exhausted — detected via a <c>403</c>/<c>429</c> status carrying
 /// <c>X-RateLimit-Remaining: 0</c>. Carries the reset time
 /// (<c>X-RateLimit-Reset</c>) when GitHub reports it, so callers can advise the
-/// user when to retry.
+/// user when to retry. <see cref="GitHubApiException.StatusCode"/> reflects the
+/// actual response status (403 or 429).
 /// </summary>
 public sealed class GitHubRateLimitException : GitHubApiException
 {
@@ -40,10 +39,10 @@ public sealed class GitHubRateLimitException : GitHubApiException
     /// </summary>
     public DateTimeOffset? ResetAt { get; }
 
-    internal GitHubRateLimitException(DateTimeOffset? resetAt)
+    internal GitHubRateLimitException(int statusCode, DateTimeOffset? resetAt)
         : base(
-            (int)HttpStatusCode.Forbidden,
-            "GitHub API rate limit exhausted"
+            statusCode,
+            "GitHub API rate limit exhausted (HTTP " + statusCode + ")"
                 + (resetAt.HasValue ? $" — resets at {resetAt:O}." : "."))
     {
         ResetAt = resetAt;

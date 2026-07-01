@@ -223,6 +223,20 @@ public sealed class GitHubClientTests
         Assert.IsAssignableFrom<GitHubApiException>(ex);
     }
 
+    [Fact]
+    public void GetLatestRelease_429_rate_limited_carries_actual_status()
+    {
+        // GitHub occasionally signals rate limiting with 429 Too Many Requests;
+        // the exception must surface that status (not a hardcoded 403).
+        var handler = new StubHttpMessageHandler(_ =>
+            HttpResponses.RateLimited(1_700_000_000L, HttpStatusCode.TooManyRequests));
+        var client = CreateClient(handler);
+
+        var ex = Assert.Throws<GitHubRateLimitException>(() => client.GetLatestRelease(new GitHubRepo("o", "r")));
+        Assert.Equal(429, ex.StatusCode);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_700_000_000L), ex.ResetAt);
+    }
+
     // ---- DownloadAssetAsync -------------------------------------------------
 
     [Fact]
@@ -307,6 +321,39 @@ public sealed class GitHubClientTests
                 dest));
             Assert.Equal(404, ex.StatusCode);
             Assert.False(File.Exists(dest));
+        }
+        finally
+        {
+            if (File.Exists(dest))
+            {
+                File.Delete(dest);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DownloadAssetAsync_failed_mid_stream_deletes_partial_file()
+    {
+        // Simulate a network drop: a stream that emits a few bytes, then throws.
+        // The client created the destination file, so it must clean up the
+        // partial write rather than leave a corrupt file behind.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StreamContent(new HalfwayFailingStream(bytesBeforeFailure: 5)),
+        });
+        var client = CreateClient(handler);
+
+        var dest = Path.Combine(Path.GetTempPath(), "magos-integrations-" + Guid.NewGuid() + ".bin");
+        var progress = new CapturingProgress();
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(() => client.DownloadAssetAsync(
+                new GitHubReleaseAsset("a.zip", 1024, new Uri("https://github.com/o/r/releases/download/v1/a.zip")),
+                dest,
+                progress));
+
+            Assert.False(File.Exists(dest));
+            Assert.NotEmpty(progress.Reports); // proves the copy started before failing
         }
         finally
         {
@@ -404,6 +451,40 @@ public sealed class GitHubClientTests
             var tcs = new TaskCompletionSource<HttpResponseMessage>();
             cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
             return tcs.Task;
+        }
+    }
+
+    /// <summary>
+    /// A read-only stream that emits <paramref name="bytesBeforeFailure"/> bytes
+    /// then throws <see cref="IOException"/> — simulates a mid-download network
+    /// drop so partial-file cleanup can be asserted.
+    /// </summary>
+    private sealed class HalfwayFailingStream : Stream
+    {
+        private int _remaining;
+
+        public HalfwayFailingStream(int bytesBeforeFailure) => _remaining = bytesBeforeFailure;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_remaining <= 0)
+            {
+                throw new IOException("simulated network drop mid-download");
+            }
+
+            buffer[offset] = 0xAB;
+            _remaining--;
+            return 1;
         }
     }
 }

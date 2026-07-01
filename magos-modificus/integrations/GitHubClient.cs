@@ -38,10 +38,13 @@ internal sealed class GitHubClient : IGitHubClient
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-        // Defensive: the configured client should already carry a User-Agent
-        // (set in AddIntegrations), but guarantee one — GitHub rejects requests
-        // without it. TryAdd avoids duplicating if the factory already set it.
-        _httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd(UserAgent);
+        // Guarantee a User-Agent — GitHub rejects requests without one. DI (via
+        // AddIntegrations) already sets it on the typed client, so only add one
+        // when none is present (avoids a duplicated User-Agent in production).
+        if (_httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
+        {
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+        }
     }
 
     /// <inheritdoc />
@@ -85,14 +88,43 @@ internal sealed class GitHubClient : IGitHubClient
             DownloadBufferSize,
             useAsync: true);
 
-        var buffer = new byte[DownloadBufferSize];
-        long total = 0;
-        int read;
-        while ((read = await network.ReadAsync(buffer.AsMemory(0, DownloadBufferSize), ct).ConfigureAwait(false)) > 0)
+        try
         {
-            await file.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-            total += read;
-            progress?.Report(total);
+            var buffer = new byte[DownloadBufferSize];
+            long total = 0;
+            int read;
+            while ((read = await network.ReadAsync(buffer.AsMemory(0, DownloadBufferSize), ct).ConfigureAwait(false)) > 0)
+            {
+                await file.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                total += read;
+                progress?.Report(total);
+            }
+        }
+        catch
+        {
+            // A failure mid-copy (network drop, cancellation, etc.) leaves a
+            // partial file at destinationPath — and we created it, so we own the
+            // cleanup. Dispose (release the Windows file handle) before deleting;
+            // File.Delete throws on an open handle. Best-effort: swallow cleanup
+            // failures so the original exception propagates unmasked.
+            file.Dispose();
+            TryDelete(destinationPath);
+            throw;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort — the original error is the one callers need to see.
         }
     }
 
@@ -164,7 +196,7 @@ internal sealed class GitHubClient : IGitHubClient
                 "GitHub API rate limit exhausted (status {Status}, reset at {Reset}).",
                 (int)response.StatusCode,
                 reset);
-            throw new GitHubRateLimitException(reset);
+            throw new GitHubRateLimitException((int)response.StatusCode, reset);
         }
 
         var message = await ReadErrorMessageAsync(response, ct).ConfigureAwait(false);
@@ -178,7 +210,7 @@ internal sealed class GitHubClient : IGitHubClient
         // sets X-RateLimit-Remaining: 0. A 403 for other reasons (permissions)
         // carries a non-zero remaining — so both conditions must hold.
         if (response.StatusCode != HttpStatusCode.Forbidden &&
-            response.StatusCode != (HttpStatusCode)429)
+            response.StatusCode != HttpStatusCode.TooManyRequests)
         {
             return false;
         }
