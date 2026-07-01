@@ -207,8 +207,11 @@ a Windows binary, so to run it Magos invokes it under **Proton**, using
 runs, to decide which prefix to use. By the time the launcher executes it's
 already inside that prefix; it cannot relocate itself, and Darktide inherits
 the prefix regardless. So the compatdata must be set by whoever invokes Proton
-— it is not passable as a launcher flag. **Magos sets
-`STEAM_COMPAT_DATA_PATH` in the environment when it invokes Proton.**
+— it is not passable as a launcher flag. **Magos sets both
+`STEAM_COMPAT_DATA_PATH` (the Wine prefix) and
+`STEAM_COMPAT_CLIENT_INSTALL_PATH` (the Steam install dir) in the environment
+when it invokes Proton.** (The live-validated working invocation set both env
+vars.) Steam discovers both; Enginseer-client sets both.
 
 Responsibilities:
 
@@ -228,12 +231,14 @@ Responsibilities:
   - Translate the profile's native mod-path → `Z:\...` (and confirm
     `--game-binary` is the in-prefix Windows path).
   - Assemble the launcher args.
-  - `Process.Start` with `STEAM_COMPAT_DATA_PATH = <compatdata>` in env,
+  - `Process.Start` with `STEAM_COMPAT_DATA_PATH = <compatdata>` and
+    `STEAM_COMPAT_CLIENT_INSTALL_PATH = <steam-install>` in env,
     command = `<proton> run <runtime-dir>/magos_launcher.exe <args>`.
 
 **Enginseer is unchanged on Linux** — no Linux helper, no Steam/Proton
 discovery, no new flag. It remains the Windows launcher + shell + mod_loader,
-run under Proton with `STEAM_COMPAT_DATA_PATH` set by Magos.
+run under Proton with `STEAM_COMPAT_DATA_PATH` + `STEAM_COMPAT_CLIENT_INSTALL_PATH`
+set by Magos.
 
 **Known characteristic (not a defect):** when Magos launches directly, Steam
 isn't supervising the session (no overlay / playtime tracking). The **Steam

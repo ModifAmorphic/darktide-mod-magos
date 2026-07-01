@@ -5,9 +5,26 @@
     <AssemblyName>Magos.Modificus.Steam</AssemblyName>
   </PropertyGroup>
 
+  <!--
+    Exposes internal helpers (the VDF parser) to the test assembly so the parser
+    can be unit-tested in isolation without widening the library's public surface.
+    Implementation services (SteamService, SteamRegistryReader, ProcessLookup)
+    stay internal and are exercised through ISteamService via DI in tests.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Magos.Modificus.Steam.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+    <!--
+      No Microsoft.Win32.Registry package: on net10.0 the Registry type is in the
+      reference assembly, gated behind [SupportedOSPlatform("windows")] (runtime
+      throws on non-Windows). SteamRegistryReader guards every call with
+      OperatingSystem.IsWindows(), so it compiles cleanly on Linux and is a no-op
+      there. No new NuGet dependency required.
+    -->
   </ItemGroup>
 
 </Project>
