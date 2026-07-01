@@ -29,6 +29,9 @@ public sealed class MagosConfig
     /// </summary>
     public string EnginseerRuntimeDir { get; set; } = AppPaths.DefaultEnginseerRuntimeDir;
 
+    /// <summary>External-service (mod-source) integration settings.</summary>
+    public IntegrationsConfig Integrations { get; set; } = new();
+
     /// <summary>A fully-defaulted config instance.</summary>
     public static MagosConfig CreateDefault() => new();
 }
