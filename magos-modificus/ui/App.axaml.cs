@@ -60,7 +60,7 @@ public class App : Application
     {
         var count = 0;
         if (services.GetService<IProfileService>() is not null) count++;
-        if (services.GetService<IModSourceService>() is not null) count++;
+        if (services.GetService<IGitHubClient>() is not null) count++;
         if (services.GetService<ISteamService>() is not null) count++;
         if (services.GetService<IEnginseerLaunchService>() is not null) count++;
         if (services.GetService<IProfileLauncher>() is not null) count++;
