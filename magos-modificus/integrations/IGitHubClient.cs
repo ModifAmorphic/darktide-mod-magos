@@ -21,6 +21,7 @@ public interface IGitHubClient
     /// <summary>
     /// Lists a repository's published releases (newest first, per the GitHub API).
     /// A <c>404</c> (unknown repo) yields an empty list rather than an exception.
+    /// Returns up to GitHub's default page size (~30); pagination is a later phase.
     /// </summary>
     /// <exception cref="GitHubApiException">A non-2xx response other than 404.</exception>
     /// <exception cref="GitHubRateLimitException">The API rate limit is exhausted.</exception>
