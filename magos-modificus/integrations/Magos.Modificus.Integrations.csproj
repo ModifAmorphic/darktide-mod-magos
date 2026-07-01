@@ -5,9 +5,30 @@
     <AssemblyName>Magos.Modificus.Integrations</AssemblyName>
   </PropertyGroup>
 
+  <!--
+    Exposes the internal GitHubClient implementation to the test assembly so it
+    can be unit-tested against a fake HttpMessageHandler without widening the
+    library's public surface. The implementation stays internal and is also
+    exercised through IGitHubClient via DI in the service-collection tests.
+  -->
   <ItemGroup>
+    <InternalsVisibleTo Include="Magos.Modificus.Integrations.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Microsoft.Extensions.Http brings AddHttpClient<TClient,TImpl> +
+      IHttpClientFactory (the standard, testable .NET HTTP pattern). The
+      Microsoft.Extensions.* packages ride the .NET 10 LTS versions.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- MagosConfig (the Integrations.GitHub section) is read at DI time. -->
+    <ProjectReference Include="..\config\Magos.Modificus.Config.csproj" />
   </ItemGroup>
 
 </Project>
