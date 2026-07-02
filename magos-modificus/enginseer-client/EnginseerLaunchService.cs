@@ -113,11 +113,10 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
 
             var gameBinary = discovery.DarktideGameBinaryPath!;
             var logFile = _config.Logging.LogFile;
-            var logLevel = _config.Logging.Level;
 
             var started = _platform == LaunchPlatform.Windows
-                ? LaunchWindows(launcherPath, gameBinary, modPath, logFile, logLevel)
-                : LaunchLinux(discovery, launcherPath, gameBinary, modPath, logFile, logLevel);
+                ? LaunchWindows(launcherPath, gameBinary, modPath, logFile)
+                : LaunchLinux(discovery, launcherPath, gameBinary, modPath, logFile);
 
             if (!started)
             {
@@ -150,10 +149,10 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
     // ---- Windows -----------------------------------------------------------
 
     private bool LaunchWindows(
-        string launcherPath, string gameBinary, string modPath, string logFile, string logLevel)
+        string launcherPath, string gameBinary, string modPath, string logFile)
     {
         // Direct invocation — no Proton, no path translation (native Windows paths).
-        var args = BuildLauncherArgs(gameBinary, modPath, logFile, logLevel, translate: false);
+        var args = BuildLauncherArgs(gameBinary, modPath, logFile, translate: false);
         _logger.LogInformation("Launching (Windows) {Launcher} {Args}", launcherPath, FormatArgs(args));
         return _launcher.Start(launcherPath, args, environmentVariables: null);
     }
@@ -165,13 +164,13 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
         string launcherPath,
         string gameBinary,
         string modPath,
-        string logFile,
-        string logLevel)
+        string logFile)
     {
-        // The launcher's OWN args (--game-binary, --mod-path) are Windows paths
-        // (the launcher runs under Wine); the proton command + the launcher.exe
-        // path are native Linux (Proton resolves the .exe from a native path).
-        var launcherArgs = BuildLauncherArgs(gameBinary, modPath, logFile, logLevel, translate: true);
+        // The launcher's OWN args (--game-binary, --mod-path, --log-file) are
+        // Windows paths (the launcher runs under Wine); the proton command +
+        // the launcher.exe path are native Linux (Proton resolves the .exe from
+        // a native path).
+        var launcherArgs = BuildLauncherArgs(gameBinary, modPath, logFile, translate: true);
 
         var arguments = new List<string>(capacity: launcherArgs.Count + 2)
         {
@@ -202,14 +201,24 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
     /// <paramref name="translate"/> is set (Linux), the path-valued flags are
     /// converted to Wine <c>Z:\</c> form so the launcher-under-Wine can resolve them.
     /// </summary>
+    /// <remarks>
+    /// <c>--log-level</c> is intentionally NOT emitted: <c>MagosConfig.Logging.Level</c>
+    /// is a Serilog level name (<c>Verbose</c>/<c>Information</c>/<c>Warning</c>/<c>Fatal</c>)
+    /// for Magos's own log, but the Enginseer shell's level vocabulary is
+    /// <c>error</c>/<c>warn</c>/<c>info</c>/<c>debug</c>/<c>trace</c> — forwarding the
+    /// Serilog name silently mis-resolved 4/6 levels (e.g. <c>Warning</c> → shell
+    /// <c>info</c>, more noise than intended). The two logs serve different purposes;
+    /// the shell log level is now decoupled and the launcher's <c>info</c> default
+    /// is used. A dedicated shell-level config field can be added if a future need arises.
+    /// </remarks>
     private static List<string> BuildLauncherArgs(
-        string gameBinary, string modPath, string logFile, string logLevel, bool translate)
+        string gameBinary, string modPath, string logFile, bool translate)
     {
         var game = translate ? WinePath.ToWine(gameBinary) : gameBinary;
         var mod = translate ? WinePath.ToWine(modPath) : modPath;
         // --log-file is a path the launcher-under-Wine opens, so it must be
         // Z:\-translated on Linux too (otherwise magos_enginseer.log can't be
-        // written where Magos expects). --log-level is a level name, not a path.
+        // written where Magos expects).
         var log = translate ? WinePath.ToWine(logFile) : logFile;
 
         return new List<string>
@@ -217,7 +226,6 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
             "--game-binary", game,
             "--mod-path", mod,
             "--log-file", log,
-            "--log-level", logLevel,
         };
     }
 

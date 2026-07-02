@@ -33,9 +33,13 @@ public sealed class EnginseerLaunchServiceTests
         Assert.Equal(
             new[] { "--game-binary", FakeDiscovery.WindowsGameBinary,
                     "--mod-path",    @"C:\magos\profiles\abc\mods",
-                    "--log-file",    fx.Config.Logging.LogFile,
-                    "--log-level",   fx.Config.Logging.Level },
+                    "--log-file",    fx.Config.Logging.LogFile },
             fx.Launcher.Arguments);
+
+        // --log-level is intentionally NOT emitted: the shell's level vocabulary
+        // (error/warn/info/debug/trace) differs from Serilog's, so the launcher's
+        // info default is used (the two logs are decoupled).
+        Assert.DoesNotContain("--log-level", fx.Launcher.Arguments!);
     }
 
     [Fact]
@@ -148,6 +152,8 @@ public sealed class EnginseerLaunchServiceTests
         Assert.Equal("run", args[0]);
         Assert.Equal(fx.LauncherPath, args[1]);       // native Linux path — Proton resolves it
         Assert.True(args.Count > 2, "expected launcher flags after the launcher path");
+        // --log-level is not emitted (shell level vocabulary != Serilog's).
+        Assert.DoesNotContain("--log-level", args);
     }
 
     [Fact]
