@@ -1,4 +1,5 @@
 using Magos.Modificus.Profiles;
+using Magos.Modificus.SharedMods;
 using Magos.Modificus.Steam;
 
 namespace Magos.Modificus.EnginseerClient.Tests;
@@ -41,6 +42,8 @@ internal sealed class FakeProfileService : IProfileService
     public void SetModOrder(Guid id, IReadOnlyList<string> modNamesInOrder) => throw new NotSupportedException();
     public void SetModEnabled(Guid id, string modName, bool enabled) => throw new NotSupportedException();
     public void AddMod(Guid id, string modName) => throw new NotSupportedException();
+    public void AddMod(Guid id, string modName, ModVersionPolicy policy) => throw new NotSupportedException();
+    public void SetModPolicy(Guid id, string modName, ModVersionPolicy policy) => throw new NotSupportedException();
     public void RemoveMod(Guid id, string modName) => throw new NotSupportedException();
 }
 

@@ -4,6 +4,7 @@ using Magos.Modificus.Config;
 using Magos.Modificus.General;
 using Magos.Modificus.Integrations;
 using Magos.Modificus.Profiles;
+using Magos.Modificus.SharedMods;
 using Magos.Modificus.Steam;
 using Magos.Modificus.UI.ViewModels;
 using Magos.Modificus.UI.Views;
@@ -30,8 +31,12 @@ public static class MagosComposition
         var loggerFactory = LoggingBootstrap.CreateLoggerFactory(config);
 
         // 3. Compose services: General infra + every domain library + UI.
+        //    AddSharedMods() is called explicitly (and idempotently again inside
+        //    AddProfiles()) so the shared store is discoverable at the root +
+        //    IProfileService always resolves its staging dependency.
         var services = new ServiceCollection();
         services.AddGeneral(config, loggerFactory);
+        services.AddSharedMods();
         services.AddProfiles();
         services.AddIntegrations();
         services.AddSteam();

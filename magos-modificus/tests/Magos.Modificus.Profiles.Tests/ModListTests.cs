@@ -1,3 +1,5 @@
+using Magos.Modificus.SharedMods;
+
 namespace Magos.Modificus.Profiles.Tests;
 
 /// <summary>
@@ -70,36 +72,116 @@ public sealed class ModListTests
     }
 
     [Fact]
-    public void RemoveMod_drops_entry_and_deletes_its_directory()
+    public void AddMod_defaults_to_Latest_policy()
+    {
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+
+        fx.Service.AddMod(profile.Id, "DMF"); // Phase 1-compatible overload
+
+        var entry = Assert.Single(fx.Service.GetModList(profile.Id));
+        Assert.IsType<LatestPolicy>(entry.Policy);
+    }
+
+    [Fact]
+    public void AddMod_with_explicit_Pinned_policy_persists()
+    {
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var pinned = new PinnedPolicy(new Version(2, 1, 0));
+
+        fx.Service.AddMod(profile.Id, "DMF", pinned);
+
+        var entry = Assert.Single(fx.Service.GetModList(profile.Id));
+        var pinnedLoaded = Assert.IsType<PinnedPolicy>(entry.Policy);
+        Assert.Equal(new Version(2, 1, 0), pinnedLoaded.Version);
+    }
+
+    [Fact]
+    public void AddMod_is_idempotent_keeps_existing_policy()
+    {
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy(new Version(3, 0, 0)));
+
+        // Re-add via the no-policy overload: idempotent, keeps the Pinned policy.
+        fx.Service.AddMod(profile.Id, "DMF");
+
+        var entry = Assert.Single(fx.Service.GetModList(profile.Id));
+        Assert.IsType<PinnedPolicy>(entry.Policy);
+    }
+
+    [Fact]
+    public void SetModPolicy_unknown_mod_throws_KeyNotFoundException()
+    {
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+
+        Assert.Throws<KeyNotFoundException>(() =>
+            fx.Service.SetModPolicy(profile.Id, "Ghost", ModVersionPolicy.Latest));
+    }
+
+    [Fact]
+    public void GetModList_loads_Phase1_profile_json_without_policy_as_Latest()
+    {
+        // A profile.json persisted by Phase 1 (no Policy field) upgrades
+        // transparently: each entry's Policy deserializes to Latest.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var phase1Profile = new
+        {
+            Id = profile.Id,
+            Name = "P",
+            CreatedAt = profile.CreatedAt,
+            Mods = new[]
+            {
+                new { Name = "DMF", Enabled = true, Order = 0 }, // no Policy
+            }
+        };
+        File.WriteAllText(fx.ProfileJson(profile.Id),
+            System.Text.Json.JsonSerializer.Serialize(phase1Profile),
+            new System.Text.UTF8Encoding(false));
+
+        var entry = Assert.Single(fx.Service.GetModList(profile.Id));
+        Assert.IsType<LatestPolicy>(entry.Policy);
+    }
+
+    [Fact]
+    public void RemoveMod_drops_entry_and_deletes_its_diverged_copy()
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
         fx.Service.AddMod(profile.Id, "DMF");
-        // Simulate an installed mod directory under the mod root.
-        var modDir = Path.Combine(fx.ModRoot(profile.Id), "DMF");
-        Directory.CreateDirectory(modDir);
-        File.WriteAllText(Path.Combine(modDir, "marker.txt"), "x");
-        Assert.True(Directory.Exists(modDir));
+        // Simulate a diverged (profile-local) copy of the mod.
+        var divergedModDir = fx.DivergedModDir(profile.Id, "DMF");
+        Directory.CreateDirectory(divergedModDir);
+        File.WriteAllText(Path.Combine(divergedModDir, "marker.txt"), "x");
+        Assert.True(Directory.Exists(divergedModDir));
 
         fx.Service.RemoveMod(profile.Id, "DMF");
 
         Assert.Empty(fx.Service.GetModList(profile.Id));
-        Assert.False(Directory.Exists(modDir));
+        Assert.False(Directory.Exists(divergedModDir));
     }
 
     [Fact]
-    public void RemoveMod_is_graceful_when_mod_directory_was_never_installed()
+    public void RemoveMod_is_graceful_when_diverged_copy_was_never_present()
     {
-        // "missing mod dir for a listed mod -> graceful": the mod is in the
-        // list (so RemoveMod removes it) but its folder was never created.
+        // "missing local copy for a listed mod -> graceful": the mod is in the
+        // list (so RemoveMod removes it) but its diverged/ dir was never created
+        // (the mod was shared, never diverged). The shared-store copy is NOT
+        // touched (RemoveMod's contract is profile-local only).
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
+        fx.AddSharedMod("DMF"); // shared copy exists
         fx.Service.AddMod(profile.Id, "DMF");
-        Assert.False(Directory.Exists(Path.Combine(fx.ModRoot(profile.Id), "DMF")));
+        Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")));
 
         fx.Service.RemoveMod(profile.Id, "DMF"); // must not throw
 
         Assert.Empty(fx.Service.GetModList(profile.Id));
+        // Shared copy untouched.
+        Assert.True(Directory.Exists(fx.SharedModDir("DMF")));
     }
 
     [Fact]

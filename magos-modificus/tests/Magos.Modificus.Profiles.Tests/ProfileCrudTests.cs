@@ -10,7 +10,7 @@ namespace Magos.Modificus.Profiles.Tests;
 public sealed class ProfileCrudTests
 {
     [Fact]
-    public void CreateProfile_scaffolds_dir_and_modroot_and_persists_profile_json()
+    public void CreateProfile_scaffolds_dir_and_staged_and_diverged_and_persists_profile_json()
     {
         using var fx = new ProfileServiceFixture();
 
@@ -21,9 +21,10 @@ public sealed class ProfileCrudTests
         Assert.Equal(DateTimeOffset.UtcNow, profile.CreatedAt, TimeSpan.FromSeconds(5));
         Assert.Empty(profile.Mods);
 
-        // Dir + mod root + profile.json all created.
+        // Dir + staged/ + diverged/ + profile.json all created.
         Assert.True(Directory.Exists(fx.ProfileDir(profile.Id)));
-        Assert.True(Directory.Exists(fx.ModRoot(profile.Id)));
+        Assert.True(Directory.Exists(fx.StagedDir(profile.Id)));
+        Assert.True(Directory.Exists(fx.DivergedDir(profile.Id)));
         Assert.True(File.Exists(fx.ProfileJson(profile.Id)));
     }
 
