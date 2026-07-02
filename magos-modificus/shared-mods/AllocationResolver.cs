@@ -53,6 +53,16 @@ public static class AllocationResolver
         }
 
         // Both Pinned to the same version -> share (frozen to the same release).
+        // TODO(phase4): System.Version equality is COMPONENT-COUNT-SENSITIVE —
+        // new Version(1,0) != new Version(1,0,0) and Version.Parse("1.0") !=
+        // Version.Parse("1.0.0") (Build/Revision default to -1, not 0). Phase 2
+        // is internally consistent (its tests use matching component counts), so
+        // this is dormant. But Phase 4 (acquisition) will parse user-typed pins
+        // + GitHub-release-tag versions against shared-store entries — cross-
+        // component-count comparisons would silently Diverge here. Phase 4 must
+        // normalize version representation at the acquisition boundary (canonical
+        // Major.Minor.Build, or a 2/3/4-component-normalized compare) so "1.0"
+        // and "1.0.0" compare equal. No Phase 2 logic change.
         if (sharedPolicy is PinnedPolicy sp && profilePolicy is PinnedPolicy pp
             && sp.Version == pp.Version)
         {
