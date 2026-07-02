@@ -1,7 +1,7 @@
 //! The oracle: the 16 target-function RVAs pinned to the analyzed Darktide.exe
 //! build (SHA-256 `132eed5f…791661`, 18,715,784 bytes), transcribed from the
-//! POC's runtime-confirmed `addresses.json` /
-//! `docs/poc/production-spec.md` §"Confirmed function addresses".
+//! runtime-confirmed `addresses.json` captures (the validated binary constraints
+//! are documented in `docs/reference/darktide/darktide-binary.md`).
 //!
 //! The discovery engine itself is **build-agnostic** (no address is hardcoded
 //! in its logic). This table exists only as the *Tier-1 exact-match oracle*

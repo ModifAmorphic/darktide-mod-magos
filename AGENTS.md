@@ -22,7 +22,7 @@ pre-release of production code. Production is built ground-up with
 testability, review, and production-readiness as first-class goals. The POC
 carries forward (1) proof of feasibility and (2) validated technical
 constraints that are properties of the Darktide binary (in
-`docs/reference/darktide-binary.md`). It does not carry forward code.
+`docs/reference/darktide/darktide-binary.md`). It does not carry forward code.
 Requirements, architecture, and technology choices are made fresh.
 
 ## Repository state
@@ -88,10 +88,14 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   launcher/             Magos.Modificus.Launcher — stub (slim profile launcher exe;
                           the Steam non-steam-shortcut target)
   tests/
-    Magos.Modificus.General.Tests/    xUnit tests for the general library
-    Magos.Modificus.Profiles.Tests/   xUnit tests for the profiles library (incl. staging)
-    Magos.Modificus.SharedMods.Tests/  xUnit tests for the shared-mod store + allocation
-docs/               architecture, poc (frozen), reference
+    Magos.Modificus.General.Tests/         xUnit tests for the general library
+    Magos.Modificus.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
+    Magos.Modificus.SharedMods.Tests/      xUnit tests for the shared-mod store + allocation
+    Magos.Modificus.Integrations.Tests/    xUnit tests for the GitHub Releases client
+    Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
+    Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
+                                            `dotnet test` = xUnit; `dotnet run` = composition smoke harness)
+docs/               architecture/ + reference/ (darktide/, community-tools/, magos-modificus/)
 .github/workflows/  CI: mingw-build + msvc-build (Enginseer) + magos-build (Magos Modificus)
 .gitignore          ignores enginseer/target, enginseer/bin, .NET bin/obj, build artifacts, _local/
 ```
@@ -150,14 +154,16 @@ dotnet run   --project magos-modificus/ui --configuration Release   # bare Avalo
   file/dir → defaults (first-run safe).
 - **Logging** is Serilog (console + file) bridged into
   `Microsoft.Extensions.Logging`; honors `Logging:Level` + `Logging:LogFile`.
-- Profiles (Phase 1: profile data model + lifecycle) + SharedMods (Phase 2: the
-  global shared mod store + version-policy model + allocation resolution) are
-  implemented; Profiles now stages **shared-first** — `PrepareModRoot` builds a
-  `staged/` symlink projection (Share → shared store, Diverge → profile's
-  `diverged/` copy) + writes `mods.lst` from the staged mods (Phase 1's
-  per-profile `mods/` dir is replaced). The other library projects are **stubs**
-  (interfaces + `Add<Library>()` only). Real implementations come in later
-  phases. See `docs/architecture/MAGOS-MODIFICUS.md`.
+- The backend libraries are all implemented: **Profiles** (Phase 1: profile data
+  model + lifecycle; stages **shared-first** — `PrepareModRoot` builds a `staged/`
+  symlink projection (Share → shared store, Diverge → profile's `diverged/` copy)
+  + writes `mods.lst`), **Steam** (Phase 1: Steam + Darktide + Proton discovery
+  + `IsGameRunning` — `WinProcessLookup` via process comm on Windows,
+  `LinuxProcessLookup` via `/proc` argv[0] under Proton), **Integrations**
+  (Phase 1: GitHub Releases client), **Enginseer-client** (Phase 1: the launch
+  façade), **SharedMods** (Phase 2: shared mod store + version-policy model +
+  allocation resolution). The **UI is still the bare Phase-0 window** and the
+  **Launcher** is a stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
 - **CI** (`magos-build.yml`) is scoped to `magos-modificus/**` + the workflow
   file, matrixed on Windows + Ubuntu; gates on build + tests.
 
@@ -165,10 +171,11 @@ dotnet run   --project magos-modificus/ui --configuration Release   # bare Avalo
 
 - `docs/architecture/` — the production architecture (component model, the
   Hybrid, the seam, test strategy, build, launcher flow).
-- `docs/reference/darktide-binary.md` — validated game-binary constraints.
-- `docs/reference/darktide-framework-analysis.md` — the existing modding
-  ecosystem being replaced.
-- `docs/poc/` — frozen POC handoff (historical reference).
+- `docs/reference/darktide/darktide-binary.md` — validated game-binary constraints.
+- `docs/reference/community-tools/darktide-framework-analysis.md` — the existing
+  modding ecosystem being replaced.
+- `docs/reference/magos-modificus/` — per-library API reference for the Magos
+  Modificus backend libraries.
 
 ## Conventions
 
@@ -218,8 +225,12 @@ affects repo structure, build, architecture, or ops, update:
   goes in the relevant component README, and the root must link to it.
 - **Component-dir `README.md`** (e.g. `enginseer/README.md`) — for build/dev
   detail under that component; ensure the root links to it.
-- **`docs/architecture/`** for any architecture change; `docs/reference/` for
-  game/ecosystem facts.
+- **`docs/architecture/`** for any architecture change.
+- **`docs/reference/`** — categorized: `darktide/` (game-binary facts),
+  `community-tools/` (existing modding ecosystem), `magos-modificus/`
+  (per-library API reference). When a Magos Modificus library's public surface,
+  key types, or DI registration changes, update its
+  `docs/reference/magos-modificus/<library>.md` in the same PR.
 
 Then ensure `make build/check/test` + clippy pass. **Outdated docs in a PR are
 a review blocker** — including this file.

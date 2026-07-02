@@ -8,11 +8,13 @@ Mods, Steam), and the "Launch Darktide" button that invokes the Enginseer
 launcher. Enginseer does the injection + mod loading; Magos Modificus owns the
 management experience around it.
 
-> **Status: Phase 0 scaffold in place; library implementations pending.** The
-> foundation is built (.NET 10 + Avalonia 12 layout, DI composition, structured
-> logging, global config schema/loader, a bare UI shell). Library
-> implementations come in later phases. Enginseer (the runtime it builds on) is
-> built — see `docs/architecture/ENGINSEER.md`.
+> **Status: Phases 0–2 complete.** The foundation (.NET 10 + Avalonia 12 layout,
+> DI composition, structured logging, global config schema/loader, a bare UI
+> shell) plus the backend libraries are built: Profiles, Steam, Integrations,
+> Enginseer-client (Phase 1) + SharedMods (Phase 2). The **UI is still the bare
+> Phase-0 window** (no profile/mod-management UI yet) and the **Launcher** is a
+> stub (Phase 5). Next: Phase 3 (UI build-out). Enginseer (the runtime it builds
+> on) is built — see `docs/architecture/ENGINSEER.md`.
 
 ## In scope for this document
 
@@ -45,14 +47,16 @@ its own subfolder:
 ```
 magos-modificus/
   ui/                     the Avalonia app (UI only — no direct data access)
-  enginseer-client/      Enginseer-client library — the launch façade
-  profiles/              Profiles + Settings library
-  integrations/          GitHub Releases + Nexus Mods client
-  steam/                 Steam discovery + shortcuts
-  general/               cross-cutting infra (DI, logging, config, primitives)
-  launcher/ (optional)    slim profile launcher — launches a profile without
-                          the UI (entry point for Steam non-steam shortcuts)
+  general/                cross-cutting infra (DI, logging, config, primitives)
   config/                 the global config schema + defaults
+  profiles/               Profiles library — profile data, staging, mods.lst
+  shared-mods/            SharedMods library — global shared mod store + version-policy model
+  steam/                  Steam library — Steam/Darktide/Proton discovery + IsGameRunning
+  integrations/           Integrations library — GitHub Releases client (Nexus = Phase 4)
+  enginseer-client/       Enginseer-client library — the launch façade
+  launcher/ (optional)    slim profile launcher — launches a profile without
+                          the UI (entry point for Steam non-steam shortcuts); Phase 5
+  tests/                  xUnit test projects per library
 ```
 
 The UI **never** touches files, directories, APIs, or any data directly —
@@ -72,6 +76,56 @@ UI models.
 | **Integrations** | External-service calls: Nexus Mods (primary user-mod source), GitHub Releases, local install. Nexus API key / OIDC, version checks, downloads / updates. |
 | **Steam** | Steam operations outside Enginseer: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; add / remove non-steam shortcuts; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
 | **General** | Cross-cutting infra: DI composition, structured logging, configuration, shared primitives. |
+
+## Composition & startup
+
+The composition root is `ui/MagosComposition.cs` — a static `Build()` that
+constructs and returns the application `IServiceProvider`. The UI **never**
+touches files, directories, or APIs directly; every data operation flows
+through a registered library interface. The UI registers only its own surface
+(main window + view model) — no data access.
+
+`MagosComposition.Build()` runs this sequence, in order:
+
+1. **Load config** — `new ConfigLoader().Load()` produces a fully-defaulted
+   `MagosConfig` (defaults + JSON overrides; first-run safe). Logging needs this
+   first.
+2. **Build the logger** — `LoggingBootstrap.CreateLoggerFactory(config)`
+   (Serilog console + file, level-honored, truncated on startup). Both config
+   and the logger are constructed **outside** DI because DI itself needs them.
+3. **Compose services** — `new ServiceCollection()`, then the `Add<Library>()`
+   extensions in their real order:
+   - `AddGeneral(config, loggerFactory)` — registers the config singleton, the
+     logger factory, `AddLogging()`, and the config loader.
+   - `AddSharedMods()` — the global shared store (called explicitly here and
+     idempotently again inside `AddProfiles()`, so the store is discoverable at
+     the root and `IProfileService` always resolves its staging dependency).
+   - `AddProfiles()` — profile service + the `SymlinkCreator` staging seam.
+   - `AddIntegrations()` — the typed GitHub HTTP client.
+   - `AddSteam()` — Steam discovery + the platform process-lookup seam.
+   - `AddEnginseerClient()` — the launch façade + the process-launcher seam.
+   - `AddLauncher()` — the slim profile launcher stub (Phase 5).
+   - `AddTransient<MainWindow>()` + `AddSingleton<MainViewModel>()` — the UI
+     surface.
+4. **Build** — `BuildServiceProvider()`.
+
+**The DI contract:** each library exposes one `Add<Library>()` extension and
+accepts only interfaces or primitives (never concrete UI models). Supporting
+services and injectable seams are registered with `TryAdd` — `SteamDiscoveryOptions`,
+`ISteamRegistryReader`, `IProcessLookup` (Steam), `SymlinkCreator` (Profiles),
+`IProcessLauncher` (Enginseer-client), `ISharedModStore` (SharedMods) — so tests
+and hosts can pre-register overrides (e.g. the Steam fixture's fakes, or a
+throwing `SymlinkCreator` to exercise the failure path) and have them survive the
+`Add<Library>()` chain. `TryAdd` is specifically load-bearing for `AddProfiles()`,
+which calls `AddSharedMods()` unconditionally: a plain `AddSingleton` there would
+clobber a pre-registered mock.
+
+**Per-profile vs global:** global, system-level settings live in `MagosConfig`
+(one config file under the OS local-app-data dir); per-profile settings (mods,
+load order, per-mod policies) live with the profile, not in the global config.
+
+Per-library public surfaces — interfaces, key types, exact DI registrations —
+are documented under [Reference — Magos Modificus](../reference/magos-modificus/).
 
 ## The Enginseer contract Magos consumes
 
@@ -108,7 +162,9 @@ logging, the hook-ready handshake).
   Magos writes `mods.lst` into it on each launch.
 - **DMF on profile creation:** the new-profile flow offers "add latest DMF?"
   (default yes). If accepted, DMF is added to the profile's mod list like any
-  mod (fetched from GitHub Releases). DMF is a normal mod with exactly two
+  mod (sourced per the open DMF-sourcing decision — see
+  [Mod sources / integrations](#mod-sources--integrations); it is **not**
+  settled as GitHub Releases). DMF is a normal mod with exactly two
   exceptions: (1) the creation-time prompt; (2) DMF is never auto-placed by an
   Enginseer-side rule — Magos writes it first in `mods.lst` because dependency
   resolution puts it there. Beyond those, DMF is fully user-controllable (a
@@ -162,11 +218,15 @@ again, the local copy is dropped back to a shared reference.
 - **GitHub Releases** — a source for mods that publish there; no auth required
   for public releases (version checks + downloads).
 - **Local** — manually-installed mods (the user supplies the files).
-- **DMF specifically** is fetched from **GitHub Releases** at the new-profile
-  prompt. Most mods depend on DMF, so this is the common case; sourcing it from
-  GitHub means the user needn't configure a Nexus API key just to get it. DMF
-  isn't mandatory — a mod can be written without it — so the prompt is an offer,
-  not a requirement. (See [Profiles](#profiles).)
+- **DMF specifically** — the new-profile prompt offers to add it (most mods
+  depend on it, so this is the common case; DMF isn't mandatory, so the prompt
+  is an offer, not a requirement). **DMF sourcing is an OPEN decision
+  (Phase 4):** the original plan (fetch from GitHub Releases, keyless) is broken
+  — DMF's GitHub repo has no releases/tags; its canonical releases are on
+  NexusMods. The lean is to require a Nexus API key be configured, or have the
+  user download DMF manually. Bundling DMF with Magos is rejected
+  (modding-community norms + Nexus rules). Resolution deferred to Phase 4. (See
+  [Profiles](#profiles).)
 - Per-mod: auto-update override (overrides the global setting); version pinning.
 - **Import / Export** — profile import / export.
 
@@ -281,7 +341,8 @@ Per-profile settings live with the profile, not in the global config.
 - Mod list: enable / disable / remove, update indicators, version pinning,
   per-mod auto-update override, auto-sort + manual sequential reorder.
 - Shared mod storage (shared-first allocation by version policy).
-- Mod sources: Nexus Mods (primary) + GitHub Releases + local; DMF via GitHub.
+- Mod sources: Nexus Mods (primary) + GitHub Releases + local; DMF via the
+  open sourcing decision (Phase 4 — see Mod sources).
 - Launch Darktide (Windows trivial; Linux native + Proton-at-launch +
   discovery + escape hatch).
 - Steam non-steam shortcuts.

@@ -5,11 +5,11 @@ top of the Enginseer runtime. It owns profiles, mod staging, load order,
 dependency resolution, mod-source integrations (Nexus Mods, GitHub Releases,
 Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
 
-> **Status: Phase 0 scaffold.** The project layout, DI composition, structured
-> logging, global config schema/loader, and a bare UI window are in place.
-> Library implementations come in later phases — Profiles (Phase 1) + SharedMods
-> (Phase 2) are implemented; the other domain libraries are currently stubs
-> (interfaces + DI registration only). Target architecture:
+> **Status: Phases 0–2 complete.** The foundation + all backend libraries are
+> implemented: Profiles, Steam, Integrations, Enginseer-client (Phase 1) +
+> SharedMods (Phase 2). The UI is still the bare Phase-0 window (no
+> profile/mod-management UI yet); the Launcher is a stub (Phase 5). Target
+> architecture:
 > [`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md).
 
 ## Tech stack
@@ -35,14 +35,17 @@ magos-modificus/
   config/                         Magos.Modificus.Config   the MagosConfig schema + defaults (POCO)
   profiles/                       Magos.Modificus.Profiles          implemented (Phase 1 + Phase 2 staging)
   shared-mods/                    Magos.Modificus.SharedMods        implemented (Phase 2)
-  integrations/                   Magos.Modificus.Integrations      stub
-  steam/                          Magos.Modificus.Steam             stub
-  enginseer-client/               Magos.Modificus.EnginseerClient   stub (launch façade)
-  launcher/                       Magos.Modificus.Launcher          stub (slim Steam-shortcut launcher)
+  integrations/                   Magos.Modificus.Integrations      implemented (Phase 1 — GitHub Releases client)
+  steam/                          Magos.Modificus.Steam             implemented (Phase 1 — discovery + IsGameRunning)
+  enginseer-client/               Magos.Modificus.EnginseerClient   implemented (Phase 1 — launch façade)
+  launcher/                       Magos.Modificus.Launcher          stub (slim Steam-shortcut launcher; Phase 5)
   tests/
-    Magos.Modificus.General.Tests/  xUnit tests for the general library
-    Magos.Modificus.Profiles.Tests/  xUnit tests for the profiles library (incl. staging)
-    Magos.Modificus.SharedMods.Tests/  xUnit tests for the shared-mod store + allocation
+    Magos.Modificus.General.Tests/         xUnit tests for the general library
+    Magos.Modificus.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
+    Magos.Modificus.SharedMods.Tests/      xUnit tests for the shared-mod store + allocation
+    Magos.Modificus.Integrations.Tests/    xUnit tests for the GitHub Releases client
+    Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
+    Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose: dotnet test / dotnet run smoke harness)
 ```
 
 Each library exposes an `Add<Library>()` extension method on

@@ -11,9 +11,10 @@ way for vanilla play (launch from Steam = the unmodified game).
   one DLL, delivered by `CreateRemoteThread`; the C shell stages the
   **mod loader** — the runtime-controlled Lua loader that loads DMF + user mods.
   See `docs/architecture/ENGINSEER.md` for the full subcomponent breakdown.
-- **Magos Modificus — `magos-modificus/`** (planned, not built): the user-facing
+- **Magos Modificus — `magos-modificus/`** (Phases 0–2 built): the user-facing
   app — staging-directory management, load order, profiles, dependency
-  resolution, the "Launch Modded" button. See
+  resolution, the "Launch Modded" button. The backend libraries are implemented;
+  the UI is still the bare Phase-0 window (Phase 3). See
   [`MAGOS-MODIFICUS.md`](MAGOS-MODIFICUS.md) for the target architecture.
 - **DMF + user mods** (Lua, not our code): the Darktide-Mod-Framework Lua
   files, preserved as-is; only the harness is replaced. Loaded by the mod loader
@@ -78,11 +79,10 @@ addresses), via two methods + `.pdata` gap handling:
 - `.pdata` gaps: CFG thunks (`E9 rel32`), leaf functions, import thunks
   (`FF 25`).
 
-The engine is **build-agnostic** — validated when the installed binary turned
-out to be a newer build than the POC's pinned one: all 16 were found at
-uniformly-shifted RVAs (+0xf0680 cluster). The matchers are the ongoing
-maintenance surface (re-tune on a LuaJIT version change — rare; LuaJIT is
-static Stingray code).
+The engine is **build-agnostic** — all 16 functions are found at
+uniformly-shifted RVAs across binary versions (validated across builds; e.g. a
++0xf0680 cluster shift). The matchers are the ongoing maintenance surface
+(re-tune on a LuaJIT version change — rare; LuaJIT is static Stingray code).
 
 ## Test strategy
 
@@ -128,8 +128,9 @@ Windows (CI). Both gate on `cargo clippy --all-targets --features test-hooks --
   consumes, profiles, the Windows/Linux launch paths, v1 scope.
 - `docs/architecture/MOD_LOADER-DMF.md` — the mod_loader↔DMF integration: the
   loader, the IO re-rooting, the load timing, the two-path split.
-- `docs/reference/darktide-binary.md` — the validated game-binary constraints
-  (addresses, struct offsets, sandboxed `_G`, discovery methodology).
-- `docs/reference/darktide-framework-analysis.md` — the existing modding
-  ecosystem being replaced.
-- `docs/poc/` — the frozen POC handoff (detailed historical reference).
+- `docs/reference/darktide/darktide-binary.md` — the validated game-binary
+  constraints (addresses, struct offsets, sandboxed `_G`, discovery methodology).
+- `docs/reference/community-tools/darktide-framework-analysis.md` — the existing
+  modding ecosystem being replaced.
+- `docs/reference/magos-modificus/` — per-library API reference for the Magos
+  Modificus backend libraries.

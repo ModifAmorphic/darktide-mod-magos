@@ -286,5 +286,4 @@ gate.
   re-rooting (the loader, the loader surfaces, the `Managers.mod` shape contract,
   the load timing).
 - `docs/architecture/README.md` — project architecture + the Enginseer↔mod-manager contract.
-- `docs/reference/darktide-binary.md` — the validated game-binary constraints.
-- `docs/poc/` — frozen POC handoff (the discovery methodology + DMF bootstrap approach are validated here).
+- `docs/reference/darktide/darktide-binary.md` — the validated game-binary constraints.
