@@ -403,6 +403,6 @@ unchanged.
 - `enginseer/mod_loader/{file,hook,class_patch,require_wrap}.lua` — the loader API.
 - `docs/architecture/ENGINSEER.md` — the engine-context mechanism + the deferred
   bootstrap bridge + the launcher/shell contracts.
-- `docs/reference/darktide-framework-analysis.md` — how the existing community
+- `docs/reference/community-tools/darktide-framework-analysis.md` — how the existing community
   toolchain (`patch_999` → `mod_loader` → DMF → mods) works; the loader
   replicates the community `mod_loader` role.

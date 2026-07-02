@@ -1,13 +1,13 @@
 # Reference — living
 
-Validated facts about the Darktide game binary and the existing modding
-ecosystem. Updated as we learn more.
+Reference material, organized by category. Updated as we learn more.
 
-- `darktide-binary.md` — the validated game-binary constraints (LuaJIT,
-  `lua_State` offsets, sandboxed `_G`, discovery methodology, timing).
-- `darktide-framework-analysis.md` — how the current (DMF + dtkit-patch)
-  toolchain works; what production replaces.
-- `analysis-verification.md` — audit of the above.
-
-These are properties of the game/ecosystem, independent of any implementation.
-The frozen POC deep-dive lives in `../poc/`.
+- [`darktide/`](darktide/) — validated facts about the Darktide engine binary
+  (LuaJIT, `lua_State` offsets, sandboxed `_G`, discovery methodology).
+  Properties of the game, independent of any implementation.
+- [`community-tools/`](community-tools/) — the existing Darktide modding
+  ecosystem (DMF + dtkit-patch toolchain) that production replaces, plus its
+  audit.
+- [`magos-modificus/`](magos-modificus/) — per-library API reference for the
+  Magos Modificus backend libraries (public interfaces, key types, DI
+  registration, cross-platform notes).

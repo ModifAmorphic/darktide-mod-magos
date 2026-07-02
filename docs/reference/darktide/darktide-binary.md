@@ -2,8 +2,7 @@
 
 Immutable technical facts about the Darktide engine binary that any
 implementation must respect. These are properties of the game, not of any
-implementation. Detailed historical reference: `../poc/production-spec.md` and
-`../poc/lua-vm-injection-anchors.md`.
+implementation.
 
 ## LuaJIT
 
@@ -63,4 +62,5 @@ the engine's `lua_pcall` calls (succeeds ~1.3–2.4s after VM creation).
 ## Pinned reference binary
 
 SHA-256 `132eed5fe58515774a41199269dd240ef6092f84b1efc8ad4a28e23ea6791661`
-(the `docs/poc` addresses are for this build; the engine is build-agnostic).
+(the pinned reference build; the engine is build-agnostic, so addresses shift
+uniformly across builds).

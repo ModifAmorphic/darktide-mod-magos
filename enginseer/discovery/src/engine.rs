@@ -25,8 +25,7 @@ use crate::scan::{find_callers, find_lea_xrefs};
 /// calls `luaL_loadbuffer`).
 #[derive(Debug, Clone, Default)]
 pub struct AddressTable {
-    // --- the 16 (matches docs/poc/production-spec.md §"Confirmed function
-    //     addresses") ---
+    // --- the 16 target functions (the documented build's confirmed addresses) ---
     pub lua_newstate_thunk: u32,
     pub lua_newstate_body: u32,
     pub lua_atpanic: u32,
