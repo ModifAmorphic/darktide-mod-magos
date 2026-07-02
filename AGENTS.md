@@ -29,8 +29,9 @@ Requirements, architecture, and technology choices are made fresh.
 
 - **`main`** — production. Enginseer (the injected modding runtime + launcher) is
   merged as the production seed; Magos Modificus is scaffolded (Phase 0:
-  .NET 10 + Avalonia 12 foundation — Profiles + SharedMods implemented in
-  Phases 1–2; the other libraries are stubs).
+  .NET 10 + Avalonia 12 foundation — the backend libraries (Profiles, Steam,
+  Integrations, Enginseer-client, SharedMods) are implemented in Phases 1–2;
+  the UI is still the bare Phase-0 window, and the Launcher is a stub).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -73,9 +74,17 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         (ISharedModStore manifest) + the version-policy model
                         (ModVersionPolicy: PinnedPolicy/LatestPolicy) + allocation
                         resolution (AllocationResolver)
-  integrations/         Magos.Modificus.Integrations — stub
-  steam/                Magos.Modificus.Steam — stub
-  enginseer-client/     Magos.Modificus.EnginseerClient — stub (the v1 launch façade)
+  integrations/         Magos.Modificus.Integrations — GitHub Releases client
+                        (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
+                        via IHttpClientFactory, typed exceptions, optional PAT)
+  steam/                Magos.Modificus.Steam — Steam + Darktide + Proton discovery
+                        (multi-library + compatdata), IsGameRunning (WinProcessLookup
+                        via process comm on Windows; LinuxProcessLookup via /proc
+                        argv[0] under Proton — selected once by DI), injectable seams
+  enginseer-client/     Magos.Modificus.EnginseerClient — the v1 launch façade
+                        (IEnginseerLaunchService.Launch → LaunchResult; Windows: direct
+                        launcher Process.Start; Linux: proton run with both STEAM_COMPAT_*
+                        env + Z:\-translated paths)
   launcher/             Magos.Modificus.Launcher — stub (slim profile launcher exe;
                           the Steam non-steam-shortcut target)
   tests/
