@@ -10,14 +10,15 @@ namespace Magos.Modificus.EnginseerClient.Tests;
 /// <c>magos_launcher.exe</c> (so the runtime-dir check passes), and supplies
 /// fakes for <see cref="IProfileService"/> + <see cref="ISteamService"/> +
 /// <see cref="IProcessLauncher"/>. Builds the internal
-/// <see cref="EnginseerLaunchService"/> with a forced <see cref="LaunchPlatform"/>
-/// so both code paths are exercisable on any CI OS. Disposes the temp tree on
-/// teardown so tests are isolated regardless of outcome.
+/// <see cref="EnginseerLaunchService"/> with a concrete
+/// <see cref="IPlatformLaunchStrategy"/> (backed by the fake launcher) so both
+/// the Windows and Linux code paths are exercisable on any CI OS. Disposes the
+/// temp tree on teardown so tests are isolated regardless of outcome.
 /// </summary>
 /// <remarks>
 /// Mirrors the Steam library's SteamFixture: resolve the seams as fakes, drive
 /// the service under test, assert on the recorded side-effects. The service is
-/// constructed via its internal (forced-platform) constructor; the DI path is
+/// constructed via its DI constructor with the chosen strategy; the DI path is
 /// covered separately in the service-collection tests.
 /// </remarks>
 internal sealed class EnginseerFixture : IDisposable
@@ -47,10 +48,26 @@ internal sealed class EnginseerFixture : IDisposable
     /// <summary>The full path to the stub launcher in the temp runtime dir.</summary>
     public string LauncherPath { get; }
 
-    /// <summary>Builds the service under test with the given forced platform.</summary>
-    public EnginseerLaunchService BuildService(LaunchPlatform platform) =>
-        new(Profiles, Steam, Config, Launcher,
-            NullLogger<EnginseerLaunchService>.Instance, platform);
+    /// <summary>
+    /// Builds the service under test wired for a Windows launch (direct
+    /// invocation, untranslated args) — the real <see cref="WindowsLaunchStrategy"/>
+    /// driven by the fixture's fake <see cref="IProcessLauncher"/>.
+    /// </summary>
+    public EnginseerLaunchService BuildWindowsService() =>
+        BuildService(new WindowsLaunchStrategy(Launcher, NullLogger<WindowsLaunchStrategy>.Instance));
+
+    /// <summary>
+    /// Builds the service under test wired for a Linux launch (<c>proton run</c>
+    /// + both <c>STEAM_COMPAT_*</c> env vars + <c>Z:\</c>-translated args) — the
+    /// real <see cref="LinuxLaunchStrategy"/> driven by the fixture's fake
+    /// <see cref="IProcessLauncher"/>.
+    /// </summary>
+    public EnginseerLaunchService BuildLinuxService() =>
+        BuildService(new LinuxLaunchStrategy(Launcher, NullLogger<LinuxLaunchStrategy>.Instance));
+
+    /// <summary>Builds the service under test with an explicit strategy.</summary>
+    public EnginseerLaunchService BuildService(IPlatformLaunchStrategy strategy) =>
+        new(Profiles, Steam, Config, strategy, NullLogger<EnginseerLaunchService>.Instance);
 
     /// <summary>Removes the stub launcher so the runtime-dir check fails.</summary>
     public void DeleteLauncher()
