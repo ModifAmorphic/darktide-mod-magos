@@ -455,19 +455,34 @@ internal sealed class ProfileService : IProfileService
                 continue; // raced away; nothing to delete
             }
 
-            // ReparsePoint == symlink (file or dir). File.Delete removes the
-            // link itself on both Windows + Unix without touching the target.
+            // ReparsePoint == symlink (file or dir). The link itself is removed
+            // without touching the target — but the delete API must match the
+            // link's kind, or Windows throws:
+            //   - Directory symlink (ReparsePoint + Directory) → Directory.Delete.
+            //     On Windows, File.Delete on a directory (incl. a dir-symlink)
+            //     throws UnauthorizedAccessException ("Access denied" — Windows
+            //     surfaces "is a directory" via the file-delete API as access-
+            //     denied). Directory.Delete on a reparse point removes the point
+            //     itself, NOT the target, so it stays data-safe on both platforms.
+            //   - File symlink (ReparsePoint, not Directory) → File.Delete.
             if ((attrs & FileAttributes.ReparsePoint) != 0)
             {
-                File.Delete(entry);
+                if ((attrs & FileAttributes.Directory) != 0)
+                {
+                    Directory.Delete(entry); // directory symlink → remove the link only
+                }
+                else
+                {
+                    File.Delete(entry);      // file symlink → remove the link only
+                }
             }
             else if ((attrs & FileAttributes.Directory) != 0)
             {
-                Directory.Delete(entry, recursive: true);
+                Directory.Delete(entry, recursive: true); // real directory → recurse
             }
             else
             {
-                File.Delete(entry);
+                File.Delete(entry);                        // real file (mods.lst, etc.)
             }
         }
     }
