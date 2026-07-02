@@ -69,7 +69,7 @@ internal sealed class SteamService : ISteamService
 
         var libraries = ReadLibraries(resolved.Path, warnings);
         var darktide = FindDarktide(libraries, warnings);
-        var compatdata = FindCompatdata(resolved.Path);
+        var compatdata = FindCompatdata(resolved.Path, libraries);
         var proton = FindProton(resolved.Path, _options.LinuxCompatibilityToolsDir, warnings);
 
         var status = StatusForLinux(resolved.Path, darktide, compatdata, proton?.Path);
@@ -202,12 +202,48 @@ internal sealed class SteamService : ISteamService
         return null;
     }
 
-    private string? FindCompatdata(string steamRoot)
+    /// <summary>
+    /// Resolves the Darktide compatdata (Proton prefix) for the configured app
+    /// id. Probes the main Steam install first, then each library declared in
+    /// <c>libraryfolders.vdf</c> (in order); the first existing dir wins.
+    /// </summary>
+    /// <remarks>
+    /// The prefix is created on whichever drive Steam chose at install time, so
+    /// it frequently lives under a Steam *library* rather than the main install
+    /// (e.g. <c>/games/steamapps/compatdata/&lt;appid&gt;/</c>). Probing the
+    /// main install first preserves prior behavior — when the prefix is there it
+    /// still wins — and the library scan is deterministic (VDF order).
+    /// </remarks>
+    private string? FindCompatdata(string steamRoot, IReadOnlyList<string> libraries)
     {
-        var dir = Path.Combine(
-            steamRoot, "steamapps", "compatdata", _options.DarktideAppId.ToString(CultureInfo.InvariantCulture));
+        var appId = _options.DarktideAppId.ToString(CultureInfo.InvariantCulture);
 
-        return Directory.Exists(dir) ? dir : null;
+        // Main install first, then each library in VDF order — the main install
+        // is yielded explicitly so it's probed first even if the VDF lists it
+        // later (or omits it); the explicit duplicate is skipped below.
+        foreach (var root in CompatdataCandidateRoots(steamRoot, libraries))
+        {
+            var dir = Path.Combine(root, "steamapps", "compatdata", appId);
+            if (Directory.Exists(dir))
+            {
+                return dir;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> CompatdataCandidateRoots(string steamRoot, IReadOnlyList<string> libraries)
+    {
+        yield return steamRoot;
+        foreach (var lib in libraries)
+        {
+            // Skip the main install when the VDF lists it — it's yielded first above.
+            if (!string.Equals(lib, steamRoot, StringComparison.Ordinal))
+            {
+                yield return lib;
+            }
+        }
     }
 
     /// <summary>
