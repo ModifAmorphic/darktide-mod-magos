@@ -1,18 +1,127 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Magos.Modificus.UI.ViewModels"
+        xmlns:profiles="using:Magos.Modificus.Profiles"
         x:Class="Magos.Modificus.UI.Views.MainWindow"
-        x:DataType="vm:MainViewModel"
+        x:DataType="vm:ShellViewModel"
         Title="Magos Modificus"
-        Width="680" Height="440"
+        Width="960" Height="640"
+        MinWidth="720" MinHeight="480"
         WindowStartupLocation="CenterScreen">
-    <ScrollViewer Padding="20">
-        <StackPanel Orientation="Vertical" Spacing="8">
-            <TextBlock Text="Magos Modificus"
-                       FontSize="24" FontWeight="Bold" Margin="0,0,0,4" />
-            <TextBlock Text="Phase 0 scaffold"
-                       FontSize="13" Opacity="0.6" Margin="0,0,0,12" />
-            <TextBlock Text="{Binding ConfigSummary}" FontFamily="monospace" TextWrapping="Wrap" />
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- Header bar: app title + Launch Darktide -->
+    <Border Grid.Row="0"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="20,12">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="Magos Modificus"
+                   FontSize="18" FontWeight="SemiBold"
+                   VerticalAlignment="Center" />
+        <Button Grid.Column="1"
+                Content="Launch Darktide"
+                Command="{Binding LaunchCommand}"
+                VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+    <!-- Body: sidebar + content -->
+    <Grid Grid.Row="1" ColumnDefinitions="260,*">
+
+      <!-- Sidebar: profile-list region -->
+      <Border Grid.Column="0"
+              BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+              BorderThickness="0,0,1,0">
+        <DockPanel LastChildFill="True">
+          <TextBlock DockPanel.Dock="Top"
+                     Text="PROFILES"
+                     FontWeight="SemiBold" Opacity="0.6"
+                     Margin="16,14,16,4" />
+          <Button DockPanel.Dock="Bottom"
+                  Content="+ New"
+                  Command="{Binding NewProfileCommand}"
+                  HorizontalAlignment="Stretch"
+                  Margin="16,8,16,16" />
+
+          <!-- Profile list (empty pre-release) + its empty state -->
+          <Panel>
+            <ListBox ItemsSource="{Binding Profiles}"
+                     SelectedItem="{Binding SelectedProfile}"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     Padding="8,0,8,0">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="profiles:ProfileSummary">
+                  <TextBlock Text="{Binding Name}" Padding="6,4" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock Text="No profiles yet."
+                       IsVisible="{Binding !HasProfiles}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Opacity="0.6" />
+          </Panel>
+        </DockPanel>
+      </Border>
+
+      <!-- Content: selected-profile header + mod-list region -->
+      <Grid Grid.Column="1" RowDefinitions="Auto,*">
+
+        <!-- Selected-profile name header -->
+        <Border Grid.Row="0"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="20,14">
+          <Panel>
+            <TextBlock Text="Select or create a profile"
+                       IsVisible="{Binding !HasSelectedProfile}"
+                       FontSize="16" Opacity="0.6"
+                       VerticalAlignment="Center" />
+            <TextBlock Text="{Binding SelectedProfile.Name}"
+                       IsVisible="{Binding HasSelectedProfile}"
+                       FontSize="18" FontWeight="SemiBold"
+                       VerticalAlignment="Center" />
+          </Panel>
+        </Border>
+
+        <!-- Mod-list region (placeholder until Track B) -->
+        <StackPanel Grid.Row="1" Margin="20,14,20,20" Spacing="6">
+          <TextBlock Text="Mods"
+                     FontSize="14" FontWeight="SemiBold"
+                     Opacity="0.7" />
+          <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                  BorderThickness="1" CornerRadius="4"
+                  MinHeight="220">
+            <TextBlock Text="Select or create a profile to manage its mods"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Margin="20"
+                       Opacity="0.6" />
+          </Border>
         </StackPanel>
-    </ScrollViewer>
+      </Grid>
+    </Grid>
+
+    <!-- Status strip: game-running indicator -->
+    <Border Grid.Row="2"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+            BorderThickness="0,1,0,0"
+            Padding="20,6">
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <TextBlock Text="●" FontSize="11" VerticalAlignment="Center"
+                   Foreground="#22A06B"
+                   IsVisible="{Binding IsGameRunning}" />
+        <TextBlock Text="●" FontSize="11" VerticalAlignment="Center"
+                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                   IsVisible="{Binding !IsGameRunning}" />
+        <TextBlock Text="{Binding GameRunningText}"
+                   FontSize="12" Opacity="0.8"
+                   VerticalAlignment="Center" />
+      </StackPanel>
+    </Border>
+  </Grid>
 </Window>

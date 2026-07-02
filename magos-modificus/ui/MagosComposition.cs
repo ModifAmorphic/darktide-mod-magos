@@ -43,7 +43,7 @@ public static class MagosComposition
         services.AddEnginseerClient();
         services.AddLauncher();
         services.AddTransient<MainWindow>();
-        services.AddSingleton<MainViewModel>();
+        services.AddSingleton<ShellViewModel>();
 
         return services.BuildServiceProvider();
     }
