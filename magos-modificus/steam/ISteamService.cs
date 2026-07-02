@@ -16,9 +16,11 @@ namespace Magos.Modificus.Steam;
 public interface ISteamService
 {
     /// <summary>
-    /// Probes the OS-appropriate Steam install locations and resolves the
-    /// Steam install, Darktide install, compatdata, and Proton version. Never
-    /// throws on missing pieces — those are reported via <see cref="DiscoveryResult.Status"/>
+    /// Delegates to the platform <c>ISteamDiscoverer</c> (selected once at DI
+    /// registration from <see cref="SteamDiscoveryOptions.Platform"/>), which
+    /// probes the OS-appropriate Steam install locations and resolves the Steam
+    /// install, Darktide install, compatdata, and Proton version. Never throws
+    /// on missing pieces — those are reported via <see cref="DiscoveryResult.Status"/>
     /// + the nullable fields (the escape hatch).
     /// </summary>
     DiscoveryResult Discover();
