@@ -8,8 +8,9 @@
   <!--
     Exposes internal helpers (the VDF parser) to the test assembly so the parser
     can be unit-tested in isolation without widening the library's public surface.
-    Implementation services (SteamService, SteamRegistryReader, ProcessLookup)
-    stay internal and are exercised through ISteamService via DI in tests.
+    Implementation services (SteamService, SteamRegistryReader,
+    WinProcessLookup/LinuxProcessLookup) stay internal and are exercised through
+    ISteamService via DI in tests.
   -->
   <ItemGroup>
     <InternalsVisibleTo Include="Magos.Modificus.Steam.Tests" />

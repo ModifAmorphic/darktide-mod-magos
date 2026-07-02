@@ -60,7 +60,9 @@ public sealed class SteamDiscoveryOptions
 
     /// <summary>
     /// The process-name stem used by <see cref="ISteamService.IsGameRunning"/>.
-    /// Overridable for tests / future Linux-naming refinement.
+    /// Matched against process comm on Windows and the
+    /// <c>/proc/&lt;pid&gt;/cmdline</c> <c>argv[0]</c> stem on Linux (the kernel
+    /// <c>comm</c> is unreliable under Proton). Overridable for tests.
     /// </summary>
     public string GameProcessName { get; set; } = "Darktide";
 
