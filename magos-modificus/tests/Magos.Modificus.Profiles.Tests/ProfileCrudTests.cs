@@ -21,7 +21,7 @@ public sealed class ProfileCrudTests
         Assert.Equal(DateTimeOffset.UtcNow, profile.CreatedAt, TimeSpan.FromSeconds(5));
         Assert.Empty(profile.Mods);
 
-        // Dir + staged/ + diverged/ + profile.json all created.
+        // Dir + staged/ + mods/ + profile.json all created.
         Assert.True(Directory.Exists(fx.ProfileDir(profile.Id)));
         Assert.True(Directory.Exists(fx.StagedDir(profile.Id)));
         Assert.True(Directory.Exists(fx.DivergedDir(profile.Id)));

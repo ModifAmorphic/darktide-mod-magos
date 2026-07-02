@@ -46,7 +46,7 @@ Method behavior:
 - `GetProfile(id)` — loads the full profile (metadata + mod list). Throws
   `KeyNotFoundException` if the profile dir or `profile.json` is absent.
 - `CreateProfile(name)` — generates the `Guid`, scaffolds the directory tree
-  (`staged/` + `diverged/`) **before** persisting an empty `profile.json`
+  (`staged/` + `mods/`) **before** persisting an empty `profile.json`
   (so a crash between the two never leaves a `profile.json` without its tree),
   and returns the new profile. `name` must be non-whitespace.
 - `RenameProfile(id, newName)` — display label only; the id and on-disk dir are
@@ -68,7 +68,7 @@ Method behavior:
 - `SetModPolicy(id, modName, policy)` — records the new policy, then reconciles
   the diverged copy against the shared store (see [Divergence transitions](#divergence-transitions)).
 - `RemoveMod(id, modName)` — drops the entry and the mod's profile-local
-  (`diverged/`) files, if any. A missing local copy is graceful. The shared-store
+  (`mods/`) files, if any. A missing local copy is graceful. The shared-store
   copy is **not** touched (other profiles may still share it).
 - `PrepareModRoot(id)` — regenerates the staged mod root (the `--mod-path`) from
   the current shared-first resolution and writes `mods.lst`. Idempotent (clears +
@@ -127,10 +127,10 @@ disk, and `MagosConfig` (its only config source) is itself a singleton.
 <ProfilesBaseFolder>/              (auto-created on first run)
   <guid>/                          (profile dir; id-named)
     profile.json                   (metadata + mod list — the source of truth)
-    diverged/<mod>/                (a profile's diverged copy of a mod, if any)
+    mods/<mod>/                    (a profile's diverged copy of a mod, if any)
     staged/                        (the staged mod root = the --mod-path;
                                      REGENERATED each launch — a projection)
-      <mod>                        (symlink → shared <mod> OR diverged/<mod>)
+      <mod>                        (symlink → shared <mod> OR mods/<mod>)
       mods.lst                     (successfully-staged enabled mods, in order)
 ```
 
@@ -143,12 +143,12 @@ Each enabled mod resolves Share/Diverge against the shared store via
 `AllocationResolver`:
 
 - **Share** → symlink `staged/<mod>` → the shared store entry's `Path`.
-- **Diverge** (and a `diverged/<mod>/` copy is present) → symlink
-  `staged/<mod>` → `diverged/<mod>/`.
-- **Diverge** but `diverged/<mod>/` absent (Phase 4 acquisition hasn't placed it)
+- **Diverge** (and a `mods/<mod>/` copy is present) → symlink
+  `staged/<mod>` → `mods/<mod>/`.
+- **Diverge** but `mods/<mod>/` absent (Phase 4 acquisition hasn't placed it)
   → skipped with a warning (no `staged/` entry, no `mods.lst` entry).
 
-**Symlinks, never copies** — the shared store + `diverged/` hold the files;
+**Symlinks, never copies** — the shared store + `mods/` hold the files;
 `staged/` is a symlink projection. `mods.lst` lists exactly what got staged, in
 `Order` — no DMF-first enforcement, no auto-sort (those are higher-layer
 concerns).
@@ -158,10 +158,10 @@ concerns).
 A policy change re-resolves the mod against the shared store:
 
 - **Share → Diverge:** records the policy (the profile now needs a local copy).
-  Acquiring the `diverged/<mod>/` files is Phase 4 — staging looks for it and
+  Acquiring the `mods/<mod>/` files is Phase 4 — staging looks for it and
   skips + warns until then.
 - **Diverge → Share:** the local copy is no longer needed — drops
-  `diverged/<mod>/` to reclaim space (best-effort; a missing dir is a no-op;
+  `mods/<mod>/` to reclaim space (best-effort; a missing dir is a no-op;
   re-divergence re-acquires).
 
 If the mod has no shared-store entry, only the policy is recorded (no transition

@@ -15,7 +15,7 @@ public enum AllocationResolution
     /// <summary>
     /// The profile needs a profile-local (diverged) copy (its policy differs in
     /// intent from the shared entry's). Staged as a symlink into the profile's
-    /// <c>diverged/</c> dir.
+    /// <c>mods/</c> dir.
     /// </summary>
     Diverge,
 }

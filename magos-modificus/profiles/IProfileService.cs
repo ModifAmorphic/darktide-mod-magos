@@ -31,7 +31,7 @@ public interface IProfileService
 
     /// <summary>
     /// Creates a new profile: generates the id, scaffolds its directory tree
-    /// (<c>staged/</c> + <c>diverged/</c>) + persists an empty <c>profile.json</c>.
+    /// (<c>staged/</c> + <c>mods/</c>) + persists an empty <c>profile.json</c>.
     /// </summary>
     /// <returns>The newly-created profile.</returns>
     Profile CreateProfile(string name);
@@ -93,11 +93,11 @@ public interface IProfileService
     /// the divergence resolution against the shared store:
     /// <list type="bullet">
     /// <item><b>share→diverge:</b> records the policy (the profile now needs a
-    /// local copy). The actual file acquisition (creating <c>diverged/&lt;mod&gt;/</c>
+    /// local copy). The actual file acquisition (creating <c>mods/&lt;mod&gt;/</c>
     /// at the profile's version) is <b>Phase 4</b>; staging looks for it and
     /// skips + warns if Phase 4 hasn't placed it yet.</item>
     /// <item><b>diverge→share:</b> the local copy is no longer needed — drops
-    /// <c>diverged/&lt;mod&gt;/</c> to reclaim space (re-divergence re-acquires).</item>
+    /// <c>mods/&lt;mod&gt;/</c> to reclaim space (re-divergence re-acquires).</item>
     /// </list>
     /// If the mod has no shared-store entry, only the policy is recorded (no
     /// divergence transition applies until acquisition populates the store).
@@ -108,7 +108,7 @@ public interface IProfileService
     void SetModPolicy(Guid id, string modName, ModVersionPolicy policy);
 
     /// <summary>
-    /// Removes the mod entry and the mod's profile-local (<c>diverged/</c>)
+    /// Removes the mod entry and the mod's profile-local (<c>mods/</c>)
     /// files, if any. A missing local copy for a listed mod is graceful (not a
     /// crash). The shared-store copy is <b>not</b> touched (other profiles may
     /// still share it).
@@ -129,7 +129,7 @@ public interface IProfileService
     /// Symlinks, not copies (download once, store once). A symlink-creation
     /// failure (e.g. Windows without symlink permissions / Developer Mode) throws
     /// <see cref="SymlinkStagingException"/> — it never silently copies. A mod
-    /// that resolves to Diverge but whose <c>diverged/</c> copy is absent (Phase 4
+    /// that resolves to Diverge but whose <c>mods/</c> copy is absent (Phase 4
     /// hasn't acquired it) is skipped with a warning, not a crash.
     /// </remarks>
     /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
