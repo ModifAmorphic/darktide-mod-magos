@@ -34,8 +34,16 @@ public sealed class SteamServiceCollectionExtensionsTests
         using var provider = services.BuildServiceProvider();
 
         Assert.NotNull(provider.GetService<SteamDiscoveryOptions>());
-        Assert.NotNull(provider.GetService<ISteamRegistryReader>());
         Assert.NotNull(provider.GetService<IProcessLookup>());
+
+        // ISteamRegistryReader is a Windows-only capability: registered ONLY on
+        // Windows. On Linux it is intentionally absent so resolving it fails fast
+        // (the honest outcome for a Windows-only registry reader) — the Windows
+        // discoverer path is exercised on Linux CI via the fixture's FakeRegistryReader.
+        if (OperatingSystem.IsWindows())
+            Assert.NotNull(provider.GetService<ISteamRegistryReader>());
+        else
+            Assert.Null(provider.GetService<ISteamRegistryReader>());
     }
 
     [Fact]

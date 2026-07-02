@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Magos.Modificus.Config;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.Steam;
@@ -7,27 +6,23 @@ using Microsoft.Extensions.Logging;
 namespace Magos.Modificus.EnginseerClient;
 
 /// <summary>
-/// Default <see cref="IEnginseerLaunchService"/>. Assembles the
-/// <c>magos_launcher.exe</c> argument list from the profile (the
-/// <c>--mod-path</c> via <see cref="IProfileService.PrepareModRoot"/>) and Steam
-/// discovery (the <c>--game-binary</c>, plus the Proton wrapper + compat env vars
-/// on Linux), then spawns the launcher through <see cref="IProcessLauncher"/>.
+/// Default <see cref="IEnginseerLaunchService"/>. A thin orchestrator: it runs
+/// the platform-agnostic launch flow (discover → check completeness → prepare
+/// mod root → launcher-exists → spawn → result mapping) and delegates the
+/// platform-varying pieces to an <see cref="IPlatformLaunchStrategy"/> selected
+/// once at DI registration from the runtime OS. Contains no per-launch OS branch.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Windows:</b> the launcher is invoked directly —
-/// <c>Process.Start(launcher.exe, args)</c>, no Proton, no path translation.</para>
+/// The strategy owns the spawn (direct <c>Process.Start</c> on Windows;
+/// <c>proton run</c> + both <c>STEAM_COMPAT_*</c> env vars + <c>Z:\</c>-translated
+/// args on Linux), the per-platform required discovery fields, and the launch
+/// label for logging.</para>
 /// <para>
-/// <b>Linux:</b> native Magos invokes
-/// <c>&lt;proton&gt; run &lt;launcher.exe&gt; &lt;args&gt;</c> with
-/// <c>STEAM_COMPAT_DATA_PATH</c> + <c>STEAM_COMPAT_CLIENT_INSTALL_PATH</c> set
-/// from discovery, and the launcher's path-valued flags <c>Z:\</c>-translated
-/// (the launcher runs under Wine and needs Windows paths).</para>
-/// <para>
-/// Registered as a singleton: it holds no per-launch state. The platform is
-/// resolved once at construction (from <see cref="RuntimeInformation"/>); the OS
-/// does not change at runtime. Tests force the platform via the internal
-/// constructor to exercise both code paths on any CI OS.</para>
+/// Registered as a singleton: it holds no per-launch state. The active strategy
+/// does not change at runtime. Tests inject the concrete Windows/Linux strategy
+/// (with a fake <see cref="IProcessLauncher"/>) to exercise either path on any
+/// CI OS.</para>
 /// </remarks>
 internal sealed class EnginseerLaunchService : IEnginseerLaunchService
 {
@@ -46,37 +41,21 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
     private readonly IProfileService _profiles;
     private readonly ISteamService _steam;
     private readonly MagosConfig _config;
-    private readonly IProcessLauncher _launcher;
+    private readonly IPlatformLaunchStrategy _strategy;
     private readonly ILogger<EnginseerLaunchService> _logger;
-    private readonly LaunchPlatform _platform;
 
-    /// <summary>DI constructor — resolves the current OS for platform branching.</summary>
     public EnginseerLaunchService(
         IProfileService profiles,
         ISteamService steam,
         MagosConfig config,
-        IProcessLauncher launcher,
+        IPlatformLaunchStrategy strategy,
         ILogger<EnginseerLaunchService> logger)
-        : this(profiles, steam, config, launcher, logger, DetectPlatform())
-    {
-    }
-
-    /// <summary>Test constructor — forces the platform so both code paths are
-    /// exercisable on any CI OS (Windows-arg tests run on Linux CI, etc.).</summary>
-    internal EnginseerLaunchService(
-        IProfileService profiles,
-        ISteamService steam,
-        MagosConfig config,
-        IProcessLauncher launcher,
-        ILogger<EnginseerLaunchService> logger,
-        LaunchPlatform platform)
     {
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _steam = steam ?? throw new ArgumentNullException(nameof(steam));
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
+        _strategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _platform = platform;
     }
 
     /// <inheritdoc />
@@ -87,12 +66,12 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
             // Discovery first: if we cannot launch, do not touch the profile's
             // mod root (no point writing mods.lst for a launch that won't happen).
             var discovery = _steam.Discover();
-            var missing = MissingDiscoveryFields(discovery, _platform);
+            var missing = _strategy.RequiredDiscoveryFields(discovery);
             if (missing.Count > 0)
             {
                 _logger.LogWarning(
                     "Discovery incomplete ({Platform}); missing: {Fields}.",
-                    _platform, string.Join(", ", missing));
+                    _strategy.Name, string.Join(", ", missing));
                 return new LaunchResult(
                     LaunchStatus.DiscoveryIncomplete,
                     Message: $"Steam discovery is missing required fields: {string.Join(", ", missing)}.",
@@ -114,16 +93,14 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
             var gameBinary = discovery.DarktideGameBinaryPath!;
             var logFile = _config.Logging.LogFile;
 
-            var started = _platform == LaunchPlatform.Windows
-                ? LaunchWindows(launcherPath, gameBinary, modPath, logFile)
-                : LaunchLinux(discovery, launcherPath, gameBinary, modPath, logFile);
+            var started = _strategy.Start(launcherPath, discovery, gameBinary, modPath, logFile);
 
             if (!started)
             {
                 return ErrorResult($"Failed to start the Enginseer launcher at '{launcherPath}'.");
             }
 
-            _logger.LogInformation("Launched profile {Id} via the {Platform} path.", profileId, _platform);
+            _logger.LogInformation("Launched profile {Id} via the {Platform} path.", profileId, _strategy.Name);
             return new LaunchResult(LaunchStatus.Launched, Message: null, MissingDiscoveryFields: Array.Empty<string>());
         }
         catch (KeyNotFoundException ex)
@@ -146,120 +123,6 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
         }
     }
 
-    // ---- Windows -----------------------------------------------------------
-
-    private bool LaunchWindows(
-        string launcherPath, string gameBinary, string modPath, string logFile)
-    {
-        // Direct invocation — no Proton, no path translation (native Windows paths).
-        var args = BuildLauncherArgs(gameBinary, modPath, logFile, translate: false);
-        _logger.LogInformation("Launching (Windows) {Launcher} {Args}", launcherPath, FormatArgs(args));
-        return _launcher.Start(launcherPath, args, environmentVariables: null);
-    }
-
-    // ---- Linux -------------------------------------------------------------
-
-    private bool LaunchLinux(
-        DiscoveryResult discovery,
-        string launcherPath,
-        string gameBinary,
-        string modPath,
-        string logFile)
-    {
-        // The launcher's OWN args (--game-binary, --mod-path, --log-file) are
-        // Windows paths (the launcher runs under Wine); the proton command +
-        // the launcher.exe path are native Linux (Proton resolves the .exe from
-        // a native path).
-        var launcherArgs = BuildLauncherArgs(gameBinary, modPath, logFile, translate: true);
-
-        var arguments = new List<string>(capacity: launcherArgs.Count + 2)
-        {
-            "run",          // proton's "run this Windows binary" subcommand
-            launcherPath,   // native Linux path — Proton resolves it
-        };
-        arguments.AddRange(launcherArgs);
-
-        // Both Steam compat vars are required for Proton to use the right Wine
-        // prefix + find the Steam client; discovery guaranteed non-null above.
-        var env = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["STEAM_COMPAT_DATA_PATH"] = discovery.CompatdataPath!,
-            ["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = discovery.SteamInstallPath!,
-        };
-
-        _logger.LogInformation(
-            "Launching (Linux) {Proton} run {Launcher} {Args}",
-            discovery.ProtonBinaryPath, launcherPath, FormatArgs(arguments));
-        return _launcher.Start(discovery.ProtonBinaryPath!, arguments, env);
-    }
-
-    // ---- shared arg assembly ----------------------------------------------
-
-    /// <summary>
-    /// Builds the launcher's own argument list (the flags AFTER
-    /// <c>magos_launcher.exe</c> / <c>... proton run launcher.exe</c>). When
-    /// <paramref name="translate"/> is set (Linux), the path-valued flags are
-    /// converted to Wine <c>Z:\</c> form so the launcher-under-Wine can resolve them.
-    /// </summary>
-    /// <remarks>
-    /// <c>--log-level</c> is intentionally NOT emitted: <c>MagosConfig.Logging.Level</c>
-    /// is a Serilog level name (<c>Verbose</c>/<c>Information</c>/<c>Warning</c>/<c>Fatal</c>)
-    /// for Magos's own log, but the Enginseer shell's level vocabulary is
-    /// <c>error</c>/<c>warn</c>/<c>info</c>/<c>debug</c>/<c>trace</c> — forwarding the
-    /// Serilog name silently mis-resolved 4/6 levels (e.g. <c>Warning</c> → shell
-    /// <c>info</c>, more noise than intended). The two logs serve different purposes;
-    /// the shell log level is now decoupled and the launcher's <c>info</c> default
-    /// is used. A dedicated shell-level config field can be added if a future need arises.
-    /// </remarks>
-    private static List<string> BuildLauncherArgs(
-        string gameBinary, string modPath, string logFile, bool translate)
-    {
-        var game = translate ? WinePath.ToWine(gameBinary) : gameBinary;
-        var mod = translate ? WinePath.ToWine(modPath) : modPath;
-        // --log-file is a path the launcher-under-Wine opens, so it must be
-        // Z:\-translated on Linux too (otherwise magos_enginseer.log can't be
-        // written where Magos expects).
-        var log = translate ? WinePath.ToWine(logFile) : logFile;
-
-        return new List<string>
-        {
-            "--game-binary", game,
-            "--mod-path", mod,
-            "--log-file", log,
-        };
-    }
-
-    /// <summary>
-    /// The discovery fields the current OS requires but discovery could not
-    /// resolve. Field names mirror <see cref="DiscoveryResult"/>'s properties so
-    /// the UI can map them to prompt fields. By the Steam service's construction
-    /// this is equivalent to <see cref="DiscoveryStatus"/> != Complete (Complete
-    /// ⟺ every OS-required field is non-null) — derived from the fields directly
-    /// so the result and the missing-field list cannot diverge.
-    /// </summary>
-    private static IReadOnlyList<string> MissingDiscoveryFields(DiscoveryResult d, LaunchPlatform platform)
-    {
-        var missing = new List<string>();
-
-        // Both platforms need Steam + the game binary.
-        if (d.SteamInstallPath is null) missing.Add(nameof(DiscoveryResult.SteamInstallPath));
-        if (d.DarktideGameBinaryPath is null) missing.Add(nameof(DiscoveryResult.DarktideGameBinaryPath));
-
-        // Linux additionally needs the Wine prefix (compatdata) + Proton.
-        if (platform == LaunchPlatform.Linux)
-        {
-            if (d.CompatdataPath is null) missing.Add(nameof(DiscoveryResult.CompatdataPath));
-            if (d.ProtonBinaryPath is null) missing.Add(nameof(DiscoveryResult.ProtonBinaryPath));
-        }
-
-        return missing;
-    }
-
     private static LaunchResult ErrorResult(string message) =>
         new(LaunchStatus.Error, Message: message, MissingDiscoveryFields: Array.Empty<string>());
-
-    private static LaunchPlatform DetectPlatform() =>
-        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? LaunchPlatform.Windows : LaunchPlatform.Linux;
-
-    private static string FormatArgs(IReadOnlyList<string> args) => string.Join(' ', args);
 }

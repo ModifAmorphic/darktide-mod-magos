@@ -5,8 +5,9 @@ namespace Magos.Modificus.EnginseerClient.Tests;
 /// <summary>
 /// Launch-path tests for <see cref="EnginseerLaunchService"/>. All via the fakes
 /// in <see cref="EnginseerFixture"/>: no real process is spawned and no game is
-/// required. The platform is forced so both the Windows and Linux code paths
-/// are exercised on any CI OS.
+/// required. The concrete Windows/Linux <see cref="IPlatformLaunchStrategy"/>
+/// (driven by the fixture's fake <see cref="IProcessLauncher"/>) is injected so
+/// both code paths are exercised on any CI OS.
 /// </summary>
 public sealed class EnginseerLaunchServiceTests
 {
@@ -19,7 +20,7 @@ public sealed class EnginseerLaunchServiceTests
         fx.Steam.Result = FakeDiscovery.CompleteWindows;
         fx.Profiles.PrepareModRootResult = @"C:\magos\profiles\abc\mods";
         var profileId = Guid.NewGuid();
-        var svc = fx.BuildService(LaunchPlatform.Windows);
+        var svc = fx.BuildWindowsService();
 
         var result = svc.Launch(profileId);
 
@@ -51,7 +52,7 @@ public sealed class EnginseerLaunchServiceTests
         fx.Steam.Result = FakeDiscovery.CompleteWindows;
         const string LogFile = @"C:\magos\logs\magos.log";
         fx.Config.Logging.LogFile = LogFile;
-        var svc = fx.BuildService(LaunchPlatform.Windows);
+        var svc = fx.BuildWindowsService();
 
         svc.Launch(Guid.NewGuid());
 
@@ -70,7 +71,7 @@ public sealed class EnginseerLaunchServiceTests
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteWindows;
         fx.Launcher.Returns = true;
-        var svc = fx.BuildService(LaunchPlatform.Windows);
+        var svc = fx.BuildWindowsService();
 
         var result = svc.Launch(Guid.NewGuid());
 
@@ -86,7 +87,7 @@ public sealed class EnginseerLaunchServiceTests
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.Profiles.PrepareModRootResult = "/home/u/.local/share/Magos Modificus/profiles/abc/mods";
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         svc.Launch(Guid.NewGuid());
 
@@ -113,7 +114,7 @@ public sealed class EnginseerLaunchServiceTests
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         const string LogFile = "/home/u/.local/share/Magos Modificus/logs/magos.log";
         fx.Config.Logging.LogFile = LogFile;
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         svc.Launch(Guid.NewGuid());
 
@@ -127,7 +128,7 @@ public sealed class EnginseerLaunchServiceTests
     {
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         svc.Launch(Guid.NewGuid());
 
@@ -142,7 +143,7 @@ public sealed class EnginseerLaunchServiceTests
     {
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         svc.Launch(Guid.NewGuid());
 
@@ -162,7 +163,7 @@ public sealed class EnginseerLaunchServiceTests
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.Launcher.Returns = true;
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         var result = svc.Launch(Guid.NewGuid());
 
@@ -183,7 +184,7 @@ public sealed class EnginseerLaunchServiceTests
             ProtonVersion = null,
             Status = DiscoveryStatus.Partial,
         };
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         var result = svc.Launch(Guid.NewGuid());
 
@@ -206,7 +207,7 @@ public sealed class EnginseerLaunchServiceTests
             DarktideGameBinaryPath = null,
             Status = DiscoveryStatus.Partial,
         };
-        var svc = fx.BuildService(LaunchPlatform.Windows);
+        var svc = fx.BuildWindowsService();
 
         var result = svc.Launch(Guid.NewGuid());
 
@@ -229,7 +230,7 @@ public sealed class EnginseerLaunchServiceTests
             ProtonVersion: null,
             Status: DiscoveryStatus.Failed,
             Warnings: Array.Empty<string>());
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         var result = svc.Launch(Guid.NewGuid());
 
@@ -255,7 +256,7 @@ public sealed class EnginseerLaunchServiceTests
         const string PreparedRoot = "/tmp/prepared-mod-root";
         fx.Profiles.PrepareModRootResult = PreparedRoot;
         var profileId = Guid.NewGuid();
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         svc.Launch(profileId);
 
@@ -278,7 +279,7 @@ public sealed class EnginseerLaunchServiceTests
         fx.Steam.Result = FakeDiscovery.CompleteLinux; // discovery OK, but profile unknown
         fx.Profiles.UnknownProfile = true;
         var profileId = Guid.NewGuid();
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         var result = svc.Launch(profileId);
 
@@ -293,7 +294,7 @@ public sealed class EnginseerLaunchServiceTests
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.DeleteLauncher(); // Enginseer runtime not deployed
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         var result = svc.Launch(Guid.NewGuid());
 
@@ -309,7 +310,7 @@ public sealed class EnginseerLaunchServiceTests
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.Launcher.Returns = false; // process.Start failed (file missing, perms, etc.)
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         var result = svc.Launch(Guid.NewGuid());
 
@@ -325,7 +326,7 @@ public sealed class EnginseerLaunchServiceTests
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.DeleteLauncher();
-        var svc = fx.BuildService(LaunchPlatform.Linux);
+        var svc = fx.BuildLinuxService();
 
         var result = svc.Launch(Guid.NewGuid());
 

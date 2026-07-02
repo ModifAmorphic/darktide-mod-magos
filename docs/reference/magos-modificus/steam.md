@@ -18,10 +18,13 @@ public interface ISteamService
 }
 ```
 
-- `Discover()` — probes the OS-appropriate Steam install locations and resolves
-  the Steam install, Darktide install, compatdata, and Proton version. **Never
-  throws on missing pieces** — those are reported via `DiscoveryResult.Status`
-  and the nullable fields (the escape hatch the UI prompts against).
+- `Discover()` — delegates to the platform `ISteamDiscoverer` (selected once at
+  DI registration from `SteamDiscoveryOptions.Platform`), which probes the
+  OS-appropriate Steam install locations and resolves the Steam install, Darktide
+  install, compatdata, and Proton version. **Never throws on missing pieces** —
+  those are reported via `DiscoveryResult.Status` and the nullable fields (the
+  escape hatch the UI prompts against). `SteamService` itself contains no
+  platform dispatch.
 - `IsGameRunning()` — cross-platform best-effort check against Darktide's process
   name. Delegates to the platform `IProcessLookup`; never throws — enumeration
   failures degrade to "not running."
@@ -72,15 +75,31 @@ every OS-specific input + platform seam is injected:
   Notable fields: `LinuxDefaultSteamRoot`, `LinuxFlatpakSteamRoot`,
   `LinuxCompatibilityToolsDir`, `WindowsDefaultSteamRoot`, `DarktideAppId`
   (`1361210`), `DarktideCommonDir`, `GameBinaryName`, `GameProcessName`.
+- `ISteamDiscoverer` (internal) — `Discover() → DiscoveryResult`. The
+  platform-specific discovery strategy. Two implementations
+  (`LinuxSteamDiscoverer`, `WindowsSteamDiscoverer`), selected once at DI time
+  from `SteamDiscoveryOptions.Platform` (see [Cross-platform notes](#cross-platform-notes)).
+- `SteamDiscoveryCore` (internal) — the shared, platform-agnostic mechanics
+  (root resolution, `libraryfolders.vdf` reading, Darktide probing, the all-null
+  failure result) that both discoverers compose. This is composition, not
+  inheritance — each discoverer injects the core and layers its own platform
+  steps on top.
 - `ISteamRegistryReader` — reads the Windows registry for the Steam install path
-  (`GetSteamPath()` → `HKCU\Software\Valve\Steam\SteamPath`, or null on
-  non-Windows / unreadable). Abstracted so the Windows path resolves on Linux CI.
+  (`GetSteamPath()` → `HKCU\Software\Valve\Steam\SteamPath`, or null if
+  unreadable). Abstracted so the Windows discoverer's registry resolution is
+  mockable on Linux CI. The production `SteamRegistryReader` is Windows-only
+  (annotated `[SupportedOSPlatform("windows")]`) and is registered **only on
+  Windows** — on Linux it is intentionally absent so resolving it fails fast.
 - `IProcessLookup` — `IsRunning(processName)`; two production implementations,
-  selected once at DI time (see [Cross-platform notes](#cross-platform-notes)).
+  selected once at DI time from the host OS (see [Cross-platform notes](#cross-platform-notes)).
 
 ## Discovery behavior
 
-### Linux (`DiscoverLinux`)
+`SteamService.Discover()` is a one-line delegation to the active
+`ISteamDiscoverer`; all platform logic lives in the discoverer + the shared
+`SteamDiscoveryCore` it composes.
+
+### Linux (`LinuxSteamDiscoverer`)
 
 1. **Steam root** — ordered candidates: native default (`~/.local/share/Steam`)
    first, then Flatpak (`~/.var/app/com.valvesoftware.Steam/data/Steam`). The
@@ -88,9 +107,10 @@ every OS-specific input + platform seam is injected:
    raises a warning. A missing root (no candidate carries a valid VDF) → `Failed`.
 2. **Libraries** — parses `libraryfolders.vdf` (multi-library) via the internal
    `LibraryFoldersVdf` parser; always includes the Steam root itself as a
-   fallback (the VDF usually lists itself as library "0").
+   fallback (the VDF usually lists itself as library "0"). (Both steps are
+   `SteamDiscoveryCore` mechanics, shared with the Windows path.)
 3. **Darktide** — `<lib>/steamapps/common/<DarktideCommonDir>/binaries/<GameBinaryName>`
-   probed across every library; first hit wins.
+   probed across every library; first hit wins. (Shared `SteamDiscoveryCore` step.)
 4. **Compatdata** — `steamapps/compatdata/<DarktideAppId>/` probed on the main
    install first, then each library in VDF order (the prefix frequently lives on
    a library drive, not the main install); first existing dir wins.
@@ -104,12 +124,13 @@ every OS-specific input + platform seam is injected:
    The chosen source is recorded in `Warnings`. Status is `Complete` only if
    Steam + Darktide + compatdata + Proton all resolve.
 
-### Windows (`DiscoverWindows`)
+### Windows (`WindowsSteamDiscoverer`)
 
 Registry first (`ISteamRegistryReader` — authoritative when present), then the
 default path (`C:\Program Files (x86)\Steam`); the resolved source is recorded.
-Same multi-library `libraryfolders.vdf` parse + Darktide probe. Compatdata/Proton
-are null (native — unused). Status is `Complete` only if Steam + Darktide resolve.
+Same multi-library `libraryfolders.vdf` parse + Darktide probe (shared core).
+Compatdata/Proton are null (native — unused). Status is `Complete` only if Steam
++ Darktide resolve.
 
 ### VDF parsing (`LibraryFoldersVdf`, internal)
 
@@ -121,9 +142,21 @@ to tests via `InternalsVisibleTo`.
 
 ## Cross-platform notes
 
-`IProcessLookup` is selected **once, at DI registration** by `AddSteam()` from
-`RuntimeInformation.IsOSPlatform` — there is no per-call OS branch inside the
-check:
+There are two independent platform selections, made once each at DI registration
+by `AddSteam()` — neither leaves a per-call OS branch inside the service:
+
+| Collaborator | Selected from | Implementations |
+| --- | --- | --- |
+| `ISteamDiscoverer` | `SteamDiscoveryOptions.Platform` (overridable) | `LinuxSteamDiscoverer`, `WindowsSteamDiscoverer` |
+| `IProcessLookup` | host runtime OS | `LinuxProcessLookup`, `WinProcessLookup` |
+
+The discoverer follows the **`Platform` option, not the runtime OS**, on purpose:
+the `Platform` knob exists precisely so cross-OS testing works — a fixture forces
+`Platform = Windows` and the Windows discoverer runs on Linux CI (and vice
+ versa). `IsGameRunning` has no such option, so `IProcessLookup` is picked from
+the host OS.
+
+### `IProcessLookup`
 
 | Host | Implementation | How it matches |
 | --- | --- | --- |
@@ -157,7 +190,17 @@ check raises there, not during enumeration).
 public static IServiceCollection AddSteam(this IServiceCollection services)
 {
     services.TryAddSingleton(_ => SteamDiscoveryOptions.CreateDefault());
-    services.TryAddSingleton<ISteamRegistryReader, SteamRegistryReader>();
+    services.TryAddSingleton<SteamDiscoveryCore>();
+
+    // Discoverer follows the (overridable) Platform knob, NOT the runtime OS.
+    services.TryAddSingleton<ISteamDiscoverer>(sp =>
+        sp.GetRequiredService<SteamDiscoveryOptions>().Platform == DiscoveryPlatform.Linux
+            ? new LinuxSteamDiscoverer(...)   // core + options + logger
+            : new WindowsSteamDiscoverer(...)); // core + options + ISteamRegistryReader + logger
+
+    // Windows-only capability: NOT registered on Linux (fail-fast if resolved).
+    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        services.TryAddSingleton<ISteamRegistryReader, SteamRegistryReader>();
 
     if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         services.TryAddSingleton<IProcessLookup, LinuxProcessLookup>();
@@ -169,18 +212,23 @@ public static IServiceCollection AddSteam(this IServiceCollection services)
 }
 ```
 
-`SteamDiscoveryOptions`, `ISteamRegistryReader`, and `IProcessLookup` are all
-`TryAdd` so tests (and hosts with custom paths) can pre-register overrides — the
-discovery pipeline is then fully exercisable against fixture layouts. `ISteamService`
-is `AddSingleton` (holds no per-call state). Resolves `ILogger<SteamService>` from
-the container.
+`SteamDiscoveryOptions`, `SteamDiscoveryCore`, `ISteamDiscoverer`,
+`ISteamRegistryReader`, and `IProcessLookup` are all `TryAdd` so tests (and hosts
+with custom paths) can pre-register overrides — the discovery pipeline is then
+fully exercisable against fixture layouts (e.g. the Steam fixture pre-registers
+its `FakeRegistryReader` + forces `Platform = Windows`, which drives the discoverer
+selection so the Windows path runs on Linux CI). `ISteamService` is `AddSingleton`
+(holds no per-call state).
 
 Note: this library does **not** reference `MagosConfig` — it reads OS-specific
 inputs entirely from the injected `SteamDiscoveryOptions`. No
 `Microsoft.Win32.Registry` package is required: on `net10.0` the `Registry` type
-is in the reference assembly, gated behind `[SupportedOSPlatform("windows")]`;
-`SteamRegistryReader` guards every call with `OperatingSystem.IsWindows()`, so it
-compiles cleanly on Linux and is a no-op there.
+is in the reference assembly, gated behind `[SupportedOSPlatform("windows")]`.
+`SteamRegistryReader` is annotated `[SupportedOSPlatform("windows")]` (declaring
+it Windows-only at the type level for CA1416, with no per-call runtime guard) and
+is registered **only on Windows** — on Linux it is intentionally absent so
+resolving `ISteamRegistryReader` fails fast (the honest outcome for a Windows-only
+capability, rather than a silent no-op).
 
 ## Dependencies
 
@@ -195,8 +243,11 @@ compiles cleanly on Linux and is a no-op there.
 selection (`ProtonSelectionTests`), the `libraryfolders.vdf` parser
 (`LibraryFoldersVdfTests`), game-running detection (`GameRunningTests`,
 `ArgvMatchTests` — the latter pinning the `MatchesArgv0` backslash normalization),
-and the `AddSteam` DI wiring (including the `TryAdd` overrides + platform
-`IProcessLookup` selection).
+and the `AddSteam` DI wiring (the `TryAdd` overrides, the `ISteamDiscoverer`
+selection by `SteamDiscoveryOptions.Platform`, and the platform `IProcessLookup`
+selection). `WindowsDiscoveryTests` force `Platform = Windows` + a fake registry
+reader so the Windows discoverer path runs on Linux CI — the load-bearing proof
+that discoverer selection follows `Platform`, not the runtime OS.
 
 ```sh
 dotnet test magos-modificus/magos-modificus.sln -c Release

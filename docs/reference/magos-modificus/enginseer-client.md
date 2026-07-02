@@ -23,13 +23,15 @@ expected conditions:
 - Resolves Steam discovery first (`ISteamService.Discover()`). If discovery is
   missing required fields for the current OS, returns `DiscoveryIncomplete`
   **without** writing the profile's mod root (no point writing `mods.lst` for a
-  launch that won't happen) — `MissingDiscoveryFields` lists them.
+  launch that won't happen) — `MissingDiscoveryFields` lists them. The
+  per-platform required set comes from the active `IPlatformLaunchStrategy`.
 - Prepares the mod root (`IProfileService.PrepareModRoot(profileId)` — writes
   `mods.lst` and returns the `--mod-path`). An unknown profile (`KeyNotFoundException`
   from PrepareModRoot) is caught and mapped to `Error`.
 - Checks that the launcher exists at `<EnginseerRuntimeDir>/magos_launcher.exe`.
-- Assembles the launcher args and spawns the launcher via `IProcessLauncher`
-  (directly on Windows; under `proton run` on Linux).
+- Spawns the launcher via the active `IPlatformLaunchStrategy` (directly on
+  Windows; under `proton run` on Linux) — the service itself contains no
+  per-launch OS branch.
 
 ```csharp
 public sealed record LaunchResult(
@@ -49,28 +51,42 @@ public enum LaunchStatus { Launched, DiscoveryIncomplete, Error }
 `MissingDiscoveryFields` is derived from the `DiscoveryResult` fields directly
 (both platforms need Steam + the game binary; Linux additionally needs compatdata
 + Proton), so it and `DiscoveryStatus` cannot diverge — it is equivalent to
-`Status != Complete`.
+`Status != Complete`. The per-platform required set is owned by the active
+`IPlatformLaunchStrategy` (`RequiredDiscoveryFields`).
 
 ### Injectable seams
 
+- `IPlatformLaunchStrategy` (internal) — the per-platform launch surface:
+  - `RequiredDiscoveryFields(discovery)` — the discovery fields this platform
+    requires but could not resolve (Windows: Steam + game binary; Linux: +
+    compatdata + Proton).
+  - `Start(launcherPath, discovery, gameBinary, modPath, logFile) → bool` — the
+    spawn. Windows: a direct invocation of the launcher with native
+    (untranslated) args; Linux: `<proton> run <launcher.exe> <args>` with both
+    `STEAM_COMPAT_*` env vars and the path-valued flags `Z:\`-translated.
+  - `Name` — a short label ("Windows" / "Linux") for log messages.
+  - Two implementations (`WindowsLaunchStrategy`, `LinuxLaunchStrategy`),
+    selected once at DI time from the host OS (see
+    [Cross-platform notes](#cross-platform-notes)).
 - `IProcessLauncher` — `Start(filePath, arguments, environmentVariables) → bool`
   (fire-and-forget; `true` if started, `false` if it could not start — never
   throws). Abstracted so the launch path is deterministic and mockable in tests
-  (the real `Process.Start` would spawn a real process). The default
+  (the real `Process.Start` would spawn a real process). Injected into the
+  strategy (not the service) so tests can fake the spawn. The default
   `ProcessLauncher` uses `ProcessStartInfo.ArgumentList` (argv-correct, no shell,
   no injection surface) and applies env overrides directly to the child's
   environment block.
-- `LaunchPlatform` (internal enum `Windows` / `Linux`) — resolved once from the
-  runtime OS via `RuntimeInformation`; tests force it via an internal constructor
-  to exercise both branches on any CI OS.
 
 `WinePath.ToWine(posixPath)` (internal) translates an absolute POSIX path to its
-Wine `Z:\` form (`/` → `\`, `Z:` prefix) for the launcher-under-Wine flags.
+Wine `Z:\` form (`/` → `\`, `Z:` prefix) for the launcher-under-Wine flags; it is
+used only by `LinuxLaunchStrategy`.
 
 ## Cross-platform notes
 
-The launch path branches on `LaunchPlatform` (decided once at construction; the
-OS does not change at runtime):
+The launch path branches on platform via the active `IPlatformLaunchStrategy`,
+selected once at DI registration from the host OS — the launch service contains
+no per-launch OS branch. Each strategy owns the spawn (via `IProcessLauncher`),
+its required discovery fields, and its own log label.
 
 ### Windows — direct invocation
 
@@ -116,17 +132,25 @@ shell-level config field can be added if a future need arises.
 public static IServiceCollection AddEnginseerClient(this IServiceCollection services)
 {
     services.TryAddSingleton<IProcessLauncher, ProcessLauncher>();
+
+    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        services.TryAddSingleton<IPlatformLaunchStrategy, WindowsLaunchStrategy>();
+    else
+        services.TryAddSingleton<IPlatformLaunchStrategy, LinuxLaunchStrategy>();
+
     services.AddSingleton<IEnginseerLaunchService, EnginseerLaunchService>();
     return services;
 }
 ```
 
-`IProcessLauncher` is `TryAdd` so tests (and hosts wiring a custom launch hook)
-can pre-register an override before calling `AddEnginseerClient` — the same
-pattern the Steam library uses for its platform seams. `IEnginseerLaunchService`
-is `AddSingleton` (holds no per-launch state). Resolves `IProfileService`,
-`ISteamService`, `MagosConfig`, `IProcessLauncher`, and
-`ILogger<EnginseerLaunchService>` from the container.
+`IProcessLauncher` and `IPlatformLaunchStrategy` are `TryAdd` so tests (and hosts
+wiring a custom launch hook) can pre-register an override before calling
+`AddEnginseerClient` — the same pattern the Steam library uses for its platform
+seams. The strategy is selected once, here, from the host OS, so the launch
+service contains no per-call OS branch. `IEnginseerLaunchService` is `AddSingleton`
+(holds no per-launch state). Resolves `IProfileService`, `ISteamService`,
+`MagosConfig`, `IPlatformLaunchStrategy`, and `ILogger<EnginseerLaunchService>`
+from the container.
 
 ## Dependencies
 
@@ -139,16 +163,17 @@ is `AddSingleton` (holds no per-launch state). Resolves `IProfileService`,
 
 `Magos.Modificus.EnginseerClient.Tests` is a **dual-purpose** project. `dotnet
 test` runs the xUnit suite — `EnginseerLaunchServiceTests` (Windows + Linux arg
-assembly, `DiscoveryIncomplete` missing-field derivation, `Error` mapping, the
-forced-platform internal constructor), `WinePathTests`, the `AddEnginseerClient`
-DI wiring, all against a fake `IProcessLauncher` (`TestDoubles.cs`).
-`dotnet run -- <discover|list|launch>` runs the **composition smoke harness**
-under `SmokeHarness/Program.cs` — it composes the **real** services (general +
-profiles + steam + enginseer-client, no fakes) via the same `Add<Library>()`
-chain the UI uses. `launch <profileId>` invokes an actual launch against the
-user's Steam/Darktide setup, for user-machine validation; `discover` reports the
-resolved Steam/Darktide/Proton discovery + `IsGameRunning()`; `list` lists
-profiles.
+assembly via the concrete `WindowsLaunchStrategy` / `LinuxLaunchStrategy` + a
+fake `IProcessLauncher`, `DiscoveryIncomplete` missing-field derivation, `Error`
+mapping), `WinePathTests`, the `AddEnginseerClient` DI wiring, all against the
+fakes in `TestDoubles.cs`. Tests inject the concrete strategy to exercise either
+path on any CI OS. `dotnet run -- <discover|list|launch>` runs the **composition
+smoke harness** under `SmokeHarness/Program.cs` — it composes the **real**
+services (general + profiles + steam + enginseer-client, no fakes) via the same
+`Add<Library>()` chain the UI uses. `launch <profileId>` invokes an actual launch
+against the user's Steam/Darktide setup, for user-machine validation; `discover`
+reports the resolved Steam/Darktide/Proton discovery + `IsGameRunning()`; `list`
+lists profiles.
 
 ```sh
 dotnet test magos-modificus/magos-modificus.sln -c Release          # xUnit suite
