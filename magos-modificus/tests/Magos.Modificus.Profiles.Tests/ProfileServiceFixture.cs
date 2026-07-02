@@ -64,8 +64,8 @@ internal sealed class ProfileServiceFixture : IDisposable
     public string ModsLst(Guid id) => Path.Combine(StagedDir(id), "mods.lst");
     public string StagedModLink(Guid id, string modName) => Path.Combine(StagedDir(id), modName);
 
-    // diverged/ holds a profile's local copy of a mod.
-    public string DivergedDir(Guid id) => Path.Combine(ProfileDir(id), "diverged");
+    // mods/ holds a profile's local copy of a mod.
+    public string DivergedDir(Guid id) => Path.Combine(ProfileDir(id), "mods");
     public string DivergedModDir(Guid id, string modName) => Path.Combine(DivergedDir(id), modName);
 
     // ---- shared-store path helpers -----------------------------------------

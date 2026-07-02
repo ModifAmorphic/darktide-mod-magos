@@ -90,9 +90,9 @@ would defeat the shared-mod purpose). On-disk layout:
   <mod-name>/                        # the shared mod files (one copy, shared)
 <ProfilesBaseFolder>/<guid>/
   profile.json                       # metadata + mod list (entries carry a Policy)
-  diverged/<mod-name>/               # a profile's diverged copy of a mod (Phase 4 acquires)
+  mods/<mod-name>/                   # a profile's diverged copy of a mod (Phase 4 acquires)
   staged/                            # the staged mod root = the --mod-path (REGENERATED each launch)
-    <mod-name>                       #   symlink → shared <mod-name> OR diverged/<mod-name>
+    <mod-name>                       #   symlink → shared <mod-name> OR mods/<mod-name>
     mods.lst                         #   successfully-staged enabled mods, in order
 ```
 

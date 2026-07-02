@@ -168,7 +168,7 @@ public sealed class ModListTests
     public void RemoveMod_is_graceful_when_diverged_copy_was_never_present()
     {
         // "missing local copy for a listed mod -> graceful": the mod is in the
-        // list (so RemoveMod removes it) but its diverged/ dir was never created
+        // list (so RemoveMod removes it) but its mods/ dir was never created
         // (the mod was shared, never diverged). The shared-store copy is NOT
         // touched (RemoveMod's contract is profile-local only).
         using var fx = new ProfileServiceFixture();

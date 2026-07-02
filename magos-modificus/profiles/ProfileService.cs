@@ -15,18 +15,18 @@ namespace Magos.Modificus.Profiles;
 /// &lt;ProfilesBaseFolder&gt;/          (auto-created on first run)
 ///   &lt;guid&gt;/                        (profile dir; id-named)
 ///     profile.json                   (metadata + mod list — the source of truth)
-///     diverged/&lt;mod&gt;/              (a profile's diverged copy of a mod, if any)
+///     mods/&lt;mod&gt;/                    (a profile's diverged copy of a mod, if any)
 ///     staged/                        (the staged mod root = the --mod-path;
 ///                                     REGENERATED each launch — a projection)
-///       &lt;mod&gt;                       (symlink → shared &lt;mod&gt; OR diverged/&lt;mod&gt;)
+///       &lt;mod&gt;                       (symlink → shared &lt;mod&gt; OR mods/&lt;mod&gt;)
 ///       mods.lst                     (successfully-staged enabled mods, in order)
 /// </code>
 /// <para>
 /// Staging is shared-first: each enabled mod resolves Share/Diverge against the
 /// shared store (<see cref="ISharedModStore"/>); Share symlinks into the shared
-/// store, Diverge symlinks into <c>diverged/&lt;mod&gt;/</c> (skipped + warned if
+/// store, Diverge symlinks into <c>mods/&lt;mod&gt;/</c> (skipped + warned if
 /// absent — Phase 4 populates it). <b>Symlinks, never copies.</b> The shared
-/// store + <c>diverged/</c> hold the files; <c>staged/</c> is a symlink projection.</para>
+/// store + <c>mods/</c> hold the files; <c>staged/</c> is a symlink projection.</para>
 /// <para>
 /// Registered as a singleton: the service holds no per-request state — all
 /// state lives on disk, and <see cref="MagosConfig"/> (its only config source)
@@ -118,13 +118,13 @@ internal sealed class ProfileService : IProfileService
             Mods = Array.Empty<ModListEntry>(),
         };
 
-        // Scaffold the profile dir + staged/ + diverged/ before persisting so a
+        // Scaffold the profile dir + staged/ + mods/ before persisting so a
         // crash between the two never leaves a profile.json without its tree.
-        // staged/ is regenerated each PrepareModRoot; diverged/ is populated by
+        // staged/ is regenerated each PrepareModRoot; mods/ is populated by
         // Phase 4 — both pre-created for a predictable first-run shape.
         Directory.CreateDirectory(ProfileDir(profile.Id));
         Directory.CreateDirectory(StagedDir(profile.Id));
-        Directory.CreateDirectory(DivergedDir(profile.Id));
+        Directory.CreateDirectory(ProfileModsDir(profile.Id));
         WriteProfileFile(profile);
 
         _logger.LogInformation("Created profile {Id} ('{Name}')", profile.Id, profile.Name);
@@ -265,7 +265,7 @@ internal sealed class ProfileService : IProfileService
         // Drop the profile's diverged copy, if any (best-effort; never throws —
         // a missing dir is the normal case for a shared mod). The shared-store
         // copy is NOT touched (other profiles may still share it).
-        var divergedModDir = DivergedModDir(id, modName);
+        var divergedModDir = ProfileModDir(id, modName);
         if (Directory.Exists(divergedModDir))
         {
             try
@@ -304,7 +304,7 @@ internal sealed class ProfileService : IProfileService
                 // Diverge + no diverged copy yet (Phase 4 hasn't acquired it) →
                 // skip + warn. The mod simply isn't in the staged root.
                 _logger.LogWarning(
-                    "Mod {Mod} on profile {Id} could not be staged (no shared copy, and diverged/ copy absent — acquisition pending). Skipping.",
+                    "Mod {Mod} on profile {Id} could not be staged (no shared copy, and mods/ copy absent — acquisition pending). Skipping.",
                     mod.Name, id);
                 continue;
             }
@@ -359,7 +359,7 @@ internal sealed class ProfileService : IProfileService
 
     private (string? Target, string Resolve) DivergeTarget(Guid id, string modName)
     {
-        var divergedModDir = DivergedModDir(id, modName);
+        var divergedModDir = ProfileModDir(id, modName);
         return Directory.Exists(divergedModDir)
             ? (divergedModDir, nameof(AllocationResolution.Diverge))
             : (null, nameof(AllocationResolution.Diverge));
@@ -375,31 +375,31 @@ internal sealed class ProfileService : IProfileService
         var shared = _sharedStore.Get(modName);
         if (shared is null)
         {
-            // No shared entry → can't converge to Share; leave diverged/ as-is
+            // No shared entry → can't converge to Share; leave mods/ as-is
             // (acquisition will populate the store later).
             _logger.LogDebug(
-                "Mod {Mod} on profile {Id} has no shared entry; diverged/ left as-is.", modName, id);
+                "Mod {Mod} on profile {Id} has no shared entry; mods/ left as-is.", modName, id);
             return;
         }
 
         var resolution = AllocationResolver.Resolve(shared.Policy, shared.ActualVersion, profilePolicy);
         if (resolution != AllocationResolution.Share)
         {
-            // Still diverged (or just diverged) — diverged/ is needed (or will be,
+            // Still diverged (or just diverged) — mods/ is needed (or will be,
             // once Phase 4 acquires it). Nothing to drop.
             return;
         }
 
         // diverge → share: drop the local copy to reclaim space. Best-effort;
         // a missing dir (never diverged / not yet acquired) is a no-op.
-        var divergedModDir = DivergedModDir(id, modName);
+        var divergedModDir = ProfileModDir(id, modName);
         if (Directory.Exists(divergedModDir))
         {
             try
             {
                 Directory.Delete(divergedModDir, recursive: true);
                 _logger.LogInformation(
-                    "Mod {Mod} on profile {Id} converged to Share; dropped diverged/ copy.", modName, id);
+                    "Mod {Mod} on profile {Id} converged to Share; dropped mods/ copy.", modName, id);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -548,8 +548,8 @@ internal sealed class ProfileService : IProfileService
     private string ProfileDir(Guid id) => Path.Combine(_baseFolder, id.ToString());
     private static string ProfileFilePath(string profileDir) => Path.Combine(profileDir, "profile.json");
     private string StagedDir(Guid id) => Path.Combine(ProfileDir(id), "staged");
-    private string DivergedDir(Guid id) => Path.Combine(ProfileDir(id), "diverged");
-    private string DivergedModDir(Guid id, string modName) => Path.Combine(DivergedDir(id), modName);
+    private string ProfileModsDir(Guid id) => Path.Combine(ProfileDir(id), "mods");
+    private string ProfileModDir(Guid id, string modName) => Path.Combine(ProfileModsDir(id), modName);
     private static string ModListPath(string stagedRoot) => Path.Combine(stagedRoot, "mods.lst");
 
     private static KeyNotFoundException UnknownProfile(Guid id) =>

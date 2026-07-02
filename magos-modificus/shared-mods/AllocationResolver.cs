@@ -21,7 +21,7 @@ namespace Magos.Modificus.SharedMods;
 /// alone is not enough — both sides must agree on intent.</para>
 /// <para>
 /// Pure: no I/O, no logging, no DI. Inputs are non-null; the caller decides how
-/// to handle a mod with no shared-store entry (treated as needing a diverged/
+/// to handle a mod with no shared-store entry (treated as needing a mods/
 /// local copy by the staging layer).</para>
 /// </remarks>
 public static class AllocationResolver

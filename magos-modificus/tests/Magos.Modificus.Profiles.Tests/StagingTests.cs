@@ -7,9 +7,9 @@ namespace Magos.Modificus.Profiles.Tests;
 
 /// <summary>
 /// Phase 2 shared-first staging contract: shared mods symlink to the shared
-/// store; diverged mods symlink to <c>diverged/</c>; <c>staged/</c> holds only
+/// store; diverged mods symlink to <c>mods/</c>; <c>staged/</c> holds only
 /// symlinks + <c>mods.lst</c> (no copied files); regeneration clears + rebuilds;
-/// a missing <c>diverged/</c> copy is skipped + warned (not a crash); a
+/// a missing <c>mods/</c> copy is skipped + warned (not a crash); a
 /// symlink-creation failure throws <see cref="SymlinkStagingException"/> (never
 /// silently copies); and <see cref="IProfileService.SetModPolicy"/> reconciles
 /// the diverged copy on share↔diverge transitions.
@@ -149,7 +149,7 @@ public sealed class StagingTests
         var profile = fx.Service.CreateProfile("P");
         fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
         fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy(new Version(2, 0, 0)));
-        // diverged/DMF intentionally NOT created (acquisition pending).
+        // mods/DMF intentionally NOT created (acquisition pending).
 
         fx.Service.PrepareModRoot(profile.Id); // must not throw
 
@@ -161,11 +161,11 @@ public sealed class StagingTests
     public void Mod_not_in_shared_store_is_skipped_when_no_diverged_copy()
     {
         // A profile mod whose name isn't in the shared store at all, and has no
-        // diverged/ copy, is skipped (nothing to stage). Other mods still stage.
+        // mods/ copy, is skipped (nothing to stage). Other mods still stage.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
         fx.AddSharedMod("RealMod");
-        fx.Service.AddMod(profile.Id, "GhostMod"); // not in shared store, no diverged/
+        fx.Service.AddMod(profile.Id, "GhostMod"); // not in shared store, no mods/
         fx.Service.AddMod(profile.Id, "RealMod");
 
         fx.Service.PrepareModRoot(profile.Id);
@@ -177,7 +177,7 @@ public sealed class StagingTests
     [Fact]
     public void Diverged_mod_without_shared_entry_uses_diverged_copy()
     {
-        // No shared entry, but a diverged/ copy exists -> stage the local copy.
+        // No shared entry, but a mods/ copy exists -> stage the local copy.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
         fx.Service.AddMod(profile.Id, "LocalOnly");
@@ -216,7 +216,7 @@ public sealed class StagingTests
     [Fact]
     public void SetModPolicy_share_to_diverge_marks_metadata_only()
     {
-        // share->diverge: the policy is recorded; diverged/ is Phase 4's job, so
+        // share->diverge: the policy is recorded; mods/ is Phase 4's job, so
         // it is NOT created here. Staging looks for it (absent -> skip + warn).
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
@@ -227,7 +227,7 @@ public sealed class StagingTests
 
         var entry = Assert.Single(fx.Service.GetModList(profile.Id));
         Assert.Equal(new Version(2, 0, 0), Assert.IsType<PinnedPolicy>(entry.Policy).Version);
-        // diverged/ not created by SetModPolicy (acquisition is Phase 4).
+        // mods/ not created by SetModPolicy (acquisition is Phase 4).
         Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")));
 
         // Staging: diverged copy absent -> skipped.
@@ -250,7 +250,7 @@ public sealed class StagingTests
         fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy(new Version(1, 0, 0))); // -> Share
 
         Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")),
-            "converging to Share should reclaim the diverged/ copy");
+            "converging to Share should reclaim the mods/ copy");
 
         // Staging now symlinks to the shared store.
         fx.Service.PrepareModRoot(profile.Id);

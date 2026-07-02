@@ -156,7 +156,7 @@ dotnet run   --project magos-modificus/ui --configuration Release   # bare Avalo
   `Microsoft.Extensions.Logging`; honors `Logging:Level` + `Logging:LogFile`.
 - The backend libraries are all implemented: **Profiles** (Phase 1: profile data
   model + lifecycle; stages **shared-first** — `PrepareModRoot` builds a `staged/`
-  symlink projection (Share → shared store, Diverge → profile's `diverged/` copy)
+  symlink projection (Share → shared store, Diverge → profile's `mods/` copy)
   + writes `mods.lst`), **Steam** (Phase 1: Steam + Darktide + Proton discovery
   + `IsGameRunning` — `WinProcessLookup` via process comm on Windows,
   `LinuxProcessLookup` via `/proc` argv[0] under Proton), **Integrations**
