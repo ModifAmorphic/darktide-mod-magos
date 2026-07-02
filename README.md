@@ -14,10 +14,12 @@ Magos has two components:
   production seed of this repo. See
   [`enginseer/README.md`](enginseer/README.md) for build + developer details.
 - **Magos Modificus** — the mod manager app (UI, staging, load order, profiles,
-  dependency resolution). Phases 0–2 complete: the backend libraries (Profiles,
-  Steam, Integrations, Enginseer-client, SharedMods) are implemented; the UI is
-  still the bare Phase-0 window (no profile/mod-management UI yet) and the
-  Launcher is a stub (Phase 5). See
+  dependency resolution). Phases 0–2 complete; Phase 3 Track A in progress: the
+  backend libraries (Profiles, Steam, Integrations, Enginseer-client,
+  SharedMods) are implemented, and the UI shell + profile management (dropdown
+  switch, persisted active profile, create/rename/delete dialog) are wired.
+  Mod-list UI and Launch behavior are still pending, and the Launcher is a stub
+  (Phase 5). See
   [`magos-modificus/README.md`](magos-modificus/README.md) for developer/build
   details.
 

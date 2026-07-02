@@ -1,0 +1,74 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Magos.Modificus.UI.ViewModels"
+        xmlns:profiles="using:Magos.Modificus.Profiles"
+        x:Class="Magos.Modificus.UI.Views.ManageProfilesWindow"
+        x:DataType="vm:ManageProfilesViewModel"
+        Title="Manage profiles"
+        Width="520" Height="440"
+        MinWidth="440" MinHeight="360"
+        CanResize="True"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+
+  <Grid RowDefinitions="*,Auto" Margin="16">
+
+    <!-- Profile list + rename row -->
+    <Grid Grid.Row="0" RowDefinitions="*,Auto" Margin="0,0,0,12">
+      <Border Grid.Row="0"
+              BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+              BorderThickness="1"
+              CornerRadius="4">
+        <ListBox ItemsSource="{Binding ProfileList}"
+                 SelectedItem="{Binding SelectedProfile}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="profiles:ProfileSummary">
+              <TextBlock Text="{Binding Name}" />
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Border>
+
+      <!-- Inline rename: name field + Rename (enabled by selection). -->
+      <Grid Grid.Row="1"
+            ColumnDefinitions="*,Auto"
+            Margin="0,8,0,0">
+        <TextBox Grid.Column="0"
+                 Text="{Binding RenameName}"
+                 PlaceholderText="Rename selected…"
+                 IsEnabled="{Binding SelectedProfile, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <Button Grid.Column="1"
+                Content="Rename"
+                Command="{Binding RenameProfileCommand}"
+                Margin="8,0,0,0"
+                VerticalAlignment="Center" />
+      </Grid>
+    </Grid>
+
+    <!-- Create row + actions -->
+    <StackPanel Grid.Row="1" Spacing="8">
+      <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+              BorderThickness="0,1,0,0"
+              Padding="0,12,0,0">
+        <Grid ColumnDefinitions="*,Auto,Auto">
+          <TextBox Grid.Column="0"
+                   Text="{Binding NewProfileName}"
+                   PlaceholderText="New profile name…" />
+          <Button Grid.Column="1"
+                  Content="Create"
+                  Command="{Binding CreateProfileCommand}"
+                  Margin="8,0,0,0" />
+          <Button Grid.Column="2"
+                  Content="Delete"
+                  Command="{Binding DeleteProfileCommand}"
+                  Margin="8,0,0,0" />
+        </Grid>
+      </Border>
+
+      <Button Content="Done"
+              HorizontalAlignment="Right"
+              Click="Done_Click"
+              MinWidth="96" />
+    </StackPanel>
+  </Grid>
+</Window>

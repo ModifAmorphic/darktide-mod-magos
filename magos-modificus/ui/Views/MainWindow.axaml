@@ -31,7 +31,8 @@
                     VerticalAlignment="Center">
           <ComboBox ItemsSource="{Binding Profiles}"
                     SelectedItem="{Binding SelectedProfile}"
-                    IsEnabled="{Binding HasProfiles}"
+                    IsEnabled="{Binding CanSwitchProfile}"
+                    ToolTip.Tip="{Binding ProfileSwitchTooltip}"
                     PlaceholderText="No profile"
                     MinWidth="180">
             <ComboBox.ItemTemplate>
@@ -40,8 +41,11 @@
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <Button Content="Manage profiles…"
-                  Command="{Binding ManageProfilesCommand}" />
+          <Button Content="⚙"
+                  Command="{Binding ManageProfilesCommand}"
+                  ToolTip.Tip="Manage profiles…"
+                  FontSize="14"
+                  MinWidth="36" />
         </StackPanel>
 
         <!-- Launch Darktide (right) -->

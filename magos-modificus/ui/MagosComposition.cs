@@ -6,6 +6,7 @@ using Magos.Modificus.Integrations;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.SharedMods;
 using Magos.Modificus.Steam;
+using Magos.Modificus.UI.Dialogs;
 using Magos.Modificus.UI.ViewModels;
 using Magos.Modificus.UI.Views;
 using Magos.Modificus.EnginseerClient;
@@ -16,8 +17,9 @@ namespace Magos.Modificus.UI;
 /// <summary>
 /// The DI composition root. Loads config, builds the structured logger, wires
 /// every library's <c>Add&lt;Library&gt;()</c> extension, and registers the UI
-/// surface (main window + view model). All data operations flow through the
-/// registered library services — the UI never touches files or APIs directly.
+/// surface (main window + view model + dialog service). All data operations flow
+/// through the registered library services — the UI never touches files or APIs
+/// directly.
 /// </summary>
 public static class MagosComposition
 {
@@ -42,8 +44,16 @@ public static class MagosComposition
         services.AddSteam();
         services.AddEnginseerClient();
         services.AddLauncher();
-        services.AddTransient<MainWindow>();
+
+        // UI surface. MainWindow is a singleton: the desktop lifetime installs
+        // the resolved instance as desktop.MainWindow, and DialogService resolves
+        // the same one as the owner for modal dialogs.
+        services.AddSingleton<MainWindow>();
         services.AddSingleton<ShellViewModel>();
+        services.AddSingleton<IDialogService>(sp =>
+            new DialogService(
+                sp.GetRequiredService<MainWindow>(),
+                sp.GetRequiredService<IProfileService>()));
 
         return services.BuildServiceProvider();
     }

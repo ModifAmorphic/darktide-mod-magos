@@ -28,10 +28,12 @@ Requirements, architecture, and technology choices are made fresh.
 ## Repository state
 
 - **`main`** — production. Enginseer (the injected modding runtime + launcher) is
-  merged as the production seed; Magos Modificus is scaffolded (Phase 0:
-  .NET 10 + Avalonia 12 foundation — the backend libraries (Profiles, Steam,
-  Integrations, Enginseer-client, SharedMods) are implemented in Phases 1–2;
-  the UI is still the bare Phase-0 window, and the Launcher is a stub).
+  merged as the production seed; Magos Modificus has the backend libraries
+  implemented (Phases 1–2) and the Phase 3 Track A UI in progress: the app shell
+  + profile management (dropdown switch, persisted active profile, create/rename
+ /delete dialog, switch-blocked-while-running) are wired (milestones 1–2);
+  mod-list UI (Track B) + Launch behavior (Track C) are still pending, and the
+  Launcher is a stub (Phase 5).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -64,8 +66,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   magos-modificus.sln   solution root (classic .sln)
   Directory.Build.props  shared MSBuild props (net10.0, nullable, implicit usings)
   ui/                   Magos.Modificus.UI — the Avalonia executable + DI composition root
+                          (Phase 3 Track A: shell + profile management — dropdown switch,
+                          persisted active profile, create/rename/delete dialog)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
-                          config loader, AddGeneral() DI ext)
+                          config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
   profiles/             Magos.Modificus.Profiles — profile data model, persistence,
                         shared-first staging (ProfileService.PrepareModRoot builds the
@@ -95,6 +99,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
     Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
                                             `dotnet test` = xUnit; `dotnet run` = composition smoke harness)
+    Magos.Modificus.UI.Tests/              xUnit tests for the shell + manage-profiles
+                                            view models (profile CRUD/switch, active-profile
+                                            persist, switch-blocked-while-running; dialog via
+                                            an injectable IDialogService seam)
 docs/               architecture/ + reference/ (darktide/, community-tools/, magos-modificus/)
 .github/workflows/  CI: mingw-build + msvc-build (Enginseer) + magos-build (Magos Modificus)
 .gitignore          ignores enginseer/target, enginseer/bin, .NET bin/obj, build artifacts, _local/
@@ -145,7 +153,7 @@ Build + test the mod-manager app — run from the repo root (.NET 10 SDK require
 ```sh
 dotnet build magos-modificus/magos-modificus.sln --configuration Release
 dotnet test  magos-modificus/magos-modificus.sln --configuration Release
-dotnet run   --project magos-modificus/ui --configuration Release   # bare Avalonia window
+dotnet run   --project magos-modificus/ui --configuration Release   # app shell window
 ```
 - The composition root is `magos-modificus/ui/MagosComposition.cs` (loads
   config → builds the Serilog logger → wires every `Add<Library>()`).
@@ -162,8 +170,14 @@ dotnet run   --project magos-modificus/ui --configuration Release   # bare Avalo
   `LinuxProcessLookup` via `/proc` argv[0] under Proton), **Integrations**
   (Phase 1: GitHub Releases client), **Enginseer-client** (Phase 1: the launch
   façade), **SharedMods** (Phase 2: shared mod store + version-policy model +
-  allocation resolution). The **UI is still the bare Phase-0 window** and the
-  **Launcher** is a stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
+  allocation resolution). **General** carries cross-cutting infra: logging,
+  `ConfigLoader`, and `AppStateStore` (runtime app-state — the active-profile id,
+  persisted to a separate `app-state.json`, not `MagosConfig`). **Phase 3 Track A
+  UI** is in progress: the shell + profile management (dropdown switch, persisted
+  active profile, create/rename/delete dialog via an injectable `IDialogService`,
+  switch-blocked-while-running) are wired (milestones 1–2); mod-list UI
+  (Track B) + Launch behavior (Track C) are still pending, and the **Launcher**
+  is a stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
 - **CI** (`magos-build.yml`) is scoped to `magos-modificus/**` + the workflow
   file, matrixed on Windows + Ubuntu; gates on build + tests.
 

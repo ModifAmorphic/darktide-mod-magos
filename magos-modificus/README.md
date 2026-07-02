@@ -5,11 +5,15 @@ top of the Enginseer runtime. It owns profiles, mod staging, load order,
 dependency resolution, mod-source integrations (Nexus Mods, GitHub Releases,
 Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
 
-> **Status: Phases 0–2 complete.** The foundation + all backend libraries are
-> implemented: Profiles, Steam, Integrations, Enginseer-client (Phase 1) +
-> SharedMods (Phase 2). The UI is still the bare Phase-0 window (no
-> profile/mod-management UI yet); the Launcher is a stub (Phase 5). Target
-> architecture:
+> **Status: Phases 0–2 complete; Phase 3 Track A in progress.** The foundation +
+> all backend libraries are implemented: Profiles, Steam, Integrations,
+> Enginseer-client (Phase 1) + SharedMods (Phase 2). Phase 3 Track A wires the
+> UI: milestone 1 landed the app shell (top bar + status strip, live
+> profile/game-running state) and milestone 2 makes the profile controls work
+> (dropdown switch + persisted active profile + a "Manage profiles…" create /
+> rename / delete dialog, switch-blocked-while-running). Mod-list UI (Track B)
+> and Launch behavior (Track C) are still pending; the Launcher is a stub
+> (Phase 5). Target architecture:
 > [`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md).
 
 ## Tech stack
@@ -31,7 +35,9 @@ magos-modificus/
   Directory.Build.props           shared MSBuild properties (net10.0, nullable)
   config.example.json             sample global config (schema reference)
   ui/                             Magos.Modificus.UI       Avalonia executable + DI composition root
-  general/                        Magos.Modificus.General  cross-cutting infra: logging, config loader, DI
+                                                            (Phase 3 Track A: shell + profile management)
+  general/                        Magos.Modificus.General  cross-cutting infra: logging, config loader,
+                                                            app-state store, DI
   config/                         Magos.Modificus.Config   the MagosConfig schema + defaults (POCO)
   profiles/                       Magos.Modificus.Profiles          implemented (Phase 1 + Phase 2 staging)
   shared-mods/                    Magos.Modificus.SharedMods        implemented (Phase 2)
@@ -46,6 +52,7 @@ magos-modificus/
     Magos.Modificus.Integrations.Tests/    xUnit tests for the GitHub Releases client
     Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose: dotnet test / dotnet run smoke harness)
+    Magos.Modificus.UI.Tests/              xUnit tests for the shell + manage-profiles view models
 ```
 
 Each library exposes an `Add<Library>()` extension method on
@@ -66,8 +73,11 @@ dotnet build magos-modificus/magos-modificus.sln --configuration Release
 dotnet run --project magos-modificus/ui --configuration Release
 ```
 
-The bare Phase-0 window displays the loaded config values, and the startup log
-lines (`Magos Modificus starting`, `Config loaded …`, `DI wired …`) go to the
+The window shows the top bar (app title, profile dropdown + "Manage profiles…"
+gear, Launch Darktide) and the status strip (Darktide running indicator). The
+profile dropdown switches the active profile (persisted across restarts via
+`IAppStateStore`); "Manage profiles…" opens the create / rename / delete dialog.
+The startup log lines (`Magos Modificus starting`, `Config loaded …`) go to the
 console and to the configured log file.
 
 ## Test
