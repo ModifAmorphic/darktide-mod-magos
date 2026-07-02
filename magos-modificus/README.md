@@ -7,9 +7,9 @@ Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
 
 > **Status: Phase 0 scaffold.** The project layout, DI composition, structured
 > logging, global config schema/loader, and a bare UI window are in place.
-> Library implementations come in later phases — Profiles is implemented
-> (Phase 1); the other domain libraries are currently stubs (interfaces + DI
-> registration only). Target architecture:
+> Library implementations come in later phases — Profiles (Phase 1) + SharedMods
+> (Phase 2) are implemented; the other domain libraries are currently stubs
+> (interfaces + DI registration only). Target architecture:
 > [`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md).
 
 ## Tech stack
@@ -33,14 +33,16 @@ magos-modificus/
   ui/                             Magos.Modificus.UI       Avalonia executable + DI composition root
   general/                        Magos.Modificus.General  cross-cutting infra: logging, config loader, DI
   config/                         Magos.Modificus.Config   the MagosConfig schema + defaults (POCO)
-  profiles/                       Magos.Modificus.Profiles          implemented (Phase 1)
+  profiles/                       Magos.Modificus.Profiles          implemented (Phase 1 + Phase 2 staging)
+  shared-mods/                    Magos.Modificus.SharedMods        implemented (Phase 2)
   integrations/                   Magos.Modificus.Integrations      stub
   steam/                          Magos.Modificus.Steam             stub
   enginseer-client/               Magos.Modificus.EnginseerClient   stub (launch façade)
   launcher/                       Magos.Modificus.Launcher          stub (slim Steam-shortcut launcher)
   tests/
     Magos.Modificus.General.Tests/  xUnit tests for the general library
-    Magos.Modificus.Profiles.Tests/  xUnit tests for the profiles library
+    Magos.Modificus.Profiles.Tests/  xUnit tests for the profiles library (incl. staging)
+    Magos.Modificus.SharedMods.Tests/  xUnit tests for the shared-mod store + allocation
 ```
 
 Each library exposes an `Add<Library>()` extension method on
@@ -70,6 +72,33 @@ console and to the configured log file.
 ```sh
 dotnet test magos-modificus/magos-modificus.sln --configuration Release
 ```
+
+## Storage model (shared-first)
+
+Mods are stored **shared-first** across profiles — a profile uses the global
+shared copy when its version policy is compatible, and takes a profile-local
+(diverged) copy only when policies diverge. **Symlinks** project the resolved
+set into the staged mod root at launch (download once, store once — copying
+would defeat the shared-mod purpose). On-disk layout:
+
+```
+<SharedModsFolder>/                  # the global shared store (MagosConfig)
+  shared-manifest.json               # ISharedModStore: [{Name, Policy, ActualVersion, Path}]
+  <mod-name>/                        # the shared mod files (one copy, shared)
+<ProfilesBaseFolder>/<guid>/
+  profile.json                       # metadata + mod list (entries carry a Policy)
+  diverged/<mod-name>/               # a profile's diverged copy of a mod (Phase 4 acquires)
+  staged/                            # the staged mod root = the --mod-path (REGENERATED each launch)
+    <mod-name>                       #   symlink → shared <mod-name> OR diverged/<mod-name>
+    mods.lst                         #   successfully-staged enabled mods, in order
+```
+
+`Profiles` owns the staging seam (`ProfileService.PrepareModRoot` clears +
+rebuilds `staged/`, then writes `mods.lst`); `SharedMods` owns the shared
+manifest + the version-policy model + the allocation logic. Allocation
+(Share/Diverge) is by policy **intent**, not current version — see
+[`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md)
+(Shared mod storage).
 
 ## Configuration
 
