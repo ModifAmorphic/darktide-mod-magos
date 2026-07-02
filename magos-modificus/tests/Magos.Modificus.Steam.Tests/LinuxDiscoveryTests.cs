@@ -116,6 +116,28 @@ public sealed class LinuxDiscoveryTests
     }
 
     [Fact]
+    public void Compatdata_in_secondary_library_is_found()
+    {
+        // The Proton prefix (compatdata) is created on whichever drive Steam
+        // chose at install time — frequently a Steam *library* drive rather than
+        // the main install (e.g. /games/steamapps/compatdata/<appid>/). Discovery
+        // must probe each library, not just the main install, or it reports
+        // CompatdataPath missing → DiscoveryIncomplete and blocks the launch.
+        using var fx = new SteamFixture();
+        var secondary = Path.Combine(fx.TempRoot, "secondary-lib");
+        Directory.CreateDirectory(secondary);
+        fx.WithLibraryFoldersAtSteamRoot(fx.SteamRoot, secondary);
+        fx.WithDarktide(fx.SteamRoot);
+        fx.WithCompatdata(secondary); // prefix only under the secondary library
+        fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
+
+        var result = fx.Service.Discover();
+
+        Assert.Equal(DiscoveryStatus.Complete, result.Status);
+        Assert.Equal(fx.ExpectedCompatdataPath(secondary), result.CompatdataPath);
+    }
+
+    [Fact]
     public void Missing_steam_root_falls_back_to_flatpak_when_valid()
     {
         // Native root absent; flatpak root is a valid Steam install → resolves there
