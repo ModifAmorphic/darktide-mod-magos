@@ -41,17 +41,23 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Windows_paths_are_not_z_translated()
     {
-        // Guard: a native Windows path must pass through unchanged (no Z:\ prefix).
+        // Guard: every path-valued flag must pass through unchanged on Windows
+        // (no Z:\ prefix) — translation is a Linux-only concern.
         using var fx = new EnginseerFixture();
         fx.Steam.Result = FakeDiscovery.CompleteWindows;
+        const string LogFile = @"C:\magos\logs\magos.log";
+        fx.Config.Logging.LogFile = LogFile;
         var svc = fx.BuildService(LaunchPlatform.Windows);
 
         svc.Launch(Guid.NewGuid());
 
         var args = fx.Launcher.Arguments!;
         var game = args[IndexOf(args, "--game-binary") + 1];
+        var log = args[IndexOf(args, "--log-file") + 1];
         Assert.Equal(FakeDiscovery.WindowsGameBinary, game);
+        Assert.Equal(LogFile, log);
         Assert.DoesNotContain("Z:", game);
+        Assert.DoesNotContain("Z:", log);
     }
 
     [Fact]
@@ -91,6 +97,25 @@ public sealed class EnginseerLaunchServiceTests
         Assert.Equal(
             @"Z:\home\u\.steam\steam\steamapps\common\Warhammer 40,000 DARKTIDE\binaries\Darktide.exe",
             game);
+    }
+
+    [Fact]
+    public void Linux_translates_log_file_to_wine_path()
+    {
+        // The launcher runs under Wine and opens --log-file itself, so it must
+        // be Z:\-translated on Linux (else magos_enginseer.log can't be written
+        // where Magos expects).
+        using var fx = new EnginseerFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteLinux;
+        const string LogFile = "/home/u/.local/share/Magos Modificus/logs/magos.log";
+        fx.Config.Logging.LogFile = LogFile;
+        var svc = fx.BuildService(LaunchPlatform.Linux);
+
+        svc.Launch(Guid.NewGuid());
+
+        var args = fx.Launcher.Arguments!;
+        var log = args[IndexOf(args, "--log-file") + 1];
+        Assert.Equal(@"Z:\home\u\.local\share\Magos Modificus\logs\magos.log", log);
     }
 
     [Fact]

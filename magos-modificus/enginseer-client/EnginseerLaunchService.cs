@@ -207,12 +207,16 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
     {
         var game = translate ? WinePath.ToWine(gameBinary) : gameBinary;
         var mod = translate ? WinePath.ToWine(modPath) : modPath;
+        // --log-file is a path the launcher-under-Wine opens, so it must be
+        // Z:\-translated on Linux too (otherwise magos_enginseer.log can't be
+        // written where Magos expects). --log-level is a level name, not a path.
+        var log = translate ? WinePath.ToWine(logFile) : logFile;
 
         return new List<string>
         {
             "--game-binary", game,
             "--mod-path", mod,
-            "--log-file", logFile,
+            "--log-file", log,
             "--log-level", logLevel,
         };
     }
