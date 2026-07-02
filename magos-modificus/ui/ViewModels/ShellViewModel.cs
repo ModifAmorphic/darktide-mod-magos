@@ -19,7 +19,7 @@ namespace Magos.Modificus.UI.ViewModels;
 /// <b>Real (live), milestone 1:</b> <see cref="Profiles"/> is
 /// <see cref="IProfileService.ListProfiles"/> and <see cref="IsGameRunning"/> is
 /// <see cref="ISteamService.IsGameRunning"/>. Pre-release both are empty/false.
-/// <b>Stubbed/disabled, milestone 1:</b> <see cref="NewProfileCommand"/> and
+/// <b>Stubbed/disabled, milestone 1:</b> <see cref="ManageProfilesCommand"/> and
 /// <see cref="LaunchCommand"/> are present (so the UI binds cleanly) but
 /// no-op / disabled; <see cref="SelectedProfile"/> stays <c>null</c>.
 /// </remarks>
@@ -64,19 +64,20 @@ public partial class ShellViewModel : ObservableObject
     /// </summary>
     public IReadOnlyList<ProfileSummary> Profiles { get; }
 
-    /// <summary>Whether at least one profile exists (drives the sidebar empty state).</summary>
+    /// <summary>Whether at least one profile exists (gates the profile dropdown's enabled state).</summary>
     public bool HasProfiles => Profiles.Count > 0;
 
     /// <summary>
     /// The currently-selected profile, or <c>null</c>. Milestone 1 leaves this
-    /// <c>null</c> (nothing to select); milestone 2 binds it to the sidebar.
+    /// <c>null</c> (nothing to select); milestone 2 binds it to the top-bar
+    /// profile dropdown.
     /// </summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LaunchCommand))]
     [NotifyPropertyChangedFor(nameof(HasSelectedProfile))]
     private ProfileSummary? _selectedProfile;
 
-    /// <summary>Whether a profile is currently selected (drives the content empty states).</summary>
+    /// <summary>Whether a profile is currently selected (drives the mod-list empty state).</summary>
     public bool HasSelectedProfile => SelectedProfile is not null;
 
     /// <summary>
@@ -93,18 +94,19 @@ public partial class ShellViewModel : ObservableObject
     public string GameRunningText => IsGameRunning ? "Darktide: running" : "Darktide: not running";
 
     /// <summary>
-    /// Milestone 1: profile creation is not yet implemented. The command is
-    /// present so the <c>[+ New]</c> affordance binds, but it is always disabled;
-    /// milestone 2 implements it (create dialog + <see cref="IProfileService.CreateProfile"/>).
+    /// Milestone 1: profile management (the create/rename/delete dialog + the
+    /// dropdown switch) is not yet implemented. The command is present so the
+    /// <c>Manage profiles…</c> affordance binds, but it is always disabled;
+    /// milestone 2 implements it (the management dialog + switch logic).
     /// </summary>
-    [RelayCommand(CanExecute = nameof(CanNewProfile))]
-    private void NewProfile()
+    [RelayCommand(CanExecute = nameof(CanManageProfiles))]
+    private void ManageProfiles()
     {
-        // Milestone 2: open the create-profile dialog and persist via IProfileService.
+        // milestone 2: open the create/rename/delete dialog and wire the dropdown switch.
     }
 
-    /// <summary>Milestone 1: New is always disabled (no profile CRUD yet).</summary>
-    private bool CanNewProfile() => false;
+    /// <summary>Milestone 1: profile management is not implemented yet.</summary>
+    private bool CanManageProfiles() => false;
 
     /// <summary>
     /// Milestone 1: launch is not wired (Track C). The command is present so the

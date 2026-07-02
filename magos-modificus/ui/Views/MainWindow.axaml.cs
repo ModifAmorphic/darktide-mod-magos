@@ -3,8 +3,8 @@ using Avalonia.Controls;
 namespace Magos.Modificus.UI.Views;
 
 /// <summary>
-/// The main window — the app shell (sidebar + header + content + status strip).
-/// Its <c>DataContext</c> is set by the composition root
+/// The main window — the app shell (top bar + dominant mod-list area + status
+/// strip). Its <c>DataContext</c> is set by the composition root
 /// (<see cref="App.OnFrameworkInitializationCompleted"/>) to the resolved
 /// <see cref="ViewModels.ShellViewModel"/>.
 /// </summary>
