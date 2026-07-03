@@ -5,6 +5,7 @@
         x:Class="Magos.Modificus.UI.Views.MainWindow"
         x:DataType="vm:ShellViewModel"
         Title="{ReflectionBinding [App_Title], Source={StaticResource Loc}}"
+        Icon="/Assets/app-icon.png"
         Width="960" Height="640"
         MinWidth="720" MinHeight="480"
         WindowStartupLocation="CenterScreen">
@@ -20,7 +21,7 @@
 
         <!-- App title (left) -->
         <TextBlock Grid.Column="0"
-                   Text="{ReflectionBinding [App_Title], Source={StaticResource Loc}}"
+                   Text="{ReflectionBinding [Shell_ProfileLabel], Source={StaticResource Loc}}"
                    FontSize="18" FontWeight="SemiBold"
                    VerticalAlignment="Center"
                    Margin="0,0,24,0" />

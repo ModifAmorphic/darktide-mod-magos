@@ -4,7 +4,13 @@
     <OutputType>WinExe</OutputType>
     <RootNamespace>Magos.Modificus.UI</RootNamespace>
     <AssemblyName>Magos.Modificus</AssemblyName>
+    <ApplicationIcon>app-icon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/app-icon.png" />
+    <AvaloniaResource Include="Assets/app-icon-bw.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.0.5" />

@@ -63,7 +63,11 @@
 
   <data name="App_Title" xml:space="preserve">
     <value>Magos Modificus</value>
-    <comment>The app title shown in the shell top bar and as the window title.</comment>
+    <comment>The app title shown as the window title.</comment>
+  </data>
+  <data name="Shell_ProfileLabel" xml:space="preserve">
+    <value>Profile</value>
+    <comment>Label next to the profile dropdown in the top bar.</comment>
   </data>
   <data name="Profile_DropdownPlaceholder" xml:space="preserve">
     <value>No profile</value>
