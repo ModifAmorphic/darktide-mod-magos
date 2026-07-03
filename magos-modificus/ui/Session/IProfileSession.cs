@@ -17,10 +17,11 @@ namespace Magos.Modificus.UI.Session;
 /// sole place a voluntary active change is allowed or rejected (applied only
 /// when the game isn't running). Both the dropdown switch and the dialog's
 /// create-sets-active route through it, so the two can never diverge.</para>
-/// <para><b>Forced recovery is ungated:</b> <see cref="ReconcileActive"/> handles
-/// delete-of-active (the active id no longer exists) by falling back to the first
-/// remaining profile (or null), regardless of running state. The running game
-/// already launched with its staged root, and the pointer must move off a gone id.</para>
+/// <para><b>Delete-of-active:</b> the active profile is locked while Darktide runs
+/// (<see cref="CanDeleteProfile"/> gates the delete), so delete-of-active only
+/// happens when the game is stopped. <see cref="ReconcileActive"/> then clears the
+/// active id (null) so the user explicitly picks the next; it never auto-selects a
+/// remaining profile on someone's behalf.</para>
 /// <para><b>Observable:</b> implements <see cref="INotifyPropertyChanged"/> so the
 /// shell reacts to live <see cref="IsRunning"/> changes driven by the session's
 /// polling timer (status strip + launch-availability + dropdown-enable update
@@ -48,12 +49,24 @@ public interface IProfileSession : INotifyPropertyChanged
     void RequestActive(Guid id);
 
     /// <summary>
-    /// Forced recovery after CRUD that may have removed the active profile: if the
-    /// current active id no longer exists in <see cref="IProfileService.ListProfiles"/>,
-    /// falls back to the first remaining profile (or null when none remain) and
-    /// persists. <b>Bypasses the running-state gate</b>, because there is nothing
-    /// sensible to keep when the active id is gone. A no-op when the active id is
-    /// still present, or when no active is set (first run / nothing chosen).
+    /// Whether the profile <paramref name="id"/> may be deleted right now. The
+    /// single authority for the delete gate: the active profile is locked while
+    /// Darktide runs (<c>false</c> when <paramref name="id"/> is the active id and
+    /// the game is running); every other profile is deletable (<c>true</c>). The
+    /// Manage-profiles dialog binds each row's trash button to this so the active
+    /// row's trash disables while the game runs.
+    /// </summary>
+    bool CanDeleteProfile(Guid id);
+
+    /// <summary>
+    /// Recovery after CRUD that may have removed the active profile: if the current
+    /// active id no longer exists in <see cref="IProfileService.ListProfiles"/>,
+    /// clears the active id (null) and persists. Delete-of-active is blocked while
+    /// the game runs (<see cref="CanDeleteProfile"/>), so by the time this runs the
+    /// game is stopped and null is the correct outcome (the user explicitly picks
+    /// the next profile; we never auto-select a remaining one). A no-op when the
+    /// active id is still present, or when no active is set (first run / nothing
+    /// chosen).
     /// </summary>
     void ReconcileActive();
 }

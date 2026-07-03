@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Magos.Modificus.Profiles;
@@ -25,10 +26,14 @@ namespace Magos.Modificus.UI.ViewModels;
 /// (truthful by construction). Create calls <see cref="IProfileService.CreateProfile"/>
 /// then <see cref="IProfileSession.RequestActive"/> (the session gates it; the
 /// dialog does not decide). Delete calls <see cref="IProfileService.DeleteProfile"/>
-/// then <see cref="IProfileSession.ReconcileActive"/> (forced recovery if the
+/// then <see cref="IProfileSession.ReconcileActive"/> (clears the active id when the
 /// active itself was deleted). Rename leaves the active untouched (the id is stable
-/// across renames). Because active changes are applied live through the session,
-/// the dialog returns nothing to the shell; the shell refreshes its list on close.</para>
+/// across renames). The per-row trash button binds its enabled state to
+/// <see cref="IProfileSession.CanDeleteProfile"/>, so the active row's trash disables
+/// while Darktide runs (delete-of-active is blocked); the dialog subscribes to the
+/// session's live state so the trash flips the moment the game starts or stops.
+/// Because active changes are applied live through the session, the dialog returns
+/// nothing to the shell; the shell refreshes its list on close.</para>
 /// </remarks>
 public partial class ManageProfilesViewModel : ObservableObject
 {
@@ -39,7 +44,8 @@ public partial class ManageProfilesViewModel : ObservableObject
     /// <param name="profiles">The profile service (CRUD).</param>
     /// <param name="dialogs">The dialog seam, used for the delete confirmation.</param>
     /// <param name="session">The active-profile authority. The marker reads its
-    /// active id; create + delete-of-active route active changes through it.</param>
+    /// active id; the trash enable-state reads <see cref="IProfileSession.CanDeleteProfile"/>;
+    /// create + delete-of-active route active changes through it.</param>
     public ManageProfilesViewModel(
         IProfileService profiles,
         IDialogService dialogs,
@@ -48,7 +54,35 @@ public partial class ManageProfilesViewModel : ObservableObject
         _profiles = profiles;
         _dialogs = dialogs;
         _session = session;
+
+        // The trash enable-state + active marker depend on the session's live state
+        // (the polling timer can flip IsRunning while the dialog is open), so react to
+        // its changes. Detached on window close (the session outlives this dialog).
+        _session.PropertyChanged += OnSessionPropertyChanged;
+
         Refresh();
+    }
+
+    /// <summary>
+    /// Unsubscribes from the session so this short-lived dialog VM is collectable
+    /// after its window closes (the session is a singleton that outlives the dialog).
+    /// Called by the manage-profiles window on close.
+    /// </summary>
+    public void Detach() => _session.PropertyChanged -= OnSessionPropertyChanged;
+
+    /// <summary>
+    /// Re-applies the session's active marker + delete-enable to the existing rows
+    /// when the session's live state changes while the dialog is open (the polling
+    /// timer flipping <see cref="IProfileSession.IsRunning"/>, or an active change).
+    /// No full rebuild, so any in-flight inline edit / scroll position is preserved.
+    /// </summary>
+    private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(IProfileSession.IsRunning)
+            or nameof(IProfileSession.ActiveProfileId))
+        {
+            ApplySessionState();
+        }
     }
 
     /// <summary>The editable profile rows (name + active marker + inline actions).</summary>
@@ -129,14 +163,27 @@ public partial class ManageProfilesViewModel : ObservableObject
 
     /// <summary>
     /// Deletes the row's profile after a confirmation (real data loss: the profile
-    /// config + its owned local mod copies). If the deleted profile was active,
-    /// <see cref="IProfileSession.ReconcileActive"/> moves the session's active id
-    /// to the first remaining profile (or null), regardless of running state.
+    /// config + its owned local mod copies). The active profile is locked while
+    /// Darktide runs: <see cref="IProfileSession.CanDeleteProfile"/> is the single
+    /// authority and is consulted here too (defense-in-depth, not only via the
+    /// trash button's binding), so delete-of-active only proceeds when the game is
+    /// stopped; <see cref="IProfileSession.ReconcileActive"/> then clears the active
+    /// id (null) so the user explicitly picks the next. A non-active profile is
+    /// deletable anytime; deleting it does not touch the active.
     /// </summary>
     [RelayCommand]
     private async Task DeleteProfile(ProfileItemViewModel? item)
     {
         if (item is null)
+        {
+            return;
+        }
+
+        // Defense-in-depth: the per-row trash button binds its IsEnabled to the
+        // session's gate, but a programmatic DeleteProfileCommand.Execute on the
+        // active row while the game runs would bypass that binding. Consult the
+        // single authority here too; bail before the confirm + delete flow.
+        if (!_session.CanDeleteProfile(item.Id))
         {
             return;
         }
@@ -222,15 +269,37 @@ public partial class ManageProfilesViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Re-applies the session's active marker + delete-enable to the existing rows
+    /// (see <see cref="OnSessionPropertyChanged"/>). Kept separate from
+    /// <see cref="Refresh"/> so live running-state changes do not disturb the list.
+    /// </summary>
+    private void ApplySessionState()
+    {
+        var activeId = _session.ActiveProfileId;
+        foreach (var item in Items)
+        {
+            item.IsActive = item.Id == activeId;
+            item.IsDeleteEnabled = _session.CanDeleteProfile(item.Id);
+        }
+    }
+
+    /// <summary>
     /// Rebuilds the row list from the service, marking the active profile's row
-    /// (read from <see cref="IProfileSession.ActiveProfileId"/>) so the marker
-    /// renders on the session's authoritative active profile.
+    /// (read from <see cref="IProfileSession.ActiveProfileId"/>) and setting each
+    /// row's delete-enable from <see cref="IProfileSession.CanDeleteProfile"/>, so
+    /// the marker renders on the session's authoritative active profile and the
+    /// active row's trash disables while Darktide runs.
     /// </summary>
     private void Refresh()
     {
         var activeId = _session.ActiveProfileId;
         Items = _profiles.ListProfiles()
-            .Select(s => new ProfileItemViewModel(s.Id, s.Name) { IsActive = s.Id == activeId })
+            .Select(s =>
+            {
+                var item = new ProfileItemViewModel(s.Id, s.Name) { IsActive = s.Id == activeId };
+                item.IsDeleteEnabled = _session.CanDeleteProfile(s.Id);
+                return item;
+            })
             .ToArray();
     }
 }

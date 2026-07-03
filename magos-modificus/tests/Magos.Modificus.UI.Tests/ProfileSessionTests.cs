@@ -6,10 +6,11 @@ namespace Magos.Modificus.UI.Tests;
 
 /// <summary>
 /// <see cref="ProfileSession"/> unit tests: the can-change gate (RequestActive),
-/// the delete-of-active fallback (ReconcileActive), persistence, and the live
-/// running-state refresh. All against in-memory fakes; the polling timer is
-/// injected as null and <see cref="ProfileSession.Refresh"/> is driven directly
-/// for deterministic running-state changes.
+/// the delete gate (CanDeleteProfile), delete-of-active recovery (ReconcileActive
+/// clears the active id), persistence, and the live running-state refresh. All
+/// against in-memory fakes; the polling timer is injected as null and
+/// <see cref="ProfileSession.Refresh"/> is driven directly for deterministic
+/// running-state changes.
 /// </summary>
 public sealed class ProfileSessionTests
 {
@@ -116,28 +117,79 @@ public sealed class ProfileSessionTests
         Assert.Equal(0, appState.SetCount); // same value, no write
     }
 
-    // ---- ReconcileActive: forced fallback ---------------------------------
+    // ---- CanDeleteProfile: the delete gate --------------------------------
 
     [Fact]
-    public void ReconcileActive_falls_back_when_the_active_profile_is_deleted_regardless_of_running()
+    public void CanDeleteProfile_locks_the_active_id_while_running()
     {
-        // Delete-of-active bypasses the running gate: the pointer must move off a gone id.
+        var a = Profile("Alpha");
+        var b = Profile("Bravo");
+        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
+        var session = Build(profiles: TestDoubles.Profiles(a, b), appState: appState);
+        session.IsRunning = true;
+
+        Assert.False(session.CanDeleteProfile(a.Id)); // active locked while running
+    }
+
+    [Fact]
+    public void CanDeleteProfile_allows_a_non_active_profile_while_running()
+    {
+        var a = Profile("Alpha");
+        var b = Profile("Bravo");
+        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
+        var session = Build(profiles: TestDoubles.Profiles(a, b), appState: appState);
+        session.IsRunning = true;
+
+        Assert.True(session.CanDeleteProfile(b.Id)); // non-active deletable anytime
+    }
+
+    [Fact]
+    public void CanDeleteProfile_allows_the_active_id_when_not_running()
+    {
+        var a = Profile("Alpha");
+        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
+        var session = Build(profiles: TestDoubles.Profiles(a), appState: appState);
+        session.IsRunning = false;
+
+        Assert.True(session.CanDeleteProfile(a.Id));
+    }
+
+    [Fact]
+    public void CanDeleteProfile_allows_every_profile_when_none_is_active()
+    {
+        var a = Profile("Alpha");
+        var session = Build(
+            profiles: TestDoubles.Profiles(a),
+            appState: new FakeAppStateStore { ActiveProfileId = null });
+        session.IsRunning = true;
+
+        Assert.True(session.CanDeleteProfile(a.Id)); // nothing locked when none active
+    }
+
+    // ---- ReconcileActive: delete-of-active recovery -----------------------
+
+    [Fact]
+    public void ReconcileActive_clears_active_when_the_active_profile_is_deleted()
+    {
+        // Delete-of-active is blocked while the game runs (CanDeleteProfile), so this
+        // path runs when stopped. The active clears (null): we never auto-select a
+        // remaining profile on someone's behalf; the user explicitly picks the next.
         var a = Profile("Alpha");
         var b = Profile("Bravo");
         var profiles = TestDoubles.Profiles(a, b);
         var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
         var session = Build(profiles: profiles, appState: appState);
-        session.IsRunning = true;
+        session.IsRunning = false;
 
         profiles.DeleteProfile(a.Id);
         session.ReconcileActive();
 
-        Assert.Equal(b.Id, session.ActiveProfileId); // fell back, even while running
-        Assert.Equal(b.Id, appState.ActiveProfileId);
+        Assert.Null(session.ActiveProfileId); // not b.Id: cleared, not switched
+        Assert.Null(appState.ActiveProfileId);
     }
 
     [Fact]
-    public void ReconcileActive_falls_back_to_null_when_no_profiles_remain()
+    public void ReconcileActive_clears_active_when_no_profiles_remain()
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);

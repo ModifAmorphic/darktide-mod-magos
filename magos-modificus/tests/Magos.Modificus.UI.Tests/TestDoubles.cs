@@ -157,10 +157,12 @@ internal sealed class FakeSteamService : ISteamService
 
 /// <summary>
 /// In-memory <see cref="IProfileSession"/> for shell / dialog tests. Mirrors the
-/// real session's gate (<see cref="RequestActive"/> no-ops when running) and
-/// fallback (<see cref="ReconcileActive"/> uses the optional profile-list lookup).
-/// Raises <see cref="INotifyPropertyChanged.PropertyChanged"/> so the shell reacts
-/// to live <see cref="IsRunning"/> changes the way the real polling timer drives.
+/// real session's gate (<see cref="RequestActive"/> no-ops when running), delete
+/// gate (<see cref="CanDeleteProfile"/> locks the active id while running), and
+/// recovery (<see cref="ReconcileActive"/> clears the active id when it no longer
+/// exists). Raises <see cref="INotifyPropertyChanged.PropertyChanged"/> so the shell
+/// + dialog react to live <see cref="IsRunning"/> changes the way the real polling
+/// timer drives.
 /// </summary>
 internal sealed class FakeProfileSession : ObservableObject, IProfileSession
 {
@@ -200,6 +202,15 @@ internal sealed class FakeProfileSession : ObservableObject, IProfileSession
         ActiveProfileId = id;
     }
 
+    public int CanDeleteProfileCalls { get; private set; }
+
+    /// <summary>Mirrors the real session: the active id is locked while running.</summary>
+    public bool CanDeleteProfile(Guid id)
+    {
+        CanDeleteProfileCalls++;
+        return !(id == ActiveProfileId && IsRunning);
+    }
+
     public int ReconcileCalls { get; private set; }
 
     public void ReconcileActive()
@@ -216,7 +227,7 @@ internal sealed class FakeProfileSession : ObservableObject, IProfileSession
             return;
         }
 
-        ActiveProfileId = existing.Count > 0 ? existing[0].Id : null;
+        ActiveProfileId = null;
     }
 }
 

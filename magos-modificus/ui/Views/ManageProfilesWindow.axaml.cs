@@ -1,3 +1,4 @@
+using System;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -31,6 +32,16 @@ public partial class ManageProfilesWindow : Window
     }
 
     private ManageProfilesViewModel? ViewModel => DataContext as ManageProfilesViewModel;
+
+    /// <summary>
+    /// Detaches the VM's session subscription on close so the short-lived dialog
+    /// VM is collectable (the session is a singleton that outlives the dialog).
+    /// </summary>
+    protected override void OnClosed(EventArgs e)
+    {
+        ViewModel?.Detach();
+        base.OnClosed(e);
+    }
 
     private void Done_Click(object? sender, RoutedEventArgs e) => Close();
 

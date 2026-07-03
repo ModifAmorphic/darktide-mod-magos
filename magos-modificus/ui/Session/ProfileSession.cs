@@ -86,14 +86,20 @@ public sealed partial class ProfileSession : ObservableObject, IProfileSession
     }
 
     /// <summary>
-    /// Forced recovery after delete-of-active. See
+    /// The delete gate. See <see cref="IProfileSession.CanDeleteProfile"/>.
+    /// </summary>
+    public bool CanDeleteProfile(Guid id) => !(id == ActiveProfileId && IsRunning);
+
+    /// <summary>
+    /// Recovery after delete-of-active. See
     /// <see cref="IProfileSession.ReconcileActive"/>.
     /// </summary>
     public void ReconcileActive()
     {
-        // Only recover when an active id was set but no longer exists. A null
-        // active (first run / nothing chosen) is intentionally left null: the user
-        // picks a profile; we never auto-select one on someone's behalf.
+        // Only recover when an active id was set but no longer exists. Delete-of-active
+        // is blocked while the game runs (CanDeleteProfile), so reaching here means the
+        // game is stopped and the active should clear: the user explicitly picks the
+        // next profile, we never auto-select a remaining one on someone's behalf.
         if (ActiveProfileId is not Guid id)
         {
             return;
@@ -105,7 +111,7 @@ public sealed partial class ProfileSession : ObservableObject, IProfileSession
             return;
         }
 
-        ActiveProfileId = existing.Count > 0 ? existing[0].Id : null;
+        ActiveProfileId = null;
     }
 
     /// <summary>

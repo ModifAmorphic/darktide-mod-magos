@@ -219,4 +219,37 @@ public sealed class ShellViewModelTests
         Assert.Equal(b.Id, session.ActiveProfileId);
         Assert.Equal(b.Id, vm.SelectedProfile?.Id);
     }
+
+    [Fact]
+    public async Task ManageProfiles_deleting_the_active_clears_selection_and_blocks_launch()
+    {
+        // Belt-and-suspenders: delete-of-active (not running) clears the active id;
+        // the shell's selection mirrors it to null, so CanLaunch (unchanged) keeps
+        // Launch blocked because no profile is selected.
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var session = new FakeProfileSession(() => profiles.ListProfiles())
+        {
+            ActiveProfileId = a.Id,
+            IsRunning = false,
+        };
+        var dialogs = new FakeDialogService
+        {
+            ConfirmResult = true,
+            OnManageProfiles = () =>
+            {
+                // Simulate the dialog deleting the active profile: profile gone,
+                // session reconciles (clears the active id, per the fix).
+                profiles.DeleteProfile(a.Id);
+                session.ReconcileActive();
+            },
+        };
+        var vm = Build(profiles, session, dialogs);
+        Assert.NotNull(vm.SelectedProfile);
+
+        await vm.ManageProfilesCommand.ExecuteAsync(null);
+
+        Assert.Null(vm.SelectedProfile);                  // active cleared
+        Assert.False(vm.LaunchCommand.CanExecute(null)); // Launch blocked (no selection)
+    }
 }
