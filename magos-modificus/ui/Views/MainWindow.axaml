@@ -100,8 +100,8 @@
                  Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                  IsVisible="{Binding !IsGameRunning}" />
         <TextBlock Text="{Binding GameRunningText}"
-                   FontSize="12" Opacity="0.8"
-                   VerticalAlignment="Center" />
+                    FontSize="{DynamicResource AppStatusFontSize}" Opacity="0.8"
+                    VerticalAlignment="Center" />
       </StackPanel>
     </Border>
   </Grid>

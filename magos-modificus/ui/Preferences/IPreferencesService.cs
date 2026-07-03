@@ -32,10 +32,11 @@ public interface IPreferencesService
 
 /// <summary>
 /// Default <see cref="IPreferencesService"/>. Applies the theme via
-/// <see cref="Application.RequestedThemeVariant"/>, the font scale via an
-/// application-level <c>AppFontSize</c> resource that a Window style binds to
-/// (cascading to all controls through inheritance + DynamicResource), and the
-/// language via <see cref="LocalizationService"/>.<see cref="LocalizationService.SetCulture"/>.
+/// <see cref="Application.RequestedThemeVariant"/>, the font scale via
+/// application-level <c>AppFontSize</c> + <c>AppStatusFontSize</c> resources
+/// that a Window style / the status TextBlock bind to (cascading to all controls
+/// through inheritance + DynamicResource), and the language via
+/// <see cref="LocalizationService"/>.<see cref="LocalizationService.SetCulture"/>.
 /// </summary>
 public sealed class PreferencesService : IPreferencesService
 {
@@ -46,7 +47,17 @@ public sealed class PreferencesService : IPreferencesService
     /// </summary>
     public const double BaseFontSize = 14.0;
 
+    /// <summary>
+    /// The base (unscaled) status-strip font size in pixels. The applied value
+    /// is <see cref="BaseStatusFontSize"/> * <c>FontScale</c>; the resource key
+    /// <c>AppStatusFontSize</c> is read by the status TextBlock in MainWindow.
+    /// Smaller than <see cref="BaseFontSize"/> because the status strip is a
+    /// secondary, low-emphasis line.
+    /// </summary>
+    public const double BaseStatusFontSize = 12.0;
+
     private const string AppFontSizeResourceKey = "AppFontSize";
+    private const string AppStatusFontSizeResourceKey = "AppStatusFontSize";
 
     private readonly MagosConfig _config;
     private readonly IConfigLoader _configLoader;
@@ -110,12 +121,14 @@ public sealed class PreferencesService : IPreferencesService
     }
 
     /// <summary>
-    /// Publishes the scaled font size as the <c>AppFontSize</c> application
-    /// resource. The Window style in App.axaml binds <c>Window.FontSize</c> to
-    /// it (DynamicResource), so all open windows (and their inheriting children)
-    /// re-resolve when the resource changes. Non-finite or non-positive scales
-    /// fall back to <see cref="BaseFontSize"/> (graceful: a bad value does not
-    /// collapse the UI).
+    /// Publishes the scaled font sizes as the <c>AppFontSize</c> +
+    /// <c>AppStatusFontSize</c> application resources. The Window style in
+    /// App.axaml binds <c>Window.FontSize</c> to <c>AppFontSize</c>
+    /// (DynamicResource), so all open windows (and their inheriting children)
+    /// re-resolve when the resource changes; MainWindow's status TextBlock binds
+    /// to <c>AppStatusFontSize</c>. Both use the same scale so the status strip
+    /// grows with the body. Non-finite or non-positive scales fall back to 1.0
+    /// (graceful: a bad value does not collapse the UI).
     /// </summary>
     private static void ApplyFontScale(double fontScale)
     {
@@ -126,6 +139,7 @@ public sealed class PreferencesService : IPreferencesService
 
         var scale = double.IsFinite(fontScale) && fontScale > 0 ? fontScale : 1.0;
         Application.Current.Resources[AppFontSizeResourceKey] = BaseFontSize * scale;
+        Application.Current.Resources[AppStatusFontSizeResourceKey] = BaseStatusFontSize * scale;
     }
 
     /// <summary>

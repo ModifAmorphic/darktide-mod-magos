@@ -101,4 +101,15 @@ public sealed class PreferencesServiceTests
         Assert.Null(ex);
         Assert.Equal(1, loader.SaveCalls);
     }
+
+    [Fact]
+    public void Base_font_size_constants_match_the_design_intent()
+    {
+        // The body + status font sizes are the unscaled anchors the
+        // PreferencesService multiplies by the user's font scale. They back the
+        // AppFontSize / AppStatusFontSize resources; pinning them guards the
+        // status-strip (12) staying a step below the body (14).
+        Assert.Equal(14.0, PreferencesService.BaseFontSize);
+        Assert.Equal(12.0, PreferencesService.BaseStatusFontSize);
+    }
 }

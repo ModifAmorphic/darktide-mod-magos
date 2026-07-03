@@ -33,5 +33,13 @@
           (overwritten at startup from the loaded config).
         -->
         <x:Double x:Key="AppFontSize">14</x:Double>
+        <!--
+          Status-strip font size, in pixels. Smaller than the body font (the
+          status strip is a secondary, low-emphasis line). The PreferencesService
+          overwrites it with the same scale as AppFontSize; MainWindow's status
+          TextBlock binds FontSize to it. Default = unscaled (overwritten at
+          startup from the loaded config).
+        -->
+        <x:Double x:Key="AppStatusFontSize">12</x:Double>
     </Application.Resources>
 </Application>

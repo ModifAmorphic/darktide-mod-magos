@@ -1,0 +1,84 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Magos.Modificus.UI.Views.DialogTitleBar">
+
+  <!--
+    Shared custom title bar reused by the three modal dialogs
+    (PreferencesWindow / ManageProfilesWindow / ConfirmDialog).
+
+    The outer Border carries WindowDecorationProperties.ElementRole="TitleBar",
+    so the OS handles native drag + double-click-to-maximize over this region
+    (Avalonia 12.x custom-chrome pattern; see docs/platform-specific-guides/windows).
+    The dialog's own Window.Title is mirrored here as the visible header, and the
+    close button is a drawn X Path (no Unicode glyph, per AGENTS.md) whose Click
+    closes the owning window.
+
+    Height is content-driven, not a fixed pixel value: the title TextBlock
+    inherits Window.FontSize (cascaded from the AppFontSize resource), so the bar
+    grows with the user's font scale. The close button stretches vertically to
+    fill the bar. Themed entirely through Fluent system brushes so light/dark and
+    hover states follow the active theme.
+  -->
+
+  <UserControl.Styles>
+    <Style Selector="Button.captionClose">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <!--
+      Fluent's Button template draws its background on the inner
+      ContentPresenter#PART_ContentPresenter; these selectors (more specific than
+      the theme's own Button:pointerover) make the close button read as a flat
+      caption button: transparent at rest, themed hover/press highlight.
+    -->
+    <Style Selector="Button.captionClose /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button.captionClose:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}" />
+    </Style>
+    <Style Selector="Button.captionClose:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseMediumBrush}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border WindowDecorationProperties.ElementRole="TitleBar"
+          Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
+          Padding="0,8">
+    <Grid ColumnDefinitions="*,Auto">
+      <TextBlock Grid.Column="0"
+                 Text="{ReflectionBinding Title, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}"
+                 Margin="14,0,0,0"
+                 FontWeight="SemiBold"
+                 Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                 TextTrimming="CharacterEllipsis"
+                 VerticalAlignment="Center" />
+      <Button Grid.Column="1"
+              Classes="captionClose"
+              Click="Close_Click"
+              Width="46"
+              VerticalAlignment="Stretch"
+              HorizontalAlignment="Right"
+              AutomationProperties.Name="{ReflectionBinding [Dialog_CloseTooltip], Source={StaticResource Loc}}"
+              ToolTip.Tip="{ReflectionBinding [Dialog_CloseTooltip], Source={StaticResource Loc}}">
+        <!-- Material "close" X (24x24 source): drawn geometry with an explicit
+             BaseHigh Fill so the glyph reads clearly at rest in both light and
+             dark themes. Avalonia Shapes do NOT inherit Fill from
+             Control.Foreground (the default Fill is null, i.e. invisible), so
+             the Fill must be set explicitly. The button's hover/press background
+             styles below remain the hover affordance; the X stays BaseHigh
+             across rest/hover/press. -->
+        <Path Width="10" Height="10" Stretch="Uniform"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              Fill="{DynamicResource SystemControlForegroundBaseHighBrush}"
+              Data="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+      </Button>
+    </Grid>
+  </Border>
+</UserControl>

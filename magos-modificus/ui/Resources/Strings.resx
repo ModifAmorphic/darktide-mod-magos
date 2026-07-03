@@ -144,6 +144,15 @@
   </data>
 
   <!-- ============================================================ -->
+  <!-- Shared dialog chrome (custom title bar on the modal windows) -->
+  <!-- ============================================================ -->
+
+  <data name="Dialog_CloseTooltip" xml:space="preserve">
+    <value>Close</value>
+    <comment>Tooltip + automation name on the drawn close (X) button in the shared modal title bar.</comment>
+  </data>
+
+  <!-- ============================================================ -->
   <!-- Confirm dialog                                               -->
   <!-- ============================================================ -->
 

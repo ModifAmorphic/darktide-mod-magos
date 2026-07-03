@@ -206,6 +206,21 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
 - **Conventional Commits** (`type(scope): subject`); commit freely on feature
   branches. Branch + PR flow; no unreviewed merges to `main`.
 - Don't commit secrets, the game binary, or anything under `_local/`.
+- **Do not trust training data for framework/library version-specific APIs.** The
+  project uses Avalonia 12.x + .NET 10, which postdate the model's training data.
+  Before deciding an approach or delegating UI/framework work: determine the exact
+  version in use, assess whether you are current on it, and if not, READ THE CURRENT
+  DOCS (e.g. docs.avaloniaui.net) before proposing or implementing. Stale knowledge
+  has bitten this project (the WPF-era `SizeToContent` toggle, `NoChrome`, and
+  `CanMinimize` hiding were all wrong for Avalonia 12.x).
+- **Discuss non-trivial or hacky UI/approach decisions before implementing.** Do not
+  delegate or commit a workaround without surfacing it first.
+- **Do not commit a change as a "fix" before the operator verifies it.** Leave fixes
+  uncommitted (or clearly WIP/pending) until the operator confirms; they test on
+  their own machine.
+- **Be consultative on UI.** Propose UI approaches and discuss, especially
+  non-obvious ones, rather than implementing unilaterally. The operator is the UI
+  authority.
 - **UI icons + decorative markers are drawn geometry, not Unicode glyphs.** In the
   Avalonia UI, icons are `<Path Data="…">` (standard Material/Fluent-style path
   data, dependency-free, themed via foreground) and dots/markers are `<Ellipse>`,
