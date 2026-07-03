@@ -68,7 +68,7 @@ public sealed class ConfigLoader : IConfigLoader
 
 ### `IAppStateStore` / `AppStateStore`
 
-Persists **runtime application state** — values that capture "where the app left
+Persists **runtime application state**: values that capture "where the app left
 off" rather than user system settings. Kept deliberately narrow: the only state
 today is the last-chosen active profile. A separate file (not `MagosConfig`)
 holds it so the settings schema stays pure (system settings vs. runtime state).
@@ -90,14 +90,15 @@ public sealed class AppStateStore : IAppStateStore
 - File: `<LocalApplicationData>/Magos Modificus/app-state.json`
   (`{ "ActiveProfileId": "<guid>" | null }`), derived the same way
   `ConfigLoader` derives its config path.
-- JSON is handled with `System.Text.Json` directly (read + write) —
+- JSON is handled with `System.Text.Json` directly (read + write);
   `Microsoft.Extensions.Configuration` is binding-oriented and read-only, the
   wrong fit for a tiny writable state file.
-- **First-run safe:** a missing or corrupt file never throws — `get` just
+- **First-run safe:** a missing or corrupt file never throws; `get` just
   returns `null`. Writes are best-effort (runtime state is non-critical; a
   persistence failure is swallowed rather than crashing the app).
-- Used by `ShellViewModel` to restore the active profile on construction and to
-  persist it on every dropdown switch.
+- Used by `IProfileSession` (the active-profile authority) to restore the active
+  profile on construction and persist it on changes. The shell and the Manage
+  dialog read the active id through the session; they do not touch this store.
 
 ## DI registration
 
@@ -117,9 +118,9 @@ DI itself needs them). It registers:
 - `AddLogging()` — wires `ILogger<T>` resolution through the factory.
 - `AddSingleton<IConfigLoader, ConfigLoader>()` — so a re-load is available if
   ever needed (the path is re-resolved to the default location).
-- `TryAddSingleton<IAppStateStore, AppStateStore>()` — the runtime app-state
-  store. `TryAdd` (not `Add`) so a test or host may pre-register an override —
-  e.g. an in-memory or temp-path store — before `AddGeneral` runs.
+- `TryAddSingleton<IAppStateStore, AppStateStore>()`: the runtime app-state
+  store. `TryAdd` (not `Add`) so a test or host may pre-register an override
+  (e.g. an in-memory or temp-path store) before `AddGeneral` runs.
 
 `config` and `loggerFactory` are constructed objects passed in, not overridable
 from the container; `IAppStateStore` is the one seam here (overridable via
