@@ -73,6 +73,27 @@ jobs:
           :: Launcher.
           cl /nologo /O2 /Fe:bin\magos_launcher.exe launcher\src\launcher.c /link kernel32.lib
 
+      - name: Stage mod loader Lua into bin/mod_loader/
+        shell: pwsh
+        run: |
+          # Mirror the Makefile's stage-mod_loader target: copy the runtime
+          # entry + active modules (NOT init.v1.lua or the tests/ harness)
+          # next to the DLL/launcher so the shell self-locates
+          # <dll-dir>/mod_loader/init.lua. mingw gets this via `make build`;
+          # the MSVC path hand-rolls cl/link, so stage it explicitly here so
+          # the Upload PE artifacts step has bin/mod_loader/ to include.
+          $dst = "bin/mod_loader"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item -Path @(
+              "mod_loader/init.lua",
+              "mod_loader/file.lua",
+              "mod_loader/hook.lua",
+              "mod_loader/class_patch.lua",
+              "mod_loader/require_wrap.lua",
+              "mod_loader/lifecycle.lua",
+              "mod_loader/mod_manager.lua"
+          ) -Destination $dst
+
       - name: Build C tests (cl/link)
         shell: cmd
         run: |
