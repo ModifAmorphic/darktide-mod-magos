@@ -1,4 +1,3 @@
-using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.UI.ViewModels;
 using Microsoft.Extensions.Logging;
@@ -7,10 +6,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Magos.Modificus.UI.Tests;
 
 /// <summary>
-/// Shell-VM profile controls: active-profile restore on construction, dropdown
-/// switch + persistence, switch-blocked-while-running, and dialog-driven
-/// refresh. All against in-memory fakes — no Avalonia window is needed because
-/// the dialog is behind the <see cref="IDialogService"/> seam.
+/// Shell-VM profile controls: mirroring the session's active id + running-state,
+/// dropdown switch (routed through the session gate), switch-blocked-while-running,
+/// and dialog-driven list refresh. All against in-memory fakes; the session is
+/// behind the <see cref="UI.Session.IProfileSession"/> seam (a <see cref="FakeProfileSession"/>).
 /// </summary>
 public sealed class ShellViewModelTests
 {
@@ -18,16 +17,15 @@ public sealed class ShellViewModelTests
 
     private static ShellViewModel Build(
         FakeProfileService? profiles = null,
-        FakeAppStateStore? appState = null,
-        FakeDialogService? dialogs = null,
-        FakeSteamService? steam = null)
+        FakeProfileSession? session = null,
+        FakeDialogService? dialogs = null)
     {
         profiles ??= TestDoubles.Profiles();
+        session ??= new FakeProfileSession(() => profiles.ListProfiles());
         return new ShellViewModel(
             profiles,
-            steam ?? new FakeSteamService(),
+            session,
             new FakeLaunchService(),
-            appState ?? new FakeAppStateStore(),
             dialogs ?? new FakeDialogService(),
             Logger);
     }
@@ -40,9 +38,9 @@ public sealed class ShellViewModelTests
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
         var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
         var profiles = TestDoubles.Profiles(a, b);
-        var appState = new FakeAppStateStore { ActiveProfileId = b.Id };
+        var session = new FakeProfileSession { ActiveProfileId = b.Id };
 
-        var vm = Build(profiles, appState);
+        var vm = Build(profiles, session);
 
         Assert.NotNull(vm.SelectedProfile);
         Assert.Equal(b.Id, vm.SelectedProfile!.Id);
@@ -52,65 +50,73 @@ public sealed class ShellViewModelTests
     public void Constructor_leaves_selection_null_when_no_active_profile_recorded()
     {
         var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha"));
-        var appState = new FakeAppStateStore { ActiveProfileId = null };
+        var session = new FakeProfileSession { ActiveProfileId = null };
 
-        var vm = Build(profiles, appState);
+        var vm = Build(profiles, session);
 
         Assert.Null(vm.SelectedProfile);
     }
 
     [Fact]
-    public void Constructor_does_not_persist_when_restoring_the_active_profile()
+    public void Constructor_does_not_request_an_active_change_during_restore()
     {
-        // The suppress guard must keep the initial restore from writing back.
-        var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha"));
-        var appState = new FakeAppStateStore { ActiveProfileId = null };
+        // Restoring the saved active reads it from the session; it never asks the
+        // session to change active (no voluntary gate invocation on startup).
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
 
-        var vm = Build(profiles, appState);
+        var vm = Build(profiles, session);
 
-        Assert.Equal(0, appState.SetCount);
+        Assert.Equal(0, session.RequestActiveCalls);
     }
 
     [Fact]
     public void Constructor_falls_back_to_null_when_the_recorded_active_profile_is_absent()
     {
-        // Stale state pointing at a deleted profile — don't select garbage.
+        // Stale state pointing at a deleted profile resolves to no selection.
         var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha"));
-        var appState = new FakeAppStateStore { ActiveProfileId = Guid.NewGuid() };
+        var session = new FakeProfileSession { ActiveProfileId = Guid.NewGuid() };
 
-        var vm = Build(profiles, appState);
+        var vm = Build(profiles, session);
 
         Assert.Null(vm.SelectedProfile);
     }
 
-    // ---- dropdown switch + persistence -------------------------------------
+    // ---- dropdown switch routes through the session ------------------------
 
     [Fact]
-    public void Setting_SelectedProfile_persists_the_active_id()
+    public void Setting_SelectedProfile_requests_the_id_active_through_the_session()
     {
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
         var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
         var profiles = TestDoubles.Profiles(a, b);
-        var appState = new FakeAppStateStore();
-        var vm = Build(profiles, appState);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = false };
+        var vm = Build(profiles, session);
 
         vm.SelectedProfile = b;
 
-        Assert.Equal(b.Id, appState.ActiveProfileId);
-        Assert.Equal(1, appState.SetCount);
+        Assert.Equal(b.Id, session.ActiveProfileId); // session applied it
+        Assert.Equal(1, session.RequestActiveCalls);
+        Assert.Equal(b.Id, vm.SelectedProfile?.Id);  // selection follows the session
     }
 
     [Fact]
-    public void Clearing_SelectedProfile_persists_null()
+    public void Setting_SelectedProfile_reverts_when_the_session_gate_rejects()
     {
+        // The session is the authority: when it blocks the change (game running),
+        // the dropdown snaps back to the real active instead of lying.
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
-        var profiles = TestDoubles.Profiles(a);
-        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
-        var vm = Build(profiles, appState);
+        var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
+        var profiles = TestDoubles.Profiles(a, b);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = true };
+        var vm = Build(profiles, session);
 
-        vm.SelectedProfile = null;
+        vm.SelectedProfile = b; // programmatically (the dropdown is disabled while running)
 
-        Assert.Null(appState.ActiveProfileId);
+        Assert.Equal(a.Id, vm.SelectedProfile?.Id); // reverted to the real active
+        Assert.Equal(a.Id, session.ActiveProfileId); // session never moved
+        Assert.Equal(1, session.RequestActiveCalls);  // but it was asked
     }
 
     // ---- switch-blocked-while-running --------------------------------------
@@ -118,10 +124,8 @@ public sealed class ShellViewModelTests
     [Fact]
     public void CanSwitchProfile_is_true_when_not_running_and_profiles_exist()
     {
-        var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha"));
-        var steam = new FakeSteamService { Running = false };
-
-        var vm = Build(profiles, steam: steam);
+        var vm = Build(TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha")),
+            new FakeProfileSession { IsRunning = false });
 
         Assert.True(vm.CanSwitchProfile);
     }
@@ -129,10 +133,8 @@ public sealed class ShellViewModelTests
     [Fact]
     public void CanSwitchProfile_is_false_when_the_game_is_running()
     {
-        var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha"));
-        var steam = new FakeSteamService { Running = true };
-
-        var vm = Build(profiles, steam: steam);
+        var session = new FakeProfileSession { IsRunning = true };
+        var vm = Build(TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha")), session);
 
         Assert.False(vm.CanSwitchProfile);
         Assert.Contains("Darktide is running", vm.ProfileSwitchTooltip);
@@ -148,14 +150,15 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public void IsGameRunning_changes_flip_CanSwitchProfile_and_the_tooltip()
+    public void Live_IsRunning_change_flips_CanSwitchProfile_and_the_tooltip()
     {
-        var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha"));
-        var steam = new FakeSteamService { Running = false };
-        var vm = Build(profiles, steam: steam);
+        // The status strip + dropdown-enable react to the session's live running-state
+        // (the polling timer drives this in production).
+        var session = new FakeProfileSession { IsRunning = false };
+        var vm = Build(TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "Alpha")), session);
         Assert.True(vm.CanSwitchProfile);
 
-        vm.IsGameRunning = true;
+        session.IsRunning = true; // the timer flipped it
 
         Assert.False(vm.CanSwitchProfile);
         Assert.Contains("Darktide is running", vm.ProfileSwitchTooltip);
@@ -164,113 +167,56 @@ public sealed class ShellViewModelTests
     // ---- manage dialog coordination ----------------------------------------
 
     [Fact]
-    public async Task ManageProfiles_opens_the_dialog_with_the_current_active_id()
+    public async Task ManageProfiles_opens_the_dialog_once()
     {
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
         var dialogs = new FakeDialogService();
-        var vm = Build(profiles, appState, dialogs);
+        var vm = Build(profiles, session, dialogs);
 
         await vm.ManageProfilesCommand.ExecuteAsync(null);
 
         Assert.Equal(1, dialogs.ManageProfilesCalls);
-        Assert.Equal(a.Id, dialogs.LastCurrentActiveId);
     }
 
     [Fact]
-    public async Task ManageProfiles_applies_the_dialog_reported_active_id()
+    public async Task ManageProfiles_refreshes_the_profile_list_after_close()
     {
-        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
-        var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
-        var profiles = TestDoubles.Profiles(a, b);
-        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
-        // Simulate the dialog creating a new profile that should become active.
-        var dialogs = new FakeDialogService { ManageProfilesResult = b.Id };
-
-        var vm = Build(profiles, appState, dialogs);
-        await vm.ManageProfilesCommand.ExecuteAsync(null);
-
-        Assert.Equal(b.Id, vm.SelectedProfile?.Id);
-        Assert.Equal(b.Id, appState.ActiveProfileId);
-    }
-
-    [Fact]
-    public async Task ManageProfiles_keeps_current_selection_when_dialog_reports_null()
-    {
+        // The dialog (simulated) creates a profile during its session; the shell
+        // reloads its list snapshot when the dialog closes.
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
-        // Dialog did nothing (rename only / no-op) → null → keep current.
-        var dialogs = new FakeDialogService { ManageProfilesResult = null };
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var dialogs = new FakeDialogService
+        {
+            OnManageProfiles = () => profiles.CreateProfile("Bravo"),
+        };
+        var vm = Build(profiles, session, dialogs);
 
-        var vm = Build(profiles, appState, dialogs);
         await vm.ManageProfilesCommand.ExecuteAsync(null);
 
-        Assert.Equal(a.Id, vm.SelectedProfile?.Id);
+        Assert.Contains(vm.Profiles, p => p.Name == "Bravo");
     }
 
-    // ---- create-in-dialog respects switch-blocked-while-running ------------
-
     [Fact]
-    public async Task ManageProfiles_while_not_running_applies_the_dialog_reported_active_id()
+    public async Task ManageProfiles_re_syncs_selection_to_the_session_active_after_close()
     {
-        // Create while the game is stopped → the new profile becomes active
-        // (the dialog's desired result is applied: current not-running gate).
+        // The dialog applies active changes live through the session; on close the
+        // shell follows the session's authoritative active id.
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
         var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
         var profiles = TestDoubles.Profiles(a, b);
-        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
-        var dialogs = new FakeDialogService { ManageProfilesResult = b.Id };
-        var steam = new FakeSteamService { Running = false };
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = false };
+        var dialogs = new FakeDialogService
+        {
+            OnManageProfiles = () => session.RequestActive(b.Id),
+        };
+        var vm = Build(profiles, session, dialogs);
 
-        var vm = Build(profiles, appState, dialogs, steam);
         await vm.ManageProfilesCommand.ExecuteAsync(null);
 
+        Assert.Equal(b.Id, session.ActiveProfileId);
         Assert.Equal(b.Id, vm.SelectedProfile?.Id);
-        Assert.Equal(b.Id, appState.ActiveProfileId);
-    }
-
-    [Fact]
-    public async Task ManageProfiles_while_running_leaves_active_unchanged_when_dialog_creates_a_profile()
-    {
-        // Create while the game runs → the profile is created (present in the
-        // list) but the active-change gate blocks making it active: the current
-        // active stays put. Same gate the dropdown switch respects.
-        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
-        var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
-        var profiles = TestDoubles.Profiles(a, b);
-        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
-        var dialogs = new FakeDialogService { ManageProfilesResult = b.Id };
-        var steam = new FakeSteamService { Running = true };
-
-        var vm = Build(profiles, appState, dialogs, steam);
-        await vm.ManageProfilesCommand.ExecuteAsync(null);
-
-        Assert.Equal(a.Id, vm.SelectedProfile?.Id);     // unchanged — gate held
-        Assert.Equal(a.Id, appState.ActiveProfileId);   // not persisted to b
-        Assert.Contains(b, vm.Profiles);                // but the profile exists
-    }
-
-    [Fact]
-    public async Task ManageProfiles_while_running_still_falls_back_when_the_active_profile_is_deleted()
-    {
-        // Delete-of-active is a forced recovery (the current selection is gone),
-        // so it bypasses the running gate — the pointer moves to the fallback.
-        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
-        var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
-        var profiles = TestDoubles.Profiles(a, b);
-        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
-        var dialogs = new FakeDialogService { ManageProfilesResult = b.Id };
-        var steam = new FakeSteamService { Running = true };
-
-        var vm = Build(profiles, appState, dialogs, steam);
-        // Simulate the dialog deleting the active profile (a) then reporting the
-        // fallback (b) — the next ListProfiles call will no longer see a.
-        profiles.DeleteProfile(a.Id);
-        await vm.ManageProfilesCommand.ExecuteAsync(null);
-
-        Assert.Equal(b.Id, vm.SelectedProfile?.Id);     // fell back to b
-        Assert.Equal(b.Id, appState.ActiveProfileId);
     }
 }

@@ -1,9 +1,11 @@
+using CommunityToolkit.Mvvm.ComponentModel;
 using Magos.Modificus.EnginseerClient;
 using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.SharedMods;
 using Magos.Modificus.Steam;
 using Magos.Modificus.UI.Dialogs;
+using Magos.Modificus.UI.Session;
 
 namespace Magos.Modificus.UI.Tests;
 
@@ -117,15 +119,15 @@ internal sealed class FakeAppStateStore : IAppStateStore
 
 /// <summary>
 /// Configurable dialog fake. <see cref="ConfirmResult"/> drives
-/// <see cref="ConfirmAsync"/>; <see cref="ManageProfilesResult"/> is returned
-/// verbatim from <see cref="ShowManageProfilesAsync"/>. Records calls so tests
-/// can assert the dialog was opened with the expected current active id.
+/// <see cref="ConfirmAsync"/>; <see cref="OnManageProfiles"/> runs when the
+/// manage-profiles dialog is opened (lets a test simulate the dialog creating /
+/// deleting profiles and routing active changes through the session). Records
+/// calls so tests can assert the dialog was opened.
 /// </summary>
 internal sealed class FakeDialogService : IDialogService
 {
     public bool ConfirmResult { get; set; } = true;
-    public Guid? ManageProfilesResult { get; set; }
-    public Guid? LastCurrentActiveId { get; private set; }
+    public Action? OnManageProfiles { get; set; }
     public int ConfirmCalls { get; private set; }
     public string? LastConfirmMessage { get; private set; }
     public int ManageProfilesCalls { get; private set; }
@@ -137,11 +139,11 @@ internal sealed class FakeDialogService : IDialogService
         return Task.FromResult(ConfirmResult);
     }
 
-    public Task<Guid?> ShowManageProfilesAsync(Guid? currentActiveProfileId)
+    public Task ShowManageProfilesAsync()
     {
         ManageProfilesCalls++;
-        LastCurrentActiveId = currentActiveProfileId;
-        return Task.FromResult(ManageProfilesResult);
+        OnManageProfiles?.Invoke();
+        return Task.CompletedTask;
     }
 }
 
@@ -151,6 +153,71 @@ internal sealed class FakeSteamService : ISteamService
     public bool Running { get; set; }
     public bool IsGameRunning() => Running;
     public DiscoveryResult Discover() => throw new NotImplementedException();
+}
+
+/// <summary>
+/// In-memory <see cref="IProfileSession"/> for shell / dialog tests. Mirrors the
+/// real session's gate (<see cref="RequestActive"/> no-ops when running) and
+/// fallback (<see cref="ReconcileActive"/> uses the optional profile-list lookup).
+/// Raises <see cref="INotifyPropertyChanged.PropertyChanged"/> so the shell reacts
+/// to live <see cref="IsRunning"/> changes the way the real polling timer drives.
+/// </summary>
+internal sealed class FakeProfileSession : ObservableObject, IProfileSession
+{
+    private readonly Func<IReadOnlyList<ProfileSummary>>? _listProfiles;
+    private Guid? _activeProfileId;
+    private bool _isRunning;
+
+    public FakeProfileSession(Func<IReadOnlyList<ProfileSummary>>? listProfiles = null)
+    {
+        _listProfiles = listProfiles;
+    }
+
+    public Guid? ActiveProfileId
+    {
+        get => _activeProfileId;
+        set => SetProperty(ref _activeProfileId, value);
+    }
+
+    public bool IsRunning
+    {
+        get => _isRunning;
+        set => SetProperty(ref _isRunning, value);
+    }
+
+    public int RequestActiveCalls { get; private set; }
+    public Guid? LastRequestedId { get; private set; }
+
+    public void RequestActive(Guid id)
+    {
+        RequestActiveCalls++;
+        LastRequestedId = id;
+        if (IsRunning)
+        {
+            return;
+        }
+
+        ActiveProfileId = id;
+    }
+
+    public int ReconcileCalls { get; private set; }
+
+    public void ReconcileActive()
+    {
+        ReconcileCalls++;
+        if (_listProfiles is null || _activeProfileId is not Guid id)
+        {
+            return;
+        }
+
+        var existing = _listProfiles();
+        if (existing.Any(p => p.Id == id))
+        {
+            return;
+        }
+
+        ActiveProfileId = existing.Count > 0 ? existing[0].Id : null;
+    }
 }
 
 /// <summary>No-op launch service (launch is Track C; not exercised here).</summary>

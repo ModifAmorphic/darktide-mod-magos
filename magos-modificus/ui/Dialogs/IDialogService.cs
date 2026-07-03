@@ -1,3 +1,5 @@
+using Magos.Modificus.UI.Session;
+
 namespace Magos.Modificus.UI.Dialogs;
 
 /// <summary>
@@ -17,13 +19,13 @@ public interface IDialogService
     Task<bool> ConfirmAsync(string title, string message);
 
     /// <summary>
-    /// Opens the "Manage profiles…" modal dialog (create / rename / delete),
-    /// scoped to the given <paramref name="currentActiveProfileId"/>. Returns
-    /// the active-profile id the shell should apply after the dialog closes:
-    /// unchanged when the user only renames or does nothing; the newly-created
-    /// id after a create; or a fallback (first remaining / <c>null</c>) when the
-    /// active profile itself was deleted. The shell owns <c>SelectedProfile</c>
-    /// + persistence — this only reports the requested id.
+    /// Opens the "Manage profiles…" modal dialog (create / rename / delete).
+    /// Active changes are applied live through the <see cref="IProfileSession"/>
+    /// during the dialog's session (create requests the new id active, gated by
+    /// the session; delete-of-active reconciles), so by the time this completes
+    /// the session already reflects whatever the gate allowed. The caller just
+    /// refreshes its profile-list snapshot on completion; there is no
+    /// returned-active-id for the shell to gate.
     /// </summary>
-    Task<Guid?> ShowManageProfilesAsync(Guid? currentActiveProfileId);
+    Task ShowManageProfilesAsync();
 }

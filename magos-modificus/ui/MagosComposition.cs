@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Magos.Modificus.Config;
@@ -7,6 +8,7 @@ using Magos.Modificus.Profiles;
 using Magos.Modificus.SharedMods;
 using Magos.Modificus.Steam;
 using Magos.Modificus.UI.Dialogs;
+using Magos.Modificus.UI.Session;
 using Magos.Modificus.UI.ViewModels;
 using Magos.Modificus.UI.Views;
 using Magos.Modificus.EnginseerClient;
@@ -47,15 +49,39 @@ public static class MagosComposition
 
         // UI surface. MainWindow is a singleton: the desktop lifetime installs
         // the resolved instance as desktop.MainWindow, and DialogService resolves
-        // the same one as the owner for modal dialogs.
+        // the same one as the owner for modal dialogs. IProfileSession is the
+        // single active-profile + running-state authority shared by the shell and
+        // the manage-profiles dialog (its polling timer drives the live status).
+        services.AddSingleton<IProfileSession>(sp => new ProfileSession(
+            sp.GetRequiredService<ISteamService>(),
+            sp.GetRequiredService<IProfileService>(),
+            sp.GetRequiredService<IAppStateStore>(),
+            StartRunningStatePolling));
         services.AddSingleton<MainWindow>();
         services.AddSingleton<ShellViewModel>();
         services.AddSingleton<IDialogService>(sp =>
             new DialogService(
                 sp.GetRequiredService<MainWindow>(),
                 sp.GetRequiredService<IProfileService>(),
-                sp.GetRequiredService<ISteamService>()));
+                sp.GetRequiredService<IProfileSession>()));
 
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>
+    /// The live running-state poll: a <see cref="DispatcherTimer"/> that pings
+    /// <see cref="ISteamService.IsGameRunning"/> every few seconds so the status
+    /// strip + launch-availability + dropdown-enable react to the game starting or
+    /// stopping while Magos is open. Runs on the UI thread (composition happens
+    /// during app startup, also on the UI thread).
+    /// </summary>
+    private static void StartRunningStatePolling(Action onTick)
+    {
+        var timer = new DispatcherTimer
+        {
+            Interval = ProfileSession.PollInterval,
+        };
+        timer.Tick += (_, _) => onTick();
+        timer.Start();
     }
 }

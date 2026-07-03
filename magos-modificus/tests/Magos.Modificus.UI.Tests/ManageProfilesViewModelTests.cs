@@ -4,25 +4,24 @@ using Magos.Modificus.UI.ViewModels;
 namespace Magos.Modificus.UI.Tests;
 
 /// <summary>
-/// Manage-profiles dialog VM — the editable-list mechanics: ✏ inline rename
-/// (commit / cancel / empty-rejected / no-op-same-name), 🗑 delete-confirm
+/// Manage-profiles dialog VM, the editable-list mechanics: inline rename
+/// (commit / cancel / empty-rejected / no-op-same-name), delete-confirm
 /// (yes deletes / no aborts / active-fallback), "+ New profile" add row (create
-/// becomes active / empty cancels), and the active-profile tracking the shell
-/// consumes via <see cref="ManageProfilesViewModel.ActiveProfileId"/>. Delete
-/// confirmation is exercised through the <see cref="IDialogService"/> seam — no
-/// real Avalonia window.
+/// requests active through the session / empty cancels), and the active marker
+/// reading the session's authoritative active id. Delete confirmation is exercised
+/// through the <see cref="IDialogService"/> seam; the active state is exercised
+/// through the <see cref="UI.Session.IProfileSession"/> seam.
 /// </summary>
 public sealed class ManageProfilesViewModelTests
 {
     private static ManageProfilesViewModel Build(
         FakeProfileService profiles,
         FakeDialogService? dialogs = null,
-        FakeSteamService? steam = null,
-        Guid? initialActive = null)
+        FakeProfileSession? session = null)
     {
         dialogs ??= new FakeDialogService();
-        steam ??= new FakeSteamService { Running = false };
-        return new ManageProfilesViewModel(profiles, dialogs, steam, initialActive);
+        session ??= new FakeProfileSession(() => profiles.ListProfiles());
+        return new ManageProfilesViewModel(profiles, dialogs, session);
     }
 
     private static ProfileSummary Profile(string name) =>
@@ -38,19 +37,20 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var b = Profile("Bravo");
-        var vm = Build(TestDoubles.Profiles(a, b), initialActive: b.Id);
+        var session = new FakeProfileSession { ActiveProfileId = b.Id };
+        var vm = Build(TestDoubles.Profiles(a, b), session: session);
 
         Assert.Equal(2, vm.Items.Count);
         Assert.True(Row(vm, "Bravo").IsActive);
         Assert.False(Row(vm, "Alpha").IsActive);
-        Assert.Equal(b.Id, vm.ActiveProfileId);
     }
 
     [Fact]
     public void Construction_marks_no_row_active_when_the_active_id_is_unknown()
     {
         var a = Profile("Alpha");
-        var vm = Build(TestDoubles.Profiles(a), initialActive: Guid.NewGuid());
+        var session = new FakeProfileSession { ActiveProfileId = Guid.NewGuid() };
+        var vm = Build(TestDoubles.Profiles(a), session: session);
 
         Assert.False(Row(vm, "Alpha").IsActive);
         Assert.Single(vm.Items);
@@ -60,18 +60,20 @@ public sealed class ManageProfilesViewModelTests
     public void Construction_marks_no_row_active_when_none_is_active()
     {
         var a = Profile("Alpha");
-        var vm = Build(TestDoubles.Profiles(a), initialActive: null);
+        var session = new FakeProfileSession { ActiveProfileId = null };
+        var vm = Build(TestDoubles.Profiles(a), session: session);
 
         Assert.False(Row(vm, "Alpha").IsActive);
     }
 
-    // ---- rename (✏) --------------------------------------------------------
+    // ---- rename ------------------------------------------------------------
 
     [Fact]
     public void StartRename_prefills_the_edit_field_and_enters_edit_mode()
     {
         var a = Profile("Alpha");
-        var vm = Build(TestDoubles.Profiles(a), initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(TestDoubles.Profiles(a), session: session);
         var row = Row(vm, "Alpha");
 
         vm.StartRenameCommand.Execute(row);
@@ -85,7 +87,8 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var b = Profile("Bravo");
-        var vm = Build(TestDoubles.Profiles(a, b), initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(TestDoubles.Profiles(a, b), session: session);
         var rowA = Row(vm, "Alpha");
         var rowB = Row(vm, "Bravo");
 
@@ -101,7 +104,8 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, session: session);
         var row = Row(vm, "Alpha");
 
         vm.StartRenameCommand.Execute(row);
@@ -114,17 +118,19 @@ public sealed class ManageProfilesViewModelTests
     }
 
     [Fact]
-    public void CommitRename_does_not_change_the_active_id()
+    public void CommitRename_does_not_request_or_reconcile_active()
     {
         var a = Profile("Alpha");
-        var vm = Build(TestDoubles.Profiles(a), initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(TestDoubles.Profiles(a), session: session);
         var row = Row(vm, "Alpha");
 
         vm.StartRenameCommand.Execute(row);
         row.EditText = "Beta";
         vm.CommitRenameCommand.Execute(row);
 
-        Assert.Equal(a.Id, vm.ActiveProfileId);
+        Assert.Equal(0, session.RequestActiveCalls);
+        Assert.Equal(0, session.ReconcileCalls);
     }
 
     [Fact]
@@ -132,7 +138,8 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, session: session);
         var row = Row(vm, "Alpha");
 
         vm.StartRenameCommand.Execute(row);
@@ -149,11 +156,12 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, session: session);
         var row = Row(vm, "Alpha");
 
         vm.StartRenameCommand.Execute(row);
-        // EditText pre-filled with "Alpha" — commit should not call RenameProfile.
+        // EditText pre-filled with "Alpha", commit should not call RenameProfile.
         vm.CommitRenameCommand.Execute(row);
 
         Assert.Empty(profiles.Renames);
@@ -165,7 +173,8 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, session: session);
         var row = Row(vm, "Alpha");
 
         vm.StartRenameCommand.Execute(row);
@@ -181,7 +190,8 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, session: session);
         var row = Row(vm, "Alpha");
 
         vm.StartRenameCommand.Execute(row);
@@ -193,7 +203,7 @@ public sealed class ManageProfilesViewModelTests
         Assert.Equal("Alpha", row.Name); // unchanged
     }
 
-    // ---- delete (🗑) --------------------------------------------------------
+    // ---- delete ------------------------------------------------------------
 
     [Fact]
     public async Task DeleteProfile_prompts_for_confirmation_with_the_name()
@@ -201,7 +211,8 @@ public sealed class ManageProfilesViewModelTests
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
         var dialogs = new FakeDialogService();
-        var vm = Build(profiles, dialogs, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, dialogs, session);
         var row = Row(vm, "Alpha");
 
         await vm.DeleteProfileCommand.ExecuteAsync(row);
@@ -217,7 +228,8 @@ public sealed class ManageProfilesViewModelTests
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
         var dialogs = new FakeDialogService { ConfirmResult = true };
-        var vm = Build(profiles, dialogs, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, dialogs, session);
 
         await vm.DeleteProfileCommand.ExecuteAsync(Row(vm, "Alpha"));
 
@@ -231,7 +243,8 @@ public sealed class ManageProfilesViewModelTests
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
         var dialogs = new FakeDialogService { ConfirmResult = false };
-        var vm = Build(profiles, dialogs, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, dialogs, session);
 
         await vm.DeleteProfileCommand.ExecuteAsync(Row(vm, "Alpha"));
 
@@ -240,33 +253,35 @@ public sealed class ManageProfilesViewModelTests
     }
 
     [Fact]
-    public async Task DeleteProfile_of_the_active_falls_back_to_first_remaining()
+    public async Task DeleteProfile_of_the_active_reconciles_and_falls_back_to_first_remaining()
     {
         var a = Profile("Alpha");
         var b = Profile("Bravo");
         var profiles = TestDoubles.Profiles(a, b);
         var dialogs = new FakeDialogService { ConfirmResult = true };
-        var vm = Build(profiles, dialogs, initialActive: a.Id);
+        var session = new FakeProfileSession(() => profiles.ListProfiles()) { ActiveProfileId = a.Id };
+        var vm = Build(profiles, dialogs, session);
 
         await vm.DeleteProfileCommand.ExecuteAsync(Row(vm, "Alpha"));
 
         Assert.Equal(a.Id, Assert.Single(profiles.DeletedIds));
-        Assert.True(vm.ActiveProfileId.HasValue);
-        Assert.NotEqual(a.Id, vm.ActiveProfileId); // fell back to a remaining one
-        Assert.True(Row(vm, "Bravo").IsActive); // and that row is now marked
+        Assert.Equal(1, session.ReconcileCalls);
+        Assert.Equal(b.Id, session.ActiveProfileId); // session fell back to b
+        Assert.True(Row(vm, "Bravo").IsActive);     // marker followed the session
     }
 
     [Fact]
-    public async Task DeleteProfile_of_the_last_active_falls_back_to_null()
+    public async Task DeleteProfile_of_the_last_active_reconciles_to_null()
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
         var dialogs = new FakeDialogService { ConfirmResult = true };
-        var vm = Build(profiles, dialogs, initialActive: a.Id);
+        var session = new FakeProfileSession(() => profiles.ListProfiles()) { ActiveProfileId = a.Id };
+        var vm = Build(profiles, dialogs, session);
 
         await vm.DeleteProfileCommand.ExecuteAsync(Row(vm, "Alpha"));
 
-        Assert.Null(vm.ActiveProfileId);
+        Assert.Null(session.ActiveProfileId);
         Assert.Empty(vm.Items);
     }
 
@@ -277,12 +292,13 @@ public sealed class ManageProfilesViewModelTests
         var b = Profile("Bravo");
         var profiles = TestDoubles.Profiles(a, b);
         var dialogs = new FakeDialogService { ConfirmResult = true };
-        var vm = Build(profiles, dialogs, initialActive: a.Id);
+        var session = new FakeProfileSession(() => profiles.ListProfiles()) { ActiveProfileId = a.Id };
+        var vm = Build(profiles, dialogs, session);
 
         await vm.DeleteProfileCommand.ExecuteAsync(Row(vm, "Bravo"));
 
         Assert.Equal(b.Id, Assert.Single(profiles.DeletedIds));
-        Assert.Equal(a.Id, vm.ActiveProfileId);
+        Assert.Equal(a.Id, session.ActiveProfileId); // active untouched
         Assert.True(Row(vm, "Alpha").IsActive);
     }
 
@@ -292,7 +308,8 @@ public sealed class ManageProfilesViewModelTests
     public void StartCreate_shows_the_add_row_and_clears_the_entry()
     {
         var a = Profile("Alpha");
-        var vm = Build(TestDoubles.Profiles(a), initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(TestDoubles.Profiles(a), session: session);
         vm.NewProfileName = "stale";
 
         vm.StartCreateCommand.Execute(null);
@@ -305,7 +322,8 @@ public sealed class ManageProfilesViewModelTests
     public void StartCreate_cancels_any_inline_rename_in_flight()
     {
         var a = Profile("Alpha");
-        var vm = Build(TestDoubles.Profiles(a), initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(TestDoubles.Profiles(a), session: session);
         var row = Row(vm, "Alpha");
         vm.StartRenameCommand.Execute(row);
 
@@ -315,11 +333,12 @@ public sealed class ManageProfilesViewModelTests
     }
 
     [Fact]
-    public void CommitCreate_adds_the_profile_and_makes_it_active()
+    public void CommitCreate_adds_the_profile_and_requests_it_active_when_not_running()
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = false };
+        var vm = Build(profiles, session: session);
         vm.StartCreateCommand.Execute(null);
         vm.NewProfileName = "Bravo";
 
@@ -328,35 +347,33 @@ public sealed class ManageProfilesViewModelTests
         Assert.Contains("Bravo", profiles.CreatedNames);
         Assert.False(vm.IsAddingNew);
         Assert.Empty(vm.NewProfileName);
-        // New profile is active + marked.
-        var newRow = Row(vm, "Bravo");
-        Assert.Equal(newRow.Id, vm.ActiveProfileId);
-        Assert.True(newRow.IsActive);
+        Assert.Equal(1, session.RequestActiveCalls); // the dialog asked the session
+        Assert.Equal(Row(vm, "Bravo").Id, session.ActiveProfileId); // session applied it
+        Assert.True(Row(vm, "Bravo").IsActive);  // marker follows the session
         Assert.False(Row(vm, "Alpha").IsActive);
     }
 
     [Fact]
-    public void CommitCreate_while_running_creates_the_profile_but_leaves_active_on_the_current_profile()
+    public void CommitCreate_while_running_creates_the_profile_but_the_gate_blocks_active()
     {
-        // The dialog-side half of the create-while-running gate: the profile is created
-        // (it appears in the list), but create-sets-active consults the same running
-        // state the shell's CanChangeActiveProfile gate reads, so the marker stays on the
-        // current active instead of jumping to the new profile. This is the VM-side pin
-        // for the gap that let the divergence ship (the shell-side test already exists);
-        // the not-running branch is pinned by CommitCreate_adds_the_profile_and_makes_it_active.
+        // Create while the game runs: the profile is created (it appears in the
+        // list), but the session's gate blocks making it active. The marker reads
+        // the session, so it stays on the current active. The dialog did not
+        // decide; it asked the session, which is the sole gate.
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var steam = new FakeSteamService { Running = true };
-        var vm = Build(profiles, steam: steam, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = true };
+        var vm = Build(profiles, session: session);
         vm.StartCreateCommand.Execute(null);
         vm.NewProfileName = "Bravo";
 
         vm.CommitCreateCommand.Execute(null); // Enter
 
-        Assert.Contains("Bravo", profiles.CreatedNames); // created...
-        Assert.Equal(a.Id, vm.ActiveProfileId);          // ...but active stays on Alpha
-        Assert.True(Row(vm, "Alpha").IsActive);          // marker held
-        Assert.False(Row(vm, "Bravo").IsActive);         // new row not marked
+        Assert.Contains("Bravo", profiles.CreatedNames); // created
+        Assert.Equal(1, session.RequestActiveCalls);      // the dialog asked
+        Assert.Equal(a.Id, session.ActiveProfileId);       // but the gate held
+        Assert.True(Row(vm, "Alpha").IsActive);            // marker held
+        Assert.False(Row(vm, "Bravo").IsActive);
     }
 
     [Fact]
@@ -364,7 +381,8 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, session: session);
         vm.StartCreateCommand.Execute(null);
         vm.NewProfileName = "   ";
 
@@ -373,6 +391,7 @@ public sealed class ManageProfilesViewModelTests
         Assert.Empty(profiles.CreatedNames);
         Assert.False(vm.IsAddingNew);
         Assert.Empty(vm.NewProfileName);
+        Assert.Equal(0, session.RequestActiveCalls); // no create, no request
     }
 
     [Fact]
@@ -380,7 +399,8 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, session: session);
         vm.StartCreateCommand.Execute(null);
         vm.NewProfileName = "Bravo";
 
@@ -395,7 +415,8 @@ public sealed class ManageProfilesViewModelTests
     {
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
-        var vm = Build(profiles, initialActive: a.Id);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, session: session);
         vm.StartCreateCommand.Execute(null);
         vm.NewProfileName = "Discarded";
 

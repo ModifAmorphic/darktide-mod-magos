@@ -1,85 +1,83 @@
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Magos.Modificus.EnginseerClient;
-using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
-using Magos.Modificus.Steam;
 using Magos.Modificus.UI.Dialogs;
+using Magos.Modificus.UI.Session;
 using Microsoft.Extensions.Logging;
 
 namespace Magos.Modificus.UI.ViewModels;
 
 /// <summary>
-/// The view model behind the Magos Modificus main window — the Phase 3 Track A
-/// app shell. Milestone 2 makes the profile controls work: the dropdown
-/// switches the active profile (persisted across restarts via
-/// <see cref="IAppStateStore"/>), switching is blocked while Darktide runs, and
-/// "Manage profiles…" opens a CRUD dialog. The shell is the single owner of the
-/// active <see cref="SelectedProfile"/> + its persistence; the dialog reports a
-/// requested active id and the shell applies it on close — gated by
-/// <see cref="CanChangeActiveProfile"/> so the active profile only changes when
-/// the game isn't running, whether the request comes from the dropdown or the
-/// dialog.
+/// The view model behind the Magos Modificus main window, the Phase 3 Track A
+/// app shell. Milestone 2 makes the profile controls work: the dropdown switches
+/// the active profile (the request flows through <see cref="IProfileSession"/>,
+/// which owns the active id + persistence), switching is blocked while Darktide
+/// runs (the session gates it), and "Manage profiles…" opens a CRUD dialog. The
+/// shell owns only the profile-list snapshot + the dropdown selection binding;
+/// the <b>session</b> is the single source of truth for the active id, the
+/// can-change gate, and the LIVE running-state.
 /// </summary>
 /// <remarks>
-/// Track C (Launch behavior) and Track B (mod-list contents) are not wired here
-/// yet — <see cref="LaunchCommand"/> stays a no-op placeholder whose guard is
-/// real so it lights up once a profile is selected and the game is stopped.
+/// <para><b>Running-state is live:</b> the shell mirrors <see cref="IsGameRunning"/>
+/// from <see cref="IProfileSession.IsRunning"/>, which a polling timer refreshes.
+/// So the status strip, launch-availability, and dropdown-enable react within a
+/// few seconds of Darktide starting or stopping while Magos is open.</para>
+/// <para>Track C (Launch behavior) and Track B (mod-list contents) are not wired
+/// here yet. <see cref="LaunchCommand"/> stays a no-op placeholder whose guard is
+/// real so it lights up once a profile is selected and the game is stopped.</para>
 /// </remarks>
 public partial class ShellViewModel : ObservableObject
 {
     private readonly IProfileService _profileService;
-    private readonly ISteamService _steam;
+    private readonly IProfileSession _session;
     private readonly IEnginseerLaunchService _launchService;
-    private readonly IAppStateStore _appState;
     private readonly IDialogService _dialogs;
     private readonly ILogger<ShellViewModel> _logger;
 
-    // Guards persistence during the constructor's initial selection restore —
-    // loading the saved active id must not write it straight back.
-    private bool _suppressPersistence = true;
+    // Guards selection updates while the shell mirrors the session's authoritative
+    // active id back into the dropdown, so re-syncing the selection does not
+    // re-request an active change (avoids a feedback loop).
+    private bool _syncing;
 
     /// <summary>
-    /// Creates the shell VM, snapshots the profile list + game-running state,
-    /// and restores the last-chosen active profile from app-state.
+    /// Creates the shell VM, loads the profile list, mirrors the session's current
+    /// active id + running-state, and subscribes to live running-state changes.
     /// </summary>
     public ShellViewModel(
         IProfileService profiles,
-        ISteamService steam,
+        IProfileSession session,
         IEnginseerLaunchService launchService,
-        IAppStateStore appState,
         IDialogService dialogs,
         ILogger<ShellViewModel> logger)
     {
         _profileService = profiles;
-        _steam = steam;
+        _session = session;
         _launchService = launchService;
-        _appState = appState;
         _dialogs = dialogs;
         _logger = logger;
 
-        Profiles = _profileService.ListProfiles();
-        _isGameRunning = _steam.IsGameRunning();
+        // Set the backing fields directly: no subscribers yet, and setting
+        // SelectedProfile through the property would route through the selection
+        // handler (which requests an active change) during the initial restore.
+        _profiles = _profileService.ListProfiles();
+        _isGameRunning = _session.IsRunning;
+        _selectedProfile = ResolveActive();
 
-        // Restore the persisted active profile (null on first run / corrupt state).
-        var activeId = _appState.ActiveProfileId;
-        SelectedProfile = activeId is Guid id
-            ? Profiles.FirstOrDefault(p => p.Id == id)
-            : null;
-
-        _suppressPersistence = false;
+        _session.PropertyChanged += OnSessionPropertyChanged;
 
         _logger.LogInformation(
             "Shell initialized: {ProfileCount} profile(s) loaded; active={ActiveId}; " +
             "Darktide running: {IsRunning}; launch facade: {LaunchFacade}",
             Profiles.Count,
-            activeId?.ToString() ?? "(none)",
-            _isGameRunning,
+            _session.ActiveProfileId?.ToString() ?? "(none)",
+            IsGameRunning,
             _launchService.GetType().Name);
     }
 
     /// <summary>
-    /// All known profiles — a snapshot of <see cref="IProfileService.ListProfiles"/>,
+    /// All known profiles, a snapshot of <see cref="IProfileService.ListProfiles"/>,
     /// refreshed after the management dialog closes. Empty pre-release until a
     /// profile is created.
     /// </summary>
@@ -94,7 +92,9 @@ public partial class ShellViewModel : ObservableObject
 
     /// <summary>
     /// The currently-selected (active) profile, or <c>null</c>. Bound to the
-    /// top-bar dropdown; selecting switches the active profile and persists it.
+    /// top-bar dropdown; selecting requests the active change through the session
+    /// (which gates it). The shell then re-syncs to the session's authoritative
+    /// active id, so a blocked change snaps the dropdown back to the real active.
     /// </summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LaunchCommand))]
@@ -105,9 +105,9 @@ public partial class ShellViewModel : ObservableObject
     public bool HasSelectedProfile => SelectedProfile is not null;
 
     /// <summary>
-    /// Whether Darktide is currently running — the real
-    /// <see cref="ISteamService.IsGameRunning"/> check, snapshotted at
-    /// construction. Gates profile switching (<see cref="CanSwitchProfile"/>).
+    /// Whether Darktide is currently running, mirrored LIVE from
+    /// <see cref="IProfileSession.IsRunning"/> (a polling timer refreshes it).
+    /// Gates profile switching (<see cref="CanSwitchProfile"/>) and launch.
     /// </summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LaunchCommand))]
@@ -121,97 +121,96 @@ public partial class ShellViewModel : ObservableObject
 
     /// <summary>
     /// Whether the profile dropdown is interactive: a profile must exist and the
-    /// game must not be running. Switching the active (staged) root while the
-    /// game runs is disallowed.
+    /// game must not be running. The gate itself lives in the session; this just
+    /// exposes the running-state so the dropdown can disable while Darktide runs.
     /// </summary>
-    public bool CanSwitchProfile => CanChangeActiveProfile && HasProfiles;
-
-    /// <summary>
-    /// The central active-profile-change gate: the active (staged) profile only
-    /// changes when Darktide isn't running, regardless of how the change is
-    /// requested. Both active-change paths consult this single predicate — the
-    /// dropdown switch (via <see cref="CanSwitchProfile"/>'s <c>IsEnabled</c>)
-    /// and the dialog's requested active change (applied in
-    /// <see cref="RefreshProfiles"/>). So a create-in-dialog while the game runs
-    /// still creates the profile, it just isn't made active until the game stops.
-    /// </summary>
-    /// <remarks>
-    /// Delete-of-active is the one forced change that bypasses this gate: the
-    /// current selection no longer exists, so the pointer must move regardless of
-    /// running state (the running game already launched with its staged root).
-    /// <see cref="RefreshProfiles"/> detects that by the current selection being
-    /// absent from the refreshed list — not a voluntary switch.
-    /// </remarks>
-    private bool CanChangeActiveProfile => !IsGameRunning;
+    public bool CanSwitchProfile => !IsGameRunning && HasProfiles;
 
     /// <summary>
     /// Tooltip explaining the dropdown's current enabled state (the block reason
     /// when the game is running, or a first-run hint when no profile exists).
     /// </summary>
     public string ProfileSwitchTooltip =>
-        IsGameRunning ? "Darktide is running — stop it before switching profiles"
+        IsGameRunning ? "Darktide is running; stop it before switching profiles"
         : HasProfiles ? string.Empty
         : "Create a profile first";
 
     /// <summary>
-    /// Persists the active profile whenever the selection changes from the UI —
-    /// except during the constructor's initial restore (guarded).
+    /// The dropdown (or a programmatic set) changed the selection. Asks the session
+    /// to make it active; the session gates it (only when the game isn't running).
+    /// Then re-syncs to the session's authoritative active id so a blocked or
+    /// cleared selection reverts, the dropdown never lies about the active profile.
     /// </summary>
     partial void OnSelectedProfileChanged(ProfileSummary? value)
     {
-        if (_suppressPersistence)
+        if (_syncing)
         {
             return;
         }
 
-        _appState.ActiveProfileId = value?.Id;
+        _syncing = true;
+        try
+        {
+            if (value is { } profile)
+            {
+                _session.RequestActive(profile.Id);
+            }
+
+            SelectedProfile = ResolveActive();
+        }
+        finally
+        {
+            _syncing = false;
+        }
     }
 
     /// <summary>
-    /// Opens the "Manage profiles…" dialog, then refreshes the profile list and
-    /// applies the active id the dialog reports (newly-created, fallback after
-    /// active-delete, or unchanged on rename/no-op).
+    /// Mirrors the session's live running-state into <see cref="IsGameRunning"/>
+    /// (the status strip, launch-availability, and dropdown-enable all cascade
+    /// from it). Active-id changes are handled at the known points they can occur
+    /// (dropdown request + after the dialog), not here.
+    /// </summary>
+    private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(IProfileSession.IsRunning))
+        {
+            IsGameRunning = _session.IsRunning;
+        }
+    }
+
+    /// <summary>
+    /// Opens the "Manage profiles…" dialog, then reloads the profile list and
+    /// re-syncs the selection to the session's active id. The dialog applies
+    /// active changes live through the session during its session, so by the time
+    /// it closes the session already reflects whatever the gate allowed; the shell
+    /// just refreshes its list snapshot and follows the authoritative active id.
     /// </summary>
     [RelayCommand]
     private async Task ManageProfiles()
     {
-        var requestedActiveId = await _dialogs.ShowManageProfilesAsync(SelectedProfile?.Id);
-        RefreshProfiles(requestedActiveId);
+        await _dialogs.ShowManageProfilesAsync();
+
+        Profiles = _profileService.ListProfiles();
+
+        _syncing = true;
+        try
+        {
+            SelectedProfile = ResolveActive();
+        }
+        finally
+        {
+            _syncing = false;
+        }
     }
 
     /// <summary>
-    /// Reloads the profile list and re-applies the requested active id through
-    /// the central <see cref="CanChangeActiveProfile"/> gate. When the game is
-    /// running, a voluntary change (create-in-dialog → make the new one active)
-    /// is blocked: the new profile exists in the list, but the current active
-    /// stays put. When not running, the requested id is applied (falling back to
-    /// the current selection when the dialog reports <c>null</c> — rename / no-op).
+    /// Resolves the session's active id to the matching profile in the current
+    /// list (null when the id is unknown or no profile exists).
     /// </summary>
-    /// <remarks>
-    /// Delete-of-active forces a recovery that bypasses the gate: the current
-    /// selection is gone from the refreshed list, so the pointer must move. The
-    /// dialog reports the fallback (first remaining / <c>null</c>); we apply it
-    /// regardless of running state because there is nothing sensible to "keep".
-    /// </remarks>
-    private void RefreshProfiles(Guid? requestedActiveId)
-    {
-        Profiles = _profileService.ListProfiles();
-
-        var current = SelectedProfile;
-        var currentStillExists = current is { } c && Profiles.Any(p => p.Id == c.Id);
-
-        // Voluntary switch while the game runs is blocked (keep current). A
-        // forced fallback (current deleted) is not a switch — apply the request.
-        var blocked = !CanChangeActiveProfile && currentStillExists;
-
-        var targetId = blocked
-            ? current!.Id
-            : requestedActiveId ?? current?.Id;
-
-        SelectedProfile = targetId is Guid id
+    private ProfileSummary? ResolveActive() =>
+        _session.ActiveProfileId is Guid id
             ? Profiles.FirstOrDefault(p => p.Id == id)
             : null;
-    }
 
     /// <summary>
     /// Track C: launch is not wired yet. The command is present so the Launch
