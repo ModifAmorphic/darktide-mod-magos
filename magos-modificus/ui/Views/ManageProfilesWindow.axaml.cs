@@ -17,7 +17,7 @@ namespace Magos.Modificus.UI.Views;
     /// The per-row pencil / trash buttons use code-behind <c>Click</c> handlers
     /// (rather than a compiled binding up to the parent VM) because reaching the
     /// parent <c>DataContext</c> from inside an <c>ItemTemplate</c> is the one
-    /// non-trivial binding here — the handlers simply resolve the row from
+    /// non-trivial binding here; the handlers simply resolve the row from
     /// <see cref="Avalonia.Controls.Button.DataContext"/> and forward to the
     /// matching VM command. The inline-edit key gestures (Enter commit / Esc
     /// cancel) + commit-on-blur live here too: they are pure view mechanics over

@@ -171,13 +171,14 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   (Phase 1: GitHub Releases client), **Enginseer-client** (Phase 1: the launch
   façade), **SharedMods** (Phase 2: shared mod store + version-policy model +
   allocation resolution). **General** carries cross-cutting infra: logging,
-  `ConfigLoader`, and `AppStateStore` (runtime app-state — the active-profile id,
+  `ConfigLoader`, and `AppStateStore` (runtime app-state: the active-profile id,
   persisted to a separate `app-state.json`, not `MagosConfig`). **Phase 3 Track A
-  UI** is in progress: the shell + profile management (dropdown switch, persisted
-  active profile, create/rename/delete dialog via an injectable `IDialogService`,
-  switch-blocked-while-running) are wired (milestones 1–2); mod-list UI
-  (Track B) + Launch behavior (Track C) are still pending, and the **Launcher**
-  is a stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
+  UI** (the shell + profile management: dropdown switch, persisted active profile,
+  create/rename/delete dialog) is wired, with an `IProfileSession` (ui/) as the
+  single authority for the active profile, the switch-block gate, and the live
+  running-state (polled). Next: Track D (Preferences + i18n), then B (mod-list)
+  and C (launch); the **Launcher** is a stub (Phase 5). See
+  `docs/architecture/MAGOS-MODIFICUS.md`.
 - **CI** (`magos-build.yml`) is scoped to `magos-modificus/**` + the workflow
   file, matrixed on Windows + Ubuntu; gates on build + tests.
 

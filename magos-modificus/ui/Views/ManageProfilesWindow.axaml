@@ -55,7 +55,7 @@
                           MinWidth="36" Margin="6,0,0,0"
                           VerticalAlignment="Center"
                           IsVisible="{Binding !IsEditing}">
-                    <!-- Material "create" pencil (24x24 source) — drawn geometry,
+                    <!-- Material "create" pencil (24x24 source): drawn geometry,
                          so it renders identically everywhere and inherits the
                          button foreground (theme + pressed states). -->
                     <Path Width="16" Height="16" Stretch="Uniform"
@@ -72,7 +72,7 @@
                           CommandParameter="{Binding}"
                           MinWidth="36" Margin="6,0,0,0"
                           VerticalAlignment="Center">
-                    <!-- Material "delete" trash can (24x24 source) — drawn
+                    <!-- Material "delete" trash can (24x24 source): drawn
                          geometry, inherits the button foreground. -->
                     <Path Width="16" Height="16" Stretch="Uniform"
                           HorizontalAlignment="Center" VerticalAlignment="Center"

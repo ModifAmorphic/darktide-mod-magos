@@ -16,7 +16,7 @@ public static class ServiceCollectionExtensions
     /// Registers General services: the <paramref name="config"/> singleton,
     /// the <paramref name="loggerFactory"/>, <c>AddLogging()</c>,
     /// <see cref="IConfigLoader"/>, and <see cref="IAppStateStore"/> (runtime
-    /// app-state — the active-profile id, persisted separately from
+    /// app-state: the active-profile id, persisted separately from
     /// <see cref="MagosConfig"/>).
     /// </summary>
     public static IServiceCollection AddGeneral(

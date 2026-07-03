@@ -1,7 +1,7 @@
 namespace Magos.Modificus.General;
 
 /// <summary>
-/// Persists non-critical **runtime application state** — values that capture
+/// Persists non-critical **runtime application state**: values that capture
 /// "where the app left off" (e.g. the last-selected profile) rather than user
 /// system settings. Backed by a small JSON file kept under the app-data dir,
 /// separate from <see cref="Config.MagosConfig"/> (which holds system settings
@@ -11,7 +11,7 @@ namespace Magos.Modificus.General;
 /// </summary>
 /// <remarks>
 /// <para><b>First-run safe:</b> a missing or corrupt state file never throws;
-/// reads just return <c>null</c>. Writes are best-effort — runtime app-state is
+/// reads just return <c>null</c>. Writes are best-effort; runtime app-state is
 /// non-critical, so a persistence failure (unwritable dir, full disk) is
 /// swallowed rather than crashing the app mid-interaction.</para>
 /// </remarks>

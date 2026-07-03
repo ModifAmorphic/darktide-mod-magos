@@ -11,7 +11,7 @@ namespace Magos.Modificus.UI.Tests;
 
 /// <summary>
 /// Hand-rolled test doubles for the shell/manage VMs' dependencies. No mock
-/// library is used anywhere in the repo — these recording fakes match that style
+/// library is used anywhere in the repo; these recording fakes match that style
 /// and keep the test project dependency-free.
 /// </summary>
 internal static class TestDoubles
@@ -20,7 +20,7 @@ internal static class TestDoubles
 }
 
 /// <summary>
-/// In-memory <see cref="IProfileService"/> for VM tests — backs only the CRUD +
+/// In-memory <see cref="IProfileService"/> for VM tests: backs only the CRUD +
 /// listing surface the shell/manage VMs touch. Records calls so tests can assert
 /// on them. <c>ModList</c>/<c>PrepareModRoot</c>-style members throw
 /// <see cref="NotImplementedException"/> (out of scope for milestone-2 VM tests).

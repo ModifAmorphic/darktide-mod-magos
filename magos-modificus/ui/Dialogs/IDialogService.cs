@@ -14,7 +14,7 @@ public interface IDialogService
     /// <summary>
     /// Shows a modal confirmation prompt. Returns <c>true</c> when the user
     /// confirms, <c>false</c> otherwise (cancel / dismiss). Used to gate
-    /// destructive actions (e.g. profile delete — real data loss).
+    /// destructive actions (e.g. profile delete: real data loss).
     /// </summary>
     Task<bool> ConfirmAsync(string title, string message);
 

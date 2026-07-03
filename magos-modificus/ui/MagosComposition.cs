@@ -20,7 +20,7 @@ namespace Magos.Modificus.UI;
 /// The DI composition root. Loads config, builds the structured logger, wires
 /// every library's <c>Add&lt;Library&gt;()</c> extension, and registers the UI
 /// surface (main window + view model + dialog service). All data operations flow
-/// through the registered library services — the UI never touches files or APIs
+/// through the registered library services; the UI never touches files or APIs
 /// directly.
 /// </summary>
 public static class MagosComposition

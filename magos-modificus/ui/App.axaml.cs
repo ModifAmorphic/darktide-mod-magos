@@ -29,7 +29,7 @@ public class App : Application
 
         logger.LogInformation("Magos Modificus starting");
         logger.LogInformation(
-            "Config loaded — ProfilesBaseFolder={Profiles}; SharedModsFolder={Shared}; " +
+            "Config loaded: ProfilesBaseFolder={Profiles}; SharedModsFolder={Shared}; " +
             "EnginseerRuntimeDir={Runtime}; LogLevel={Level}; LogFile={LogFile}",
             config.ProfilesBaseFolder,
             config.SharedModsFolder,

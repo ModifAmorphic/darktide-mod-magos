@@ -6,7 +6,7 @@ namespace Magos.Modificus.UI.ViewModels;
 /// One row in the "Manage profiles" editable list. Wraps a profile's stable
 /// identity + display name, plus the per-row inline-edit state (rename) and the
 /// active marker. The parent <see cref="ManageProfilesViewModel"/> owns all CRUD;
-/// this row carries state only — it never talks to
+/// this row carries state only; it never talks to
 /// <see cref="Magos.Modificus.Profiles.IProfileService"/> directly.
 /// </summary>
 /// <remarks>

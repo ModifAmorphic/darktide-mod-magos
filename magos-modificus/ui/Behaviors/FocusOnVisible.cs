@@ -8,14 +8,14 @@ namespace Magos.Modificus.UI.Behaviors;
 /// Attached behavior: when a <see cref="TextBox"/> becomes visible, focus it
 /// and select all its text. Used by the "Manage profiles" editable list so the
 /// inline rename / "+ New profile" entry box grabs focus + selects its text the
-/// moment it appears — without this the row would show a TextBox the user must
+/// moment it appears; without this the row would show a TextBox the user must
 /// still click into, which defeats inline editing.
 /// </summary>
 /// <remarks>
 /// Observes <see cref="Visual.IsVisibleProperty"/> via
 /// <see cref="AvaloniaObject.PropertyChanged"/> (a guaranteed, stable API) rather
 /// than a visibility-changed event, so the behavior is robust across Avalonia
-/// revisions. View-only — not exercised by VM unit tests.
+/// revisions. View-only: not exercised by VM unit tests.
 /// </remarks>
 public static class FocusOnVisible
 {

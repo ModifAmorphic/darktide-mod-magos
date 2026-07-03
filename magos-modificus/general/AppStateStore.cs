@@ -7,7 +7,7 @@ namespace Magos.Modificus.General;
 /// <c>&lt;app-data&gt;/Magos Modificus/app-state.json</c> (<c>{ "ActiveProfileId": "&lt;guid&gt;" | null }</c>).
 /// The app-data dir is derived the same way <see cref="ConfigLoader"/> derives
 /// its config path. JSON is handled with <see cref="JsonSerializer"/> (direct,
-/// read+write) rather than <c>Microsoft.Extensions.Configuration</c> — the
+/// read+write) rather than <c>Microsoft.Extensions.Configuration</c>. The
 /// latter is binding-oriented and read-only; a tiny writable state file is the
 /// wrong fit for it.
 /// </summary>
@@ -62,7 +62,7 @@ public sealed class AppStateStore : IAppStateStore
         }
         catch
         {
-            // Missing/corrupt/permission-denied — treat as "no state recorded."
+            // Missing/corrupt/permission-denied: treat as "no state recorded."
             return null;
         }
     }
@@ -84,7 +84,7 @@ public sealed class AppStateStore : IAppStateStore
         }
         catch
         {
-            // Swallow — the app keeps working without persisted state.
+            // Swallow: the app keeps working without persisted state.
         }
     }
 
