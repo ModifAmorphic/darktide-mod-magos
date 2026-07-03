@@ -1,17 +1,33 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Magos.Modificus.UI.ViewModels"
+        xmlns:views="using:Magos.Modificus.UI.Views"
         xmlns:behaviors="using:Magos.Modificus.UI.Behaviors"
         x:Class="Magos.Modificus.UI.Views.ManageProfilesWindow"
         x:DataType="vm:ManageProfilesViewModel"
-        Title="Manage profiles"
-        Width="520" Height="440"
+        Title="{ReflectionBinding [ManageProfiles_Title], Source={StaticResource Loc}}"
+        ExtendClientAreaToDecorationsHint="True"
+        WindowDecorations="None"
+        Width="520" Height="480"
         MinWidth="440" MinHeight="360"
         CanResize="True"
         ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner">
 
-  <Grid x:Name="Root" RowDefinitions="*,Auto" Margin="16">
+  <!--
+    WindowDecorations="None" removes all native chrome (min/max/close); the
+    custom title bar (views:DialogTitleBar) provides the drag region + drawn
+    close button, and this outer Border re-frames the window. Content is static
+    over the dialog's lifetime (the list is scrollable), so no live-fit is needed:
+    the fixed size accommodates the title bar at the current font scale.
+  -->
+  <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+          BorderThickness="1">
+    <Grid RowDefinitions="Auto,*">
+
+      <views:DialogTitleBar Grid.Row="0" />
+
+      <Grid Grid.Row="1" x:Name="Root" RowDefinitions="*,Auto" Margin="16">
 
     <!-- Editable profile list: each row = active marker · name/rename · pencil · trash -->
     <Border Grid.Row="0"
@@ -26,7 +42,7 @@
               <DataTemplate x:DataType="vm:ProfileItemViewModel">
                 <Grid ColumnDefinitions="20,*,Auto,Auto" Margin="4,3">
 
-                  <!-- active marker -->
+                  <!-- active marker (drawn Ellipse, no glyph) -->
                   <Ellipse Grid.Column="0"
                            Width="9" Height="9"
                            Fill="#22A06B"
@@ -49,7 +65,7 @@
 
                   <!-- pencil rename (hidden while editing) -->
                   <Button Grid.Column="2"
-                          ToolTip.Tip="Rename"
+                          ToolTip.Tip="{ReflectionBinding [ManageProfiles_RenameTooltip], Source={StaticResource Loc}}"
                           Click="Rename_Click"
                           CommandParameter="{Binding}"
                           MinWidth="36" Margin="6,0,0,0"
@@ -85,7 +101,7 @@
           </ItemsControl>
 
           <!-- "+ New profile" add row -->
-          <Button Content="+ New profile"
+          <Button Content="{ReflectionBinding [ManageProfiles_NewButton], Source={StaticResource Loc}}"
                   Command="{Binding StartCreateCommand}"
                   IsVisible="{Binding !IsAddingNew}"
                   HorizontalAlignment="Stretch"
@@ -93,7 +109,7 @@
                   Margin="4,8,4,3"
                   MinHeight="32" />
           <TextBox Text="{Binding NewProfileName, Mode=TwoWay}"
-                   PlaceholderText="New profile name…"
+                   PlaceholderText="{ReflectionBinding [ManageProfiles_NewPlaceholder], Source={StaticResource Loc}}"
                    IsVisible="{Binding IsAddingNew}"
                    behaviors:FocusOnVisible.IsEnabled="True"
                    KeyDown="AddBox_KeyDown"
@@ -106,10 +122,12 @@
 
     <!-- Done -->
     <Button Grid.Row="1"
-            Content="Done"
+            Content="{ReflectionBinding [ManageProfiles_DoneButton], Source={StaticResource Loc}}"
             HorizontalAlignment="Right"
             Click="Done_Click"
             MinWidth="96"
             Margin="0,12,0,0" />
-  </Grid>
+      </Grid>
+    </Grid>
+  </Border>
 </Window>

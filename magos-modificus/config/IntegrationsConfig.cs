@@ -15,7 +15,7 @@ public sealed class IntegrationsConfig
 /// <summary>
 /// GitHub Releases client settings. The base URL defaults to the public GitHub
 /// REST API; an optional personal access token raises the rate limit / unlocks
-/// private repos (Phase 1: no token-management UI — supply via config only).
+/// private repos (Phase 1: no token-management UI; supply via config only).
 /// </summary>
 public sealed class GitHubConfig
 {

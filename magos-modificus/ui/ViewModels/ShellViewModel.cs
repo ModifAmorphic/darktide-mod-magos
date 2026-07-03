@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using Magos.Modificus.EnginseerClient;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.UI.Dialogs;
+using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Session;
 using Microsoft.Extensions.Logging;
 
@@ -17,13 +18,19 @@ namespace Magos.Modificus.UI.ViewModels;
 /// runs (the session gates it), and "Manage profiles…" opens a CRUD dialog. The
 /// shell owns only the profile-list snapshot + the dropdown selection binding;
 /// the <b>session</b> is the single source of truth for the active id, the
-/// can-change gate, and the LIVE running-state.
+/// can-change gate, and the LIVE running-state. Track D adds the Preferences
+/// affordance (top-bar gear) + dynamic-language refresh of the status text /
+/// tooltips via <see cref="LocalizationService"/>.
 /// </summary>
 /// <remarks>
 /// <para><b>Running-state is live:</b> the shell mirrors <see cref="IsGameRunning"/>
 /// from <see cref="IProfileSession.IsRunning"/>, which a polling timer refreshes.
 /// So the status strip, launch-availability, and dropdown-enable react within a
 /// few seconds of Darktide starting or stopping while Magos is open.</para>
+/// <para><b>Localizable text is live:</b> <see cref="GameRunningText"/> and
+/// <see cref="ProfileSwitchTooltip"/> re-resolve from <see cref="LocalizationService"/>
+/// when the UI culture changes (Preferences dialog), so the shell copy refreshes
+/// in-step with the rest of the UI on a language switch.</para>
 /// <para>Track C (Launch behavior) and Track B (mod-list contents) are not wired
 /// here yet. <see cref="LaunchCommand"/> stays a no-op placeholder whose guard is
 /// real so it lights up once a profile is selected and the game is stopped.</para>
@@ -34,6 +41,7 @@ public partial class ShellViewModel : ObservableObject
     private readonly IProfileSession _session;
     private readonly IEnginseerLaunchService _launchService;
     private readonly IDialogService _dialogs;
+    private readonly LocalizationService _localization;
     private readonly ILogger<ShellViewModel> _logger;
 
     // Guards selection updates while the shell mirrors the session's authoritative
@@ -50,12 +58,14 @@ public partial class ShellViewModel : ObservableObject
         IProfileSession session,
         IEnginseerLaunchService launchService,
         IDialogService dialogs,
+        LocalizationService localization,
         ILogger<ShellViewModel> logger)
     {
         _profileService = profiles;
         _session = session;
         _launchService = launchService;
         _dialogs = dialogs;
+        _localization = localization;
         _logger = logger;
 
         // Set the backing fields directly: no subscribers yet, and setting
@@ -66,6 +76,9 @@ public partial class ShellViewModel : ObservableObject
         _selectedProfile = ResolveActive();
 
         _session.PropertyChanged += OnSessionPropertyChanged;
+        // Re-resolve the localized strings when the UI culture flips so the
+        // status strip + tooltip refresh alongside the rest of the UI.
+        _localization.PropertyChanged += OnCultureChanged;
 
         _logger.LogInformation(
             "Shell initialized: {ProfileCount} profile(s) loaded; active={ActiveId}; " +
@@ -116,8 +129,11 @@ public partial class ShellViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ProfileSwitchTooltip))]
     private bool _isGameRunning;
 
-    /// <summary>Status-strip label for the game-running indicator.</summary>
-    public string GameRunningText => IsGameRunning ? "Darktide: running" : "Darktide: not running";
+    /// <summary>Status-strip label for the game-running indicator (localized).</summary>
+    public string GameRunningText =>
+        IsGameRunning
+            ? _localization["Status_GameRunning"]
+            : _localization["Status_GameNotRunning"];
 
     /// <summary>
     /// Whether the profile dropdown is interactive: a profile must exist and the
@@ -129,11 +145,14 @@ public partial class ShellViewModel : ObservableObject
     /// <summary>
     /// Tooltip explaining the dropdown's current enabled state (the block reason
     /// when the game is running, or a first-run hint when no profile exists).
+    /// Localized + re-resolves on a culture change.
     /// </summary>
     public string ProfileSwitchTooltip =>
-        IsGameRunning ? "Darktide is running; stop it before switching profiles"
-        : HasProfiles ? string.Empty
-        : "Create a profile first";
+        IsGameRunning
+            ? _localization["ProfileSwitch_RunningTooltip"]
+            : HasProfiles
+                ? string.Empty
+                : _localization["ProfileSwitch_CreateFirstTooltip"];
 
     /// <summary>
     /// The dropdown (or a programmatic set) changed the selection. Asks the session
@@ -179,6 +198,22 @@ public partial class ShellViewModel : ObservableObject
     }
 
     /// <summary>
+    /// The UI culture flipped (Preferences dialog). Re-fire the property-changed
+    /// events for the localized derived strings so bindings re-resolve.
+    /// </summary>
+    private void OnCultureChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(LocalizationService.Culture)
+            && e.PropertyName != "Item[]")
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(GameRunningText));
+        OnPropertyChanged(nameof(ProfileSwitchTooltip));
+    }
+
+    /// <summary>
     /// Opens the "Manage profiles…" dialog, then reloads the profile list and
     /// re-syncs the selection to the session's active id. The dialog applies
     /// active changes live through the session during its session, so by the time
@@ -201,6 +236,18 @@ public partial class ShellViewModel : ObservableObject
         {
             _syncing = false;
         }
+    }
+
+    /// <summary>
+    /// Opens the Preferences dialog (theme / font scale / language). Each
+    /// preference applies + persists immediately through the dialog, so on
+    /// return the shell only needs to let its localized bindings refresh (which
+    /// the culture-changed subscription handles for a language switch).
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenPreferences()
+    {
+        await _dialogs.ShowPreferencesAsync();
     }
 
     /// <summary>

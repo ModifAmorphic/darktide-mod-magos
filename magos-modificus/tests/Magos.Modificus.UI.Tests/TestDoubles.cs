@@ -1,10 +1,13 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using Magos.Modificus.Config;
 using Magos.Modificus.EnginseerClient;
 using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.SharedMods;
 using Magos.Modificus.Steam;
 using Magos.Modificus.UI.Dialogs;
+using Magos.Modificus.UI.Localization;
+using Magos.Modificus.UI.Preferences;
 using Magos.Modificus.UI.Session;
 
 namespace Magos.Modificus.UI.Tests;
@@ -128,9 +131,11 @@ internal sealed class FakeDialogService : IDialogService
 {
     public bool ConfirmResult { get; set; } = true;
     public Action? OnManageProfiles { get; set; }
+    public Action? OnPreferences { get; set; }
     public int ConfirmCalls { get; private set; }
     public string? LastConfirmMessage { get; private set; }
     public int ManageProfilesCalls { get; private set; }
+    public int PreferencesCalls { get; private set; }
 
     public Task<bool> ConfirmAsync(string title, string message)
     {
@@ -143,6 +148,13 @@ internal sealed class FakeDialogService : IDialogService
     {
         ManageProfilesCalls++;
         OnManageProfiles?.Invoke();
+        return Task.CompletedTask;
+    }
+
+    public Task ShowPreferencesAsync()
+    {
+        PreferencesCalls++;
+        OnPreferences?.Invoke();
         return Task.CompletedTask;
     }
 }
@@ -236,4 +248,45 @@ internal sealed class FakeLaunchService : IEnginseerLaunchService
 {
     public LaunchResult Launch(Guid profileId) =>
         new(LaunchStatus.Launched, null, Array.Empty<string>());
+}
+
+/// <summary>
+/// Recording <see cref="IPreferencesService"/> for tests. Captures the last
+/// applied (theme, fontScale, language) triple + the number of apply calls so
+/// tests can assert the Preferences VM routes changes through the authority.
+/// </summary>
+internal sealed class FakePreferencesService : IPreferencesService
+{
+    public int ApplyCalls { get; private set; }
+    public ThemeMode LastTheme { get; private set; } = ThemeMode.System;
+    public double LastFontScale { get; private set; } = 1.0;
+    public string LastLanguage { get; private set; } = "en";
+
+    public void ApplyAndPersist(ThemeMode theme, double fontScale, string language)
+    {
+        ApplyCalls++;
+        LastTheme = theme;
+        LastFontScale = fontScale;
+        LastLanguage = language;
+    }
+}
+
+/// <summary>
+/// Recording <see cref="IConfigLoader"/> for tests. <see cref="Save"/> captures
+/// the last-written config without touching disk. Returns a configurable config
+/// from <see cref="Load"/> (defaults to a fresh <see cref="MagosConfig.CreateDefault"/>).
+/// </summary>
+internal sealed class FakeConfigLoader : IConfigLoader
+{
+    public MagosConfig Config { get; set; } = MagosConfig.CreateDefault();
+    public int SaveCalls { get; private set; }
+    public MagosConfig? LastSaved { get; private set; }
+
+    public MagosConfig Load() => Config;
+
+    public void Save(MagosConfig config)
+    {
+        SaveCalls++;
+        LastSaved = config;
+    }
 }

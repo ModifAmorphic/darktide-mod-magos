@@ -1,4 +1,5 @@
 using Magos.Modificus.Profiles;
+using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.ViewModels;
 
 namespace Magos.Modificus.UI.Tests;
@@ -16,6 +17,8 @@ namespace Magos.Modificus.UI.Tests;
 /// </summary>
 public sealed class ManageProfilesViewModelTests
 {
+    private static readonly LocalizationService Localization = new();
+
     private static ManageProfilesViewModel Build(
         FakeProfileService profiles,
         FakeDialogService? dialogs = null,
@@ -23,7 +26,7 @@ public sealed class ManageProfilesViewModelTests
     {
         dialogs ??= new FakeDialogService();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
-        return new ManageProfilesViewModel(profiles, dialogs, session);
+        return new ManageProfilesViewModel(profiles, dialogs, session, Localization);
     }
 
     private static ProfileSummary Profile(string name) =>

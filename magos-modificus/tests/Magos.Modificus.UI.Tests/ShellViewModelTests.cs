@@ -1,4 +1,5 @@
 using Magos.Modificus.Profiles;
+using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.ViewModels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,6 +15,7 @@ namespace Magos.Modificus.UI.Tests;
 public sealed class ShellViewModelTests
 {
     private static readonly ILogger<ShellViewModel> Logger = NullLogger<ShellViewModel>.Instance;
+    private static readonly LocalizationService Localization = new();
 
     private static ShellViewModel Build(
         FakeProfileService? profiles = null,
@@ -27,6 +29,7 @@ public sealed class ShellViewModelTests
             session,
             new FakeLaunchService(),
             dialogs ?? new FakeDialogService(),
+            Localization,
             Logger);
     }
 

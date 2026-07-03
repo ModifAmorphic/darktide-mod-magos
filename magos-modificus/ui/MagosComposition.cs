@@ -8,6 +8,8 @@ using Magos.Modificus.Profiles;
 using Magos.Modificus.SharedMods;
 using Magos.Modificus.Steam;
 using Magos.Modificus.UI.Dialogs;
+using Magos.Modificus.UI.Localization;
+using Magos.Modificus.UI.Preferences;
 using Magos.Modificus.UI.Session;
 using Magos.Modificus.UI.ViewModels;
 using Magos.Modificus.UI.Views;
@@ -52,18 +54,25 @@ public static class MagosComposition
         // the same one as the owner for modal dialogs. IProfileSession is the
         // single active-profile + running-state authority shared by the shell and
         // the manage-profiles dialog (its polling timer drives the live status).
+        // LocalizationService + IPreferencesService are the i18n + preference
+        // authorities (singletons so the whole app shares one culture + theme).
         services.AddSingleton<IProfileSession>(sp => new ProfileSession(
             sp.GetRequiredService<ISteamService>(),
             sp.GetRequiredService<IProfileService>(),
             sp.GetRequiredService<IAppStateStore>(),
             StartRunningStatePolling));
+        services.AddSingleton<LocalizationService>();
+        services.AddSingleton<IPreferencesService, PreferencesService>();
         services.AddSingleton<MainWindow>();
         services.AddSingleton<ShellViewModel>();
         services.AddSingleton<IDialogService>(sp =>
             new DialogService(
                 sp.GetRequiredService<MainWindow>(),
                 sp.GetRequiredService<IProfileService>(),
-                sp.GetRequiredService<IProfileSession>()));
+                sp.GetRequiredService<IProfileSession>(),
+                sp.GetRequiredService<IPreferencesService>(),
+                sp.GetRequiredService<LocalizationService>(),
+                sp.GetRequiredService<MagosConfig>()));
 
         return services.BuildServiceProvider();
     }

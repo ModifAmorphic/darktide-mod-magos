@@ -1,7 +1,7 @@
 namespace Magos.Modificus.Config;
 
 /// <summary>
-/// The global Magos Modificus configuration — system-level settings shared
+/// The global Magos Modificus configuration: system-level settings shared
 /// across all profiles. Per-profile settings live with the profile, not here.
 /// Bound from JSON by the config loader in <c>Magos.Modificus.General</c>.
 /// </summary>
@@ -24,13 +24,21 @@ public sealed class MagosConfig
     public string SharedModsFolder { get; set; } = AppPaths.DefaultSharedModsFolder;
 
     /// <summary>
-    /// The Enginseer runtime directory — where <c>magos_launcher.exe</c>,
+    /// The Enginseer runtime directory: where <c>magos_launcher.exe</c>,
     /// <c>magos_shell.dll</c>, and <c>mod_loader/</c> live.
     /// </summary>
     public string EnginseerRuntimeDir { get; set; } = AppPaths.DefaultEnginseerRuntimeDir;
 
     /// <summary>External-service (mod-source) integration settings.</summary>
     public IntegrationsConfig Integrations { get; set; } = new();
+
+    /// <summary>
+    /// User-facing global preferences (theme, font scale, language). The
+    /// Preferences dialog reads + writes this section via the
+    /// <c>IPreferencesService</c>; persistence is through
+    /// <see cref="General.ConfigLoader"/>.<c>Save</c>.
+    /// </summary>
+    public PreferencesConfig Preferences { get; set; } = new();
 
     /// <summary>A fully-defaulted config instance.</summary>
     public static MagosConfig CreateDefault() => new();
