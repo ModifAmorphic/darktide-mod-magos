@@ -132,3 +132,4 @@ jobs:
           path: |
             enginseer/bin/magos_shell.dll
             enginseer/bin/magos_launcher.exe
+            enginseer/bin/mod_loader/
