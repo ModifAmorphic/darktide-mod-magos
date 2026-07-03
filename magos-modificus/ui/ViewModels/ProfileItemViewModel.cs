@@ -1,0 +1,48 @@
+using CommunityToolkit.Mvvm.ComponentModel;
+
+namespace Magos.Modificus.UI.ViewModels;
+
+/// <summary>
+/// One row in the "Manage profiles" editable list. Wraps a profile's stable
+/// identity + display name, plus the per-row inline-edit state (rename) and the
+/// active marker. The parent <see cref="ManageProfilesViewModel"/> owns all CRUD;
+/// this row carries state only — it never talks to
+/// <see cref="Magos.Modificus.Profiles.IProfileService"/> directly.
+/// </summary>
+/// <remarks>
+/// Identity (<see cref="Id"/>) is immutable; <see cref="Name"/> is updated
+/// in place after a successful rename (avoids a full list rebuild, so focus /
+/// scroll position are not disturbed). <see cref="IsEditing"/> +
+/// <see cref="EditText"/> drive the inline rename TextBox; <see cref="IsActive"/>
+/// drives the ● marker.
+/// </remarks>
+public partial class ProfileItemViewModel : ObservableObject
+{
+    /// <summary>The profile's stable identity (unchanged across renames).</summary>
+    public Guid Id { get; }
+
+    /// <summary>The display name; updated in place after a rename commits.</summary>
+    [ObservableProperty]
+    private string _name;
+
+    /// <summary>Whether this row is the active profile (drives the ● marker).</summary>
+    [ObservableProperty]
+    private bool _isActive;
+
+    /// <summary>Whether this row is currently showing its inline rename TextBox.</summary>
+    [ObservableProperty]
+    private bool _isEditing;
+
+    /// <summary>
+    /// The in-flight rename value. Pre-filled from <see cref="Name"/> on edit
+    /// start; committed (if non-empty + changed) on Enter / blur, discarded on Esc.
+    /// </summary>
+    [ObservableProperty]
+    private string _editText = string.Empty;
+
+    public ProfileItemViewModel(Guid id, string name)
+    {
+        Id = id;
+        _name = name;
+    }
+}

@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Magos.Modificus.UI.ViewModels"
-        xmlns:profiles="using:Magos.Modificus.Profiles"
+        xmlns:behaviors="using:Magos.Modificus.UI.Behaviors"
         x:Class="Magos.Modificus.UI.Views.ManageProfilesWindow"
         x:DataType="vm:ManageProfilesViewModel"
         Title="Manage profiles"
@@ -11,64 +11,92 @@
         ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner">
 
-  <Grid RowDefinitions="*,Auto" Margin="16">
+  <Grid x:Name="Root" RowDefinitions="*,Auto" Margin="16">
 
-    <!-- Profile list + rename row -->
-    <Grid Grid.Row="0" RowDefinitions="*,Auto" Margin="0,0,0,12">
-      <Border Grid.Row="0"
-              BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
-              BorderThickness="1"
-              CornerRadius="4">
-        <ListBox ItemsSource="{Binding ProfileList}"
-                 SelectedItem="{Binding SelectedProfile}">
-          <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="profiles:ProfileSummary">
-              <TextBlock Text="{Binding Name}" />
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
-      </Border>
+    <!-- Editable profile list: each row = active marker · name/rename · ✏ · 🗑 -->
+    <Border Grid.Row="0"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+            BorderThickness="1"
+            CornerRadius="4">
+      <ScrollViewer Padding="4">
+        <StackPanel>
 
-      <!-- Inline rename: name field + Rename (enabled by selection). -->
-      <Grid Grid.Row="1"
-            ColumnDefinitions="*,Auto"
-            Margin="0,8,0,0">
-        <TextBox Grid.Column="0"
-                 Text="{Binding RenameName}"
-                 PlaceholderText="Rename selected…"
-                 IsEnabled="{Binding SelectedProfile, Converter={x:Static ObjectConverters.IsNotNull}}" />
-        <Button Grid.Column="1"
-                Content="Rename"
-                Command="{Binding RenameProfileCommand}"
-                Margin="8,0,0,0"
-                VerticalAlignment="Center" />
-      </Grid>
-    </Grid>
+          <ItemsControl ItemsSource="{Binding Items}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ProfileItemViewModel">
+                <Grid ColumnDefinitions="20,*,Auto,Auto" Margin="4,3">
 
-    <!-- Create row + actions -->
-    <StackPanel Grid.Row="1" Spacing="8">
-      <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
-              BorderThickness="0,1,0,0"
-              Padding="0,12,0,0">
-        <Grid ColumnDefinitions="*,Auto,Auto">
-          <TextBox Grid.Column="0"
-                   Text="{Binding NewProfileName}"
-                   PlaceholderText="New profile name…" />
-          <Button Grid.Column="1"
-                  Content="Create"
-                  Command="{Binding CreateProfileCommand}"
-                  Margin="8,0,0,0" />
-          <Button Grid.Column="2"
-                  Content="Delete"
-                  Command="{Binding DeleteProfileCommand}"
-                  Margin="8,0,0,0" />
-        </Grid>
-      </Border>
+                  <!-- active marker (●) -->
+                  <TextBlock Grid.Column="0"
+                             Text="●"
+                             FontSize="12"
+                             Foreground="#22A06B"
+                             VerticalAlignment="Center"
+                             IsVisible="{Binding IsActive}" />
 
-      <Button Content="Done"
-              HorizontalAlignment="Right"
-              Click="Done_Click"
-              MinWidth="96" />
-    </StackPanel>
+                  <!-- name (display; hidden while editing) -->
+                  <TextBlock Grid.Column="1"
+                             Text="{Binding Name}"
+                             VerticalAlignment="Center"
+                             IsVisible="{Binding !IsEditing}" />
+
+                  <!-- inline rename (shown only while editing) -->
+                  <TextBox Grid.Column="1"
+                           Text="{Binding EditText, Mode=TwoWay}"
+                           IsVisible="{Binding IsEditing}"
+                           behaviors:FocusOnVisible.IsEnabled="True"
+                           KeyDown="EditBox_KeyDown"
+                           LostFocus="EditBox_LostFocus" />
+
+                  <!-- ✏ rename (hidden while editing) -->
+                  <Button Grid.Column="2"
+                          Content="✏"
+                          ToolTip.Tip="Rename"
+                          Click="Rename_Click"
+                          CommandParameter="{Binding}"
+                          MinWidth="36" Margin="6,0,0,0"
+                          VerticalAlignment="Center"
+                          IsVisible="{Binding !IsEditing}" />
+
+                  <!-- 🗑 delete -->
+                  <Button Grid.Column="3"
+                          Content="🗑"
+                          ToolTip.Tip="Delete"
+                          Click="Delete_Click"
+                          CommandParameter="{Binding}"
+                          MinWidth="36" Margin="6,0,0,0"
+                          VerticalAlignment="Center" />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <!-- "+ New profile" add row -->
+          <Button Content="+ New profile"
+                  Command="{Binding StartCreateCommand}"
+                  IsVisible="{Binding !IsAddingNew}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Left"
+                  Margin="4,8,4,3"
+                  MinHeight="32" />
+          <TextBox Text="{Binding NewProfileName, Mode=TwoWay}"
+                   PlaceholderText="New profile name…"
+                   IsVisible="{Binding IsAddingNew}"
+                   behaviors:FocusOnVisible.IsEnabled="True"
+                   KeyDown="AddBox_KeyDown"
+                   LostFocus="AddBox_LostFocus"
+                   Margin="4,8,4,3" />
+
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Done -->
+    <Button Grid.Row="1"
+            Content="Done"
+            HorizontalAlignment="Right"
+            Click="Done_Click"
+            MinWidth="96"
+            Margin="0,12,0,0" />
   </Grid>
 </Window>
