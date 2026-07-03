@@ -53,7 +53,8 @@ public static class MagosComposition
         services.AddSingleton<IDialogService>(sp =>
             new DialogService(
                 sp.GetRequiredService<MainWindow>(),
-                sp.GetRequiredService<IProfileService>()));
+                sp.GetRequiredService<IProfileService>(),
+                sp.GetRequiredService<ISteamService>()));
 
         return services.BuildServiceProvider();
     }

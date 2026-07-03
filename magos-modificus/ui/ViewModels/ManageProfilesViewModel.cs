@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Magos.Modificus.Profiles;
+using Magos.Modificus.Steam;
 using Magos.Modificus.UI.Dialogs;
 
 namespace Magos.Modificus.UI.ViewModels;
@@ -22,36 +23,54 @@ namespace Magos.Modificus.UI.ViewModels;
 /// <para><b>Active-profile tracking:</b> the dialog never edits the shell's
 /// <c>SelectedProfile</c> directly (the shell owns selection + persistence).
 /// Instead it mirrors the current active id, evolves it on the operations that
-/// change it (create → the new profile becomes active; delete-of-active → fall
-/// back to the first remaining, or none), and exposes the final value via
-/// <see cref="ActiveProfileId"/> for the shell to apply on close. Rename leaves
-/// it untouched (the id is stable across renames).</para>
+/// change it (create → the new profile becomes active, gated by the running
+/// state below; delete-of-active → fall back to the first remaining, or none),
+/// and exposes the final value via <see cref="ActiveProfileId"/> for the shell
+/// to apply on close. Rename leaves it untouched (the id is stable across
+/// renames).</para>
+/// <para><b>Create-sets-active is gated by the running state:</b> the shell
+/// only honors an active change when Darktide isn't running (its
+/// <c>CanChangeActiveProfile</c> gate, same source the dropdown switch
+/// consults), so the dialog consults the same <see cref="ISteamService.IsGameRunning"/>
+/// at create-time: when not running, create makes the new profile active
+/// (marker moves); when running, create adds the profile to the list but leaves
+/// the marker on the current active (the shell won't change active either, so
+/// the two stay in sync). Delete-of-active is a forced recovery (the active
+/// profile no longer exists), not a voluntary switch, so it stays ungated.</para>
 /// </remarks>
 public partial class ManageProfilesViewModel : ObservableObject
 {
     private readonly IProfileService _profiles;
     private readonly IDialogService _dialogs;
+    private readonly ISteamService _steam;
     private Guid? _activeProfileId;
 
     /// <param name="profiles">The profile service (CRUD).</param>
     /// <param name="dialogs">The dialog seam — used for the delete confirmation.</param>
+    /// <param name="steam">The live running-state source; consulted at create-time so
+    /// create-sets-active only moves the marker when the shell will actually honor the
+    /// change (same <see cref="ISteamService.IsGameRunning"/> source the shell's
+    /// <c>CanChangeActiveProfile</c> gate reads).</param>
     /// <param name="initialActiveProfileId">The active profile id when the dialog
     /// opened; mirrored here and evolved by create / delete-of-active.</param>
     public ManageProfilesViewModel(
         IProfileService profiles,
         IDialogService dialogs,
+        ISteamService steam,
         Guid? initialActiveProfileId)
     {
         _profiles = profiles;
         _dialogs = dialogs;
+        _steam = steam;
         _activeProfileId = initialActiveProfileId;
         Refresh();
     }
 
     /// <summary>
-    /// The active-profile id the shell should apply after the dialog closes.
-    /// Evolved by create (→ new id) and delete-of-active (→ first remaining or
-    /// <c>null</c>); rename leaves it unchanged.
+    /// The active-profile id the shell should apply after the dialog closes. Evolved by
+    /// create (→ new id, only when the game isn't running; see <see cref="CommitCreate"/>)
+    /// and delete-of-active (→ first remaining or <c>null</c>, ungated as a forced
+    /// recovery); rename leaves it unchanged.
     /// </summary>
     public Guid? ActiveProfileId => _activeProfileId;
 
@@ -184,9 +203,15 @@ public partial class ManageProfilesViewModel : ObservableObject
 
     /// <summary>
     /// Commits the add-row: trims the entry, and if non-empty, creates the
-    /// profile (which becomes active), then refreshes. An empty entry is a
-    /// silent cancel (no create). Always exits add mode (no-op + safe if already
-    /// exited, so Enter → blur does not double-create).
+    /// profile then refreshes. The new profile becomes active only when the game
+    /// isn't running, consulting the same <see cref="ISteamService.IsGameRunning"/>
+    /// source the shell's <c>CanChangeActiveProfile</c> gate reads, so the dialog's
+    /// marker can only move to the new profile when the shell will actually
+    /// honor the change. When the game is running the profile is still created
+    /// (it appears in the list) but the active id is left on the current active,
+    /// matching what the shell will keep. An empty entry is a silent cancel (no
+    /// create). Always exits add mode (no-op + safe if already exited, so
+    /// Enter → blur does not double-create).
     /// </summary>
     [RelayCommand]
     private void CommitCreate()
@@ -206,7 +231,10 @@ public partial class ManageProfilesViewModel : ObservableObject
         }
 
         var created = _profiles.CreateProfile(name);
-        _activeProfileId = created.Id;
+        if (!_steam.IsGameRunning())
+        {
+            _activeProfileId = created.Id;
+        }
         Refresh();
     }
 

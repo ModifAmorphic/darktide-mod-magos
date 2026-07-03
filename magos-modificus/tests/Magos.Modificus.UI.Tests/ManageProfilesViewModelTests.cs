@@ -17,10 +17,12 @@ public sealed class ManageProfilesViewModelTests
     private static ManageProfilesViewModel Build(
         FakeProfileService profiles,
         FakeDialogService? dialogs = null,
+        FakeSteamService? steam = null,
         Guid? initialActive = null)
     {
         dialogs ??= new FakeDialogService();
-        return new ManageProfilesViewModel(profiles, dialogs, initialActive);
+        steam ??= new FakeSteamService { Running = false };
+        return new ManageProfilesViewModel(profiles, dialogs, steam, initialActive);
     }
 
     private static ProfileSummary Profile(string name) =>
@@ -331,6 +333,30 @@ public sealed class ManageProfilesViewModelTests
         Assert.Equal(newRow.Id, vm.ActiveProfileId);
         Assert.True(newRow.IsActive);
         Assert.False(Row(vm, "Alpha").IsActive);
+    }
+
+    [Fact]
+    public void CommitCreate_while_running_creates_the_profile_but_leaves_active_on_the_current_profile()
+    {
+        // The dialog-side half of the create-while-running gate: the profile is created
+        // (it appears in the list), but create-sets-active consults the same running
+        // state the shell's CanChangeActiveProfile gate reads, so the marker stays on the
+        // current active instead of jumping to the new profile. This is the VM-side pin
+        // for the gap that let the divergence ship (the shell-side test already exists);
+        // the not-running branch is pinned by CommitCreate_adds_the_profile_and_makes_it_active.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var steam = new FakeSteamService { Running = true };
+        var vm = Build(profiles, steam: steam, initialActive: a.Id);
+        vm.StartCreateCommand.Execute(null);
+        vm.NewProfileName = "Bravo";
+
+        vm.CommitCreateCommand.Execute(null); // Enter
+
+        Assert.Contains("Bravo", profiles.CreatedNames); // created...
+        Assert.Equal(a.Id, vm.ActiveProfileId);          // ...but active stays on Alpha
+        Assert.True(Row(vm, "Alpha").IsActive);          // marker held
+        Assert.False(Row(vm, "Bravo").IsActive);         // new row not marked
     }
 
     [Fact]

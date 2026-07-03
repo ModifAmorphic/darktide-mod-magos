@@ -209,4 +209,68 @@ public sealed class ShellViewModelTests
 
         Assert.Equal(a.Id, vm.SelectedProfile?.Id);
     }
+
+    // ---- create-in-dialog respects switch-blocked-while-running ------------
+
+    [Fact]
+    public async Task ManageProfiles_while_not_running_applies_the_dialog_reported_active_id()
+    {
+        // Create while the game is stopped → the new profile becomes active
+        // (the dialog's desired result is applied: current not-running gate).
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
+        var profiles = TestDoubles.Profiles(a, b);
+        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
+        var dialogs = new FakeDialogService { ManageProfilesResult = b.Id };
+        var steam = new FakeSteamService { Running = false };
+
+        var vm = Build(profiles, appState, dialogs, steam);
+        await vm.ManageProfilesCommand.ExecuteAsync(null);
+
+        Assert.Equal(b.Id, vm.SelectedProfile?.Id);
+        Assert.Equal(b.Id, appState.ActiveProfileId);
+    }
+
+    [Fact]
+    public async Task ManageProfiles_while_running_leaves_active_unchanged_when_dialog_creates_a_profile()
+    {
+        // Create while the game runs → the profile is created (present in the
+        // list) but the active-change gate blocks making it active: the current
+        // active stays put. Same gate the dropdown switch respects.
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
+        var profiles = TestDoubles.Profiles(a, b);
+        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
+        var dialogs = new FakeDialogService { ManageProfilesResult = b.Id };
+        var steam = new FakeSteamService { Running = true };
+
+        var vm = Build(profiles, appState, dialogs, steam);
+        await vm.ManageProfilesCommand.ExecuteAsync(null);
+
+        Assert.Equal(a.Id, vm.SelectedProfile?.Id);     // unchanged — gate held
+        Assert.Equal(a.Id, appState.ActiveProfileId);   // not persisted to b
+        Assert.Contains(b, vm.Profiles);                // but the profile exists
+    }
+
+    [Fact]
+    public async Task ManageProfiles_while_running_still_falls_back_when_the_active_profile_is_deleted()
+    {
+        // Delete-of-active is a forced recovery (the current selection is gone),
+        // so it bypasses the running gate — the pointer moves to the fallback.
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var b = new ProfileSummary(Guid.NewGuid(), "Bravo");
+        var profiles = TestDoubles.Profiles(a, b);
+        var appState = new FakeAppStateStore { ActiveProfileId = a.Id };
+        var dialogs = new FakeDialogService { ManageProfilesResult = b.Id };
+        var steam = new FakeSteamService { Running = true };
+
+        var vm = Build(profiles, appState, dialogs, steam);
+        // Simulate the dialog deleting the active profile (a) then reporting the
+        // fallback (b) — the next ListProfiles call will no longer see a.
+        profiles.DeleteProfile(a.Id);
+        await vm.ManageProfilesCommand.ExecuteAsync(null);
+
+        Assert.Equal(b.Id, vm.SelectedProfile?.Id);     // fell back to b
+        Assert.Equal(b.Id, appState.ActiveProfileId);
+    }
 }
