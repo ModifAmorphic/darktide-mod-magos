@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Magos.Modificus.UI.Localization;
 
 namespace Magos.Modificus.UI.ViewModels;
 
@@ -14,12 +16,17 @@ namespace Magos.Modificus.UI.ViewModels;
 /// in place after a successful rename (avoids a full list rebuild, so focus /
 /// scroll position are not disturbed). <see cref="IsEditing"/> +
 /// <see cref="EditText"/> drive the inline rename TextBox; <see cref="IsActive"/>
-/// drives the ● marker; <see cref="IsDeleteEnabled"/> drives the trash button's
-/// enabled state (the active profile is locked while Darktide runs, read from the
-/// session's authority by the parent dialog).
+/// drives the active marker (drawn <c>&lt;Ellipse&gt;</c>, no glyph);
+/// <see cref="IsDeleteEnabled"/> drives the trash button's enabled state (the
+/// active profile is locked while Darktide runs, read from the session's
+/// authority by the parent dialog). <see cref="DeleteTooltip"/> is localized +
+/// re-resolves on a culture change (the parent dialog calls
+/// <see cref="RefreshTooltip"/> when the LocalizationService flips).
 /// </remarks>
 public partial class ProfileItemViewModel : ObservableObject
 {
+    private readonly LocalizationService _localization;
+
     /// <summary>The profile's stable identity (unchanged across renames).</summary>
     public Guid Id { get; }
 
@@ -27,7 +34,7 @@ public partial class ProfileItemViewModel : ObservableObject
     [ObservableProperty]
     private string _name;
 
-    /// <summary>Whether this row is the active profile (drives the ● marker).</summary>
+    /// <summary>Whether this row is the active profile (drives the active marker).</summary>
     [ObservableProperty]
     private bool _isActive;
 
@@ -47,12 +54,12 @@ public partial class ProfileItemViewModel : ObservableObject
 
     /// <summary>
     /// The trash button tooltip: the normal "Delete", or the lock explanation when
-    /// this row is the active profile held while Darktide runs. Derived from
-    /// <see cref="IsDeleteEnabled"/> so it tracks the gate automatically.
+    /// this row is the active profile held while Darktide runs. Localized + derived
+    /// from <see cref="IsDeleteEnabled"/> so it tracks the gate automatically.
     /// </summary>
     public string DeleteTooltip => IsDeleteEnabled
-        ? "Delete"
-        : "Can't delete the active profile while Darktide is running.";
+        ? _localization["ManageProfiles_DeleteTooltip"]
+        : _localization["ManageProfiles_DeleteLockedTooltip"];
 
     /// <summary>
     /// The in-flight rename value. Pre-filled from <see cref="Name"/> on edit
@@ -61,9 +68,17 @@ public partial class ProfileItemViewModel : ObservableObject
     [ObservableProperty]
     private string _editText = string.Empty;
 
-    public ProfileItemViewModel(Guid id, string name)
+    public ProfileItemViewModel(Guid id, string name, LocalizationService localization)
     {
         Id = id;
         _name = name;
+        _localization = localization;
     }
+
+    /// <summary>
+    /// Re-fires the property-changed event for <see cref="DeleteTooltip"/> so its
+    /// binding re-resolves after a UI culture switch. Called by the parent dialog
+    /// when the LocalizationService raises its culture-changed event.
+    /// </summary>
+    public void RefreshTooltip() => OnPropertyChanged(nameof(DeleteTooltip));
 }

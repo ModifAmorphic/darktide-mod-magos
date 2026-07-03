@@ -29,11 +29,14 @@ Requirements, architecture, and technology choices are made fresh.
 
 - **`main`** — production. Enginseer (the injected modding runtime + launcher) is
   merged as the production seed; Magos Modificus has the backend libraries
-  implemented (Phases 1–2) and the Phase 3 Track A UI in progress: the app shell
-  + profile management (dropdown switch, persisted active profile, create/rename
- /delete dialog, switch-blocked-while-running) are wired (milestones 1–2);
-  mod-list UI (Track B) + Launch behavior (Track C) are still pending, and the
-  Launcher is a stub (Phase 5).
+  implemented (Phases 1–2) and the Phase 3 UI under construction: Track A (the app
+  shell + profile management: dropdown switch, persisted active profile,
+  create/rename/delete dialog, switch-blocked-while-running) and Track D (global
+  Preferences: theme + font scale + language, with the i18n infrastructure:
+  `Strings.resx` + `LocalizationService` for dynamic culture switching, all Track
+  A UI strings backfilled to resource keys) are wired; mod-list UI (Track B) +
+  Launch behavior (Track C) are still pending, and the Launcher is a stub
+  (Phase 5).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -66,8 +69,11 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   magos-modificus.sln   solution root (classic .sln)
   Directory.Build.props  shared MSBuild props (net10.0, nullable, implicit usings)
   ui/                   Magos.Modificus.UI — the Avalonia executable + DI composition root
-                          (Phase 3 Track A: shell + profile management — dropdown switch,
-                          persisted active profile, create/rename/delete dialog)
+                          (Phase 3 Track A: shell + profile management: dropdown switch,
+                          persisted active profile, create/rename/delete dialog;
+                          Phase 3 Track D: global Preferences (theme + font scale + language)
+                          via `IPreferencesService` + the i18n infrastructure: `Strings.resx`
+                          + `LocalizationService` for dynamic culture switching)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
@@ -171,14 +177,17 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   (Phase 1: GitHub Releases client), **Enginseer-client** (Phase 1: the launch
   façade), **SharedMods** (Phase 2: shared mod store + version-policy model +
   allocation resolution). **General** carries cross-cutting infra: logging,
-  `ConfigLoader`, and `AppStateStore` (runtime app-state: the active-profile id,
-  persisted to a separate `app-state.json`, not `MagosConfig`). **Phase 3 Track A
-  UI** (the shell + profile management: dropdown switch, persisted active profile,
-  create/rename/delete dialog) is wired, with an `IProfileSession` (ui/) as the
-  single authority for the active profile, the switch-block gate, and the live
-  running-state (polled). Next: Track D (Preferences + i18n), then B (mod-list)
-  and C (launch); the **Launcher** is a stub (Phase 5). See
-  `docs/architecture/MAGOS-MODIFICUS.md`.
+  `ConfigLoader` (load + `Save` write-back for Preferences), and `AppStateStore`
+  (runtime app-state: the active-profile id, persisted to a separate
+  `app-state.json`, not `MagosConfig`). **Phase 3 Track A UI** (the shell + profile
+  management: dropdown switch, persisted active profile, create/rename/delete
+  dialog) is wired, with an `IProfileSession` (ui/) as the single authority for
+  the active profile, the switch-block gate, and the live running-state (polled).
+  **Phase 3 Track D** (global Preferences: theme + font scale + language, plus
+  the i18n infrastructure: `Strings.resx` + `LocalizationService` for dynamic
+  culture switching, all Track A UI strings backfilled to resource keys) is
+  wired. Next: Track B (mod-list) and Track C (launch); the **Launcher** is a
+  stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
 - **CI** (`magos-build.yml`) is scoped to `magos-modificus/**` + the workflow
   file, matrixed on Windows + Ubuntu; gates on build + tests.
 

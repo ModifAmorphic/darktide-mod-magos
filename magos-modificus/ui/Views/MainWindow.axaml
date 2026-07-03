@@ -4,23 +4,23 @@
         xmlns:profiles="using:Magos.Modificus.Profiles"
         x:Class="Magos.Modificus.UI.Views.MainWindow"
         x:DataType="vm:ShellViewModel"
-        Title="Magos Modificus"
+        Title="{ReflectionBinding [App_Title], Source={StaticResource Loc}}"
         Width="960" Height="640"
         MinWidth="720" MinHeight="480"
         WindowStartupLocation="CenterScreen">
 
   <Grid RowDefinitions="Auto,*,Auto">
 
-    <!-- Top bar: app title · profile dropdown · Manage… · Launch Darktide -->
+    <!-- Top bar: app title · profile dropdown · Manage… · Preferences… · Launch Darktide -->
     <Border Grid.Row="0"
             BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
             BorderThickness="0,0,0,1"
             Padding="20,12">
-      <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
 
         <!-- App title (left) -->
         <TextBlock Grid.Column="0"
-                   Text="Magos Modificus"
+                   Text="{ReflectionBinding [App_Title], Source={StaticResource Loc}}"
                    FontSize="18" FontWeight="SemiBold"
                    VerticalAlignment="Center"
                    Margin="0,0,24,0" />
@@ -33,7 +33,7 @@
                     SelectedItem="{Binding SelectedProfile}"
                     IsEnabled="{Binding CanSwitchProfile}"
                     ToolTip.Tip="{Binding ProfileSwitchTooltip}"
-                    PlaceholderText="No profile"
+                    PlaceholderText="{ReflectionBinding [Profile_DropdownPlaceholder], Source={StaticResource Loc}}"
                     MinWidth="180">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="profiles:ProfileSummary">
@@ -42,7 +42,7 @@
             </ComboBox.ItemTemplate>
           </ComboBox>
           <Button Command="{Binding ManageProfilesCommand}"
-                  ToolTip.Tip="Manage profiles…"
+                  ToolTip.Tip="{ReflectionBinding [ManageProfiles_ButtonTooltip], Source={StaticResource Loc}}"
                   MinWidth="36">
             <!-- Material "settings" gear (24x24 source): drawn geometry,
                  so it renders identically everywhere and inherits the
@@ -54,9 +54,25 @@
           </Button>
         </StackPanel>
 
-        <!-- Launch Darktide (right) -->
+        <!-- Preferences… (right, next to Launch) -->
         <Button Grid.Column="3"
-                Content="Launch Darktide"
+                Command="{Binding OpenPreferencesCommand}"
+                ToolTip.Tip="{ReflectionBinding [Preferences_ButtonTooltip], Source={StaticResource Loc}}"
+                MinWidth="36"
+                VerticalAlignment="Center"
+                Margin="0,0,8,0">
+          <!-- Material "tune"/"sliders" icon (24x24 source): drawn geometry,
+               inherits the button foreground. Chosen to distinguish Preferences
+               (sliders) from the Manage-profiles gear next to it. -->
+          <Path Width="16" Height="16" Stretch="Uniform"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
+                Fill="{Binding $parent[Button].Foreground}"
+                Data="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z" />
+        </Button>
+
+        <!-- Launch Darktide (right) -->
+        <Button Grid.Column="4"
+                Content="{ReflectionBinding [Launch_Button], Source={StaticResource Loc}}"
                 Command="{Binding LaunchCommand}"
                 VerticalAlignment="Center" />
       </Grid>
@@ -64,7 +80,7 @@
 
     <!-- Main area: the mod list (dominant, full width). Empty state until Track B. -->
     <Panel Grid.Row="1">
-      <TextBlock Text="Select or create a profile to manage its mods."
+      <TextBlock Text="{ReflectionBinding [Shell_NoProfileMessage], Source={StaticResource Loc}}"
                  IsVisible="{Binding !HasSelectedProfile}"
                  HorizontalAlignment="Center"
                  VerticalAlignment="Center"

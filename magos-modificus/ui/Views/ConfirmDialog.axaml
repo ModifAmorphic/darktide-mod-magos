@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Magos.Modificus.UI.Views.ConfirmDialog"
-        Title="Confirm"
+        Title="{ReflectionBinding [Confirm_Title], Source={StaticResource Loc}}"
         Width="420" MinWidth="320"
         SizeToContent="Height"
         CanResize="False"
@@ -15,10 +15,10 @@
       <StackPanel Orientation="Horizontal"
                   Spacing="8"
                   HorizontalAlignment="Right">
-        <Button Content="Cancel"
+        <Button Content="{ReflectionBinding [Confirm_CancelButton], Source={StaticResource Loc}}"
                 Click="Cancel_Click"
                 MinWidth="80" />
-        <Button Content="OK"
+        <Button Content="{ReflectionBinding [Confirm_OkButton], Source={StaticResource Loc}}"
                 Name="ConfirmButton"
                 Click="Confirm_Click"
                 Classes="accent"

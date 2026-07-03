@@ -7,5 +7,10 @@
   },
   "ProfilesBaseFolder": "<app-data>/Magos Modificus/profiles",
   "SharedModsFolder": "<app-data>/Magos Modificus/shared-mods",
-  "EnginseerRuntimeDir": "<app-data>/Magos Modificus/enginseer"
+  "EnginseerRuntimeDir": "<app-data>/Magos Modificus/enginseer",
+  "Preferences": {
+    "Theme": "System",
+    "FontScale": 1.0,
+    "Language": "en"
+  }
 }

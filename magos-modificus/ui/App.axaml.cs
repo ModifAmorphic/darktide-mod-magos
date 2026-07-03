@@ -2,6 +2,8 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Magos.Modificus.Config;
+using Magos.Modificus.UI.Localization;
+using Magos.Modificus.UI.Preferences;
 using Magos.Modificus.UI.ViewModels;
 using Magos.Modificus.UI.Views;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,8 +13,10 @@ namespace Magos.Modificus.UI;
 
 /// <summary>
 /// The Avalonia application. Also the startup log site: the composition root
-/// runs here, and config loading is logged so startup is observable. The shell
-/// view model resolves the backend services itself (no Phase-0 probe needed).
+/// runs here, config loading is logged so startup is observable, and the user's
+/// preferences (theme, font scale, language) are applied to the running app
+/// before the main window shows. The shell view model resolves the backend
+/// services itself (no Phase-0 probe needed).
 /// </summary>
 public class App : Application
 {
@@ -36,6 +40,17 @@ public class App : Application
             config.EnginseerRuntimeDir,
             config.Logging.Level,
             config.Logging.LogFile);
+
+        // Apply the user's preferences (theme, font scale, language) before any
+        // window shows, so the first paint already reflects them. Swaps the XAML
+        // resource placeholder for the real DI singleton, so every view's
+        // {Binding [Key], Source={StaticResource Loc}} resolves through the live
+        // service (culture switches refresh the whole UI through INPC).
+        var localization = services.GetRequiredService<LocalizationService>();
+        Resources["Loc"] = localization;
+        var prefs = config.Preferences;
+        services.GetRequiredService<IPreferencesService>()
+            .ApplyAndPersist(prefs.Theme, prefs.FontScale, prefs.Language);
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

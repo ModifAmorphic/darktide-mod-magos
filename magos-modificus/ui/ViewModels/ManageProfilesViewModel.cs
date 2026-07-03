@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.UI.Dialogs;
+using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Session;
 
 namespace Magos.Modificus.UI.ViewModels;
@@ -34,41 +35,59 @@ namespace Magos.Modificus.UI.ViewModels;
 /// session's live state so the trash flips the moment the game starts or stops.
 /// Because active changes are applied live through the session, the dialog returns
 /// nothing to the shell; the shell refreshes its list on close.</para>
+/// <para><b>Localized text is live:</b> the delete-confirm title + message resolve
+/// from <see cref="LocalizationService"/>, so a language switch in the Preferences
+/// dialog refreshes the next delete prompt. The per-row <c>DeleteTooltip</c> is
+/// localized at the row VM, which re-fires on the same culture-change event.</para>
 /// </remarks>
 public partial class ManageProfilesViewModel : ObservableObject
 {
     private readonly IProfileService _profiles;
     private readonly IDialogService _dialogs;
     private readonly IProfileSession _session;
+    private readonly LocalizationService _localization;
 
     /// <param name="profiles">The profile service (CRUD).</param>
     /// <param name="dialogs">The dialog seam, used for the delete confirmation.</param>
     /// <param name="session">The active-profile authority. The marker reads its
     /// active id; the trash enable-state reads <see cref="IProfileSession.CanDeleteProfile"/>;
     /// create + delete-of-active route active changes through it.</param>
+    /// <param name="localization">The localization service, used for the delete-confirm
+    /// title + message (localized) + handed to each row VM so its tooltip re-resolves
+    /// on a culture change.</param>
     public ManageProfilesViewModel(
         IProfileService profiles,
         IDialogService dialogs,
-        IProfileSession session)
+        IProfileSession session,
+        LocalizationService localization)
     {
         _profiles = profiles;
         _dialogs = dialogs;
         _session = session;
+        _localization = localization;
 
         // The trash enable-state + active marker depend on the session's live state
         // (the polling timer can flip IsRunning while the dialog is open), so react to
         // its changes. Detached on window close (the session outlives this dialog).
         _session.PropertyChanged += OnSessionPropertyChanged;
+        // The delete-confirm message is localized; re-firing its key path on a
+        // culture change is unnecessary (it is read at delete time, not bound), but
+        // the per-row tooltips need to refresh, which the rows do themselves.
+        _localization.PropertyChanged += OnCultureChanged;
 
         Refresh();
     }
 
     /// <summary>
-    /// Unsubscribes from the session so this short-lived dialog VM is collectable
-    /// after its window closes (the session is a singleton that outlives the dialog).
-    /// Called by the manage-profiles window on close.
+    /// Unsubscribes from the session + localization so this short-lived dialog VM
+    /// is collectable after its window closes (both are singletons that outlive the
+    /// dialog). Called by the manage-profiles window on close.
     /// </summary>
-    public void Detach() => _session.PropertyChanged -= OnSessionPropertyChanged;
+    public void Detach()
+    {
+        _session.PropertyChanged -= OnSessionPropertyChanged;
+        _localization.PropertyChanged -= OnCultureChanged;
+    }
 
     /// <summary>
     /// Re-applies the session's active marker + delete-enable to the existing rows
@@ -82,6 +101,27 @@ public partial class ManageProfilesViewModel : ObservableObject
             or nameof(IProfileSession.ActiveProfileId))
         {
             ApplySessionState();
+        }
+    }
+
+    /// <summary>
+    /// The UI culture flipped (Preferences dialog). Each row's tooltip is derived
+    /// from the localization service, so prompt them to refresh.
+    /// </summary>
+    private void OnCultureChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(LocalizationService.Culture)
+            && e.PropertyName != "Item[]")
+        {
+            return;
+        }
+
+        // Force a re-resolve of each row's DeleteTooltip by toggling the
+        // backing flag through the public setter (no visible flip; the gate
+        // value is unchanged, only the derived tooltip re-evaluates).
+        foreach (var item in Items)
+        {
+            item.RefreshTooltip();
         }
     }
 
@@ -169,7 +209,8 @@ public partial class ManageProfilesViewModel : ObservableObject
     /// trash button's binding), so delete-of-active only proceeds when the game is
     /// stopped; <see cref="IProfileSession.ReconcileActive"/> then clears the active
     /// id (null) so the user explicitly picks the next. A non-active profile is
-    /// deletable anytime; deleting it does not touch the active.
+    /// deletable anytime; deleting it does not touch the active. The confirmation
+    /// title + message are localized.
     /// </summary>
     [RelayCommand]
     private async Task DeleteProfile(ProfileItemViewModel? item)
@@ -189,9 +230,10 @@ public partial class ManageProfilesViewModel : ObservableObject
         }
 
         var name = item.Name;
-        var confirmed = await _dialogs.ConfirmAsync(
-            "Delete profile",
-            $"Delete profile {name}? This removes its mod list and any local mod copies in mods/.");
+        var title = _localization["ManageProfiles_DeleteTitle"];
+        var message = _localization.Format("ManageProfiles_DeleteMessage", name);
+
+        var confirmed = await _dialogs.ConfirmAsync(title, message);
 
         if (!confirmed)
         {
@@ -288,7 +330,9 @@ public partial class ManageProfilesViewModel : ObservableObject
     /// (read from <see cref="IProfileSession.ActiveProfileId"/>) and setting each
     /// row's delete-enable from <see cref="IProfileSession.CanDeleteProfile"/>, so
     /// the marker renders on the session's authoritative active profile and the
-    /// active row's trash disables while Darktide runs.
+    /// active row's trash disables while Darktide runs. Each row is handed the
+    /// <see cref="LocalizationService"/> so its delete tooltip localizes + refreshes
+    /// on a culture change.
     /// </summary>
     private void Refresh()
     {
@@ -296,7 +340,10 @@ public partial class ManageProfilesViewModel : ObservableObject
         Items = _profiles.ListProfiles()
             .Select(s =>
             {
-                var item = new ProfileItemViewModel(s.Id, s.Name) { IsActive = s.Id == activeId };
+                var item = new ProfileItemViewModel(s.Id, s.Name, _localization)
+                {
+                    IsActive = s.Id == activeId,
+                };
                 item.IsDeleteEnabled = _session.CanDeleteProfile(s.Id);
                 return item;
             })

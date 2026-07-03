@@ -28,4 +28,13 @@ public interface IDialogService
     /// returned-active-id for the shell to gate.
     /// </summary>
     Task ShowManageProfilesAsync();
+
+    /// <summary>
+    /// Opens the Preferences modal dialog (theme / font scale / language). Each
+    /// change applies immediately through <c>IPreferencesService</c> (which also
+    /// persists), so by the time this completes the running app + the persisted
+    /// config already reflect the user's choices. The caller has nothing to do
+    /// on completion.
+    /// </summary>
+    Task ShowPreferencesAsync();
 }
