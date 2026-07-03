@@ -13,6 +13,17 @@
     close button is a drawn X Path (no Unicode glyph, per AGENTS.md) whose Click
     closes the owning window.
 
+    The close Button itself carries WindowDecorationProperties.ElementRole="User".
+    On Windows, the whole TitleBar region is claimed for non-client drag handling
+    (HTCAPTION) during WM_NCHITTEST; without an interactive role the button sits
+    inside that caption region and never receives pointer input (no hover, no
+    press, no click). ElementRole="User" marks it as an interactive element that
+    should receive input even though it overlaps the chrome (Avalonia 12.x maps
+    this to HTCLIENT, so the button gets normal client pointer events). "User"
+    rather than "CloseButton" so the managed Close_Click handler runs identically
+    on every platform (CloseButton maps to HTCLOSE on Win32, which closes via the
+    system command and bypasses Click).
+
     Height is content-driven, not a fixed pixel value: the title TextBlock
     inherits Window.FontSize (cascaded from the AppFontSize resource), so the bar
     grows with the user's font scale. The close button stretches vertically to
@@ -61,6 +72,7 @@
                  VerticalAlignment="Center" />
       <Button Grid.Column="1"
               Classes="captionClose"
+              WindowDecorationProperties.ElementRole="User"
               Click="Close_Click"
               Width="46"
               VerticalAlignment="Stretch"
