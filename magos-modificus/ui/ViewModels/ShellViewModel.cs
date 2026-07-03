@@ -16,7 +16,10 @@ namespace Magos.Modificus.UI.ViewModels;
 /// <see cref="IAppStateStore"/>), switching is blocked while Darktide runs, and
 /// "Manage profiles…" opens a CRUD dialog. The shell is the single owner of the
 /// active <see cref="SelectedProfile"/> + its persistence; the dialog reports a
-/// requested active id and the shell applies it on close.
+/// requested active id and the shell applies it on close — gated by
+/// <see cref="CanChangeActiveProfile"/> so the active profile only changes when
+/// the game isn't running, whether the request comes from the dropdown or the
+/// dialog.
 /// </summary>
 /// <remarks>
 /// Track C (Launch behavior) and Track B (mod-list contents) are not wired here
@@ -121,7 +124,25 @@ public partial class ShellViewModel : ObservableObject
     /// game must not be running. Switching the active (staged) root while the
     /// game runs is disallowed.
     /// </summary>
-    public bool CanSwitchProfile => !IsGameRunning && HasProfiles;
+    public bool CanSwitchProfile => CanChangeActiveProfile && HasProfiles;
+
+    /// <summary>
+    /// The central active-profile-change gate: the active (staged) profile only
+    /// changes when Darktide isn't running, regardless of how the change is
+    /// requested. Both active-change paths consult this single predicate — the
+    /// dropdown switch (via <see cref="CanSwitchProfile"/>'s <c>IsEnabled</c>)
+    /// and the dialog's requested active change (applied in
+    /// <see cref="RefreshProfiles"/>). So a create-in-dialog while the game runs
+    /// still creates the profile, it just isn't made active until the game stops.
+    /// </summary>
+    /// <remarks>
+    /// Delete-of-active is the one forced change that bypasses this gate: the
+    /// current selection no longer exists, so the pointer must move regardless of
+    /// running state (the running game already launched with its staged root).
+    /// <see cref="RefreshProfiles"/> detects that by the current selection being
+    /// absent from the refreshed list — not a voluntary switch.
+    /// </remarks>
+    private bool CanChangeActiveProfile => !IsGameRunning;
 
     /// <summary>
     /// Tooltip explaining the dropdown's current enabled state (the block reason
@@ -159,16 +180,35 @@ public partial class ShellViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Reloads the profile list and re-applies the requested active id, falling
-    /// back to the current selection when the requested id is absent (deleted
-    /// without an active change) so the dropdown stays on a sensible row.
+    /// Reloads the profile list and re-applies the requested active id through
+    /// the central <see cref="CanChangeActiveProfile"/> gate. When the game is
+    /// running, a voluntary change (create-in-dialog → make the new one active)
+    /// is blocked: the new profile exists in the list, but the current active
+    /// stays put. When not running, the requested id is applied (falling back to
+    /// the current selection when the dialog reports <c>null</c> — rename / no-op).
     /// </summary>
+    /// <remarks>
+    /// Delete-of-active forces a recovery that bypasses the gate: the current
+    /// selection is gone from the refreshed list, so the pointer must move. The
+    /// dialog reports the fallback (first remaining / <c>null</c>); we apply it
+    /// regardless of running state because there is nothing sensible to "keep".
+    /// </remarks>
     private void RefreshProfiles(Guid? requestedActiveId)
     {
         Profiles = _profileService.ListProfiles();
 
-        var target = requestedActiveId ?? SelectedProfile?.Id;
-        SelectedProfile = target is Guid id
+        var current = SelectedProfile;
+        var currentStillExists = current is { } c && Profiles.Any(p => p.Id == c.Id);
+
+        // Voluntary switch while the game runs is blocked (keep current). A
+        // forced fallback (current deleted) is not a switch — apply the request.
+        var blocked = !CanChangeActiveProfile && currentStillExists;
+
+        var targetId = blocked
+            ? current!.Id
+            : requestedActiveId ?? current?.Id;
+
+        SelectedProfile = targetId is Guid id
             ? Profiles.FirstOrDefault(p => p.Id == id)
             : null;
     }

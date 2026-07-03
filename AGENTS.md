@@ -196,6 +196,15 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
 - **Conventional Commits** (`type(scope): subject`); commit freely on feature
   branches. Branch + PR flow; no unreviewed merges to `main`.
 - Don't commit secrets, the game binary, or anything under `_local/`.
+- **UI icons + decorative markers are drawn geometry, not Unicode glyphs.** In the
+  Avalonia UI, icons are `<Path Data="…">` (standard Material/Fluent-style path
+  data, dependency-free, themed via foreground) and dots/markers are `<Ellipse>`,
+  never `✏`/`🗑`/`⚙`/`●` symbol/emoji glyphs (which render unreliably across
+  fonts/platforms). Scoped to icons/markers; prose punctuation is covered by the
+  writing convention below.
+- **No em-dashes in prose** (code comments, docs, commits, chat). Em-dashes read
+  as an AI-generated tell; use a comma, colon, parentheses, semicolon, or period
+  instead.
 
 ## Naming convention
 

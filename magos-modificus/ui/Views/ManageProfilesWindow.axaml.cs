@@ -6,21 +6,22 @@ using Magos.Modificus.UI.ViewModels;
 namespace Magos.Modificus.UI.Views;
 
 /// <summary>
-/// The "Manage profiles…" modal dialog (editable-list pattern). Its
-/// <c>DataContext</c> is a <see cref="ManageProfilesViewModel"/> (set by
-/// <see cref="Dialogs.DialogService"/>). CRUD is applied immediately per action
-/// (✏ inline rename / 🗑 delete-confirm / "+ New profile" create); "Done" closes
-/// the window.
-/// </summary>
-/// <remarks>
-/// The per-row ✏ / 🗑 buttons use code-behind <c>Click</c> handlers (rather than
-/// a compiled binding up to the parent VM) because reaching the parent
-/// <c>DataContext</c> from inside an <c>ItemTemplate</c> is the one non-trivial
-/// binding here — the handlers simply resolve the row from
-/// <see cref="Avalonia.Controls.Button.DataContext"/> and forward to the matching
-/// VM command. The inline-edit key gestures (Enter commit / Esc cancel) +
-/// commit-on-blur live here too: they are pure view mechanics over the VM's
-/// commit/cancel commands. All state + CRUD stays in the (unit-tested) VM.
+    /// The "Manage profiles…" modal dialog (editable-list pattern). Its
+    /// <c>DataContext</c> is a <see cref="ManageProfilesViewModel"/> (set by
+    /// <see cref="Dialogs.DialogService"/>). CRUD is applied immediately per action
+    /// (pencil inline rename / trash delete-confirm / "+ New profile" create); "Done"
+    /// closes the window.
+    /// </summary>
+    /// <remarks>
+    /// The per-row pencil / trash buttons use code-behind <c>Click</c> handlers
+    /// (rather than a compiled binding up to the parent VM) because reaching the
+    /// parent <c>DataContext</c> from inside an <c>ItemTemplate</c> is the one
+    /// non-trivial binding here — the handlers simply resolve the row from
+    /// <see cref="Avalonia.Controls.Button.DataContext"/> and forward to the
+    /// matching VM command. The inline-edit key gestures (Enter commit / Esc
+    /// cancel) + commit-on-blur live here too: they are pure view mechanics over
+    /// the VM's commit/cancel commands. All state + CRUD stays in the
+    /// (unit-tested) VM.
 /// </remarks>
 public partial class ManageProfilesWindow : Window
 {

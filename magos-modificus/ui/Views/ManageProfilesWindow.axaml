@@ -13,7 +13,7 @@
 
   <Grid x:Name="Root" RowDefinitions="*,Auto" Margin="16">
 
-    <!-- Editable profile list: each row = active marker · name/rename · ✏ · 🗑 -->
+    <!-- Editable profile list: each row = active marker · name/rename · pencil · trash -->
     <Border Grid.Row="0"
             BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
             BorderThickness="1"
@@ -26,13 +26,12 @@
               <DataTemplate x:DataType="vm:ProfileItemViewModel">
                 <Grid ColumnDefinitions="20,*,Auto,Auto" Margin="4,3">
 
-                  <!-- active marker (●) -->
-                  <TextBlock Grid.Column="0"
-                             Text="●"
-                             FontSize="12"
-                             Foreground="#22A06B"
-                             VerticalAlignment="Center"
-                             IsVisible="{Binding IsActive}" />
+                  <!-- active marker -->
+                  <Ellipse Grid.Column="0"
+                           Width="9" Height="9"
+                           Fill="#22A06B"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding IsActive}" />
 
                   <!-- name (display; hidden while editing) -->
                   <TextBlock Grid.Column="1"
@@ -48,24 +47,37 @@
                            KeyDown="EditBox_KeyDown"
                            LostFocus="EditBox_LostFocus" />
 
-                  <!-- ✏ rename (hidden while editing) -->
+                  <!-- pencil rename (hidden while editing) -->
                   <Button Grid.Column="2"
-                          Content="✏"
                           ToolTip.Tip="Rename"
                           Click="Rename_Click"
                           CommandParameter="{Binding}"
                           MinWidth="36" Margin="6,0,0,0"
                           VerticalAlignment="Center"
-                          IsVisible="{Binding !IsEditing}" />
+                          IsVisible="{Binding !IsEditing}">
+                    <!-- Material "create" pencil (24x24 source) — drawn geometry,
+                         so it renders identically everywhere and inherits the
+                         button foreground (theme + pressed states). -->
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                  </Button>
 
-                  <!-- 🗑 delete -->
+                  <!-- trash delete -->
                   <Button Grid.Column="3"
-                          Content="🗑"
                           ToolTip.Tip="Delete"
                           Click="Delete_Click"
                           CommandParameter="{Binding}"
                           MinWidth="36" Margin="6,0,0,0"
-                          VerticalAlignment="Center" />
+                          VerticalAlignment="Center">
+                    <!-- Material "delete" trash can (24x24 source) — drawn
+                         geometry, inherits the button foreground. -->
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                  </Button>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
