@@ -1,0 +1,115 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Magos.Modificus.UI.ViewModels"
+        xmlns:behaviors="using:Magos.Modificus.UI.Behaviors"
+        x:Class="Magos.Modificus.UI.Views.ManageProfilesWindow"
+        x:DataType="vm:ManageProfilesViewModel"
+        Title="Manage profiles"
+        Width="520" Height="440"
+        MinWidth="440" MinHeight="360"
+        CanResize="True"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+
+  <Grid x:Name="Root" RowDefinitions="*,Auto" Margin="16">
+
+    <!-- Editable profile list: each row = active marker · name/rename · pencil · trash -->
+    <Border Grid.Row="0"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+            BorderThickness="1"
+            CornerRadius="4">
+      <ScrollViewer Padding="4">
+        <StackPanel>
+
+          <ItemsControl ItemsSource="{Binding Items}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ProfileItemViewModel">
+                <Grid ColumnDefinitions="20,*,Auto,Auto" Margin="4,3">
+
+                  <!-- active marker -->
+                  <Ellipse Grid.Column="0"
+                           Width="9" Height="9"
+                           Fill="#22A06B"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding IsActive}" />
+
+                  <!-- name (display; hidden while editing) -->
+                  <TextBlock Grid.Column="1"
+                             Text="{Binding Name}"
+                             VerticalAlignment="Center"
+                             IsVisible="{Binding !IsEditing}" />
+
+                  <!-- inline rename (shown only while editing) -->
+                  <TextBox Grid.Column="1"
+                           Text="{Binding EditText, Mode=TwoWay}"
+                           IsVisible="{Binding IsEditing}"
+                           behaviors:FocusOnVisible.IsEnabled="True"
+                           KeyDown="EditBox_KeyDown"
+                           LostFocus="EditBox_LostFocus" />
+
+                  <!-- pencil rename (hidden while editing) -->
+                  <Button Grid.Column="2"
+                          ToolTip.Tip="Rename"
+                          Click="Rename_Click"
+                          CommandParameter="{Binding}"
+                          MinWidth="36" Margin="6,0,0,0"
+                          VerticalAlignment="Center"
+                          IsVisible="{Binding !IsEditing}">
+                    <!-- Material "create" pencil (24x24 source): drawn geometry,
+                         so it renders identically everywhere and inherits the
+                         button foreground (theme + pressed states). -->
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                  </Button>
+
+                  <!-- trash delete (disabled on the active row while Darktide runs) -->
+                  <Button Grid.Column="3"
+                          ToolTip.Tip="{Binding DeleteTooltip}"
+                          IsEnabled="{Binding IsDeleteEnabled}"
+                          Click="Delete_Click"
+                          CommandParameter="{Binding}"
+                          MinWidth="36" Margin="6,0,0,0"
+                          VerticalAlignment="Center">
+                    <!-- Material "delete" trash can (24x24 source): drawn
+                         geometry, inherits the button foreground. -->
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                  </Button>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <!-- "+ New profile" add row -->
+          <Button Content="+ New profile"
+                  Command="{Binding StartCreateCommand}"
+                  IsVisible="{Binding !IsAddingNew}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Left"
+                  Margin="4,8,4,3"
+                  MinHeight="32" />
+          <TextBox Text="{Binding NewProfileName, Mode=TwoWay}"
+                   PlaceholderText="New profile name…"
+                   IsVisible="{Binding IsAddingNew}"
+                   behaviors:FocusOnVisible.IsEnabled="True"
+                   KeyDown="AddBox_KeyDown"
+                   LostFocus="AddBox_LostFocus"
+                   Margin="4,8,4,3" />
+
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Done -->
+    <Button Grid.Row="1"
+            Content="Done"
+            HorizontalAlignment="Right"
+            Click="Done_Click"
+            MinWidth="96"
+            Margin="0,12,0,0" />
+  </Grid>
+</Window>

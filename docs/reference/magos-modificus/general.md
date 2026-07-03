@@ -1,7 +1,8 @@
 # General (`Magos.Modificus.General`) — reference
 
-> Cross-cutting infrastructure: structured logging, JSON config loading, and the
-> DI registration that wires both into the container. Status: implemented (Phase 0).
+> Cross-cutting infrastructure: structured logging, JSON config loading, runtime
+> app-state persistence, and the DI registration that wires all three into the
+> container. Status: implemented (Phase 0; app-state store added in Phase 3).
 
 The composition root (`magos-modificus/ui/MagosComposition.cs`) calls into this
 library first — before any domain library — to load `MagosConfig` and build the
@@ -65,6 +66,40 @@ public sealed class ConfigLoader : IConfigLoader
 - `DefaultConfigPath()` — `<LocalApplicationData>/Magos Modificus/config.json`
   (`%LOCALAPPDATA%` on Windows, `~/.local/share` on Linux).
 
+### `IAppStateStore` / `AppStateStore`
+
+Persists **runtime application state**: values that capture "where the app left
+off" rather than user system settings. Kept deliberately narrow: the only state
+today is the last-chosen active profile. A separate file (not `MagosConfig`)
+holds it so the settings schema stays pure (system settings vs. runtime state).
+
+```csharp
+public interface IAppStateStore
+{
+    Guid? ActiveProfileId { get; set; }   // set persists immediately
+}
+
+public sealed class AppStateStore : IAppStateStore
+{
+    public AppStateStore(string? path = null);
+    public string Path { get; }
+    public static string DefaultStatePath();
+}
+```
+
+- File: `<LocalApplicationData>/Magos Modificus/app-state.json`
+  (`{ "ActiveProfileId": "<guid>" | null }`), derived the same way
+  `ConfigLoader` derives its config path.
+- JSON is handled with `System.Text.Json` directly (read + write);
+  `Microsoft.Extensions.Configuration` is binding-oriented and read-only, the
+  wrong fit for a tiny writable state file.
+- **First-run safe:** a missing or corrupt file never throws; `get` just
+  returns `null`. Writes are best-effort (runtime state is non-critical; a
+  persistence failure is swallowed rather than crashing the app).
+- Used by `IProfileSession` (the active-profile authority) to restore the active
+  profile on construction and persist it on changes. The shell and the Manage
+  dialog read the active id through the session; they do not touch this store.
+
 ## DI registration
 
 ```csharp
@@ -83,10 +118,13 @@ DI itself needs them). It registers:
 - `AddLogging()` — wires `ILogger<T>` resolution through the factory.
 - `AddSingleton<IConfigLoader, ConfigLoader>()` — so a re-load is available if
   ever needed (the path is re-resolved to the default location).
+- `TryAddSingleton<IAppStateStore, AppStateStore>()`: the runtime app-state
+  store. `TryAdd` (not `Add`) so a test or host may pre-register an override
+  (e.g. an in-memory or temp-path store) before `AddGeneral` runs.
 
-There are no `TryAdd` seams here: `config` and `loggerFactory` are constructed
-objects passed in, not overridable from the container. Tests that want fakes
-construct their own `ServiceCollection`.
+`config` and `loggerFactory` are constructed objects passed in, not overridable
+from the container; `IAppStateStore` is the one seam here (overridable via
+pre-registration).
 
 ## Dependencies
 
@@ -99,8 +137,10 @@ construct their own `ServiceCollection`.
 ## Testing
 
 `Magos.Modificus.General.Tests` covers `ConfigLoader` (first-run-safe + JSON
-override binding), `LoggingBootstrap` (level parsing, truncation, file/dir
-creation), and the `AddGeneral` DI wiring.
+override binding), `AppStateStore` (round-trip + first-run + corrupt-file
+safety + the app-data default path), `LoggingBootstrap` (level parsing,
+truncation, file/dir creation), and the `AddGeneral` DI wiring (including the
+`TryAdd` `IAppStateStore` override).
 
 ```sh
 dotnet test magos-modificus/magos-modificus.sln -c Release

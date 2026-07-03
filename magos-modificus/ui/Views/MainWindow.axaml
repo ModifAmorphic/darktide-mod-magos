@@ -1,18 +1,92 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Magos.Modificus.UI.ViewModels"
+        xmlns:profiles="using:Magos.Modificus.Profiles"
         x:Class="Magos.Modificus.UI.Views.MainWindow"
-        x:DataType="vm:MainViewModel"
+        x:DataType="vm:ShellViewModel"
         Title="Magos Modificus"
-        Width="680" Height="440"
+        Width="960" Height="640"
+        MinWidth="720" MinHeight="480"
         WindowStartupLocation="CenterScreen">
-    <ScrollViewer Padding="20">
-        <StackPanel Orientation="Vertical" Spacing="8">
-            <TextBlock Text="Magos Modificus"
-                       FontSize="24" FontWeight="Bold" Margin="0,0,0,4" />
-            <TextBlock Text="Phase 0 scaffold"
-                       FontSize="13" Opacity="0.6" Margin="0,0,0,12" />
-            <TextBlock Text="{Binding ConfigSummary}" FontFamily="monospace" TextWrapping="Wrap" />
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- Top bar: app title · profile dropdown · Manage… · Launch Darktide -->
+    <Border Grid.Row="0"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="20,12">
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+
+        <!-- App title (left) -->
+        <TextBlock Grid.Column="0"
+                   Text="Magos Modificus"
+                   FontSize="18" FontWeight="SemiBold"
+                   VerticalAlignment="Center"
+                   Margin="0,0,24,0" />
+
+        <!-- Profile controls: dropdown + Manage… (compact, infrequent UX) -->
+        <StackPanel Grid.Column="1"
+                    Orientation="Horizontal" Spacing="8"
+                    VerticalAlignment="Center">
+          <ComboBox ItemsSource="{Binding Profiles}"
+                    SelectedItem="{Binding SelectedProfile}"
+                    IsEnabled="{Binding CanSwitchProfile}"
+                    ToolTip.Tip="{Binding ProfileSwitchTooltip}"
+                    PlaceholderText="No profile"
+                    MinWidth="180">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="profiles:ProfileSummary">
+                <TextBlock Text="{Binding Name}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <Button Command="{Binding ManageProfilesCommand}"
+                  ToolTip.Tip="Manage profiles…"
+                  MinWidth="36">
+            <!-- Material "settings" gear (24x24 source): drawn geometry,
+                 so it renders identically everywhere and inherits the
+                 button foreground (theme + pressed states). -->
+            <Path Width="16" Height="16" Stretch="Uniform"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  Fill="{Binding $parent[Button].Foreground}"
+                  Data="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94 0 .31.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.21.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+          </Button>
         </StackPanel>
-    </ScrollViewer>
+
+        <!-- Launch Darktide (right) -->
+        <Button Grid.Column="3"
+                Content="Launch Darktide"
+                Command="{Binding LaunchCommand}"
+                VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+    <!-- Main area: the mod list (dominant, full width). Empty state until Track B. -->
+    <Panel Grid.Row="1">
+      <TextBlock Text="Select or create a profile to manage its mods."
+                 IsVisible="{Binding !HasSelectedProfile}"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center"
+                 Opacity="0.6" />
+    </Panel>
+
+    <!-- Status strip: game-running indicator -->
+    <Border Grid.Row="2"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+            BorderThickness="0,1,0,0"
+            Padding="20,6">
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <Ellipse Width="11" Height="11" VerticalAlignment="Center"
+                 Fill="#22A06B"
+                 IsVisible="{Binding IsGameRunning}" />
+        <Ellipse Width="11" Height="11" VerticalAlignment="Center"
+                 Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                 IsVisible="{Binding !IsGameRunning}" />
+        <TextBlock Text="{Binding GameRunningText}"
+                   FontSize="12" Opacity="0.8"
+                   VerticalAlignment="Center" />
+      </StackPanel>
+    </Border>
+  </Grid>
 </Window>
