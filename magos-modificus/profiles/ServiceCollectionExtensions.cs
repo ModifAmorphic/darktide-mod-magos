@@ -20,8 +20,8 @@ public static class ServiceCollectionExtensions
     /// later, DI-swappable without a UI change).
     /// </summary>
     /// <remarks>
-    /// Resolves <c>MagosConfig</c> + <c>ILogger&lt;&gt;</c> from the container
-    /// (both provided by <c>AddGeneral()</c> / <c>AddLogging()</c>).
+    /// Resolves <c>IConfigLoader</c> (the live config reader) + <c>ILogger&lt;&gt;</c>
+    /// from the container (both provided by <c>AddGeneral()</c> / <c>AddLogging()</c>).
     /// </remarks>
     public static IServiceCollection AddProfiles(this IServiceCollection services)
     {

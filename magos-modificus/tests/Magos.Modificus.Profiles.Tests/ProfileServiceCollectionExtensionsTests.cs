@@ -1,22 +1,20 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Magos.Modificus.Config;
+using Magos.Modificus.General;
 
 namespace Magos.Modificus.Profiles.Tests;
 
 /// <summary>
 /// Proves <c>AddProfiles()</c> registers <see cref="IProfileService"/> so it is
-/// resolvable from DI given its dependencies (<c>MagosConfig</c> + logging).
+/// resolvable from DI given its dependencies (<c>IConfigLoader</c> + logging).
 /// </summary>
 public sealed class ProfileServiceCollectionExtensionsTests
 {
     [Fact]
     public void AddProfiles_registers_resolvable_IProfileService()
     {
-        var config = MagosConfig.CreateDefault();
-
         var services = new ServiceCollection();
-        services.AddSingleton(config);
+        services.AddSingleton<IConfigLoader>(new FakeConfigLoader());
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.AddProfiles();
         using var provider = services.BuildServiceProvider();

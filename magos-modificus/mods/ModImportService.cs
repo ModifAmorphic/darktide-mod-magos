@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Microsoft.Extensions.Logging;
 
 namespace Magos.Modificus.Mods;
@@ -30,28 +31,26 @@ namespace Magos.Modificus.Mods;
 /// <para>
 /// Registered as a singleton (no per-request state). The single-UI-thread
 /// assumption holds, matching <see cref="ModRepository"/> +
-/// <c>ProfileService</c>.</para>
+/// <c>ProfileService</c>. The mods root folder is read live from
+/// <see cref="IConfigLoader"/> on each import, so a runtime folder change via
+/// the upcoming Settings window routes the next import to the new path.</para>
 /// </remarks>
 internal sealed class ModImportService : IModImportService
 {
     private const string ZipExtension = ".zip";
 
     private readonly IModRepository _repo;
-    private readonly string _modsFolder;
+    private readonly IConfigLoader _configLoader;
     private readonly ILogger<ModImportService> _logger;
 
     public ModImportService(
         IModRepository repo,
-        MagosConfig config,
+        IConfigLoader configLoader,
         ILogger<ModImportService> logger)
     {
         _repo = repo;
-        // ModsFolder is non-null by MagosConfig contract (defaults to
-        // <app-data>/mods). Directory.CreateDirectory is idempotent,
-        // first-import safe.
-        _modsFolder = config.ModsFolder;
+        _configLoader = configLoader;
         _logger = logger;
-        Directory.CreateDirectory(_modsFolder);
     }
 
     /// <inheritdoc />
@@ -75,6 +74,13 @@ internal sealed class ModImportService : IModImportService
                 $"Import source not found: '{sourcePath}'. Provide a folder or a .zip archive.", sourcePath);
         }
 
+        // One live snapshot for the whole import. ModsFolder is non-null by
+        // MagosConfig contract (defaults to <app-data>/mods); CreateDirectory
+        // is idempotent, first-import safe, and runs on the live path so a
+        // runtime folder change routes this import to the new dir.
+        var modsFolder = _configLoader.Load().ModsFolder;
+        Directory.CreateDirectory(modsFolder);
+
         // Confine modName to a single direct child of the mods root
         // before any filesystem op, even though the import target is now an
         // opaque UUID folder (not modName-derived). modName is user-editable
@@ -84,7 +90,7 @@ internal sealed class ModImportService : IModImportService
         // staging or confuse the untracked-by-name index. The explicit
         // separator check is cross-platform; GetFullPath then normalizes so the
         // prefix check is a real containment test (it also rejects a bare "..").
-        ValidateModName(modName);
+        ValidateModName(modName, modsFolder);
 
         // Resolve or create the container (the dedup unit). Untracked dedups by
         // the modName; Nexus/GitHub dedup by source identity.
@@ -130,9 +136,9 @@ internal sealed class ModImportService : IModImportService
         return _repo.FindBySource(source) ?? _repo.CreateContainer(source, modName);
     }
 
-    private void ValidateModName(string modName)
+    private static void ValidateModName(string modName, string modsFolder)
     {
-        var rootFull = Path.GetFullPath(_modsFolder);
+        var rootFull = Path.GetFullPath(modsFolder);
         var targetFull = Path.GetFullPath(Path.Combine(rootFull, modName));
         if (modName.IndexOf('/') >= 0
             || modName.IndexOf('\\') >= 0

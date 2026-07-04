@@ -1,7 +1,6 @@
 using Avalonia.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Magos.Modificus.Config;
 using Magos.Modificus.General;
 using Magos.Modificus.Integrations;
 using Magos.Modificus.Profiles;
@@ -30,18 +29,30 @@ public static class MagosComposition
     /// <summary>Builds and returns the application service provider.</summary>
     public static IServiceProvider Build()
     {
-        // 1. Load config (defaults + JSON overrides). Logging needs this first.
-        var config = new ConfigLoader().Load();
+        // 1. One config loader: used for the transient startup snapshot (to
+        //    build the logger) AND registered as the live-read IConfigLoader
+        //    singleton so every consumer re-reads the current disk state on
+        //    each operation (the config file is tiny; a startup cache would
+        //    only create staleness for the upcoming Settings window + mod-
+        //    repository relocation, which write config at runtime).
+        var loader = new ConfigLoader();
+
+        // The startup snapshot feeds the logger (logging config is a one-off;
+        // it does not change at runtime in v1).
+        var config = loader.Load();
 
         // 2. Build the structured logger (console + file, config-honored).
         var loggerFactory = LoggingBootstrap.CreateLoggerFactory(config);
 
         // 3. Compose services: General infra + every domain library + UI.
+        //    The same loader instance is registered as the IConfigLoader
+        //    singleton before AddGeneral (which TryAdd-skips its own default).
         //    AddMods() is called explicitly (and idempotently again inside
         //    AddProfiles()) so the repository is discoverable at the root +
         //    IProfileService always resolves its staging dependency.
         var services = new ServiceCollection();
-        services.AddGeneral(config, loggerFactory);
+        services.AddSingleton<IConfigLoader>(loader);
+        services.AddGeneral(loggerFactory);
         services.AddMods();
         services.AddProfiles();
         services.AddIntegrations();
@@ -76,7 +87,7 @@ public static class MagosComposition
                 sp.GetRequiredService<IProfileSession>(),
                 sp.GetRequiredService<IPreferencesService>(),
                 sp.GetRequiredService<LocalizationService>(),
-                sp.GetRequiredService<MagosConfig>()));
+                sp.GetRequiredService<IConfigLoader>()));
 
         var provider = services.BuildServiceProvider();
 

@@ -26,8 +26,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\integrations\Magos.Modificus.Integrations.csproj" />
-    <!-- MagosConfig is exercised directly in the DI tests. -->
+    <!--
+      MagosConfig is the config schema exercised directly in the DI tests;
+      IConfigLoader (General) is the live reader the typed-client builder reads
+      the GitHub section from.
+    -->
     <ProjectReference Include="..\..\config\Magos.Modificus.Config.csproj" />
+    <ProjectReference Include="..\..\general\Magos.Modificus.General.csproj" />
   </ItemGroup>
 
 </Project>

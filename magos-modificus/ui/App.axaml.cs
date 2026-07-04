@@ -1,7 +1,7 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Preferences;
 using Magos.Modificus.UI.ViewModels;
@@ -29,7 +29,11 @@ public class App : Application
     {
         var services = MagosComposition.Build();
         var logger = services.GetRequiredService<ILogger<App>>();
-        var config = services.GetRequiredService<MagosConfig>();
+
+        // A one-off startup snapshot for the startup log + applying initial
+        // preferences before any window shows. This is NOT a cache: every
+        // backend consumer reads live via IConfigLoader on each operation.
+        var config = services.GetRequiredService<IConfigLoader>().Load();
 
         logger.LogInformation("Magos Modificus starting");
         logger.LogInformation(

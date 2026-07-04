@@ -1,5 +1,5 @@
 using Avalonia.Controls;
-using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Preferences;
@@ -23,7 +23,7 @@ public sealed class DialogService : IDialogService
     private readonly IProfileSession _session;
     private readonly IPreferencesService _preferences;
     private readonly LocalizationService _localization;
-    private readonly MagosConfig _config;
+    private readonly IConfigLoader _configLoader;
 
     /// <param name="owner">The window dialog parents are shown over (the main window).</param>
     /// <param name="profiles">Resolved lazily to construct the manage-profiles VM.</param>
@@ -35,22 +35,22 @@ public sealed class DialogService : IDialogService
     /// <param name="localization">The Localization service; handed to the manage-profiles
     /// VM (delete-confirm message is localized + the marker tooltip) and to the
     /// Preferences VM (language picker reads the live culture).</param>
-    /// <param name="config">The loaded <see cref="MagosConfig"/> singleton; handed to the
-    /// Preferences VM so its pickers initialize from the persisted values.</param>
+    /// <param name="configLoader">The live config reader; the Preferences VM reads a
+    /// one-off snapshot from it to initialize its pickers from the persisted values.</param>
     public DialogService(
         Window owner,
         IProfileService profiles,
         IProfileSession session,
         IPreferencesService preferences,
         LocalizationService localization,
-        MagosConfig config)
+        IConfigLoader configLoader)
     {
         _owner = owner;
         _profiles = profiles;
         _session = session;
         _preferences = preferences;
         _localization = localization;
-        _config = config;
+        _configLoader = configLoader;
     }
 
     /// <inheritdoc />
@@ -81,7 +81,10 @@ public sealed class DialogService : IDialogService
     /// <inheritdoc />
     public async Task ShowPreferencesAsync()
     {
-        var viewModel = new PreferencesViewModel(_preferences, _config, _localization);
+        // The VM reads its initial state from a live snapshot (no cached
+        // singleton); subsequent changes flow through IPreferencesService, which
+        // read-modify-saves via the same loader.
+        var viewModel = new PreferencesViewModel(_preferences, _configLoader, _localization);
         var window = new PreferencesWindow
         {
             DataContext = viewModel,

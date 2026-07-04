@@ -1,4 +1,5 @@
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.Steam;
 using Microsoft.Extensions.Logging;
@@ -20,9 +21,10 @@ namespace Magos.Modificus.EnginseerClient;
 /// label for logging.</para>
 /// <para>
 /// Registered as a singleton: it holds no per-launch state. The active strategy
-/// does not change at runtime. Tests inject the concrete Windows/Linux strategy
-/// (with a fake <see cref="IProcessLauncher"/>) to exercise either path on any
-/// CI OS.</para>
+/// does not change at runtime. Reads <see cref="MagosConfig"/> live from
+/// <see cref="IConfigLoader"/> on each launch (one snapshot per op). Tests inject
+/// the concrete Windows/Linux strategy (with a fake
+/// <see cref="IProcessLauncher"/>) to exercise either path on any CI OS.</para>
 /// </remarks>
 internal sealed class EnginseerLaunchService : IEnginseerLaunchService
 {
@@ -34,26 +36,26 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
     /// The Steam app id for Darktide. The launcher defaults to this value when
     /// <c>--steam-app-id</c> is omitted; Magos relies on that default and only
     /// emits <c>--steam-app-id</c> to override it (which the current config does
-    /// not surface — see <c>ServiceCollectionExtensions</c> / future config work).
+    /// not surface (see <c>ServiceCollectionExtensions</c> / future config work).
     /// </summary>
     internal const int DarktideSteamAppId = 1361210;
 
     private readonly IProfileService _profiles;
     private readonly ISteamService _steam;
-    private readonly MagosConfig _config;
+    private readonly IConfigLoader _configLoader;
     private readonly IPlatformLaunchStrategy _strategy;
     private readonly ILogger<EnginseerLaunchService> _logger;
 
     public EnginseerLaunchService(
         IProfileService profiles,
         ISteamService steam,
-        MagosConfig config,
+        IConfigLoader configLoader,
         IPlatformLaunchStrategy strategy,
         ILogger<EnginseerLaunchService> logger)
     {
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _steam = steam ?? throw new ArgumentNullException(nameof(steam));
-        _config = config ?? throw new ArgumentNullException(nameof(config));
+        _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
         _strategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -63,6 +65,11 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
     {
         try
         {
+            // One live config snapshot for the whole launch. EnginseerRuntimeDir
+            // + Logging.LogFile are read once here; a runtime config change via
+            // the upcoming Settings window takes effect on the next launch.
+            var config = _configLoader.Load();
+
             // Discovery first: if we cannot launch, do not touch the profile's
             // mod root (no point writing mods.lst for a launch that won't happen).
             var discovery = _steam.Discover();
@@ -83,7 +90,7 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
             // caught below and mapped to LaunchStatus.Error.
             var modPath = _profiles.PrepareModRoot(profileId);
 
-            var launcherPath = Path.Combine(_config.EnginseerRuntimeDir, LauncherExecutableName);
+            var launcherPath = Path.Combine(config.EnginseerRuntimeDir, LauncherExecutableName);
             if (!File.Exists(launcherPath))
             {
                 _logger.LogError("Enginseer runtime launcher not found at {Path}.", launcherPath);
@@ -91,7 +98,7 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
             }
 
             var gameBinary = discovery.DarktideGameBinaryPath!;
-            var logFile = _config.Logging.LogFile;
+            var logFile = config.Logging.LogFile;
 
             var started = _strategy.Start(launcherPath, discovery, gameBinary, modPath, logFile);
 
@@ -105,7 +112,7 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
         }
         catch (KeyNotFoundException ex)
         {
-            // Unknown profile (PrepareModRoot) — surfaced as Error, not thrown.
+            // Unknown profile (PrepareModRoot): surfaced as Error, not thrown.
             _logger.LogError(ex, "Launch failed: profile {Id} not found.", profileId);
             return ErrorResult($"Profile '{profileId}' was not found.");
         }

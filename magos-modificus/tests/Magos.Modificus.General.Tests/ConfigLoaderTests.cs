@@ -241,4 +241,82 @@ public sealed class ConfigLoaderTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // ---- live read (no startup cache) --------------------------------------
+
+    [Fact]
+    public void Load_re_reads_the_file_on_each_call_no_stale_cache()
+    {
+        // Proves the live-read contract: the same ConfigLoader instance does not
+        // cache its first Load(). A subsequent disk write (by the Preferences
+        // flow, the upcoming Settings window, or a hand-edit) is visible to the
+        // next Load() on the same instance, so every consumer that reads per-op
+        // sees the current disk state.
+        var dir = Path.Combine(Path.GetTempPath(), "magos-cfg-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+
+        try
+        {
+            var loader = new ConfigLoader(configPath);
+
+            // Seed the file with one value.
+            var first = MagosConfig.CreateDefault();
+            first.Preferences.Language = "en";
+            loader.Save(first);
+
+            // First Load sees the seeded value.
+            Assert.Equal("en", loader.Load().Preferences.Language);
+
+            // Overwrite the file directly (simulating an external writer: the
+            // Settings window, a hand-edit, another process).
+            File.WriteAllText(configPath, """
+                {
+                  "Preferences": { "Language": "fr" }
+                }
+                """);
+
+            // Second Load on the SAME loader instance sees the new value: no
+            // startup cache, no stale snapshot.
+            Assert.Equal("fr", loader.Load().Preferences.Language);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Load_picks_up_a_runtime_folder_change_with_no_new_instance()
+    {
+        // Proves the live-read contract for path-valued fields: a consumer that
+        // resolves ProfilesBaseFolder / ModsFolder / EnginseerRuntimeDir per-op
+        // from the loader sees a runtime change without restarting. This is the
+        // property the upcoming Settings window + mod-repository relocation
+        // rely on.
+        var dir = Path.Combine(Path.GetTempPath(), "magos-cfg-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+
+        try
+        {
+            var loader = new ConfigLoader(configPath);
+            var first = MagosConfig.CreateDefault();
+            first.ModsFolder = "/first/mods";
+            loader.Save(first);
+            Assert.Equal("/first/mods", loader.Load().ModsFolder);
+
+            // A runtime relocation writes the new folder through the loader.
+            var second = loader.Load();
+            second.ModsFolder = "/relocated/mods";
+            loader.Save(second);
+
+            // The next per-op read sees the relocated folder.
+            Assert.Equal("/relocated/mods", loader.Load().ModsFolder);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }

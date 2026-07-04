@@ -81,8 +81,16 @@ public sealed class ConfigLoader : IConfigLoader
         // The config file is machine-managed; a wholesale write is fine and
         // simpler than tracking which section changed. Best-effort: a write
         // failure (unwritable dir, full disk) is swallowed so a Preferences
-        // change never crashes the app mid-interaction (the in-memory config
+        // change never crashes the app mid-interaction (the live snapshot
         // already reflects the change; the persisted copy is best-effort).
+        //
+        // Atomic publish: serialize to a temp file in the SAME directory as the
+        // target, then File.Move(overwrite:true) renames it into place. Same-
+        // directory guarantees same-volume, which makes the rename atomic: a
+        // crash mid-write never leaves a half-written config. Concurrent
+        // readers (other Load() calls on this singleton) either see the prior
+        // file or the new one, never a truncated JSON. The temp name is fixed
+        // (single-UI-thread assumption; the next Save overwrites any leak).
         try
         {
             var dir = System.IO.Path.GetDirectoryName(_path);
@@ -91,8 +99,10 @@ public sealed class ConfigLoader : IConfigLoader
                 Directory.CreateDirectory(dir);
             }
 
+            var temp = _path + ".tmp";
             var json = JsonSerializer.Serialize(config, JsonOptions);
-            File.WriteAllText(_path, json);
+            File.WriteAllText(temp, json);
+            File.Move(temp, _path, overwrite: true);
         }
         catch
         {

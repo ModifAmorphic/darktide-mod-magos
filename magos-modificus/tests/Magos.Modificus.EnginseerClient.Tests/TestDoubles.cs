@@ -1,8 +1,36 @@
+using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.Mods;
 using Magos.Modificus.Steam;
 
 namespace Magos.Modificus.EnginseerClient.Tests;
+
+/// <summary>
+/// Recording <see cref="IConfigLoader"/> for tests. <see cref="Load"/> returns
+/// a configurable mutable config (the same instance each call, so a test may
+/// mutate it between launches and the next <see cref="IConfigLoader.Load"/>
+/// sees the new value). <see cref="Save"/> captures the last-written config.
+/// </summary>
+internal sealed class FakeConfigLoader : IConfigLoader
+{
+    public MagosConfig Config { get; set; } = MagosConfig.CreateDefault();
+    public int LoadCalls { get; private set; }
+    public int SaveCalls { get; private set; }
+    public MagosConfig? LastSaved { get; private set; }
+
+    public MagosConfig Load()
+    {
+        LoadCalls++;
+        return Config;
+    }
+
+    public void Save(MagosConfig config)
+    {
+        SaveCalls++;
+        LastSaved = config;
+    }
+}
 
 /// <summary>
 /// Hand-rolled test double for <see cref="IProfileService"/>. Only

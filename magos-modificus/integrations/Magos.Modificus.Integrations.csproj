@@ -27,8 +27,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MagosConfig (the Integrations.GitHub section) is read at DI time. -->
+    <!--
+      MagosConfig is the config schema; IConfigLoader (General) is the live
+      reader the typed-client builder reads the GitHub section from.
+    -->
     <ProjectReference Include="..\config\Magos.Modificus.Config.csproj" />
+    <ProjectReference Include="..\general\Magos.Modificus.General.csproj" />
   </ItemGroup>
 
 </Project>
