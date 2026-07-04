@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 
 namespace Magos.Modificus.Profiles.Tests;
 
@@ -201,8 +202,10 @@ public sealed class ProfileCrudTests
     [Fact]
     public void FirstRun_creates_missing_ProfilesBaseFolder()
     {
-        // Point at a path whose parent chain does not exist yet; constructing
-        // the service (via AddProfiles DI) must create the full chain.
+        // Point at a path whose parent chain does not exist yet; the first
+        // public operation (here ListProfiles) must create the full chain. The
+        // directory is created per-op on the live path (not cached at
+        // construction), so a runtime folder change takes effect immediately.
         var tempRoot = Path.Combine(Path.GetTempPath(), "magos-firstrun-" + Guid.NewGuid());
         var baseFolder = Path.Combine(tempRoot, "deep", "profiles");
         Assert.False(Directory.Exists(baseFolder));
@@ -212,12 +215,14 @@ public sealed class ProfileCrudTests
             var config = MagosConfig.CreateDefault();
             config.ProfilesBaseFolder = baseFolder;
             var services = new ServiceCollection();
-            services.AddSingleton(config);
+            services.AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config });
             services.AddLogging();
             services.AddProfiles();
             using var provider = services.BuildServiceProvider();
 
-            provider.GetRequiredService<IProfileService>(); // forces construction
+            // Construction alone does not create the dir (live-read: the folder
+            // is resolved per-op). The first op creates it on the live path.
+            provider.GetRequiredService<IProfileService>().ListProfiles();
 
             Assert.True(Directory.Exists(baseFolder));
         }
@@ -239,7 +244,7 @@ public sealed class ProfileCrudTests
         public ReloadFixture(MagosConfig config)
         {
             _provider = new ServiceCollection()
-                .AddSingleton(config)
+                .AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config })
                 .AddLogging()
                 .AddProfiles()
                 .BuildServiceProvider();

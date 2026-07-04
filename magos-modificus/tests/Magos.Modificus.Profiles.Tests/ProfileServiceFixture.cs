@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Mods;
 
 namespace Magos.Modificus.Profiles.Tests;
@@ -40,7 +41,7 @@ internal sealed class ProfileServiceFixture : IDisposable
         config.ModsFolder = ModsFolder;
 
         var services = new ServiceCollection();
-        services.AddSingleton(config);
+        services.AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config });
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning)); // quiet by default
         services.AddMods();
         if (symlink is not null)

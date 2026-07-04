@@ -1,5 +1,5 @@
 using System.Net.Http.Headers;
-using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Magos.Modificus.Integrations;
@@ -10,11 +10,16 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers <see cref="IGitHubClient"/> → <see cref="GitHubClient"/> as a
     /// typed HTTP client. The <c>HttpClient</c> (base URL + headers + optional
-    /// auth) is configured from <see cref="MagosConfig.Integrations"/>
-    /// (<see cref="GitHubConfig"/>), resolved from the container (provided by
-    /// <c>AddGeneral()</c>).
+    /// auth) is configured from the live <see cref="MagosConfig.Integrations"/>
+    /// section (<see cref="GitHubConfig"/>), resolved from the container via
+    /// <see cref="IConfigLoader"/> (provided by <c>AddGeneral()</c>).
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The configuration callback resolves <see cref="IConfigLoader"/> from the
+    /// container on typed-client construction and reads the GitHub section from
+    /// a fresh live snapshot, so a runtime config change takes effect the next
+    /// time the typed client is constructed.</para>
     /// <para>
     /// Headers applied to every request: <c>User-Agent: Magos-Modificus</c>
     /// (required by GitHub) and <c>Accept: application/vnd.github+json</c>. When
@@ -29,7 +34,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddHttpClient<IGitHubClient, GitHubClient>((serviceProvider, client) =>
         {
-            var config = serviceProvider.GetRequiredService<MagosConfig>();
+            var config = serviceProvider.GetRequiredService<IConfigLoader>().Load();
             var gitHub = config.Integrations.GitHub;
 
             // Trim whitespace + trailing slashes, then re-append one slash so

@@ -17,11 +17,15 @@ public sealed class PreferencesViewModelTests
 
     private static PreferencesViewModel Build(
         FakePreferencesService? prefs = null,
+        FakeConfigLoader? loader = null,
         MagosConfig? config = null)
     {
         prefs ??= new FakePreferencesService();
+        // The VM reads one snapshot at construction; back the loader with the
+        // test's config (or a fresh default) so the restore sees the values.
         config ??= MagosConfig.CreateDefault();
-        return new PreferencesViewModel(prefs, config, Localization);
+        loader ??= new FakeConfigLoader { Config = config };
+        return new PreferencesViewModel(prefs, loader, Localization);
     }
 
     // ---- initial restore (no re-apply) -------------------------------------

@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -327,7 +328,7 @@ public sealed class ModImportServiceTests
             var config = MagosConfig.CreateDefault();
             config.ModsFolder = ModsFolder;
             _provider = new ServiceCollection()
-                .AddSingleton(config)
+                .AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config })
                 .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
                 .AddMods()
                 .BuildServiceProvider();
@@ -340,7 +341,7 @@ public sealed class ModImportServiceTests
             var config = MagosConfig.CreateDefault();
             config.ModsFolder = ModsFolder;
             var provider = new ServiceCollection()
-                .AddSingleton(config)
+                .AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config })
                 .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
                 .AddMods()
                 .BuildServiceProvider();

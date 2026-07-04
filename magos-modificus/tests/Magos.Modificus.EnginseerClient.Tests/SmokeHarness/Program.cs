@@ -53,7 +53,7 @@ internal static class Program
     {
         using var provider = BuildComposition();
         var steam = provider.GetRequiredService<ISteamService>();
-        var config = provider.GetRequiredService<MagosConfig>();
+        var config = provider.GetRequiredService<IConfigLoader>().Load();
 
         Console.WriteLine($"Platform:    {CurrentPlatformLabel()}");
         Console.WriteLine($"Runtime dir: {config.EnginseerRuntimeDir}");
@@ -157,15 +157,19 @@ internal static class Program
     /// Builds the REAL composition: loads the user's config.json, wires the
     /// Serilog logger, and registers every library with its production
     /// implementation (real ProfileService, real SteamService, real
-    /// ProcessLauncher). No fakes — this is the same wiring the Magos UI uses.
+    /// ProcessLauncher). No fakes: this is the same wiring the Magos UI uses.
     /// </summary>
     private static ServiceProvider BuildComposition()
     {
-        var config = new ConfigLoader().Load();
+        // One loader: used for the transient startup snapshot (logger) AND
+        // registered as the live-read IConfigLoader singleton.
+        var loader = new ConfigLoader();
+        var config = loader.Load();
         var loggerFactory = LoggingBootstrap.CreateLoggerFactory(config);
 
         var services = new ServiceCollection();
-        services.AddGeneral(config, loggerFactory);
+        services.AddSingleton<IConfigLoader>(loader);
+        services.AddGeneral(loggerFactory);
         services.AddProfiles();
         services.AddSteam();
         services.AddEnginseerClient();

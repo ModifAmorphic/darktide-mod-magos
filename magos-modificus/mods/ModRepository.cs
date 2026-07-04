@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Microsoft.Extensions.Logging;
 
 namespace Magos.Modificus.Mods;
@@ -27,9 +28,12 @@ namespace Magos.Modificus.Mods;
 /// container never breaks the rest), mirroring <c>ProfileService</c>'s
 /// "skip unreadable, keep going" posture.</para>
 /// <para>
-/// Registered as a singleton: it holds the in-memory index (cheap to rebuild),
-/// and <see cref="MagosConfig"/> (its only config source) is itself a singleton.
-/// Concurrent writes are not coordinated (single-UI-thread assumption).</para>
+/// Registered as a singleton: it holds the in-memory index (cheap to rebuild).
+/// The mods root folder is read live from <see cref="IConfigLoader"/> on each
+/// operation (one snapshot per op), so a runtime folder change via the upcoming
+/// Settings window takes effect immediately; <see cref="Directory.CreateDirectory"/>
+/// runs per-op (idempotent) on the live path. Concurrent writes are not
+/// coordinated (single-UI-thread assumption).</para>
 /// </remarks>
 internal sealed class ModRepository : IModRepository
 {
@@ -44,7 +48,7 @@ internal sealed class ModRepository : IModRepository
 
     private static readonly string VersionManifestFileName = "container.json";
 
-    private readonly string _baseFolder;
+    private readonly IConfigLoader _configLoader;
     private readonly ILogger<ModRepository> _logger;
 
     // Primary index: containerId -> container. Source identity lookups are
@@ -57,15 +61,33 @@ internal sealed class ModRepository : IModRepository
     // Nexus/GitHub lookups scan _byId (identity is fully on the source record).
     private readonly Dictionary<string, Guid> _untrackedByName = new(StringComparer.Ordinal);
 
-    public ModRepository(MagosConfig config, ILogger<ModRepository> logger)
+    public ModRepository(IConfigLoader configLoader, ILogger<ModRepository> logger)
+    {
+        _configLoader = configLoader;
+        _logger = logger;
+
+        // Build the in-memory index from the current mods root. The index is
+        // construction-time state (a scan of the disk); live-read changes the
+        // per-op path computations, not the index contents. A runtime folder
+        // relocation re-scans through the app's restart / relocation flow.
+        var baseFolder = EnsureBaseFolder();
+        RebuildIndex(baseFolder);
+    }
+
+    /// <summary>
+    /// Reads the mods root folder from the live config snapshot and ensures it
+    /// exists. Called at the top of each public operation so a runtime folder
+    /// change takes effect immediately (the directory is created on the live
+    /// path, and subsequent path helpers derive from it).
+    /// </summary>
+    private string EnsureBaseFolder()
     {
         // ModsFolder is non-null by MagosConfig contract (defaults to
-        // <app-data>/mods). Directory.CreateDirectory is idempotent, so
-        // this makes every subsequent op first-run safe without each re-checking.
-        _baseFolder = config.ModsFolder;
-        _logger = logger;
-        Directory.CreateDirectory(_baseFolder);
-        RebuildIndex();
+        // <app-data>/mods). Directory.CreateDirectory is idempotent, so this
+        // makes every subsequent op first-run safe without each re-checking.
+        var baseFolder = _configLoader.Load().ModsFolder;
+        Directory.CreateDirectory(baseFolder);
+        return baseFolder;
     }
 
     /// <inheritdoc />
@@ -115,6 +137,7 @@ internal sealed class ModRepository : IModRepository
             throw new ArgumentException("Container name must not be null or whitespace.", nameof(name));
         }
 
+        var baseFolder = EnsureBaseFolder();
         var container = new ModContainer
         {
             Id = Guid.NewGuid(),
@@ -123,8 +146,8 @@ internal sealed class ModRepository : IModRepository
             Versions = Array.Empty<ModVersion>(),
         };
 
-        Directory.CreateDirectory(ContainerDir(container.Id));
-        WriteContainer(container);
+        Directory.CreateDirectory(ContainerDir(baseFolder, container.Id));
+        WriteContainer(container, baseFolder);
 
         _byId[container.Id] = container;
         IndexUntrackedName(container);
@@ -143,7 +166,8 @@ internal sealed class ModRepository : IModRepository
             throw new KeyNotFoundException($"No mod container with id '{containerId}'.");
         }
 
-        var containerDir = ContainerDir(containerId);
+        var baseFolder = EnsureBaseFolder();
+        var containerDir = ContainerDir(baseFolder, containerId);
         Directory.CreateDirectory(containerDir);
 
         var existing = container.Versions.FirstOrDefault(v =>
@@ -156,7 +180,7 @@ internal sealed class ModRepository : IModRepository
             // refreshes the files; leave the version entry (Folder, VersionString,
             // IsLatest, ImportedAt) unchanged so the manifest ordering stays
             // stable. (Re-importing a version is a file refresh, not a re-order.)
-            var versionDir = VersionDir(containerId, existing.Folder);
+            var versionDir = VersionDir(baseFolder, containerId, existing.Folder);
             CleanTarget(versionDir);
             populateFolder(versionDir);
             versions = container.Versions.ToList();
@@ -170,7 +194,7 @@ internal sealed class ModRepository : IModRepository
             // entry is the newest by ImportedAt, so it becomes IsLatest and the
             // flag is cleared on every other version.
             var folder = Guid.NewGuid().ToString("N");
-            var versionDir = VersionDir(containerId, folder);
+            var versionDir = VersionDir(baseFolder, containerId, folder);
             Directory.CreateDirectory(versionDir);
             populateFolder(versionDir);
 
@@ -192,7 +216,7 @@ internal sealed class ModRepository : IModRepository
 
         var updated = container with { Versions = versions };
         _byId[containerId] = updated;
-        WriteContainer(updated);
+        WriteContainer(updated, baseFolder);
         return updated;
     }
 
@@ -213,6 +237,7 @@ internal sealed class ModRepository : IModRepository
             return; // idempotent: unknown folder is a no-op.
         }
 
+        var baseFolder = EnsureBaseFolder();
         var wasLatest = existing.IsLatest;
         var versions = container.Versions.Where(v => !ReferenceEquals(v, existing)).ToList();
 
@@ -229,11 +254,11 @@ internal sealed class ModRepository : IModRepository
 
         var updated = container with { Versions = versions };
         _byId[containerId] = updated;
-        WriteContainer(updated);
+        WriteContainer(updated, baseFolder);
 
         // Best-effort: drop the on-disk folder. A missing / unwritable folder
         // is logged + swallowed so a prune never crashes on a stray lock.
-        DeleteVersionDir(containerId, versionFolder);
+        DeleteVersionDir(baseFolder, containerId, versionFolder);
         _logger.LogInformation(
             "Removed version folder '{Folder}' from container {Id}", versionFolder, containerId);
     }
@@ -242,13 +267,15 @@ internal sealed class ModRepository : IModRepository
     public string GetVersionFolderPath(Guid containerId, string versionFolder)
     {
         ArgumentNullException.ThrowIfNull(versionFolder);
-        return VersionDir(containerId, versionFolder);
+        var baseFolder = EnsureBaseFolder();
+        return VersionDir(baseFolder, containerId, versionFolder);
     }
 
     /// <inheritdoc />
     public void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced)
     {
         ArgumentNullException.ThrowIfNull(referenced);
+        var baseFolder = EnsureBaseFolder();
 
         // Drop unreferenced versions per container. Snapshot the containers
         // first (RemoveVersion mutates the index); each RemoveVersion call
@@ -275,7 +302,7 @@ internal sealed class ModRepository : IModRepository
             {
                 _untrackedByName.Remove(empty.Name);
             }
-            var containerDir = ContainerDir(empty.Id);
+            var containerDir = ContainerDir(baseFolder, empty.Id);
             if (Directory.Exists(containerDir))
             {
                 try
@@ -293,9 +320,9 @@ internal sealed class ModRepository : IModRepository
 
     // ---- index rebuild ------------------------------------------------------
 
-    private void RebuildIndex()
+    private void RebuildIndex(string baseFolder)
     {
-        foreach (var dir in Directory.EnumerateDirectories(_baseFolder))
+        foreach (var dir in Directory.EnumerateDirectories(baseFolder))
         {
             var name = Path.GetFileName(dir);
             if (!Guid.TryParse(name, out var id))
@@ -304,7 +331,7 @@ internal sealed class ModRepository : IModRepository
                 continue;
             }
 
-            var manifest = ContainerManifestPath(id);
+            var manifest = ContainerManifestPath(baseFolder, id);
             if (!File.Exists(manifest))
             {
                 _logger.LogDebug("Skipping container directory with no container.json: {Dir}", dir);
@@ -362,12 +389,12 @@ internal sealed class ModRepository : IModRepository
 
     // ---- manifest persistence ------------------------------------------------
 
-    private void WriteContainer(ModContainer container)
+    private void WriteContainer(ModContainer container, string baseFolder)
     {
-        var dir = ContainerDir(container.Id);
+        var dir = ContainerDir(baseFolder, container.Id);
         Directory.CreateDirectory(dir);
         var json = JsonSerializer.Serialize(container, JsonOptions);
-        File.WriteAllText(ContainerManifestPath(container.Id), json, ManifestEncoding);
+        File.WriteAllText(ContainerManifestPath(baseFolder, container.Id), json, ManifestEncoding);
     }
 
     /// <summary>
@@ -394,9 +421,9 @@ internal sealed class ModRepository : IModRepository
         }
     }
 
-    private void DeleteVersionDir(Guid containerId, string versionFolder)
+    private void DeleteVersionDir(string baseFolder, Guid containerId, string versionFolder)
     {
-        var dir = VersionDir(containerId, versionFolder);
+        var dir = VersionDir(baseFolder, containerId, versionFolder);
         if (!Directory.Exists(dir) && !File.Exists(dir))
         {
             return;
@@ -414,9 +441,10 @@ internal sealed class ModRepository : IModRepository
 
     // ---- path helpers (all internal-only - paths derive from the config root + ids) --
 
-    private string ContainerDir(Guid containerId) => Path.Combine(_baseFolder, containerId.ToString());
-    private string VersionDir(Guid containerId, string versionFolder) =>
-        Path.Combine(ContainerDir(containerId), versionFolder);
-    private string ContainerManifestPath(Guid containerId) =>
-        Path.Combine(ContainerDir(containerId), VersionManifestFileName);
+    private static string ContainerDir(string baseFolder, Guid containerId) =>
+        Path.Combine(baseFolder, containerId.ToString());
+    private static string VersionDir(string baseFolder, Guid containerId, string versionFolder) =>
+        Path.Combine(ContainerDir(baseFolder, containerId), versionFolder);
+    private static string ContainerManifestPath(string baseFolder, Guid containerId) =>
+        Path.Combine(ContainerDir(baseFolder, containerId), VersionManifestFileName);
 }

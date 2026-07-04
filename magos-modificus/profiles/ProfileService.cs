@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Mods;
 using Microsoft.Extensions.Logging;
 
@@ -29,9 +30,12 @@ namespace Magos.Modificus.Profiles;
 /// holds the files; <c>staged/</c> is a symlink projection.</para>
 /// <para>
 /// Registered as a singleton: the service holds no per-request state (all state
-/// lives on disk), and <see cref="MagosConfig"/> (its only config source) is
-/// itself a singleton. Concurrent writes to the same profile are not coordinated
-/// (single-UI-thread assumption).</para>
+/// lives on disk). The profiles base folder is read live from
+/// <see cref="IConfigLoader"/>.<see cref="IConfigLoader.Load"/> on each public
+/// operation (one snapshot per op), so a runtime folder change via the upcoming
+/// Settings window takes effect immediately. <see cref="Directory.CreateDirectory"/>
+/// runs per-op (idempotent) on the live path. Concurrent writes to the same
+/// profile are not coordinated (single-UI-thread assumption).</para>
 /// </remarks>
 internal sealed class ProfileService : IProfileService
 {
@@ -44,32 +48,45 @@ internal sealed class ProfileService : IProfileService
     // BOM would surface as a stray prefix on the first mod name).
     private static readonly Encoding ModListEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
-    private readonly string _baseFolder;
+    private readonly IConfigLoader _configLoader;
     private readonly IModRepository _repo;
     private readonly SymlinkCreator _symlink;
     private readonly ILogger<ProfileService> _logger;
 
     public ProfileService(
-        MagosConfig config,
+        IConfigLoader configLoader,
         IModRepository repo,
         SymlinkCreator symlink,
         ILogger<ProfileService> logger)
     {
-        // ProfilesBaseFolder is non-null by MagosConfig contract (defaults to
-        // <app-data>/profiles). Directory.CreateDirectory is idempotent, so this
-        // makes every subsequent op first-run safe without each one re-checking.
-        _baseFolder = config.ProfilesBaseFolder;
+        _configLoader = configLoader;
         _repo = repo;
         _symlink = symlink;
         _logger = logger;
-        Directory.CreateDirectory(_baseFolder);
+    }
+
+    /// <summary>
+    /// Reads the profiles base folder from the live config snapshot and ensures
+    /// it exists. Called at the top of each public operation so a runtime folder
+    /// change takes effect immediately (the directory is created on the live
+    /// path, and subsequent path helpers derive from it).
+    /// </summary>
+    private string EnsureBaseFolder()
+    {
+        var baseFolder = _configLoader.Load().ProfilesBaseFolder;
+        // ProfilesBaseFolder is non-null by MagosConfig contract (defaults to
+        // <app-data>/profiles). Directory.CreateDirectory is idempotent, so this
+        // makes every subsequent op first-run safe without each re-checking.
+        Directory.CreateDirectory(baseFolder);
+        return baseFolder;
     }
 
     /// <inheritdoc />
     public IReadOnlyList<ProfileSummary> ListProfiles()
     {
+        var baseFolder = EnsureBaseFolder();
         var summaries = new List<ProfileSummary>();
-        foreach (var dir in Directory.EnumerateDirectories(_baseFolder))
+        foreach (var dir in Directory.EnumerateDirectories(baseFolder))
         {
             var name = Path.GetFileName(dir);
             if (!Guid.TryParse(name, out var id))
@@ -98,8 +115,8 @@ internal sealed class ProfileService : IProfileService
     /// <inheritdoc />
     public Profile GetProfile(Guid id)
     {
-        var dir = ProfileDir(id);
-        return ReadProfileFile(dir); // throws KeyNotFoundException via EnsureReadable
+        var baseFolder = EnsureBaseFolder();
+        return ReadProfileFile(ProfileDir(baseFolder, id)); // throws KeyNotFoundException via EnsureReadable
     }
 
     /// <inheritdoc />
@@ -110,6 +127,7 @@ internal sealed class ProfileService : IProfileService
             throw new ArgumentException("Profile name must not be null or whitespace.", nameof(name));
         }
 
+        var baseFolder = EnsureBaseFolder();
         var profile = new Profile
         {
             Id = Guid.NewGuid(),
@@ -121,9 +139,9 @@ internal sealed class ProfileService : IProfileService
         // Scaffold the profile dir + staged/ before persisting so a crash between
         // the two never leaves a profile.json without its tree. staged/ is
         // regenerated each PrepareModRoot.
-        Directory.CreateDirectory(ProfileDir(profile.Id));
-        Directory.CreateDirectory(StagedDir(profile.Id));
-        WriteProfileFile(profile);
+        Directory.CreateDirectory(ProfileDir(baseFolder, profile.Id));
+        Directory.CreateDirectory(StagedDir(baseFolder, profile.Id));
+        WriteProfileFile(profile, baseFolder);
 
         _logger.LogInformation("Created profile {Id} ('{Name}')", profile.Id, profile.Name);
         return profile;
@@ -137,10 +155,11 @@ internal sealed class ProfileService : IProfileService
             throw new ArgumentException("Profile name must not be null or whitespace.", nameof(newName));
         }
 
-        var profile = GetProfile(id);
+        var baseFolder = EnsureBaseFolder();
+        var profile = ReadProfileFile(ProfileDir(baseFolder, id));
         var previous = profile.Name;
         profile.Name = newName;
-        WriteProfileFile(profile);
+        WriteProfileFile(profile, baseFolder);
 
         _logger.LogInformation("Renamed profile {Id} '{Previous}' -> '{Name}'", id, previous, newName);
     }
@@ -148,7 +167,8 @@ internal sealed class ProfileService : IProfileService
     /// <inheritdoc />
     public void DeleteProfile(Guid id)
     {
-        var dir = ProfileDir(id);
+        var baseFolder = EnsureBaseFolder();
+        var dir = ProfileDir(baseFolder, id);
         if (!Directory.Exists(dir))
         {
             throw UnknownProfile(id);
@@ -165,7 +185,8 @@ internal sealed class ProfileService : IProfileService
     public void SetModOrder(Guid id, IReadOnlyList<Guid> containerIdsInOrder)
     {
         ArgumentNullException.ThrowIfNull(containerIdsInOrder);
-        var profile = GetProfile(id);
+        var baseFolder = EnsureBaseFolder();
+        var profile = ReadProfileFile(ProfileDir(baseFolder, id));
         var current = profile.Mods;
 
         // Index the desired order by containerId (first occurrence wins for dupes).
@@ -187,13 +208,14 @@ internal sealed class ProfileService : IProfileService
             .OrderBy(m => desiredIndex.TryGetValue(m.ContainerId, out var idx) ? idx : int.MaxValue)
             .Select((m, i) => m with { Order = i })
             .ToList();
-        WriteProfileFile(profile);
+        WriteProfileFile(profile, baseFolder);
     }
 
     /// <inheritdoc />
     public void SetModEnabled(Guid id, Guid containerId, bool enabled)
     {
-        var profile = GetProfile(id);
+        var baseFolder = EnsureBaseFolder();
+        var profile = ReadProfileFile(ProfileDir(baseFolder, id));
         _ = profile.Mods.FirstOrDefault(m => m.ContainerId == containerId)
             ?? throw UnknownMod(id, containerId);
 
@@ -202,7 +224,7 @@ internal sealed class ProfileService : IProfileService
         profile.Mods = profile.Mods
             .Select(m => m.ContainerId == containerId ? m with { Enabled = enabled } : m)
             .ToList();
-        WriteProfileFile(profile);
+        WriteProfileFile(profile, baseFolder);
     }
 
     /// <inheritdoc />
@@ -214,7 +236,8 @@ internal sealed class ProfileService : IProfileService
         }
         ArgumentNullException.ThrowIfNull(policy);
 
-        var profile = GetProfile(id);
+        var baseFolder = EnsureBaseFolder();
+        var profile = ReadProfileFile(ProfileDir(baseFolder, id));
 
         // Idempotent: re-adding an existing container is a no-op (keeps its order,
         // enabled state, and policy). Prevents duplicate entries from re-entrancy.
@@ -227,14 +250,15 @@ internal sealed class ProfileService : IProfileService
         profile.Mods = profile.Mods
             .Append(new ModListEntry { ContainerId = containerId, Enabled = true, Order = nextOrder, Policy = policy })
             .ToList();
-        WriteProfileFile(profile);
+        WriteProfileFile(profile, baseFolder);
     }
 
     /// <inheritdoc />
     public void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy)
     {
         ArgumentNullException.ThrowIfNull(policy);
-        var profile = GetProfile(id);
+        var baseFolder = EnsureBaseFolder();
+        var profile = ReadProfileFile(ProfileDir(baseFolder, id));
         _ = profile.Mods.FirstOrDefault(m => m.ContainerId == containerId)
             ?? throw UnknownMod(id, containerId);
 
@@ -262,19 +286,20 @@ internal sealed class ProfileService : IProfileService
         profile.Mods = profile.Mods
             .Select(m => m.ContainerId == containerId ? m with { Policy = policy } : m)
             .ToList();
-        WriteProfileFile(profile);
+        WriteProfileFile(profile, baseFolder);
         _logger.LogInformation("Set policy for container {Container} on profile {Id} to {Policy}", containerId, id, policy);
     }
 
     /// <inheritdoc />
     public void RemoveMod(Guid id, Guid containerId)
     {
-        var profile = GetProfile(id);
+        var baseFolder = EnsureBaseFolder();
+        var profile = ReadProfileFile(ProfileDir(baseFolder, id));
         _ = profile.Mods.FirstOrDefault(m => m.ContainerId == containerId)
             ?? throw UnknownMod(id, containerId);
 
         profile.Mods = profile.Mods.Where(m => m.ContainerId != containerId).ToList();
-        WriteProfileFile(profile);
+        WriteProfileFile(profile, baseFolder);
 
         // The repository copy is NOT touched: other profiles may still reference
         // it, and the startup prune reclaims it when no profile does.
@@ -283,8 +308,9 @@ internal sealed class ProfileService : IProfileService
     /// <inheritdoc />
     public string PrepareModRoot(Guid id)
     {
-        var profile = GetProfile(id);
-        var staged = StagedDir(id);
+        var baseFolder = EnsureBaseFolder();
+        var profile = ReadProfileFile(ProfileDir(baseFolder, id));
+        var staged = StagedDir(baseFolder, id);
 
         // Regenerated each launch: clear the prior projection, then rebuild from
         // the current resolution. ClearStagedDir is symlink-aware (never follows
@@ -545,17 +571,17 @@ internal sealed class ProfileService : IProfileService
         }
     }
 
-    private void WriteProfileFile(Profile profile)
+    private void WriteProfileFile(Profile profile, string baseFolder)
     {
         var json = JsonSerializer.Serialize(profile, JsonOptions);
-        File.WriteAllText(ProfileFilePath(ProfileDir(profile.Id)), json, ModListEncoding);
+        File.WriteAllText(ProfileFilePath(ProfileDir(baseFolder, profile.Id)), json, ModListEncoding);
     }
 
     // ---- path helpers (all internal-only - never leak through the interface) --
 
-    private string ProfileDir(Guid id) => Path.Combine(_baseFolder, id.ToString());
+    private static string ProfileDir(string baseFolder, Guid id) => Path.Combine(baseFolder, id.ToString());
     private static string ProfileFilePath(string profileDir) => Path.Combine(profileDir, "profile.json");
-    private string StagedDir(Guid id) => Path.Combine(ProfileDir(id), "staged");
+    private static string StagedDir(string baseFolder, Guid id) => Path.Combine(ProfileDir(baseFolder, id), "staged");
     private static string ModListPath(string stagedRoot) => Path.Combine(stagedRoot, "mods.lst");
 
     private static KeyNotFoundException UnknownProfile(Guid id) =>

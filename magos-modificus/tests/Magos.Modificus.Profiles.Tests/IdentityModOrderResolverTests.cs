@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Mods;
 
 namespace Magos.Modificus.Profiles.Tests;
@@ -111,9 +112,8 @@ public sealed class IdentityModOrderResolverTests
     [Fact]
     public void AddProfiles_registers_IModOrderResolver_as_IdentityModOrderResolver()
     {
-        var config = MagosConfig.CreateDefault();
         using var provider = new ServiceCollection()
-            .AddSingleton(config)
+            .AddSingleton<IConfigLoader>(new FakeConfigLoader())
             .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
             .AddProfiles()
             .BuildServiceProvider();
@@ -128,9 +128,8 @@ public sealed class IdentityModOrderResolverTests
         // TryAdd: a caller (tests, or the future real algorithm) may pre-register
         // an IModOrderResolver and have it survive AddProfiles.
         var fake = new FakeOrderResolver();
-        var config = MagosConfig.CreateDefault();
         using var provider = new ServiceCollection()
-            .AddSingleton(config)
+            .AddSingleton<IConfigLoader>(new FakeConfigLoader())
             .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
             .AddSingleton<IModOrderResolver>(fake)
             .AddProfiles()

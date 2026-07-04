@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Preferences;
 
@@ -17,10 +18,10 @@ namespace Magos.Modificus.UI.ViewModels;
 /// is a one-step reversible action, not a destructive one).
 /// </summary>
 /// <remarks>
-/// <para><b>Initial state</b> comes from the loaded <see cref="MagosConfig"/>
-/// singleton (which <see cref="IPreferencesService"/> keeps current as it
-/// applies each change), so the picker reflects whatever the running app
-/// actually shows, not a stale copy.</para>
+/// <para><b>Initial state</b> comes from a one-off snapshot read from
+/// <see cref="IConfigLoader"/> at construction (no cached singleton); the
+/// snapshot reflects whatever the running app last persisted, so the picker
+/// matches what the user actually sees.</para>
 /// <para><b>Theme:</b> a <see cref="ThemeMode"/>-backed picker; maps 1:1 to
 /// <c>Avalonia.Styling.ThemeVariant</c>.</para>
 /// <para><b>Font scale:</b> a percent (<see cref="FontScalePercent"/>), 80 to
@@ -56,7 +57,7 @@ public partial class PreferencesViewModel : ObservableObject
 
     public PreferencesViewModel(
         IPreferencesService preferences,
-        MagosConfig config,
+        IConfigLoader configLoader,
         LocalizationService localization)
     {
         _preferences = preferences;
@@ -73,11 +74,12 @@ public partial class PreferencesViewModel : ObservableObject
         };
 
         // Restore the current preferences into the bound controls without
-        // re-applying (they already match the running app).
+        // re-applying (they already match the running app). One live snapshot:
+        // reflects whatever was last persisted.
         _suppressApply = true;
         try
         {
-            var configured = config.Preferences;
+            var configured = configLoader.Load().Preferences;
             SelectedTheme = ThemeOptions.FirstOrDefault(o => o.Mode == configured.Theme)
                 ?? ThemeOptions.First(o => o.Mode == DefaultTheme);
             FontScalePercent = ClampFontScale(configured.FontScale);
@@ -124,7 +126,7 @@ public partial class PreferencesViewModel : ObservableObject
     /// <summary>
     /// Pushes the current selection through <see cref="IPreferencesService"/>:
     /// applies theme + font scale + language to the running app and persists the
-    /// new values to <see cref="MagosConfig"/>.<see cref="MagosConfig.Preferences"/>.
+    /// new values to the config file's <see cref="PreferencesConfig"/> section.
     /// Suppressed during the initial restore.
     /// </summary>
     private void ApplyAndPersist()

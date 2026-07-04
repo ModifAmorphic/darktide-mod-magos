@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -407,9 +408,8 @@ public sealed class ModRepositoryTests
     [Fact]
     public void AddMods_registers_resolvable_IModRepository()
     {
-        var config = MagosConfig.CreateDefault();
         using var provider = new ServiceCollection()
-            .AddSingleton(config)
+            .AddSingleton<IConfigLoader>(new FakeConfigLoader())
             .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
             .AddMods()
             .BuildServiceProvider();
@@ -438,7 +438,7 @@ public sealed class ModRepositoryTests
             var config = MagosConfig.CreateDefault();
             config.ModsFolder = Folder;
             _provider = new ServiceCollection()
-                .AddSingleton(config)
+                .AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config })
                 .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
                 .AddMods()
                 .BuildServiceProvider();
@@ -453,7 +453,7 @@ public sealed class ModRepositoryTests
             var config = MagosConfig.CreateDefault();
             config.ModsFolder = Folder;
             var provider = new ServiceCollection()
-                .AddSingleton(config)
+                .AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config })
                 .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
                 .AddMods()
                 .BuildServiceProvider();

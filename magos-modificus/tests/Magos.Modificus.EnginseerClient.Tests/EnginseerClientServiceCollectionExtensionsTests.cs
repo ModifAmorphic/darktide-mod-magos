@@ -1,4 +1,5 @@
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.Steam;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,7 +12,7 @@ namespace Magos.Modificus.EnginseerClient.Tests;
 /// Proves <c>AddEnginseerClient()</c> registers <see cref="IEnginseerLaunchService"/>
 /// (and the supporting <see cref="IProcessLauncher"/> seam) so it is resolvable
 /// from DI with the production-style deps (<c>IProfileService</c> +
-/// <c>ISteamService</c> + <c>MagosConfig</c>), and that pre-registered overrides
+/// <c>ISteamService</c> + <c>IConfigLoader</c>), and that pre-registered overrides
 /// win over the defaults via TryAdd.
 /// </summary>
 public sealed class EnginseerClientServiceCollectionExtensionsTests
@@ -65,14 +66,14 @@ public sealed class EnginseerClientServiceCollectionExtensionsTests
     /// <summary>
     /// Builds the minimal composition that makes
     /// <see cref="IEnginseerLaunchService"/> resolvable: fakes for the profile +
-    /// steam services, a default <see cref="MagosConfig"/>, logging, then
+    /// steam services, a default config loader, logging, then
     /// <see cref="ServiceCollectionExtensions.AddEnginseerClient"/>.
     /// </summary>
     private static ServiceCollection BuildComposition()
     {
         var services = new ServiceCollection();
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
-        services.AddSingleton(MagosConfig.CreateDefault());
+        services.AddSingleton<IConfigLoader>(new FakeConfigLoader());
         services.AddSingleton<IProfileService, FakeProfileService>();
         services.AddSingleton<ISteamService, FakeSteamService>();
         services.AddEnginseerClient();

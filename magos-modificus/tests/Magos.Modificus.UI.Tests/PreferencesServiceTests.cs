@@ -7,13 +7,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Magos.Modificus.UI.Tests;
 
 /// <summary>
-/// <see cref="PreferencesService"/>: applying a triple mirrors it into the
-/// loaded <see cref="MagosConfig"/> singleton, persists via the config loader,
-/// and switches the <see cref="LocalizationService"/> culture. The theme +
-/// font-scale apply paths target Avalonia's <c>Application.Current</c>, which is
-/// <c>null</c> outside a running app; both are guarded no-ops in that case
-/// (the test asserts what is testable here; the visual apply is exercised by
-/// the operator's visual review).
+/// <see cref="PreferencesService"/>: applying a triple read-modify-saves it
+/// through the config loader (load the live snapshot, overwrite the Preferences
+/// section, save), and switches the <see cref="LocalizationService"/> culture.
+/// The theme + font-scale apply paths target Avalonia's <c>Application.Current</c>,
+/// which is <c>null</c> outside a running app; both are guarded no-ops in that
+/// case (the test asserts what is testable here; the visual apply is exercised
+/// by the operator's visual review).
 /// </summary>
 public sealed class PreferencesServiceTests
 {
@@ -21,10 +21,13 @@ public sealed class PreferencesServiceTests
 
     private static (PreferencesService svc, FakeConfigLoader loader, MagosConfig config) Build()
     {
+        // The fake's Load() returns the same mutable Config object, so the
+        // read-modify-save in ApplyAndPersist reads it, mutates the Preferences
+        // section, and Save captures it. A real ConfigLoader on a temp path
+        // would also work (and proves the disk round-trip; see ConfigLoaderTests).
         var config = MagosConfig.CreateDefault();
         var loader = new FakeConfigLoader { Config = config };
         var svc = new PreferencesService(
-            config,
             loader,
             Localization,
             NullLogger<PreferencesService>.Instance);
@@ -66,34 +69,45 @@ public sealed class PreferencesServiceTests
     }
 
     [Fact]
-    public void ApplyAndPersist_mirrors_the_values_into_the_loaded_config()
+    public void ApplyAndPersist_persists_the_values_via_read_modify_save()
     {
-        var (svc, _, config) = Build();
+        // ApplyAndPersist reads the live snapshot, overwrites the Preferences
+        // section, and saves. The fake captures the saved config; its
+        // Preferences mirror the applied triple (proving the read-modify-save
+        // carried the values onto the snapshot without clobbering siblings).
+        var (svc, loader, _) = Build();
 
         svc.ApplyAndPersist(ThemeMode.Light, 1.25, "fr");
 
-        Assert.Equal(ThemeMode.Light, config.Preferences.Theme);
-        Assert.Equal(1.25, config.Preferences.FontScale);
-        Assert.Equal("fr", config.Preferences.Language);
+        Assert.Equal(1, loader.SaveCalls);
+        Assert.NotNull(loader.LastSaved);
+        Assert.Equal(ThemeMode.Light, loader.LastSaved!.Preferences.Theme);
+        Assert.Equal(1.25, loader.LastSaved.Preferences.FontScale);
+        Assert.Equal("fr", loader.LastSaved.Preferences.Language);
     }
 
     [Fact]
-    public void ApplyAndPersist_persists_via_the_config_loader()
+    public void ApplyAndPersist_does_not_clobber_sibling_sections_on_save()
     {
-        var (svc, loader, config) = Build();
+        // Read-modify-save defense: a sibling section set on the live snapshot
+        // (e.g. EnginseerRuntimeDir, written by the upcoming Settings window)
+        // must survive the Preferences save, because ApplyAndPersist loads the
+        // current snapshot rather than mutating a stale cached singleton.
+        var config = MagosConfig.CreateDefault();
+        config.EnginseerRuntimeDir = "/custom/runtime";
+        var loader = new FakeConfigLoader { Config = config };
+        var svc = new PreferencesService(loader, Localization, NullLogger<PreferencesService>.Instance);
 
-        svc.ApplyAndPersist(ThemeMode.Dark, 1.5, "en");
+        svc.ApplyAndPersist(ThemeMode.Dark, 1.0, "en");
 
-        Assert.Equal(1, loader.SaveCalls);
-        Assert.Same(config, loader.LastSaved);
+        Assert.Equal("/custom/runtime", loader.LastSaved!.EnginseerRuntimeDir);
     }
 
     [Fact]
     public void ApplyAndPersist_does_not_throw_when_application_current_is_null()
     {
         // Unit tests run without an Avalonia Application; the theme + font-scale
-        // apply paths must guard against that (the in-memory + persistence paths
-        // still run).
+        // apply paths must guard against that (the persistence path still runs).
         var (svc, loader, _) = Build();
 
         var ex = Record.Exception(() => svc.ApplyAndPersist(ThemeMode.Dark, 1.5, "en"));

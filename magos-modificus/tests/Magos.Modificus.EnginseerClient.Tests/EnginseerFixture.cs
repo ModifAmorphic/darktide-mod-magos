@@ -1,4 +1,5 @@
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.Steam;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,6 +29,7 @@ internal sealed class EnginseerFixture : IDisposable
     public FakeProfileService Profiles { get; } = new();
     public FakeSteamService Steam { get; } = new();
     public FakeProcessLauncher Launcher { get; } = new();
+    public FakeConfigLoader ConfigLoader { get; }
     public MagosConfig Config { get; }
 
     public EnginseerFixture()
@@ -43,6 +45,9 @@ internal sealed class EnginseerFixture : IDisposable
 
         Config = MagosConfig.CreateDefault();
         Config.EnginseerRuntimeDir = RuntimeDir;
+        // The fake returns the same mutable Config instance on each Load(), so a
+        // test may mutate fx.Config between launches and the next Launch sees it.
+        ConfigLoader = new FakeConfigLoader { Config = Config };
     }
 
     /// <summary>The full path to the stub launcher in the temp runtime dir.</summary>
@@ -50,7 +55,7 @@ internal sealed class EnginseerFixture : IDisposable
 
     /// <summary>
     /// Builds the service under test wired for a Windows launch (direct
-    /// invocation, untranslated args) — the real <see cref="WindowsLaunchStrategy"/>
+    /// invocation, untranslated args) - the real <see cref="WindowsLaunchStrategy"/>
     /// driven by the fixture's fake <see cref="IProcessLauncher"/>.
     /// </summary>
     public EnginseerLaunchService BuildWindowsService() =>
@@ -58,7 +63,7 @@ internal sealed class EnginseerFixture : IDisposable
 
     /// <summary>
     /// Builds the service under test wired for a Linux launch (<c>proton run</c>
-    /// + both <c>STEAM_COMPAT_*</c> env vars + <c>Z:\</c>-translated args) — the
+    /// + both <c>STEAM_COMPAT_*</c> env vars + <c>Z:\</c>-translated args) - the
     /// real <see cref="LinuxLaunchStrategy"/> driven by the fixture's fake
     /// <see cref="IProcessLauncher"/>.
     /// </summary>
@@ -67,7 +72,7 @@ internal sealed class EnginseerFixture : IDisposable
 
     /// <summary>Builds the service under test with an explicit strategy.</summary>
     public EnginseerLaunchService BuildService(IPlatformLaunchStrategy strategy) =>
-        new(Profiles, Steam, Config, strategy, NullLogger<EnginseerLaunchService>.Instance);
+        new(Profiles, Steam, ConfigLoader, strategy, NullLogger<EnginseerLaunchService>.Instance);
 
     /// <summary>Removes the stub launcher so the runtime-dir check fails.</summary>
     public void DeleteLauncher()

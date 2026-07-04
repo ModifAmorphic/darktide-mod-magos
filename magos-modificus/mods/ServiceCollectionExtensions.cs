@@ -1,4 +1,4 @@
-using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -10,8 +10,9 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers <see cref="IModRepository"/> → <see cref="ModRepository"/> and
     /// <see cref="IModImportService"/> → <see cref="ModImportService"/>. Resolves
-    /// <c>MagosConfig</c> + <c>ILogger&lt;&gt;</c> from the container (both
-    /// provided by <c>AddGeneral()</c> / <c>AddLogging()</c>).
+    /// <see cref="IConfigLoader"/> (the live config reader) +
+    /// <c>ILogger&lt;&gt;</c> from the container (both provided by
+    /// <c>AddGeneral()</c> / <c>AddLogging()</c>).
     /// </summary>
     /// <remarks>
     /// Uses <see cref="ServiceCollectionDescriptorExtensions.TryAddSingleton{IService,Service}"/>,

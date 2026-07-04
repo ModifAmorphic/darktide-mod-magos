@@ -1,4 +1,5 @@
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -14,8 +15,9 @@ namespace Magos.Modificus.Integrations.Tests;
 /// Config is verified end-to-end: a stub <see cref="HttpMessageHandler"/> is
 /// wired into the same typed-client registration <c>AddIntegrations()</c> builds,
 /// the client makes a real (offline) call, and the recorded request is asserted
-/// on — so the test proves the <c>MagosConfig</c> → <c>HttpClient</c> wiring
-/// actually reaches the wire, not just that something resolves.
+/// on - so the test proves the <see cref="IConfigLoader"/> → <see cref="MagosConfig"/>
+/// → <c>HttpClient</c> wiring actually reaches the wire, not just that something
+/// resolves.
 /// </remarks>
 public sealed class IntegrationsServiceCollectionExtensionsTests
 {
@@ -23,7 +25,7 @@ public sealed class IntegrationsServiceCollectionExtensionsTests
     public void AddIntegrations_registers_resolvable_IGitHubClient()
     {
         var services = new ServiceCollection();
-        services.AddSingleton(MagosConfig.CreateDefault());
+        services.AddSingleton<IConfigLoader>(new FakeConfigLoader());
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.AddIntegrations();
         using var provider = services.BuildServiceProvider();
@@ -37,10 +39,10 @@ public sealed class IntegrationsServiceCollectionExtensionsTests
     [Fact]
     public void AddIntegrations_exposes_IHttpClientFactory()
     {
-        // The typed client's HttpClient is built by the factory — proving the
+        // The typed client's HttpClient is built by the factory - proving the
         // standard, testable HTTP DI pattern is wired.
         var services = new ServiceCollection();
-        services.AddSingleton(MagosConfig.CreateDefault());
+        services.AddSingleton<IConfigLoader>(new FakeConfigLoader());
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.AddIntegrations();
         using var provider = services.BuildServiceProvider();
@@ -69,7 +71,7 @@ public sealed class IntegrationsServiceCollectionExtensionsTests
     [Fact]
     public void AddIntegrations_omits_auth_when_no_token_configured()
     {
-        // Default config: Token is null → anonymous access (public releases need no auth).
+        // Default config: Token is null -> anonymous access (public releases need no auth).
         var (client, handler) = BuildWithStub(MagosConfig.CreateDefault());
         client.ListReleases(new GitHubRepo("o", "r"));
 
@@ -126,7 +128,7 @@ public sealed class IntegrationsServiceCollectionExtensionsTests
         var handler = new StubHttpMessageHandler(_ => HttpResponses.Json("[]"));
 
         var services = new ServiceCollection();
-        services.AddSingleton(config);
+        services.AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config });
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.AddIntegrations();
         // Attach the stub to the same named typed client AddIntegrations registered.

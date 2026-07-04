@@ -1,5 +1,6 @@
 using System.Text;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Mods;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -318,7 +319,7 @@ public sealed class StagingTests
         reloadConfig.ProfilesBaseFolder = fx.BaseFolder;
         reloadConfig.ModsFolder = fx.ModsFolder;
         using var provider = new ServiceCollection()
-            .AddSingleton(reloadConfig)
+            .AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = reloadConfig })
             .AddLogging()
             .AddMods()
             .AddProfiles()

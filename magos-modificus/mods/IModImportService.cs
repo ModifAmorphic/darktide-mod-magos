@@ -19,8 +19,9 @@ namespace Magos.Modificus.Mods;
 /// matters: import the repository copy, then reference it from the profile).</para>
 /// <para>
 /// Registered via <c>AddMods()</c>. Resolves <see cref="IModRepository"/>,
-/// <c>MagosConfig</c> (for <c>ModsFolder</c>), and an
-/// <c>ILogger&lt;ModImportService&gt;</c> from the container.</para>
+/// <see cref="Magos.Modificus.General.IConfigLoader"/> (for the live
+/// <c>ModsFolder</c>), and an <c>ILogger&lt;ModImportService&gt;</c> from the
+/// container.</para>
 /// </remarks>
 public interface IModImportService
 {

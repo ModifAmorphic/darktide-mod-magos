@@ -22,10 +22,11 @@ public interface IPreferencesService
     /// <summary>
     /// Applies <paramref name="theme"/> / <paramref name="fontScale"/> /
     /// <paramref name="language"/> to the running app (theme variant, global
-    /// font scale, UI culture), writes them into the loaded
-    /// <see cref="MagosConfig"/> singleton's <see cref="MagosConfig.Preferences"/>,
-    /// and persists it via <see cref="IConfigLoader"/>.<c>Save</c>. Safe to call
-    /// at startup (the values may match the loaded config, which is a no-op apply).
+    /// font scale, UI culture), then persists them to the config file via a
+    /// read-modify-save through <see cref="IConfigLoader"/> (load the live
+    /// snapshot, overwrite the <see cref="PreferencesConfig"/> section, save).
+    /// Safe to call at startup (the values may match the loaded config, which is
+    /// a no-op apply).
     /// </summary>
     void ApplyAndPersist(ThemeMode theme, double fontScale, string language);
 }
@@ -59,18 +60,15 @@ public sealed class PreferencesService : IPreferencesService
     private const string AppFontSizeResourceKey = "AppFontSize";
     private const string AppStatusFontSizeResourceKey = "AppStatusFontSize";
 
-    private readonly MagosConfig _config;
     private readonly IConfigLoader _configLoader;
     private readonly LocalizationService _localization;
     private readonly ILogger<PreferencesService> _logger;
 
     public PreferencesService(
-        MagosConfig config,
         IConfigLoader configLoader,
         LocalizationService localization,
         ILogger<PreferencesService> logger)
     {
-        _config = config;
         _configLoader = configLoader;
         _localization = localization;
         _logger = logger;
@@ -84,14 +82,18 @@ public sealed class PreferencesService : IPreferencesService
         ApplyFontScale(fontScale);
         ApplyLanguage(language);
 
-        // 2. Mirror into the loaded config singleton (so anything else reading
-        //    MagosConfig.Preferences sees the new value this session).
-        _config.Preferences.Theme = theme;
-        _config.Preferences.FontScale = fontScale;
-        _config.Preferences.Language = language;
-
-        // 3. Persist (best-effort; ConfigLoader.Save swallows write errors).
-        _configLoader.Save(_config);
+        // 2. Persist via read-modify-save: load the live snapshot, overwrite the
+        //    Preferences section, save. There is no cached singleton; each
+        //    Load() is a fresh snapshot, so this carries the user's change onto
+        //    the current disk state without clobbering sibling sections written
+        //    by another flow (the upcoming Settings window, etc.). Save is best-
+        //    effort (ConfigLoader.Save swallows write errors), so a persistence
+        //    failure never crashes the dialog mid-interaction.
+        var config = _configLoader.Load();
+        config.Preferences.Theme = theme;
+        config.Preferences.FontScale = fontScale;
+        config.Preferences.Language = language;
+        _configLoader.Save(config);
 
         _logger.LogInformation(
             "Preferences applied + persisted: theme={Theme}; fontScale={FontScale:F2}; language={Language}",

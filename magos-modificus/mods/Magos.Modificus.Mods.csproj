@@ -26,8 +26,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MagosConfig (ModsFolder) is read at DI time + by the repository. -->
+    <!--
+      MagosConfig is the config schema; IConfigLoader (General) is the live
+      reader the repository + import service read ModsFolder from on each op.
+    -->
     <ProjectReference Include="..\config\Magos.Modificus.Config.csproj" />
+    <ProjectReference Include="..\general\Magos.Modificus.General.csproj" />
   </ItemGroup>
 
 </Project>
