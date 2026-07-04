@@ -1,0 +1,215 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Magos.Modificus.UI.ViewModels"
+             x:Class="Magos.Modificus.UI.Views.ModListView"
+             x:DataType="vm:ModListViewModel">
+
+  <!--
+    The active profile's mod list: header (count + auto-sort + Add split button)
+    over a scrollable row list, with owned empty states (no profile / no mods).
+    The whole content area is a drag-and-drop target (folders + .zip), so mods
+    can be added by dropping as well as via the Add split button's zip + folder
+    pickers. Drag-and-drop is a Windows-only feature in Avalonia 12.0.x (XDND
+    lands in 12.1), surfaced via a hint in the no-mods empty state + the
+    content-area tooltip; the folder picker covers folder import on all
+    platforms. Row interactions route through code-behind handlers to the parent
+    VM's commands (the established ManageProfilesWindow pattern), passing the row
+    as CommandParameter.
+
+    Icons + markers are drawn <Path> geometry (Material 24x24 source) and Ellipse,
+    never Unicode glyphs, per AGENTS.md. The SplitButton's arrow is built-in
+    theme chrome, not an authored glyph.
+  -->
+
+  <UserControl.Styles>
+    <!-- Source badge: a subtle pill so it reads as metadata, not body text. -->
+    <Style Selector="Border.badge">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="6,1" />
+      <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- Compact icon buttons (up / down / trash): flat, inherit foreground. -->
+    <Style Selector="Button.icon">
+      <Setter Property="Padding" Value="6" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*" Margin="20,12,20,12">
+
+    <!-- Header: count + auto-sort toggle + Add split button (hidden until a profile is active). -->
+    <Grid Grid.Row="0"
+          ColumnDefinitions="*,Auto,Auto"
+          IsVisible="{Binding HasActiveProfile}"
+          Margin="0,0,0,8">
+      <TextBlock Grid.Column="0"
+                 Text="{Binding HeaderCountText}"
+                 FontSize="16" FontWeight="SemiBold"
+                 VerticalAlignment="Center" />
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="16,0,0,0">
+        <CheckBox IsChecked="{Binding AutoSortEnabled, Mode=TwoWay}"
+                  Click="AutoSort_Click"
+                  ToolTip.Tip="{ReflectionBinding [ModList_AutoSortTooltip], Source={StaticResource Loc}}" />
+        <TextBlock Text="{ReflectionBinding [ModList_AutoSort], Source={StaticResource Loc}}"
+                   VerticalAlignment="Center" />
+      </StackPanel>
+      <!--
+        Add split button: primary click opens the current mode's picker (zip file
+        picker by default, folder picker after the folder flyout item is chosen);
+        the arrow opens the flyout to switch modes. The TextBlock binds to the
+        VM's AddModeLabel so it reads "Add Mod (zip)" / "Add Mod (folder)". The
+        arrow is built-in theme chrome (no authored glyph). Folders need a picker
+        path because drag-and-drop is a Windows-only feature in Avalonia 12.0.x.
+      -->
+      <SplitButton Grid.Column="2"
+                   Click="Add_Click"
+                   ToolTip.Tip="{ReflectionBinding [ModList_AddButtonTooltip], Source={StaticResource Loc}}"
+                   Margin="16,0,0,0"
+                   VerticalAlignment="Center">
+        <SplitButton.Content>
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <!-- Material "add" plus (24x24 source): drawn geometry. -->
+            <Path Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"
+                  Fill="{Binding $parent[SplitButton].Foreground}"
+                  Data="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+            <TextBlock Text="{Binding AddModeLabel}" VerticalAlignment="Center" />
+          </StackPanel>
+        </SplitButton.Content>
+        <SplitButton.Flyout>
+          <MenuFlyout>
+            <MenuItem Header="{ReflectionBinding [ModList_AddZip], Source={StaticResource Loc}}"
+                      Click="AddZip_Click" />
+            <MenuItem Header="{ReflectionBinding [ModList_AddFolder], Source={StaticResource Loc}}"
+                      Click="AddFolder_Click" />
+          </MenuFlyout>
+        </SplitButton.Flyout>
+      </SplitButton>
+    </Grid>
+
+    <!--
+      Content area: also the drag-and-drop target. The tooltip surfaces the
+      Windows-only note (XDND lands in Avalonia 12.1; Linux drops do not fire).
+      Empty states + the row list overlap; visibility selects which shows.
+    -->
+    <Grid Grid.Row="1"
+          DragDrop.AllowDrop="True"
+          DragDrop.Drop="OnDrop"
+          DragDrop.DragOver="OnDragOver"
+          ToolTip.Tip="{ReflectionBinding [ModList_DragDropHint], Source={StaticResource Loc}}">
+
+      <!-- Empty: no active profile. -->
+      <TextBlock Text="{Binding EmptyNoProfileText}"
+                 IsVisible="{Binding !HasActiveProfile}"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                 Opacity="0.6" />
+
+      <!--
+        Empty: active profile but no mods yet. The drag-and-drop hint sits below
+        the message; small font + lowered opacity so it reads as a secondary cue.
+        (Drag-and-drop is a Windows-only feature; the folder picker covers Linux.)
+      -->
+      <StackPanel IsVisible="{Binding IsEmptyNoMods}"
+                  HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+        <TextBlock Text="{Binding EmptyNoModsText}"
+                   HorizontalAlignment="Center"
+                   Opacity="0.6" />
+        <TextBlock Text="{ReflectionBinding [ModList_DragDropHint], Source={StaticResource Loc}}"
+                   FontSize="11"
+                   Opacity="0.6"
+                   HorizontalAlignment="Center" />
+      </StackPanel>
+
+      <!-- The mod rows (visible only when there is at least one mod). -->
+      <Border IsVisible="{Binding HasMods}"
+              BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+              BorderThickness="1"
+              CornerRadius="4">
+        <ScrollViewer Padding="2">
+          <ItemsControl ItemsSource="{Binding Mods}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ModItemViewModel">
+                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto"
+                      Margin="6,3" MinHeight="32">
+
+                  <!-- Name -->
+                  <TextBlock Grid.Column="0"
+                             Text="{Binding Name}"
+                             VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
+
+                  <!-- Source badge (drawn pill + localized text). -->
+                  <Border Grid.Column="1" Classes="badge" Margin="8,0,0,0">
+                    <TextBlock Text="{Binding SourceBadgeText}" FontSize="11" />
+                  </Border>
+
+                  <!-- Enabled toggle (two-way; Click applies via the parent). -->
+                  <CheckBox Grid.Column="2"
+                            IsChecked="{Binding Enabled, Mode=TwoWay}"
+                            Click="Enabled_Click"
+                            ToolTip.Tip="{ReflectionBinding [ModRow_EnabledTooltip], Source={StaticResource Loc}}"
+                            Margin="12,0,0,0"
+                            VerticalAlignment="Center" />
+
+                  <!-- Policy editor: ComboBox (Latest/Pinned) + inline version. -->
+                  <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6"
+                              Margin="12,0,0,0" VerticalAlignment="Center">
+                    <ComboBox SelectedIndex="{Binding PolicyChoice, Mode=TwoWay}"
+                              SelectionChanged="Policy_Changed"
+                              MinWidth="100">
+                      <ComboBoxItem Content="{ReflectionBinding [ModRow_PolicyLatest], Source={StaticResource Loc}}" />
+                      <ComboBoxItem Content="{ReflectionBinding [ModRow_PolicyPinned], Source={StaticResource Loc}}" />
+                    </ComboBox>
+                    <TextBox Text="{Binding PinnedVersion, Mode=TwoWay}"
+                             IsVisible="{Binding IsPinned}"
+                             KeyDown="PinnedVersion_KeyDown"
+                             PlaceholderText="{ReflectionBinding [ModRow_PinnedVersionPlaceholder], Source={StaticResource Loc}}"
+                             MinWidth="90" />
+                  </StackPanel>
+
+                  <!-- Move up (drawn up-chevron). -->
+                  <Button Grid.Column="4" Classes="icon"
+                          ToolTip.Tip="{ReflectionBinding [ModRow_MoveUpTooltip], Source={StaticResource Loc}}"
+                          Click="MoveUp_Click"
+                          CommandParameter="{Binding}"
+                          Margin="8,0,0,0">
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+                  </Button>
+
+                  <!-- Move down (drawn down-chevron). -->
+                  <Button Grid.Column="5" Classes="icon"
+                          ToolTip.Tip="{ReflectionBinding [ModRow_MoveDownTooltip], Source={StaticResource Loc}}"
+                          Click="MoveDown_Click"
+                          CommandParameter="{Binding}"
+                          Margin="4,0,0,0">
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
+                  </Button>
+
+                  <!-- Remove (drawn trash). -->
+                  <Button Grid.Column="6" Classes="icon"
+                          ToolTip.Tip="{ReflectionBinding [ModRow_RemoveTooltip], Source={StaticResource Loc}}"
+                          Click="Remove_Click"
+                          CommandParameter="{Binding}"
+                          Margin="4,0,0,0">
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                  </Button>
+
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>

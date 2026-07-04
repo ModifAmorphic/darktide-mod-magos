@@ -89,4 +89,17 @@ public sealed class DialogService : IDialogService
 
         await window.ShowDialog(_owner);
     }
+
+    /// <inheritdoc />
+    public async Task<ImportModResult?> ShowImportModAsync(ImportModRequest request)
+    {
+        var viewModel = new ImportModViewModel(request, _localization);
+        var window = new ImportModDialog
+        {
+            DataContext = viewModel,
+        };
+
+        await window.ShowDialog(_owner);
+        return viewModel.Result;
+    }
 }

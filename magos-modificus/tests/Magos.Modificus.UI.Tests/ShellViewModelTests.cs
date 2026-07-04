@@ -30,6 +30,7 @@ public sealed class ShellViewModelTests
             new FakeLaunchService(),
             dialogs ?? new FakeDialogService(),
             Localization,
+            TestDoubles.BuildModList(profiles, session),
             Logger);
     }
 

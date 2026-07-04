@@ -82,16 +82,16 @@ internal sealed class ProfileServiceFixture : IDisposable
         Directory.CreateDirectory(SharedModDir(modName));
         File.WriteAllText(Path.Combine(SharedModDir(modName), "marker.txt"), modName);
 
+        var versionTag = version ?? "1.0.0";
         var policy = policyLabel == "pinned"
-            ? (ModVersionPolicy)new PinnedPolicy(Version.Parse(version ?? "1.0.0"))
+            ? (ModVersionPolicy)new PinnedPolicy(versionTag)
             : ModVersionPolicy.Latest;
-        var actualVersion = version is null ? new Version(1, 0, 0) : Version.Parse(version);
 
         SharedStore.Add(new SharedModEntry
         {
             Name = modName,
             Policy = policy,
-            ActualVersion = actualVersion,
+            ActualVersion = versionTag,
             Path = SharedModDir(modName),
         });
     }

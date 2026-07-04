@@ -12,16 +12,21 @@ namespace Magos.Modificus.SharedMods.Tests;
 /// </summary>
 public sealed class SharedModStoreTests
 {
-    private static SharedModEntry Entry(string name, string policyLabel = "latest", string? version = null)
+    private static SharedModEntry Entry(
+        string name,
+        string policyLabel = "latest",
+        string? version = null,
+        ModSource? source = null)
     {
         var policy = policyLabel == "pinned"
-            ? (ModVersionPolicy)new PinnedPolicy(Version.Parse(version ?? "1.0.0"))
+            ? (ModVersionPolicy)new PinnedPolicy(version ?? "1.0.0")
             : ModVersionPolicy.Latest;
-        var actualVersion = version is null ? new Version(1, 0, 0) : Version.Parse(version);
+        var actualVersion = version ?? "1.0.0";
         return new SharedModEntry
         {
             Name = name,
             Policy = policy,
+            Source = source ?? new NoneSource(),
             ActualVersion = actualVersion,
             Path = $"/store/{name}",
         };
@@ -44,9 +49,10 @@ public sealed class SharedModStoreTests
 
         var only = Assert.Single(fx.Store.List());
         Assert.Equal("DMF", only.Name);
-        Assert.Equal(new Version(1, 2, 3), Assert.IsType<PinnedPolicy>(only.Policy).Version);
-        Assert.Equal(new Version(1, 2, 3), only.ActualVersion);
+        Assert.Equal("1.2.3", Assert.IsType<PinnedPolicy>(only.Policy).Version);
+        Assert.Equal("1.2.3", only.ActualVersion);
         Assert.Equal("/store/DMF", only.Path);
+        Assert.IsType<NoneSource>(only.Source);
     }
 
     [Fact]
@@ -70,7 +76,7 @@ public sealed class SharedModStoreTests
         fx.Store.Add(Entry("DMF", "pinned", "2.0.0")); // replace
 
         var only = Assert.Single(fx.Store.List());
-        Assert.Equal(new Version(2, 0, 0), Assert.IsType<PinnedPolicy>(only.Policy).Version);
+        Assert.Equal("2.0.0", Assert.IsType<PinnedPolicy>(only.Policy).Version);
     }
 
     [Fact]
@@ -162,6 +168,94 @@ public sealed class SharedModStoreTests
     }
 
     [Fact]
+    public void Add_then_list_round_trips_Source_for_each_kind()
+    {
+        // Source is persisted polymorphically via its own $kind discriminator,
+        // mirroring the policy hierarchy. NoneSource is the default.
+        using var fx = new SharedStoreFixture();
+        fx.Store.Add(new SharedModEntry
+        {
+            Name = "LocalMod",
+            Source = new NoneSource(),
+            ActualVersion = "1.0",
+            Path = "/store/LocalMod",
+        });
+        fx.Store.Add(new SharedModEntry
+        {
+            Name = "NexusMod",
+            Source = new NexusSource { ModId = 12345 },
+            ActualVersion = "2.1",
+            Path = "/store/NexusMod",
+        });
+        fx.Store.Add(new SharedModEntry
+        {
+            Name = "GitHubMod",
+            Source = new GitHubSource { Owner = "owner", Repo = "repo" },
+            ActualVersion = "v3.0",
+            Path = "/store/GitHubMod",
+        });
+
+        var reloaded = fx.Reload().List();
+        Assert.Equal(3, reloaded.Count);
+
+        var local = reloaded.Single(e => e.Name == "LocalMod");
+        Assert.IsType<NoneSource>(local.Source);
+
+        var nexus = reloaded.Single(e => e.Name == "NexusMod");
+        var nexusSource = Assert.IsType<NexusSource>(nexus.Source);
+        Assert.Equal(12345, nexusSource.ModId);
+        Assert.Equal("2.1", nexus.ActualVersion);
+
+        var gitHub = reloaded.Single(e => e.Name == "GitHubMod");
+        var ghSource = Assert.IsType<GitHubSource>(gitHub.Source);
+        Assert.Equal("owner", ghSource.Owner);
+        Assert.Equal("repo", ghSource.Repo);
+        Assert.Equal("v3.0", gitHub.ActualVersion);
+    }
+
+    [Fact]
+    public void Add_with_default_Source_reads_back_as_NoneSource()
+    {
+        // A legacy/Phase-2 entry that never set Source (the property defaults to
+        // NoneSource) round-trips as NoneSource: the JSON carries "$kind":"none".
+        using var fx = new SharedStoreFixture();
+        fx.Store.Add(new SharedModEntry { Name = "Legacy", Path = "/store/Legacy" });
+
+        var reloaded = fx.Reload().Get("Legacy")!;
+        Assert.IsType<NoneSource>(reloaded.Source);
+
+        var raw = File.ReadAllText(fx.ManifestPath);
+        Assert.Contains("\"$kind\": \"none\"", raw);
+    }
+
+    [Fact]
+    public void Add_upserts_Source_and_ActualVersion_on_re_add()
+    {
+        // Upsert replaces the whole entry, so Source + ActualVersion are updated
+        // when the importer re-imports with new metadata.
+        using var fx = new SharedStoreFixture();
+        fx.Store.Add(new SharedModEntry
+        {
+            Name = "DMF",
+            Source = new NoneSource(),
+            ActualVersion = "1.0",
+            Path = "/store/DMF",
+        });
+        fx.Store.Add(new SharedModEntry
+        {
+            Name = "DMF",
+            Source = new NexusSource { ModId = 99 },
+            ActualVersion = "2.0",
+            Path = "/store/DMF",
+        });
+
+        var only = Assert.Single(fx.Store.List());
+        Assert.Equal("2.0", only.ActualVersion);
+        var nexus = Assert.IsType<NexusSource>(only.Source);
+        Assert.Equal(99, nexus.ModId);
+    }
+
+    [Fact]
     public void Corrupt_manifest_is_treated_as_empty_not_a_crash()
     {
         using var fx = new SharedStoreFixture();
@@ -217,6 +311,19 @@ public sealed class SharedModStoreTests
             .BuildServiceProvider();
 
         Assert.NotNull(provider.GetService<ISharedModStore>());
+    }
+
+    [Fact]
+    public void AddSharedMods_registers_resolvable_IModImportService()
+    {
+        var config = MagosConfig.CreateDefault();
+        using var provider = new ServiceCollection()
+            .AddSingleton(config)
+            .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
+            .AddSharedMods()
+            .BuildServiceProvider();
+
+        Assert.NotNull(provider.GetService<IModImportService>());
     }
 
     [Fact]

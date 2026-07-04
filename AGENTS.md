@@ -31,12 +31,15 @@ Requirements, architecture, and technology choices are made fresh.
   merged as the production seed; Magos Modificus has the backend libraries
   implemented (Phases 1–2) and the Phase 3 UI under construction: Track A (the app
   shell + profile management: dropdown switch, persisted active profile,
-  create/rename/delete dialog, switch-blocked-while-running) and Track D (global
+  create/rename/delete dialog, switch-blocked-while-running), Track D (global
   Preferences: theme + font scale + language, with the i18n infrastructure:
   `Strings.resx` + `LocalizationService` for dynamic culture switching, all Track
-  A UI strings backfilled to resource keys) are wired; mod-list UI (Track B) +
-  Launch behavior (Track C) are still pending, and the Launcher is a stub
-  (Phase 5).
+  A UI strings backfilled to resource keys), and Track B (the mod-list UI: view
+  mods with source/version badges, enable/disable, remove-with-confirm, reorder,
+  per-mod Latest/Pinned policy, auto-sort identity stub, and local folder/`.zip`
+  import via file picker + drag-and-drop, over the `ModSource` + raw-string version
+  model + `IModImportService`) are wired; Launch behavior (Track C) is still
+  pending, and the Launcher is a stub (Phase 5).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -80,10 +83,15 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   profiles/             Magos.Modificus.Profiles — profile data model, persistence,
                         shared-first staging (ProfileService.PrepareModRoot builds the
                         staged/ symlink projection + mods.lst) + SetModPolicy transitions
+                        + the auto-sort seam (IModOrderResolver/IdentityModOrderResolver,
+                        identity stub now; real dependency-driven resolver later)
   shared-mods/          Magos.Modificus.SharedMods — the global shared mod store
                         (ISharedModStore manifest) + the version-policy model
-                        (ModVersionPolicy: PinnedPolicy/LatestPolicy) + allocation
-                        resolution (AllocationResolver)
+                        (ModVersionPolicy: PinnedPolicy/LatestPolicy; version is a raw
+                        string tag) + the mod-source provenance model (ModSource:
+                        NoneSource/NexusSource/GitHubSource + ModSourceParser URL parsing)
+                        + allocation resolution (AllocationResolver, string-equality pins)
+                        + the local-import service (IModImportService: folder/.zip → store)
   integrations/         Magos.Modificus.Integrations — GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
@@ -175,8 +183,10 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   + `IsGameRunning` — `WinProcessLookup` via process comm on Windows,
   `LinuxProcessLookup` via `/proc` argv[0] under Proton), **Integrations**
   (Phase 1: GitHub Releases client), **Enginseer-client** (Phase 1: the launch
-  façade), **SharedMods** (Phase 2: shared mod store + version-policy model +
-  allocation resolution). **General** carries cross-cutting infra: logging,
+  façade), **SharedMods** (Phase 2: shared mod store + version-policy model
+  + allocation resolution; Phase 3 Track B backend: version is a raw string tag,
+  the mod-source provenance model `ModSource` + `ModSourceParser`, and the local-
+  import service `IModImportService`; allocation uses string-equality pins). **General** carries cross-cutting infra: logging,
   `ConfigLoader` (load + `Save` write-back for Preferences), and `AppStateStore`
   (runtime app-state: the active-profile id, persisted to a separate
   `app-state.json`, not `MagosConfig`). **Phase 3 Track A UI** (the shell + profile
@@ -186,7 +196,11 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   **Phase 3 Track D** (global Preferences: theme + font scale + language, plus
   the i18n infrastructure: `Strings.resx` + `LocalizationService` for dynamic
   culture switching, all Track A UI strings backfilled to resource keys) is
-  wired. Next: Track B (mod-list) and Track C (launch); the **Launcher** is a
+  wired. **Phase 3 Track B** (the mod-list UI: view mods with source/version
+  badges, enable/disable, remove-with-confirm, reorder, per-mod Latest/Pinned
+  policy, auto-sort identity stub, and local folder/`.zip` import via file picker
+  + drag-and-drop, over the `ModSource` + raw-string version model +
+  `IModImportService`) is wired. Next: Track C (launch); the **Launcher** is a
   stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
 - **CI** (`magos-build.yml`) is scoped to `magos-modificus/**` + the workflow
   file, matrixed on Windows + Ubuntu; gates on build + tests.

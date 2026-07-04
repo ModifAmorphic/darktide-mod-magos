@@ -37,4 +37,14 @@ public interface IDialogService
     /// on completion.
     /// </summary>
     Task ShowPreferencesAsync();
+
+    /// <summary>
+    /// Shows the per-mod import modal (source chooser + conditional Version +
+    /// URL), pre-filled from <paramref name="request"/>. Returns the confirmed
+    /// <see cref="ImportModResult"/> (URL parsed to canonical source) when the
+    /// user confirms, or <c>null</c> when they cancel / dismiss. The mod-list add
+    /// flow calls this once per imported path (sequentially); a <c>null</c>
+    /// cancels the remaining batch.
+    /// </summary>
+    Task<ImportModResult?> ShowImportModAsync(ImportModRequest request);
 }

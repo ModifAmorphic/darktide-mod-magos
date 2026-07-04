@@ -9,28 +9,65 @@ using Magos.Modificus.UI.Dialogs;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Preferences;
 using Magos.Modificus.UI.Session;
+using Magos.Modificus.UI.ViewModels;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Magos.Modificus.UI.Tests;
 
 /// <summary>
-/// Hand-rolled test doubles for the shell/manage VMs' dependencies. No mock
-/// library is used anywhere in the repo; these recording fakes match that style
-/// and keep the test project dependency-free.
+/// Hand-rolled test doubles for the shell/manage/mod-list VMs' dependencies. No
+/// mock library is used anywhere in the repo; these recording fakes match that
+/// style and keep the test project dependency-free.
 /// </summary>
 internal static class TestDoubles
 {
     public static FakeProfileService Profiles(params ProfileSummary[] seed) => new(seed);
+
+    /// <summary>
+    /// Builds a <see cref="ModListViewModel"/> wired to the supplied (or default)
+    /// fakes. The defaults share one shared store between the store + import fake
+    /// so the add flow's reload joins the freshly imported source + version
+    /// (mirrors the real import service's upsert).
+    /// </summary>
+    public static ModListViewModel BuildModList(
+        FakeProfileService? profiles = null,
+        FakeProfileSession? session = null,
+        FakeSharedModStore? sharedStore = null,
+        FakeModImportService? importService = null,
+        IModOrderResolver? orderResolver = null,
+        FakeDialogService? dialogs = null,
+        LocalizationService? localization = null)
+    {
+        profiles ??= Profiles();
+        session ??= new FakeProfileSession(() => profiles.ListProfiles());
+        sharedStore ??= new FakeSharedModStore();
+        importService ??= new FakeModImportService(sharedStore);
+        orderResolver ??= new IdentityModOrderResolver();
+        dialogs ??= new FakeDialogService();
+        localization ??= new LocalizationService();
+        return new ModListViewModel(
+            profiles,
+            session,
+            sharedStore,
+            importService,
+            orderResolver,
+            dialogs,
+            localization,
+            NullLogger<ModListViewModel>.Instance);
+    }
 }
 
 /// <summary>
-/// In-memory <see cref="IProfileService"/> for VM tests: backs only the CRUD +
-/// listing surface the shell/manage VMs touch. Records calls so tests can assert
-/// on them. <c>ModList</c>/<c>PrepareModRoot</c>-style members throw
-/// <see cref="NotImplementedException"/> (out of scope for milestone-2 VM tests).
+/// In-memory <see cref="IProfileService"/> for VM tests: backs the profile CRUD +
+/// listing surface AND the per-profile mod-list surface (Track B). Records calls
+/// so tests can assert on them. <c>PrepareModRoot</c> throws (staging is out of
+/// scope for VM tests).
 /// </summary>
 internal sealed class FakeProfileService : IProfileService
 {
     private readonly List<ProfileSummary> _profiles;
+    private readonly Dictionary<Guid, List<ModListEntry>> _modLists = new();
 
     public FakeProfileService(IEnumerable<ProfileSummary> seed) =>
         _profiles = new List<ProfileSummary>(seed);
@@ -38,6 +75,34 @@ internal sealed class FakeProfileService : IProfileService
     public IReadOnlyList<string> CreatedNames { get; } = new List<string>();
     public IReadOnlyList<(Guid Id, string Name)> Renames { get; } = new List<(Guid, string)>();
     public IReadOnlyList<Guid> DeletedIds { get; } = new List<Guid>();
+
+    // ---- per-profile mod-list recording -----------------------------------
+
+    /// <summary>Per-profile mod lists (in stored order); tests seed directly.</summary>
+    public Dictionary<Guid, List<ModListEntry>> ModLists => _modLists;
+
+    public IReadOnlyList<(Guid Id, string ModName, bool Enabled)> SetModEnabledCalls { get; } = new List<(Guid, string, bool)>();
+    public IReadOnlyList<IReadOnlyList<string>> SetModOrderCalls { get; } = new List<IReadOnlyList<string>>();
+    public IReadOnlyList<(Guid Id, string ModName, ModVersionPolicy Policy)> SetModPolicyCalls { get; } = new List<(Guid, string, ModVersionPolicy)>();
+    public IReadOnlyList<(Guid Id, string ModName)> AddModCalls { get; } = new List<(Guid, string)>();
+    public IReadOnlyList<(Guid Id, string ModName)> RemoveModCalls { get; } = new List<(Guid, string)>();
+
+    /// <summary>Seeds a profile's mod list (replaces any prior). Test helper.</summary>
+    public FakeProfileService WithMods(Guid id, params ModListEntry[] mods)
+    {
+        _modLists[id] = mods.Select(m => m with { }).ToList();
+        return this;
+    }
+
+    private List<ModListEntry> EnsureList(Guid id)
+    {
+        if (!_modLists.TryGetValue(id, out var list))
+        {
+            list = new List<ModListEntry>();
+            _modLists[id] = list;
+        }
+        return list;
+    }
 
     public IReadOnlyList<ProfileSummary> ListProfiles() =>
         _profiles.OrderBy(p => p.Name, StringComparer.Ordinal).ToArray();
@@ -88,18 +153,98 @@ internal sealed class FakeProfileService : IProfileService
         }
 
         _profiles.RemoveAt(idx);
+        _modLists.Remove(id);
         ((List<Guid>)DeletedIds).Add(id);
     }
 
-    // ---- Out of scope for milestone-2 VM tests (Tracks B/C) -----------------
+    // ---- mod-list surface --------------------------------------------------
 
-    public IReadOnlyList<ModListEntry> GetModList(Guid id) => throw new NotImplementedException();
-    public void SetModOrder(Guid id, IReadOnlyList<string> modNamesInOrder) => throw new NotImplementedException();
-    public void SetModEnabled(Guid id, string modName, bool enabled) => throw new NotImplementedException();
-    public void AddMod(Guid id, string modName) => throw new NotImplementedException();
-    public void AddMod(Guid id, string modName, ModVersionPolicy policy) => throw new NotImplementedException();
-    public void SetModPolicy(Guid id, string modName, ModVersionPolicy policy) => throw new NotImplementedException();
-    public void RemoveMod(Guid id, string modName) => throw new NotImplementedException();
+    public IReadOnlyList<ModListEntry> GetModList(Guid id) => EnsureList(id).ToArray();
+
+    public void SetModOrder(Guid id, IReadOnlyList<string> modNamesInOrder)
+    {
+        ((List<IReadOnlyList<string>>)SetModOrderCalls).Add(modNamesInOrder);
+
+        var list = EnsureList(id);
+        var ordered = new List<ModListEntry>();
+        var remaining = list.ToList();
+        foreach (var name in modNamesInOrder)
+        {
+            var match = remaining.FirstOrDefault(m => m.Name == name);
+            if (match is not null)
+            {
+                ordered.Add(match);
+                remaining.Remove(match);
+            }
+        }
+        ordered.AddRange(remaining);
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            ordered[i] = ordered[i] with { Order = i };
+        }
+        list.Clear();
+        list.AddRange(ordered);
+    }
+
+    public void SetModEnabled(Guid id, string modName, bool enabled)
+    {
+        ((List<(Guid, string, bool)>)SetModEnabledCalls).Add((id, modName, enabled));
+
+        var list = EnsureList(id);
+        var idx = list.FindIndex(m => m.Name == modName);
+        if (idx < 0)
+        {
+            throw new KeyNotFoundException($"No mod {modName} in profile {id}");
+        }
+        list[idx] = list[idx] with { Enabled = enabled };
+    }
+
+    public void AddMod(Guid id, string modName) => AddMod(id, modName, ModVersionPolicy.Latest);
+
+    public void AddMod(Guid id, string modName, ModVersionPolicy policy)
+    {
+        ((List<(Guid, string)>)AddModCalls).Add((id, modName));
+
+        var list = EnsureList(id);
+        if (list.Any(m => m.Name == modName))
+        {
+            return; // idempotent
+        }
+        list.Add(new ModListEntry
+        {
+            Name = modName,
+            Enabled = true,
+            Order = list.Count,
+            Policy = policy,
+        });
+    }
+
+    public void SetModPolicy(Guid id, string modName, ModVersionPolicy policy)
+    {
+        ((List<(Guid, string, ModVersionPolicy)>)SetModPolicyCalls).Add((id, modName, policy));
+
+        var list = EnsureList(id);
+        var idx = list.FindIndex(m => m.Name == modName);
+        if (idx < 0)
+        {
+            throw new KeyNotFoundException($"No mod {modName} in profile {id}");
+        }
+        list[idx] = list[idx] with { Policy = policy };
+    }
+
+    public void RemoveMod(Guid id, string modName)
+    {
+        ((List<(Guid, string)>)RemoveModCalls).Add((id, modName));
+
+        var list = EnsureList(id);
+        var idx = list.FindIndex(m => m.Name == modName);
+        if (idx < 0)
+        {
+            throw new KeyNotFoundException($"No mod {modName} in profile {id}");
+        }
+        list.RemoveAt(idx);
+    }
+
     public string PrepareModRoot(Guid id) => throw new NotImplementedException();
 }
 
@@ -124,8 +269,11 @@ internal sealed class FakeAppStateStore : IAppStateStore
 /// Configurable dialog fake. <see cref="ConfirmResult"/> drives
 /// <see cref="ConfirmAsync"/>; <see cref="OnManageProfiles"/> runs when the
 /// manage-profiles dialog is opened (lets a test simulate the dialog creating /
-/// deleting profiles and routing active changes through the session). Records
-/// calls so tests can assert the dialog was opened.
+/// deleting profiles and routing active changes through the session). For the
+/// import modal, either a single <see cref="ImportResult"/> is returned for every
+/// call, or a per-call <see cref="ImportResultQueue"/> is dequeued (so a test can
+/// cancel mid-batch by enqueuing a <c>null</c>). Records the requests so tests
+/// can assert on the sequence.
 /// </summary>
 internal sealed class FakeDialogService : IDialogService
 {
@@ -136,6 +284,23 @@ internal sealed class FakeDialogService : IDialogService
     public string? LastConfirmMessage { get; private set; }
     public int ManageProfilesCalls { get; private set; }
     public int PreferencesCalls { get; private set; }
+
+    /// <summary>
+    /// The result returned for every import modal call when
+    /// <see cref="ImportResultQueue"/> is empty / unset. <c>null</c> by default
+    /// (simulates the user cancelling).
+    /// </summary>
+    public ImportModResult? ImportResult { get; set; }
+
+    /// <summary>
+    /// Optional per-call queue: each import modal call dequeues one result
+    /// (a <c>null</c> cancels that modal + the remaining batch). When empty /
+    /// unset, <see cref="ImportResult"/> is returned.
+    /// </summary>
+    public Queue<ImportModResult?>? ImportResultQueue { get; set; }
+
+    public IReadOnlyList<ImportModRequest> ImportRequests { get; } = new List<ImportModRequest>();
+    public int ImportCalls { get; private set; }
 
     public Task<bool> ConfirmAsync(string title, string message)
     {
@@ -156,6 +321,17 @@ internal sealed class FakeDialogService : IDialogService
         PreferencesCalls++;
         OnPreferences?.Invoke();
         return Task.CompletedTask;
+    }
+
+    public Task<ImportModResult?> ShowImportModAsync(ImportModRequest request)
+    {
+        ImportCalls++;
+        ((List<ImportModRequest>)ImportRequests).Add(request);
+
+        var result = ImportResultQueue is { Count: > 0 }
+            ? ImportResultQueue.Dequeue()
+            : ImportResult;
+        return Task.FromResult(result);
     }
 }
 
@@ -248,6 +424,58 @@ internal sealed class FakeLaunchService : IEnginseerLaunchService
 {
     public LaunchResult Launch(Guid profileId) =>
         new(LaunchStatus.Launched, null, Array.Empty<string>());
+}
+
+/// <summary>
+/// In-memory <see cref="ISharedModStore"/> for VM tests: backs the lookup / upsert
+/// surface the mod-list VM joins source + version from. Tests seed entries
+/// directly; <see cref="Add"/> upserts (mirrors the real store).
+/// </summary>
+internal sealed class FakeSharedModStore : ISharedModStore
+{
+    private readonly Dictionary<string, SharedModEntry> _entries = new(StringComparer.Ordinal);
+
+    public IReadOnlyList<SharedModEntry> List() => _entries.Values.ToArray();
+
+    public SharedModEntry? Get(string name) =>
+        _entries.TryGetValue(name, out var entry) ? entry : null;
+
+    public void Add(SharedModEntry entry) => _entries[entry.Name] = entry;
+
+    public void Remove(string name) => _entries.Remove(name);
+}
+
+/// <summary>
+/// Recording <see cref="IModImportService"/> for VM tests. Captures each Import
+/// call (source path, mod name, parsed source, version) so tests can assert the
+/// add flow recorded the right metadata. Optionally upserts a wired
+/// <see cref="ISharedModStore"/> so the add flow's reload joins the freshly
+/// imported source + version (mirrors the real import service's upsert).
+/// </summary>
+internal sealed class FakeModImportService : IModImportService
+{
+    private readonly ISharedModStore? _store;
+
+    public FakeModImportService(ISharedModStore? store = null) => _store = store;
+
+    public IReadOnlyList<(string SourcePath, string ModName, ModSource Source, string Version)> Imports { get; }
+        = new List<(string, string, ModSource, string)>();
+
+    public SharedModEntry Import(string sourcePath, string modName, ModSource source, string version)
+    {
+        ((List<(string, string, ModSource, string)>)Imports).Add((sourcePath, modName, source, version));
+
+        var entry = new SharedModEntry
+        {
+            Name = modName,
+            Source = source,
+            ActualVersion = version,
+            Path = sourcePath,
+            Policy = ModVersionPolicy.Latest,
+        };
+        _store?.Add(entry);
+        return entry;
+    }
 }
 
 /// <summary>

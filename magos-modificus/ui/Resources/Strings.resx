@@ -85,10 +85,6 @@
     <value>Launch Darktide</value>
     <comment>The Launch button in the shell top bar.</comment>
   </data>
-  <data name="Shell_NoProfileMessage" xml:space="preserve">
-    <value>Select or create a profile to manage its mods.</value>
-    <comment>The empty-state hint shown in the main area before a profile is selected.</comment>
-  </data>
   <data name="Status_GameRunning" xml:space="preserve">
     <value>Darktide: running</value>
     <comment>Status-strip label when Darktide is running.</comment>
@@ -212,5 +208,181 @@
   <data name="Preferences_DoneButton" xml:space="preserve">
     <value>Done</value>
     <comment>The Done button at the bottom of the Preferences dialog.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Mod list (ModListView / ModListViewModel / ModItemViewModel) -->
+  <!-- ============================================================ -->
+
+  <data name="ModList_Header" xml:space="preserve">
+    <value>Mods</value>
+    <comment>Neutral header for the mod list (shown when no profile is active).</comment>
+  </data>
+  <data name="ModList_Count" xml:space="preserve">
+    <value>Mods ({0})</value>
+    <comment>Header for the mod list with the current count. {0} is the mod count.</comment>
+  </data>
+  <data name="ModList_EmptyNoProfile" xml:space="preserve">
+    <value>Select or create a profile to manage its mods.</value>
+    <comment>Empty-state message in the mod list when no profile is active.</comment>
+  </data>
+  <data name="ModList_EmptyNoMods" xml:space="preserve">
+    <value>No mods yet. Add a mod (button or drag-and-drop) to get started.</value>
+    <comment>Empty-state message when the active profile has no mods.</comment>
+  </data>
+  <data name="ModList_AddButtonTooltip" xml:space="preserve">
+    <value>Add a mod to this profile</value>
+    <comment>Tooltip on the Add split button in the mod list header (the primary click opens the current mode's picker).</comment>
+  </data>
+  <data name="ModList_AddZip" xml:space="preserve">
+    <value>Add Mod (zip)</value>
+    <comment>The zip-import label: the Add split button's primary label in zip mode + the zip flyout item.</comment>
+  </data>
+  <data name="ModList_AddFolder" xml:space="preserve">
+    <value>Add Mod (folder)</value>
+    <comment>The folder-import label: the Add split button's primary label in folder mode + the folder flyout item.</comment>
+  </data>
+  <data name="ModList_DragDropHint" xml:space="preserve">
+    <value>Drag mod files or folders onto the window to import (Windows only).</value>
+    <comment>Subtle hint in the no-mods empty state + the content-area tooltip, noting drag-and-drop is a Windows-only feature (XDND lands in Avalonia 12.1).</comment>
+  </data>
+  <data name="ModList_AutoSort" xml:space="preserve">
+    <value>Auto-sort</value>
+    <comment>Label next to the auto-sort checkbox in the mod list header.</comment>
+  </data>
+  <data name="ModList_AutoSortTooltip" xml:space="preserve">
+    <value>Sort mods by their dependencies (dependency-based sorting is coming; currently no-op).</value>
+    <comment>Tooltip on the auto-sort checkbox. Notes that real sorting is coming; no em-dash.</comment>
+  </data>
+
+  <data name="ModRow_EnabledTooltip" xml:space="preserve">
+    <value>Enable / disable this mod</value>
+    <comment>Tooltip on the enabled checkbox on each mod row.</comment>
+  </data>
+  <data name="ModRow_PolicyLatest" xml:space="preserve">
+    <value>Latest</value>
+    <comment>Policy ComboBox option: track the newest release.</comment>
+  </data>
+  <data name="ModRow_PolicyPinned" xml:space="preserve">
+    <value>Pinned</value>
+    <comment>Policy ComboBox option: frozen at a specific release.</comment>
+  </data>
+  <data name="ModRow_PolicyPinnedDisplay" xml:space="preserve">
+    <value>Pinned {0}</value>
+    <comment>Policy display text for a pinned mod (the badge / tooltip form). {0} is the pinned version tag.</comment>
+  </data>
+  <data name="ModRow_PinnedVersionPlaceholder" xml:space="preserve">
+    <value>version tag</value>
+    <comment>Watermark / placeholder for the inline pinned-version editor.</comment>
+  </data>
+  <data name="ModRow_MoveUpTooltip" xml:space="preserve">
+    <value>Move up</value>
+    <comment>Tooltip on the move-up button on each mod row.</comment>
+  </data>
+  <data name="ModRow_MoveDownTooltip" xml:space="preserve">
+    <value>Move down</value>
+    <comment>Tooltip on the move-down button on each mod row.</comment>
+  </data>
+  <data name="ModRow_RemoveTooltip" xml:space="preserve">
+    <value>Remove from this profile</value>
+    <comment>Tooltip on the trash (remove) button on each mod row.</comment>
+  </data>
+  <data name="ModRow_SourceLocal" xml:space="preserve">
+    <value>Local</value>
+    <comment>Source badge text for a local / untracked mod.</comment>
+  </data>
+  <data name="ModRow_SourceNexus" xml:space="preserve">
+    <value>Nexus #{0}</value>
+    <comment>Source badge text for a Nexus Mods mod. {0} is the Nexus mod id.</comment>
+  </data>
+  <data name="ModRow_SourceGitHub" xml:space="preserve">
+    <value>GitHub {0}/{1}</value>
+    <comment>Source badge text for a GitHub mod. {0} is the owner, {1} is the repo.</comment>
+  </data>
+  <data name="ModRow_NotFound" xml:space="preserve">
+    <value>Not found</value>
+    <comment>Source badge text when a mod has no shared-store entry (stale profile reference).</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Import mod dialog (ImportModDialog / ImportModViewModel)     -->
+  <!-- ============================================================ -->
+
+  <data name="Import_Title" xml:space="preserve">
+    <value>Import mod</value>
+    <comment>Title of the per-mod import modal.</comment>
+  </data>
+  <data name="Import_NameLabel" xml:space="preserve">
+    <value>Mod name</value>
+    <comment>Label over the mod name field in the import modal.</comment>
+  </data>
+  <data name="Import_SourceLabel" xml:space="preserve">
+    <value>Source</value>
+    <comment>Label over the source chooser in the import modal.</comment>
+  </data>
+  <data name="Import_SourceLocal" xml:space="preserve">
+    <value>Local</value>
+    <comment>Source chooser option: local / untracked.</comment>
+  </data>
+  <data name="Import_SourceNexus" xml:space="preserve">
+    <value>Nexus Mods</value>
+    <comment>Source chooser option: Nexus Mods.</comment>
+  </data>
+  <data name="Import_SourceGitHub" xml:space="preserve">
+    <value>GitHub</value>
+    <comment>Source chooser option: GitHub.</comment>
+  </data>
+  <data name="Import_VersionLabel" xml:space="preserve">
+    <value>Version</value>
+    <comment>Label over the version field in the import modal.</comment>
+  </data>
+  <data name="Import_VersionRequired" xml:space="preserve">
+    <value>Version is required.</value>
+    <comment>Validation message when the version field is empty for a remote source.</comment>
+  </data>
+  <data name="Import_NexusUrlLabel" xml:space="preserve">
+    <value>Mod URL</value>
+    <comment>Label over the URL field when Nexus is chosen.</comment>
+  </data>
+  <data name="Import_GitHubUrlLabel" xml:space="preserve">
+    <value>Repo URL</value>
+    <comment>Label over the URL field when GitHub is chosen.</comment>
+  </data>
+  <data name="Import_UrlPlaceholderNexus" xml:space="preserve">
+    <value>https://www.nexusmods.com/warhammer40kdarktide/mods/…</value>
+    <comment>Watermark / placeholder for the Nexus URL field.</comment>
+  </data>
+  <data name="Import_UrlPlaceholderGitHub" xml:space="preserve">
+    <value>https://github.com/owner/repo</value>
+    <comment>Watermark / placeholder for the GitHub repo URL field.</comment>
+  </data>
+  <data name="Import_OkButton" xml:space="preserve">
+    <value>OK</value>
+    <comment>The OK / confirm button in the import modal.</comment>
+  </data>
+  <data name="Import_CancelButton" xml:space="preserve">
+    <value>Cancel</value>
+    <comment>The Cancel button in the import modal.</comment>
+  </data>
+  <data name="Import_UrlRequired" xml:space="preserve">
+    <value>A URL is required for this source.</value>
+    <comment>Validation message when the URL field is empty for a remote source.</comment>
+  </data>
+  <data name="Import_UrlInvalid" xml:space="preserve">
+    <value>This URL does not look right. Check the format and try again.</value>
+    <comment>Validation message when the URL does not parse for the chosen source.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Remove mod confirmation                                       -->
+  <!-- ============================================================ -->
+
+  <data name="RemoveMod_Title" xml:space="preserve">
+    <value>Remove mod</value>
+    <comment>Title of the remove-mod confirmation prompt.</comment>
+  </data>
+  <data name="RemoveMod_Message" xml:space="preserve">
+    <value>Remove {0} from this profile?</value>
+    <comment>Body of the remove-mod confirmation prompt. {0} is the mod name.</comment>
   </data>
 </root>
