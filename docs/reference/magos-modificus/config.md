@@ -24,7 +24,7 @@ public sealed class MagosConfig
 {
     public LoggingConfig Logging { get; set; } = new();
     public string ProfilesBaseFolder { get; set; }      // default profiles root
-    public string SharedModsFolder { get; set; }         // default shared-mods root
+    public string ModsFolder { get; set; }         // default mods root
     public string EnginseerRuntimeDir { get; set; }      // default enginseer root
     public IntegrationsConfig Integrations { get; set; } = new();
     public PreferencesConfig Preferences { get; set; } = new();
@@ -37,7 +37,7 @@ public sealed class MagosConfig
 | --- | --- | --- |
 | `Logging` | see `LoggingConfig` | Log level + file (consumed by `LoggingBootstrap`). |
 | `ProfilesBaseFolder` | `<app-data>/profiles` | Where profiles, per-profile mods, and profile settings are stored. |
-| `SharedModsFolder` | `<app-data>/shared-mods` | The global shared mod store (see [shared-mods](shared-mods.md)). |
+| `ModsFolder` | `<app-data>/mods` | The global mod store (see [mods](mods.md)). |
 | `EnginseerRuntimeDir` | `<app-data>/enginseer` | Where `magos_launcher.exe`, `magos_shell.dll`, and `mod_loader/` live (consumed by [enginseer-client](enginseer-client.md)). |
 | `Integrations` | see `IntegrationsConfig` | External-service (mod-source) integration settings. |
 | `Preferences` | see `PreferencesConfig` | User-facing global preferences (theme, font scale, language). Phase 3 Track D. |

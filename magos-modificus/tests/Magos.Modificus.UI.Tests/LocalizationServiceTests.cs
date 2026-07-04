@@ -119,7 +119,7 @@ public sealed class LocalizationServiceTests
         var formatted = svc.Format("ManageProfiles_DeleteMessage", "Alpha");
 
         Assert.Contains("Alpha", formatted);
-        Assert.Contains("mods/", formatted);
+        Assert.Contains("mod list", formatted);
     }
 
     [Fact]

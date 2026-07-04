@@ -16,7 +16,7 @@ Magos has two components:
 - **Magos Modificus** — the mod manager app (UI, staging, load order, profiles,
   dependency resolution). Phases 0–2 complete; Phase 3 Track A in progress: the
   backend libraries (Profiles, Steam, Integrations, Enginseer-client,
-  SharedMods) are implemented, and the UI shell + profile management (dropdown
+  Mods) are implemented, and the UI shell + profile management (dropdown
   switch, persisted active profile, create/rename/delete dialog) are wired.
   Mod-list UI and Launch behavior are still pending, and the Launcher is a stub
   (Phase 5). See

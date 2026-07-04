@@ -1,9 +1,9 @@
 namespace Magos.Modificus.Profiles;
 
 /// <summary>
-/// The identity <see cref="IModOrderResolver"/>: returns the mod names in their
-/// current <see cref="ModListEntry.Order"/> (a no-op). Phase-3 stub: the real
-/// dependency-driven auto-sort lands in a later phase; this keeps the UI's
+/// The identity <see cref="IModOrderResolver"/>: returns the container ids in
+/// their current <see cref="ModListEntry.Order"/> (a no-op). Phase-3 stub: the
+/// real dependency-driven auto-sort lands in a later phase; this keeps the UI's
 /// auto-sort toggle wired + shippable now.
 /// </summary>
 /// <remarks>
@@ -14,14 +14,14 @@ namespace Magos.Modificus.Profiles;
 public sealed class IdentityModOrderResolver : IModOrderResolver
 {
     /// <inheritdoc />
-    public IReadOnlyList<string> ResolveOrder(IReadOnlyList<ModListEntry> mods)
+    public IReadOnlyList<Guid> ResolveOrder(IReadOnlyList<ModListEntry> mods)
     {
         ArgumentNullException.ThrowIfNull(mods);
-        // Identity: current order, unchanged. Select names ordered by current
-        // Order; OrderBy is stable on ties.
+        // Identity: current order, unchanged. Select container ids ordered by
+        // current Order; OrderBy is stable on ties.
         return mods
             .OrderBy(m => m.Order)
-            .Select(m => m.Name)
+            .Select(m => m.ContainerId)
             .ToArray();
     }
 }

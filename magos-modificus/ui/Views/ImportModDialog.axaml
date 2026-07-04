@@ -36,11 +36,11 @@
                      PlaceholderText="{ReflectionBinding [Import_NameLabel], Source={StaticResource Loc}}" />
           </StackPanel>
 
-          <!-- Source chooser: Local / Nexus / GitHub. -->
+          <!-- Source chooser: Untracked / Nexus / GitHub. -->
           <StackPanel Spacing="4">
             <TextBlock Text="{ReflectionBinding [Import_SourceLabel], Source={StaticResource Loc}}" />
             <ComboBox SelectedIndex="{Binding SourceChoiceIndex, Mode=TwoWay}" MinWidth="160">
-              <ComboBoxItem Content="{ReflectionBinding [Import_SourceLocal], Source={StaticResource Loc}}" />
+              <ComboBoxItem Content="{ReflectionBinding [Import_SourceUntracked], Source={StaticResource Loc}}" />
               <ComboBoxItem Content="{ReflectionBinding [Import_SourceNexus], Source={StaticResource Loc}}" />
               <ComboBoxItem Content="{ReflectionBinding [Import_SourceGitHub], Source={StaticResource Loc}}" />
             </ComboBox>

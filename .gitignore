@@ -89,8 +89,10 @@ _local/
 /launch.bat
 *.obj
 
-# Ignore local mods directory. Used for local testing and validation.
-mods/
+# Ignore local mods directory (repo-root only: the mod root used for local
+# testing + validation, pointed at by --mod-path). Anchored so it does NOT also
+# ignore magos-modificus/mods/ (the Mods library source).
+/mods/
 
 ## .NET / Magos Modificus
 ## Canonical .NET .gitignore from CommunityToolkit/dotnet

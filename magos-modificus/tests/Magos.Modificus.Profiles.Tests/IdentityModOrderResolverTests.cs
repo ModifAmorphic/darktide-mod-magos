@@ -1,49 +1,59 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Magos.Modificus.Config;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 
 namespace Magos.Modificus.Profiles.Tests;
 
 /// <summary>
 /// <see cref="IdentityModOrderResolver"/>: the auto-sort identity stub. Returns
-/// the mod names in their current <see cref="ModListEntry.Order"/>; stable on
-/// ties. Also covers the <see cref="AddProfiles"/> DI registration of
+/// the container ids in their current <see cref="ModListEntry.Order"/>; stable
+/// on ties. Also covers the <see cref="AddProfiles"/> DI registration of
 /// <see cref="IModOrderResolver"/>.
 /// </summary>
 public sealed class IdentityModOrderResolverTests
 {
     [Fact]
-    public void ResolveOrder_returns_names_in_current_Order_ascending()
+    public void ResolveOrder_returns_container_ids_in_current_Order_ascending()
     {
         var resolver = new IdentityModOrderResolver();
         var mods = new[]
         {
-            new ModListEntry { Name = "Gamma", Order = 2, Enabled = true, Policy = ModVersionPolicy.Latest },
-            new ModListEntry { Name = "Alpha", Order = 0, Enabled = true, Policy = ModVersionPolicy.Latest },
-            new ModListEntry { Name = "Beta",  Order = 1, Enabled = false, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = Guid.Parse("00000000-0000-0000-0000-0000000000c0"), Order = 2, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = Guid.Parse("00000000-0000-0000-0000-0000000000a0"), Order = 0, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = Guid.Parse("00000000-0000-0000-0000-0000000000b0"), Order = 1, Enabled = false, Policy = ModVersionPolicy.Latest },
         };
 
         var order = resolver.ResolveOrder(mods);
 
-        Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, order);
+        Assert.Equal(
+            new[]
+            {
+                Guid.Parse("00000000-0000-0000-0000-0000000000a0"),
+                Guid.Parse("00000000-0000-0000-0000-0000000000b0"),
+                Guid.Parse("00000000-0000-0000-0000-0000000000c0"),
+            },
+            order);
     }
 
     [Fact]
     public void ResolveOrder_is_identity_when_already_ordered()
     {
         var resolver = new IdentityModOrderResolver();
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+        var id3 = Guid.NewGuid();
         var mods = new[]
         {
-            new ModListEntry { Name = "DMF",   Order = 0, Enabled = true, Policy = ModVersionPolicy.Latest },
-            new ModListEntry { Name = "ModB",  Order = 1, Enabled = true, Policy = ModVersionPolicy.Latest },
-            new ModListEntry { Name = "ModC",  Order = 2, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = id1, Order = 0, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = id2, Order = 1, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = id3, Order = 2, Enabled = true, Policy = ModVersionPolicy.Latest },
         };
 
         var order = resolver.ResolveOrder(mods);
 
-        // No-op: names come back in the same order they're already in.
-        Assert.Equal(new[] { "DMF", "ModB", "ModC" }, order);
+        // No-op: ids come back in the same order they're already in.
+        Assert.Equal(new[] { id1, id2, id3 }, order);
     }
 
     [Fact]
@@ -57,19 +67,21 @@ public sealed class IdentityModOrderResolverTests
     public void ResolveOrder_preserves_input_relative_order_on_ties()
     {
         // Equal Order values are stable-sorted (OrderBy is stable), so the input's
-        // relative order is preserved on ties. This is the identity behavior the
-        // auto-sort toggle relies on (a no-op should not reshuffle the list).
+        // relative order is preserved on ties.
         var resolver = new IdentityModOrderResolver();
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        var third = Guid.NewGuid();
         var mods = new[]
         {
-            new ModListEntry { Name = "First",  Order = 5, Enabled = true, Policy = ModVersionPolicy.Latest },
-            new ModListEntry { Name = "Second", Order = 5, Enabled = true, Policy = ModVersionPolicy.Latest },
-            new ModListEntry { Name = "Third",  Order = 5, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = first, Order = 5, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = second, Order = 5, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = third, Order = 5, Enabled = true, Policy = ModVersionPolicy.Latest },
         };
 
         var order = resolver.ResolveOrder(mods);
 
-        Assert.Equal(new[] { "First", "Second", "Third" }, order);
+        Assert.Equal(new[] { first, second, third }, order);
     }
 
     [Fact]
@@ -82,12 +94,11 @@ public sealed class IdentityModOrderResolverTests
     [Fact]
     public void ResolveOrder_returns_a_separate_list_not_the_input()
     {
-        // The result must be its own collection (caller may persist it; mutation
-        // of the result must not affect the input list).
         var resolver = new IdentityModOrderResolver();
+        var id = Guid.NewGuid();
         var mods = new[]
         {
-            new ModListEntry { Name = "DMF", Order = 0, Enabled = true, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = id, Order = 0, Enabled = true, Policy = ModVersionPolicy.Latest },
         };
 
         var order = resolver.ResolveOrder(mods);
@@ -131,7 +142,7 @@ public sealed class IdentityModOrderResolverTests
     /// <summary>Hand-rolled fake (no mock library, matching the test style).</summary>
     private sealed class FakeOrderResolver : IModOrderResolver
     {
-        public IReadOnlyList<string> ResolveOrder(IReadOnlyList<ModListEntry> mods) =>
-            mods.Select(m => m.Name).Reverse().ToArray();
+        public IReadOnlyList<Guid> ResolveOrder(IReadOnlyList<ModListEntry> mods) =>
+            mods.Select(m => m.ContainerId).Reverse().ToArray();
     }
 }

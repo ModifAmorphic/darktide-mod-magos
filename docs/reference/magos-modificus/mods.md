@@ -1,0 +1,296 @@
+# Mods (`Magos.Modificus.Mods`) reference
+
+> The unified mod repository: one UUID container per `(source, identity)`,
+> holding opaque-ID version subfolders indexed by per-container manifests.
+> Plus the version-policy model, the mod-source provenance model, and the
+> local-import service. Status: implemented (Phase 1 of the shared-mod-storage
+> refactor).
+
+A mod is stored exactly once, in the repository, keyed by a UUID container per
+`(source-type, identity)`. Profiles reference a mod by `(containerId, policy)`
+and never store mod files of their own. At stage time the profile resolves the
+policy to a version folder and symlinks into the repository. This eliminates the
+old divergence / allocation model entirely.
+
+## Public surface
+
+### `IModRepository`
+
+The unified mod repository. Storage CRUD over per-container `container.json`
+manifests. Owns `<ModsFolder>/<containerUUID>/container.json` (one manifest
+per container) + the opaque-ID version subfolders.
+
+```csharp
+public interface IModRepository
+{
+    IReadOnlyList<ModContainer> List();
+    ModContainer? Get(Guid containerId);
+    ModContainer? FindBySource(ModSource source);     // Nexus by ModId, GitHub by Owner/Repo; null for Untracked
+    ModContainer? FindUntrackedByName(string name);   // Untracked identity is the container Name
+    ModContainer CreateContainer(ModSource source, string name);
+    ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder);
+    void RemoveVersion(Guid containerId, string versionFolder);
+    void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
+    string GetVersionFolderPath(Guid containerId, string versionFolder);  // derived, never stored
+}
+```
+
+- `List()`: every container, in scan order.
+- `Get(containerId)`: lookup by id. Null if absent.
+- `FindBySource(source)`: Nexus by `ModId`, GitHub by `Owner`/`Repo`. Returns
+  `null` for `UntrackedSource` (untracked identity is the container `Name`;
+  use `FindUntrackedByName`).
+- `FindUntrackedByName(name)`: lookup an untracked container by its `Name`
+  (ordinal). The untracked dedup path: a re-import of the same name resolves to
+  the existing container.
+- `CreateContainer(source, name)`: new UUID container + empty `container.json`.
+  Does not check for an existing same-identity container (the caller does that
+  via `FindBySource` / `FindUntrackedByName` first).
+- `AddVersion(containerId, versionString, populateFolder)`: upsert by
+  `versionString`. Re-adding the same tag reuses + refreshes its opaque folder
+  (no re-order, `IsLatest` unchanged); a new tag creates a new opaque folder + a
+  new entry that becomes `IsLatest` (the newest by `ImportedAt`). The repository
+  invokes `populateFolder(absolutePath)` after creating the folder so the caller
+  extracts a `.zip` / copies a folder into it.
+- `RemoveVersion(containerId, versionFolder)`: idempotent. Promotes the newest
+  remaining version to `IsLatest` if the removed one carried it.
+- `PruneUnreferenced(referenced)`: GC. Drops every `(containerId, versionFolder)`
+  not in the referenced set + removes containers left with zero versions.
+  Intended for startup (`ModCleanup.PruneUnreferenced`).
+- `GetVersionFolderPath(containerId, versionFolder)`: the absolute path
+  `<ModsFolder>/<containerUUID>/<versionFolder>`. Derived (the repository
+  owns `<ModsFolder>`); never stored. Used for staging symlink targets.
+
+The repository builds an in-memory index at construction by scanning every
+`<ModsFolder>/*/container.json` (dozens of containers, cheap). There is no
+global databank file: the per-container manifests are self-describing, so the
+index rebuilds from a scan (resilient + relocatable). A corrupt/unreadable
+manifest is skipped with a warning; one bad container never breaks the rest.
+
+### `IModImportService`
+
+Imports a local mod source (a folder OR a `.zip` archive) into the repository.
+The mod-list UI's add flow (picker + drag-and-drop) goes through this seam: the
+UI never touches the filesystem directly.
+
+```csharp
+public interface IModImportService
+{
+    (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version);
+}
+```
+
+- Container resolution: `FindUntrackedByName` for untracked (dedup by `modName`),
+  `FindBySource` for Nexus/GitHub (dedup by source identity); `CreateContainer`
+  if absent.
+- Version resolution: dedup by `versionString` (`AddVersion` reuses the existing
+  folder + refreshes its files); a new `versionString` creates a new version +
+  flips `IsLatest`.
+- `.zip` detection is by extension (ordinal ignore-case); anything else is
+  treated as a folder path. A `.zip` is extracted via
+  `System.IO.Compression.ZipFile.ExtractToDirectory` (in-box for net10.0); a
+  folder is recursively copied.
+- Returns `(containerId, versionString)` so the caller does
+  `IProfileService.AddMod(profileId, containerId, policy)`.
+- Does NOT touch profile mod lists: the caller adds the profile reference after
+  the import succeeds (order matters: import the repository copy, then reference
+  it from the profile).
+- The `modName` path-traversal confinement (rejects path separators, `..`,
+  absolute paths) is retained from Track B as defense-in-depth, even though the
+  import target is now an opaque UUID folder (not `modName`-derived).
+
+### Key types
+
+#### `ModContainer` (record)
+
+A single mod in the repository (immutable record):
+
+| Field | Meaning |
+| --- | --- |
+| `Id` | Stable identity (Guid); the on-disk container directory name. |
+| `Source` | Where this mod came from: Untracked / Nexus / GitHub (`ModSource`, default `UntrackedSource`). |
+| `Name` | The display name + the untracked dedup key. Set at import. |
+| `Versions` | The container's imported versions (`IReadOnlyList<ModVersion>`). One may carry `IsLatest`. |
+
+The container's on-disk path is **derived**:
+`<ModsFolder>/<Id>/`. It is never stored absolute, so relocating the
+repository is a physical move of the tree plus a config update (no manifest
+rewriting, no drift detection).
+
+`ResolveVersion(policy)` is a pure helper on the container that resolves a
+profile's policy to the version it should stage: `LatestPolicy` → the
+`IsLatest` version; `PinnedPolicy(vId)` → the version whose `Folder == vId`
+(raw string equality on the opaque version id). Returns `null` when there is no
+match. Centralized so staging and the startup prune cannot drift.
+
+#### `ModVersion` (record)
+
+One version of a mod (immutable record):
+
+| Field | Meaning |
+| --- | --- |
+| `Folder` | The opaque version-folder ID (UUID-derived). The version's files live at `<ModsFolder>/<containerId>/<Folder>/`. Never the raw version tag. |
+| `VersionString` | The raw release tag (e.g. `"1.2"`, `"v2.0.1"`). Used for display only. Arbitrary source tags, not SemVer; never parsed. |
+| `IsLatest` | Whether this is the container's current latest version. Exactly one per container (the newest by `ImportedAt`). Moving latest is a one-field manifest edit. |
+| `ImportedAt` | When first imported (UTC). Orders the versions; the newest carries `IsLatest`. |
+
+#### `ModSource` (abstract record)
+
+A mod's source provenance. Three cases:
+
+- `UntrackedSource`: local / untracked (the default). No identity payload; the
+  dedup key is the container `Name`.
+- `NexusSource(int ModId)`: Nexus Mods (the game is fixed: Darktide; the
+  canonical identity is just the numeric mod id).
+- `GitHubSource(string Owner, string Repo)`: GitHub (the canonical identity is
+  the owner/repo pair).
+
+Persisted polymorphically to `container.json` via a `$kind` discriminator with
+**stable identifiers** (`untracked` / `nexus` / `github`):
+
+```csharp
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "$kind")]
+[JsonDerivedType(typeof(UntrackedSource), "untracked")]
+[JsonDerivedType(typeof(NexusSource),  "nexus")]
+[JsonDerivedType(typeof(GitHubSource), "github")]
+public abstract record ModSource;
+```
+
+Different source-types are separate namespaces: an untracked "WeaponTweaks" and a
+Nexus "WeaponTweaks" are distinct containers (never collide, never share).
+
+#### `ModVersionPolicy` (abstract record)
+
+A mod's version policy: drives version resolution at stage time. Two cases:
+
+- `PinnedPolicy(string VersionId)`: frozen at a specific release, referenced by
+  id (a foreign key to a `ModVersion.Folder`). Resolves to the version whose
+  `Folder` matches exactly (string equality).
+- `LatestPolicy`: tracks the newest release. Resolves to the container's
+  `IsLatest` version.
+
+Persisted polymorphically to `container.json` and `profile.json` via a `$kind`
+discriminator (`pinned` / `latest`):
+
+```csharp
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "$kind")]
+[JsonDerivedType(typeof(PinnedPolicy), "pinned")]
+[JsonDerivedType(typeof(LatestPolicy),  "latest")]
+public abstract record ModVersionPolicy
+{
+    public static ModVersionPolicy Latest { get; } = new LatestPolicy();
+}
+```
+
+The version reference is **by id, not by tag**. `PinnedPolicy.VersionId` is a
+foreign key to a `ModVersion.Folder` (the opaque on-disk version folder name,
+a `Guid.NewGuid().ToString("N")` minted by `IModRepository.AddVersion`). The
+repository stays the single source of truth for version details
+(`VersionString`, `IsLatest`); the profile holds only the id, so a phantom pin
+(an id with no matching version in the container) cannot be silently created:
+`IProfileService.SetModPolicy` rejects an orphan id, and the UI's pin dropdown
+can only produce ids the container's version list already holds.
+
+#### `ModSourceParser` (static)
+
+Pure URL → canonical `ModSource` parsers (UI-agnostic, unit-tested). Never
+throws: malformed input returns `false`.
+
+```csharp
+public static class ModSourceParser
+{
+    // "https://www.nexusmods.com/warhammer40kdarktide/mods/12345"  -> NexusSource(12345)
+    public static bool TryParseNexus(string input, out NexusSource source);
+
+    // "https://github.com/owner/repo"  -> GitHubSource(owner, repo)
+    public static bool TryParseGitHub(string input, out GitHubSource source);
+}
+```
+
+## DI registration
+
+```csharp
+public static IServiceCollection AddMods(this IServiceCollection services)
+{
+    services.TryAddSingleton<IModRepository, ModRepository>();
+    services.TryAddSingleton<IModImportService, ModImportService>();
+    return services;
+}
+```
+
+Uses `TryAddSingleton` (mirroring the `SymlinkCreator` seam in Profiles):
+production behavior is unchanged, but a caller may pre-register an
+`IModRepository` or `IModImportService` fake and have it survive `AddProfiles()`
+(which calls `AddMods()` unconditionally). Resolves `MagosConfig` +
+`ILogger<>` from the container. Registered as singletons: the repository holds
+the in-memory index (cheap to rebuild), and `MagosConfig` is itself a singleton.
+
+## On-disk layout
+
+```
+<ModsFolder>/                 (auto-created on first run)
+  <containerUUID>/                  (container dir; id-named, opaque)
+    container.json                  (id + source + name + versions[] - the manifest)
+    <versionFolder>/                (opaque-ID version subfolder; the mod files)
+    <versionFolder>/
+      ...
+```
+
+`container.json` is UTF-8 without BOM. Paths are derived (`ModsFolder` +
+UUIDs), never stored absolute.
+
+## Dependencies
+
+- **Magos libraries:** `config` (`MagosConfig.ModsFolder`).
+- **NuGet:** `Microsoft.Extensions.DependencyInjection.Abstractions`,
+  `Microsoft.Extensions.Logging.Abstractions`.
+- **BCL:** `System.IO.Compression` (the import service uses
+  `ZipFile.ExtractToDirectory`; in-box for net10.0, no package reference).
+
+## Testing
+
+`Magos.Modificus.Mods.Tests` covers:
+
+- `ModRepository`: container/version CRUD, `FindBySource` per source-type +
+  `FindUntrackedByName`, manifest round-trip + in-memory index rebuild from a
+  scan (skips non-container dirs + corrupt manifests), `PruneUnreferenced`
+  (drops unreferenced version folders + empty containers, keeps referenced),
+  opaque version-folder naming, derived paths.
+- `ModSource` JSON `$kind` round-trip (untracked/nexus/github) + defaults +
+  record equality.
+- `ModSourceParser` URL/id parsing (valid variants, trailing slash, query,
+  `.git`, plain id; malformed rejections: wrong host, wrong game slug, too few
+  segments, non-numeric/zero/negative id).
+- `ModImportService`: container find/create + version dedup + `isLatest` flip +
+  folder/`.zip` import + error paths (missing source, malformed zip, bad mod
+  name) + the retained `modName` path-traversal confinement.
+
+The internal `ModRepository` + `ModImportService` are visible to tests via
+`InternalsVisibleTo` (tests resolve them through the interface via DI).
+
+```sh
+dotnet test magos-modificus/magos-modificus.sln -c Release
+```
+
+## Persistence note (format change)
+
+This refactor supersedes the earlier per-profile allocation model. The persisted
+shapes changed incompatibly:
+
+- The old `<ModsFolder>/shared-manifest.json` (the pre-refactor manifest, a JSON
+  array of the legacy `ModEntry`) is orphaned: the new code does not read it. The
+  operator clears it once (or points `ModsFolder` at a fresh location).
+- Each profile's old `mods/` directory is no longer created or read.
+- `profile.json` mod entries changed shape: `Name` → `ContainerId` (Guid). Old
+  entries deserialize with `ContainerId == Guid.Empty` and are dropped on read
+  (logged); the profile is otherwise intact.
+
+No migration shim is provided (the spec is fresh-start; the operator's real
+profiles are dev-only at this stage).
+
+## See also
+
+- [Magos Modificus architecture](../../architecture/MAGOS-MODIFICUS.md): the
+  [Mod repository](../../architecture/MAGOS-MODIFICUS.md#mod-repository) section.
+- [profiles](profiles.md): consumes `IModRepository` for staging (resolves each
+  profile mod's policy to a version folder) + the startup prune.

@@ -1,4 +1,4 @@
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 
 namespace Magos.Modificus.UI.Dialogs;
 
@@ -13,12 +13,12 @@ namespace Magos.Modificus.UI.Dialogs;
 /// here, so the user's edit (rename at import) flows back to the caller through
 /// the same request object. This keeps <see cref="ImportModResult"/> focused on
 /// source + version while still honoring the "editable name establishes the
-/// canonical shared-store key" rule (spec §3c). On confirm, the modal trims +
+/// canonical mod-store key" rule (spec §3c). On confirm, the modal trims +
 /// writes back the edited name; the add flow then reads it for the canonical key.
 /// </remarks>
 public sealed record ImportModRequest
 {
-    /// <summary>The shared-store key + on-disk folder name. Pre-filled from the
+    /// <summary>The mod-store key + on-disk folder name. Pre-filled from the
     /// folder / archive stem; the modal two-way binds + writes the user's edit
     /// back here. The caller reads this after the modal returns to use the
     /// canonical (possibly edited) name.</summary>
@@ -44,9 +44,9 @@ public sealed record ImportModRequest
 /// (the caller stops the batch). The version is a raw release tag (arbitrary
 /// GitHub / Nexus string), never parsed or normalized.
 /// </summary>
-/// <param name="Source">The parsed canonical source. <see cref="NoneSource"/> for
-/// a local import; <see cref="NexusSource"/> / <see cref="GitHubSource"/> when the
-/// user supplied a URL the parser resolved.</param>
+/// <param name="Source">The parsed canonical source. <see cref="UntrackedSource"/>
+/// for an untracked import; <see cref="NexusSource"/> / <see cref="GitHubSource"/>
+/// when the user supplied a URL the parser resolved.</param>
 /// <param name="Version">The raw release tag string (e.g. <c>"1.2"</c>,
 /// <c>"v2.0.1"</c>). <see cref="string.Empty"/> for a local / untracked import.</param>
 public sealed record ImportModResult(ModSource Source, string Version);

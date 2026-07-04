@@ -1,4 +1,4 @@
-namespace Magos.Modificus.SharedMods.Tests;
+namespace Magos.Modificus.Mods.Tests;
 
 /// <summary>
 /// <see cref="ModSourceParser"/>: URL → canonical <see cref="ModSource"/>

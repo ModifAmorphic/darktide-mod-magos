@@ -152,7 +152,17 @@
                             Margin="12,0,0,0"
                             VerticalAlignment="Center" />
 
-                  <!-- Policy editor: ComboBox (Latest/Pinned) + inline version. -->
+                  <!-- Policy editor: ComboBox (Latest/Pinned) + inline version dropdown. -->
+                  <!--
+                    The pin is a constrained dropdown of the container's versions
+                    (bound to the row's AvailableVersions): the user can only pin to
+                    a version that exists in the container. The dropdown shows the
+                    readable version tag and stores the opaque folder id, which the
+                    parent's SetPolicyPinned command wraps as PinnedPolicy(versionId).
+                    (The import-modal version field stays free-text: it declares the
+                    version of files being imported, which is how a new version row
+                    enters the container in the first place.)
+                  -->
                   <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6"
                               Margin="12,0,0,0" VerticalAlignment="Center">
                     <ComboBox SelectedIndex="{Binding PolicyChoice, Mode=TwoWay}"
@@ -161,11 +171,18 @@
                       <ComboBoxItem Content="{ReflectionBinding [ModRow_PolicyLatest], Source={StaticResource Loc}}" />
                       <ComboBoxItem Content="{ReflectionBinding [ModRow_PolicyPinned], Source={StaticResource Loc}}" />
                     </ComboBox>
-                    <TextBox Text="{Binding PinnedVersion, Mode=TwoWay}"
-                             IsVisible="{Binding IsPinned}"
-                             KeyDown="PinnedVersion_KeyDown"
-                             PlaceholderText="{ReflectionBinding [ModRow_PinnedVersionPlaceholder], Source={StaticResource Loc}}"
-                             MinWidth="90" />
+                    <ComboBox ItemsSource="{Binding AvailableVersions}"
+                              SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                              SelectionChanged="PinnedVersion_Changed"
+                              IsVisible="{Binding IsPinned}"
+                              PlaceholderText="{ReflectionBinding [ModRow_PinnedVersionPlaceholder], Source={StaticResource Loc}}"
+                              MinWidth="120">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:VersionOption">
+                          <TextBlock Text="{Binding VersionString}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
                   </StackPanel>
 
                   <!-- Move up (drawn up-chevron). -->

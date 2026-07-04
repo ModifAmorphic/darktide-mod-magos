@@ -7,7 +7,7 @@ Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
 
 > **Status: Phases 0–2 complete; Phase 3 Track A in progress.** The foundation +
 > all backend libraries are implemented: Profiles, Steam, Integrations,
-> Enginseer-client (Phase 1) + SharedMods (Phase 2). Phase 3 Track A wires the
+> Enginseer-client (Phase 1) + Mods (Phase 2). Phase 3 Track A wires the
 > UI: milestone 1 landed the app shell (top bar + status strip, live
 > profile/game-running state) and milestone 2 makes the profile controls work
 > (dropdown switch + persisted active profile + a "Manage profiles…" create /
@@ -40,7 +40,7 @@ magos-modificus/
                                                             app-state store, DI
   config/                         Magos.Modificus.Config   the MagosConfig schema + defaults (POCO)
   profiles/                       Magos.Modificus.Profiles          implemented (Phase 1 + Phase 2 staging)
-  shared-mods/                    Magos.Modificus.SharedMods        implemented (Phase 2)
+  mods/                           Magos.Modificus.Mods              implemented (Phase 2)
   integrations/                   Magos.Modificus.Integrations      implemented (Phase 1 — GitHub Releases client)
   steam/                          Magos.Modificus.Steam             implemented (Phase 1 — discovery + IsGameRunning)
   enginseer-client/               Magos.Modificus.EnginseerClient   implemented (Phase 1 — launch façade)
@@ -48,11 +48,11 @@ magos-modificus/
   tests/
     Magos.Modificus.General.Tests/         xUnit tests for the general library
     Magos.Modificus.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
-    Magos.Modificus.SharedMods.Tests/      xUnit tests for the shared-mod store + allocation
+    Magos.Modificus.Mods.Tests/            xUnit tests for the mod repository + import
     Magos.Modificus.Integrations.Tests/    xUnit tests for the GitHub Releases client
     Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose: dotnet test / dotnet run smoke harness)
-    Magos.Modificus.UI.Tests/              xUnit tests for the shell + manage-profiles view models
+    Magos.Modificus.UI.Tests/              xUnit tests for the shell + manage-profiles + mod-list view models
 ```
 
 Each library exposes an `Add<Library>()` extension method on
@@ -86,32 +86,36 @@ console and to the configured log file.
 dotnet test magos-modificus/magos-modificus.sln --configuration Release
 ```
 
-## Storage model (shared-first)
+## Storage model (unified repository)
 
-Mods are stored **shared-first** across profiles — a profile uses the global
-shared copy when its version policy is compatible, and takes a profile-local
-(diverged) copy only when policies diverge. **Symlinks** project the resolved
-set into the staged mod root at launch (download once, store once — copying
-would defeat the shared-mod purpose). On-disk layout:
+Mods are stored **once, in a unified repository** keyed by one UUID container per
+`(source-type, identity)`, holding opaque-ID version subfolders indexed by a
+per-container `container.json` manifest. Profiles reference a mod by
+`(containerId, policy)` and store no mod files of their own. **Symlinks** project
+the resolved set into the staged mod root at launch (store once, symlink;
+copying would duplicate repository files). On-disk layout:
 
 ```
-<SharedModsFolder>/                  # the global shared store (MagosConfig)
-  shared-manifest.json               # ISharedModStore: [{Name, Policy, ActualVersion, Path}]
-  <mod-name>/                        # the shared mod files (one copy, shared)
+<ModsFolder>/                  # the mod repository root (MagosConfig)
+  <containerUUID>/                   # one container per (source, identity)
+    container.json                   # { id, source, name, versions: [{ folder, versionString, isLatest, importedAt }] }
+    <versionFolder>/                 # opaque-ID version subfolder; the mod files for that version
 <ProfilesBaseFolder>/<guid>/
-  profile.json                       # metadata + mod list (entries carry a Policy)
-  mods/<mod-name>/                   # a profile's diverged copy of a mod (Phase 4 acquires)
+  profile.json                       # metadata + mod list (entries carry ContainerId + Policy)
   staged/                            # the staged mod root = the --mod-path (REGENERATED each launch)
-    <mod-name>                       #   symlink → shared <mod-name> OR mods/<mod-name>
+    <displayName>                    #   symlink → repository version folder (Latest → isLatest; Pinned(versionId) → matching Folder)
     mods.lst                         #   successfully-staged enabled mods, in order
 ```
 
 `Profiles` owns the staging seam (`ProfileService.PrepareModRoot` clears +
-rebuilds `staged/`, then writes `mods.lst`); `SharedMods` owns the shared
-manifest + the version-policy model + the allocation logic. Allocation
-(Share/Diverge) is by policy **intent**, not current version — see
+rebuilds `staged/`, then writes `mods.lst`); `Mods` owns the repository
+(`IModRepository`) + the version-policy model + the source model + the
+local-import service. Version resolution at stage time is by policy: Latest →
+the container's `isLatest` version; Pinned(vId) → the version whose `Folder`
+matches the pin's versionId (the profile references a version by id, not by
+tag, so the repo stays the sole source of truth for version details). See
 [`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md)
-(Shared mod storage).
+(Mod repository).
 
 ## Configuration
 
@@ -128,7 +132,7 @@ for the schema.
 | `Logging:Level`        | `Information`                                   |
 | `Logging:LogFile`      | `<app-data>/Magos Modificus/logs/magos.log`     |
 | `ProfilesBaseFolder`   | `<app-data>/Magos Modificus/profiles`           |
-| `SharedModsFolder`     | `<app-data>/Magos Modificus/shared-mods`        |
+| `ModsFolder`           | `<app-data>/Magos Modificus/mods`               |
 | `EnginseerRuntimeDir`  | `<app-data>/Magos Modificus/enginseer`          |
 
 Per-profile settings live with the profile, not in the global config.

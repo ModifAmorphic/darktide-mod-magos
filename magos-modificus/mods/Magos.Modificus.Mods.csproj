@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Magos.Modificus.Mods</RootNamespace>
+    <AssemblyName>Magos.Modificus.Mods</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Exposes the internal ModRepository + ModImportService implementations to the
+    test assembly so they can be unit-tested directly when convenient, without
+    widening the library's public surface. The implementations stay internal and
+    are also exercised through IModRepository / IModImportService via DI in the
+    service-collection tests.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Magos.Modificus.Mods.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The Microsoft.Extensions.* packages ride the .NET 10 LTS versions
+      (10.0.9 is the current latest stable).
+    -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- MagosConfig (ModsFolder) is read at DI time + by the repository. -->
+    <ProjectReference Include="..\config\Magos.Modificus.Config.csproj" />
+  </ItemGroup>
+
+</Project>

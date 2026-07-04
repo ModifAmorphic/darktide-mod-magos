@@ -202,8 +202,8 @@ public partial class ManageProfilesViewModel : ObservableObject
     // ---- delete -----------------------------------------------------------
 
     /// <summary>
-    /// Deletes the row's profile after a confirmation (real data loss: the profile
-    /// config + its owned local mod copies). The active profile is locked while
+    /// Deletes the row's profile after a confirmation (real data loss: the profile's
+    /// config + its mod list; the mod repository itself is untouched). The active profile is locked while
     /// Darktide runs: <see cref="IProfileSession.CanDeleteProfile"/> is the single
     /// authority and is consulted here too (defense-in-depth, not only via the
     /// trash button's binding), so delete-of-active only proceeds when the game is

@@ -11,7 +11,7 @@ management experience around it.
 > **Status: Phases 0–2 complete.** The foundation (.NET 10 + Avalonia 12 layout,
 > DI composition, structured logging, global config schema/loader, a bare UI
 > shell) plus the backend libraries are built: Profiles, Steam, Integrations,
-> Enginseer-client (Phase 1) + SharedMods (Phase 2). The **UI is still the bare
+> Enginseer-client (Phase 1) + Mods (Phase 2). The **UI is still the bare
 > Phase-0 window** (no profile/mod-management UI yet) and the **Launcher** is a
 > stub (Phase 5). Next: Phase 3 (UI build-out). Enginseer (the runtime it builds
 > on) is built — see `docs/architecture/ENGINSEER.md`.
@@ -21,7 +21,7 @@ management experience around it.
 - The component's role, technology choices, and project layout.
 - The domain-library breakdown and each library's responsibilities.
 - The Enginseer contract Magos consumes (the stable surface it builds against).
-- The profiles model, shared mod storage, mod sources, and the launch flow on Windows and Linux.
+- The profiles model, mod storage, mod sources, and the launch flow on Windows and Linux.
 - The v1 scope cut.
 
 ## Out of scope (handled elsewhere)
@@ -50,7 +50,7 @@ magos-modificus/
   general/                cross-cutting infra (DI, logging, config, primitives)
   config/                 the global config schema + defaults
   profiles/               Profiles library — profile data, staging, mods.lst
-  shared-mods/            SharedMods library — global shared mod store + version-policy model
+  mods/                   Mods library — unified mod repository (IModRepository) + version-policy + source models
   steam/                  Steam library — Steam/Darktide/Proton discovery + IsGameRunning
   integrations/           Integrations library — GitHub Releases client (Nexus = Phase 4)
   enginseer-client/       Enginseer-client library — the launch façade
@@ -72,7 +72,7 @@ UI models.
 | Library | Owns |
 | --- | --- |
 | **Enginseer** | All interaction with the Enginseer runtime. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control — status / hot-reload / live enable-disable — is a future Enginseer contract expansion; out of v1.) |
-| **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, shared mods store); resolves shared-vs-diverged mod allocation by version policy; materializes the profile mod root + writes `mods.lst` at launch. |
+| **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, mod repository); resolves each profile mod's version policy to a repository version folder; materializes the profile mod root + writes `mods.lst` at launch. |
 | **Integrations** | External-service calls: Nexus Mods (primary user-mod source), GitHub Releases, local install. Nexus API key / OIDC, version checks, downloads / updates. |
 | **Steam** | Steam operations outside Enginseer: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; add / remove non-steam shortcuts; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
 | **General** | Cross-cutting infra: DI composition, structured logging, configuration, shared primitives. |
@@ -97,7 +97,7 @@ through a registered library interface. The UI registers only its own surface
    extensions in their real order:
    - `AddGeneral(config, loggerFactory)` — registers the config singleton, the
      logger factory, `AddLogging()`, and the config loader.
-   - `AddSharedMods()` — the global shared store (called explicitly here and
+   - `AddMods()` — the unified mod repository + import service (called explicitly here and
      idempotently again inside `AddProfiles()`, so the store is discoverable at
      the root and `IProfileService` always resolves its staging dependency).
    - `AddProfiles()` — profile service + the `SymlinkCreator` staging seam.
@@ -108,16 +108,19 @@ through a registered library interface. The UI registers only its own surface
    - `AddTransient<MainWindow>()` + `AddSingleton<MainViewModel>()` — the UI
      surface.
 4. **Build** — `BuildServiceProvider()`.
+5. **Startup prune** — `ModCleanup.PruneUnreferenced` runs once (best-effort,
+   logged + swallowed on failure) to drop repository versions no profile
+   references + empty containers.
 
 **The DI contract:** each library exposes one `Add<Library>()` extension and
 accepts only interfaces or primitives (never concrete UI models). Supporting
 services and injectable seams are registered with `TryAdd` — `SteamDiscoveryOptions`,
 `ISteamRegistryReader`, `IProcessLookup` (Steam), `SymlinkCreator` (Profiles),
-`IProcessLauncher` (Enginseer-client), `ISharedModStore` (SharedMods) — so tests
+`IProcessLauncher` (Enginseer-client), `IModRepository` (Mods) — so tests
 and hosts can pre-register overrides (e.g. the Steam fixture's fakes, or a
 throwing `SymlinkCreator` to exercise the failure path) and have them survive the
 `Add<Library>()` chain. `TryAdd` is specifically load-bearing for `AddProfiles()`,
-which calls `AddSharedMods()` unconditionally: a plain `AddSingleton` there would
+which calls `AddMods()` unconditionally: a plain `AddSingleton` there would
 clobber a pre-registered mock.
 
 **Per-profile vs global:** global, system-level settings live in `MagosConfig`
@@ -170,69 +173,86 @@ logging, the hook-ready handshake).
   resolution puts it there. Beyond those, DMF is fully user-controllable (a
   user could remove / disable / reorder it and break dependent mods —
   sharp-tools philosophy; Magos does not hard-lock it).
-- Mods are stored **shared-first** across profiles — a profile uses the
-  global shared copy when its version policy is compatible, and takes a
-  profile-local copy only when policies diverge. See
-  [Shared mod storage](#shared-mod-storage).
+- Mods are stored **once, in a unified repository** keyed by `(source, identity)`
+  per UUID container. Profiles reference a mod by `(containerId, policy)` and
+  store no mod files of their own. See [Mod repository](#mod-repository).
 
-## Shared mod storage
+## Mod repository
 
-Mods are stored **shared-first**: a profile uses the global shared copy of a mod
-when its version policy is compatible, and only takes a profile-local
-(diverged) copy when the policies would diverge. This keeps one copy of each
-mod where possible while preserving per-profile version control where it's
-needed. Building this in from v1 (rather than retrofitting dedup later) keeps
-the storage model uniform.
+Mods are stored once, in a unified repository keyed by **one UUID container per
+`(source-type, identity)`**. A container holds zero or more **opaque-ID version
+subfolders**, indexed by a per-container `container.json` manifest. Profiles
+reference a mod by `(containerId, policy)` and resolve the version folder at
+stage time, so a profile never stores mod files of its own. This keeps one copy
+of each mod + version, organized so they don't collide and can associate to
+profiles.
 
-Each mod, in the shared store and in a profile, carries a version policy:
-**pinned `<version>`** (frozen at a specific release) or **latest (auto-update)**
-(tracks the newest release). A profile's mod is resolved against the shared
-copy by policy pair:
+Container identity by source: **Nexus** by `ModId`, **GitHub** by
+`Owner`/`Repo`, **Untracked** (local) by `Name`. Different source-types are
+separate namespaces, so an untracked "WeaponTweaks" and a Nexus "WeaponTweaks"
+are distinct containers, and a Nexus mod and a GitHub mod never collide or share.
+The container directory is **UUID-named (opaque)**, and its path is **derived**
+(`<ModsFolder>/<containerUUID>/`), never stored absolute.
 
-| Shared | Profile | Resolution |
-| --- | --- | --- |
-| pinned `v1.0.1` | pinned `v1.0.1` | **share**, same pin |
-| pinned `v1.0.1` | pinned `v2.0.1` | **diverge**, different pins → profile copy |
-| latest (auto-update) | latest (auto-update) | **share**, both track latest; shared is updated to latest |
-| latest (auto-update) | pinned `v2.0.1` | **diverge**, shared will move, profile won't → profile copy |
+Each version is a subfolder with an **opaque unique ID**; the raw version tag
+lives only in the manifest (for display + pin resolution), never as a folder
+name. **`isLatest` is a flag on one version entry**, not a duplicate folder:
+moving latest is a one-field manifest edit, and profiles resolve dynamically at
+stage time (no rescanning profiles, no disk duplication).
 
-Rule: **share** iff both pinned to the same version OR both auto-update;
-otherwise **diverge**. The resolution is by *policy intent*, not current version:
-a shared auto-update mod and a profile pinned to today's same version still
-diverge, because the shared one will move on the next release.
+Each profile entry carries a **version policy**: **pinned** (frozen to a specific
+imported version) or **latest (auto-update)** (tracks the newest release). At
+stage time:
 
-The pin `<version>` is a **raw release tag string** (e.g. `v1.0.1`, `1.2`,
-`1.0.0-beta`), not a parsed `System.Version`. GitHub release tags + Nexus file
-versions are arbitrary strings, not SemVer, so the share check is exact string
-equality (`"1.0"` and `"1.0.0"` are genuinely different pins). There is no
-version ordering at this layer; "newer" is decided later (Phase 4) by fetching
-the latest release tag and checking string inequality.
+| Profile policy | Resolved version |
+| --- | --- |
+| latest | the container's `isLatest` version folder |
+| pinned `<versionId>` | the version whose `Folder` matches the pin's `VersionId` |
+| pinned `<orphan id>` | skip + warn (no version matches) |
 
-Each shared-store entry also carries a **source** (Local / Nexus / GitHub) so a
+The pin is a **foreign key** (`PinnedPolicy.VersionId`) to a `ModVersion.Folder`
+(the opaque version-folder ID the repository mints), not a version string. The
+repository is the single source of truth for version details: the readable
+release tag lives only on `ModVersion.VersionString` (for display). A pin
+references a version row, so it always resolves to a real imported version or is
+an orphan (skip + warn); a "phantom" pin to a version that was never imported
+cannot be expressed (the policy editor offers only the container's actual
+versions, and `SetModPolicy` rejects an unknown id). GitHub release tags and
+Nexus file versions are arbitrary strings (not SemVer); there is no version
+ordering at this layer, and "newer" is decided later (Phase 4) by fetching the
+latest release tag and checking string inequality.
+
+Each container also carries a **source** (Untracked / Nexus / GitHub) so a
 pinned version is legible ("WeaponTweaks *(GitHub owner/repo)* pinned to
 `1.2`"). The UI collects URLs; the model stores the canonical identity (Nexus
-mod id; GitHub owner/repo) via a pure parser. Local / untracked mods default to
-the `none` source.
+mod id; GitHub owner/repo) via a pure parser. Local / untracked mods use the
+`UntrackedSource` source (dedup by name).
 
 **Import flow:** adding a mod to the active profile goes through
 `IModImportService` (the UI never touches the filesystem). The import service
-places the files (recursive copy for a folder, `ZipFile.ExtractToDirectory` for
-a `.zip`) into `<SharedModsFolder>/<modName>/`, upserts the shared-store entry
-with the declared source + version + path, then the caller adds the profile
-reference via `IProfileService.AddMod`. First import of a mod name establishes
-the shared copy (the shared-first staging); a re-import upserts (replaces files
-+ metadata). Remote acquisition (Nexus / GitHub API clients, auto-fetch) stays
-in Phase 4.
+resolves (or creates) the container for the source, then extracts a `.zip` /
+copies a folder into the repository-managed opaque version folder via
+`IModRepository.AddVersion`. Container dedup: Untracked by name, Nexus by mod
+id, GitHub by owner/repo. Version dedup: re-importing the same tag reuses its
+folder (refreshed); a new tag creates a new version + flips `isLatest`. The
+service returns `(containerId, versionString)`; the caller then adds the
+profile reference via `IProfileService.AddMod`. Remote acquisition (Nexus /
+GitHub API clients, auto-fetch) stays in Phase 4.
 
 **Staging:** at launch (alongside regenerating `mods.lst`), Magos materializes
-the profile's mod root (the `--mod-path` dir) from the resolved set — shared
-mods linked/referenced from the shared store, diverged mods as profile-local
-copies. Like `mods.lst`, the mod root is a projection of the profile's mod-list
-metadata, regenerated each launch.
+the profile's mod root (the `--mod-path` dir) by symlinking `staged/<displayName>`
+to each enabled mod's resolved version folder. Like `mods.lst`, the mod root is
+a projection of the profile's mod-list metadata, regenerated each launch.
+**Symlinks, never copies** — the repository holds the files; `staged/` is a
+symlink projection.
 
-**Divergence transitions:** when a profile's policy change makes a previously
-shared mod diverge, Magos creates the profile-local copy; when it converges
-again, the local copy is dropped back to a shared reference.
+**Startup cleanup:** `ModCleanup.PruneUnreferenced` runs once after composition,
+dropping version folders no profile references + removing empty containers.
+Keeps the on-disk tree in sync with what the profiles actually use.
+
+**Relocation:** because paths are derived, changing `<ModsFolder>` is a
+physical move of the tree plus a config update. No manifest rewriting, no drift
+detection.
 
 ## Mod sources / integrations
 
@@ -256,8 +276,8 @@ again, the local copy is dropped back to a shared reference.
 ## Mod list (main view)
 
 - Per-mod: enable / disable, remove, update (when the source reports a newer
-  version), pin to version, per-mod auto-update override. The pinned-vs-auto-update
-  policy drives shared-vs-local allocation (see [Shared mod storage](#shared-mod-storage)).
+  version), pin to version, per-mod auto-update override. The pinned-vs-latest
+  policy drives version resolution at stage time (see [Mod repository](#mod-repository)).
 - Auto-sort (dependency-driven; toggleable); manual reorder in the sequential
   view overrides auto-sort.
 - When DMF is installed, it appears as a protected first entry (locked first
@@ -348,8 +368,8 @@ TOML):
 
 - Log file location + level (the log is **truncated on each manager startup** — no rolling/retention/backup, matching the `magos_launcher` pattern).
 - Profiles base folder (where profiles, mods, and settings are stored).
-- Shared mods folder (the global shared mod store; see
-  [Shared mod storage](#shared-mod-storage)).
+- Mods folder (the global mod store; see
+  [Mod repository](#mod-repository)).
 - Enginseer runtime dir (where `magos_launcher.exe` + `magos_shell.dll` +
   `mod_loader/` live).
 
@@ -363,7 +383,7 @@ Per-profile settings live with the profile, not in the global config.
   running).
 - Mod list: enable / disable / remove, update indicators, version pinning,
   per-mod auto-update override, auto-sort + manual sequential reorder.
-- Shared mod storage (shared-first allocation by version policy).
+- Mod storage (unified repository keyed by `(source, identity)`, version resolution by policy).
 - Mod sources: Nexus Mods (primary) + GitHub Releases + local; DMF via the
   open sourcing decision (Phase 4 — see Mod sources).
 - Launch Darktide (Windows trivial; Linux native + Proton-at-launch +

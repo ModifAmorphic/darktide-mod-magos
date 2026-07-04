@@ -3,7 +3,7 @@ using Magos.Modificus.Config;
 using Magos.Modificus.EnginseerClient;
 using Magos.Modificus.General;
 using Magos.Modificus.Profiles;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Magos.Modificus.Steam;
 using Magos.Modificus.UI.Dialogs;
 using Magos.Modificus.UI.Localization;
@@ -26,14 +26,14 @@ internal static class TestDoubles
 
     /// <summary>
     /// Builds a <see cref="ModListViewModel"/> wired to the supplied (or default)
-    /// fakes. The defaults share one shared store between the store + import fake
+    /// fakes. The defaults share one repository between the store + import fake
     /// so the add flow's reload joins the freshly imported source + version
-    /// (mirrors the real import service's upsert).
+    /// (mirrors the real import service's behavior).
     /// </summary>
     public static ModListViewModel BuildModList(
         FakeProfileService? profiles = null,
         FakeProfileSession? session = null,
-        FakeSharedModStore? sharedStore = null,
+        FakeModRepository? repo = null,
         FakeModImportService? importService = null,
         IModOrderResolver? orderResolver = null,
         FakeDialogService? dialogs = null,
@@ -41,15 +41,15 @@ internal static class TestDoubles
     {
         profiles ??= Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
-        sharedStore ??= new FakeSharedModStore();
-        importService ??= new FakeModImportService(sharedStore);
+        repo ??= new FakeModRepository();
+        importService ??= new FakeModImportService(repo);
         orderResolver ??= new IdentityModOrderResolver();
         dialogs ??= new FakeDialogService();
         localization ??= new LocalizationService();
         return new ModListViewModel(
             profiles,
             session,
-            sharedStore,
+            repo,
             importService,
             orderResolver,
             dialogs,
@@ -81,11 +81,11 @@ internal sealed class FakeProfileService : IProfileService
     /// <summary>Per-profile mod lists (in stored order); tests seed directly.</summary>
     public Dictionary<Guid, List<ModListEntry>> ModLists => _modLists;
 
-    public IReadOnlyList<(Guid Id, string ModName, bool Enabled)> SetModEnabledCalls { get; } = new List<(Guid, string, bool)>();
-    public IReadOnlyList<IReadOnlyList<string>> SetModOrderCalls { get; } = new List<IReadOnlyList<string>>();
-    public IReadOnlyList<(Guid Id, string ModName, ModVersionPolicy Policy)> SetModPolicyCalls { get; } = new List<(Guid, string, ModVersionPolicy)>();
-    public IReadOnlyList<(Guid Id, string ModName)> AddModCalls { get; } = new List<(Guid, string)>();
-    public IReadOnlyList<(Guid Id, string ModName)> RemoveModCalls { get; } = new List<(Guid, string)>();
+    public IReadOnlyList<(Guid Id, Guid ContainerId, bool Enabled)> SetModEnabledCalls { get; } = new List<(Guid, Guid, bool)>();
+    public IReadOnlyList<IReadOnlyList<Guid>> SetModOrderCalls { get; } = new List<IReadOnlyList<Guid>>();
+    public IReadOnlyList<(Guid Id, Guid ContainerId, ModVersionPolicy Policy)> SetModPolicyCalls { get; } = new List<(Guid, Guid, ModVersionPolicy)>();
+    public IReadOnlyList<(Guid Id, Guid ContainerId, ModVersionPolicy Policy)> AddModCalls { get; } = new List<(Guid, Guid, ModVersionPolicy)>();
+    public IReadOnlyList<(Guid Id, Guid ContainerId)> RemoveModCalls { get; } = new List<(Guid, Guid)>();
 
     /// <summary>Seeds a profile's mod list (replaces any prior). Test helper.</summary>
     public FakeProfileService WithMods(Guid id, params ModListEntry[] mods)
@@ -161,16 +161,16 @@ internal sealed class FakeProfileService : IProfileService
 
     public IReadOnlyList<ModListEntry> GetModList(Guid id) => EnsureList(id).ToArray();
 
-    public void SetModOrder(Guid id, IReadOnlyList<string> modNamesInOrder)
+    public void SetModOrder(Guid id, IReadOnlyList<Guid> containerIdsInOrder)
     {
-        ((List<IReadOnlyList<string>>)SetModOrderCalls).Add(modNamesInOrder);
+        ((List<IReadOnlyList<Guid>>)SetModOrderCalls).Add(containerIdsInOrder);
 
         var list = EnsureList(id);
         var ordered = new List<ModListEntry>();
         var remaining = list.ToList();
-        foreach (var name in modNamesInOrder)
+        foreach (var cid in containerIdsInOrder)
         {
-            var match = remaining.FirstOrDefault(m => m.Name == name);
+            var match = remaining.FirstOrDefault(m => m.ContainerId == cid);
             if (match is not null)
             {
                 ordered.Add(match);
@@ -186,61 +186,59 @@ internal sealed class FakeProfileService : IProfileService
         list.AddRange(ordered);
     }
 
-    public void SetModEnabled(Guid id, string modName, bool enabled)
+    public void SetModEnabled(Guid id, Guid containerId, bool enabled)
     {
-        ((List<(Guid, string, bool)>)SetModEnabledCalls).Add((id, modName, enabled));
+        ((List<(Guid, Guid, bool)>)SetModEnabledCalls).Add((id, containerId, enabled));
 
         var list = EnsureList(id);
-        var idx = list.FindIndex(m => m.Name == modName);
+        var idx = list.FindIndex(m => m.ContainerId == containerId);
         if (idx < 0)
         {
-            throw new KeyNotFoundException($"No mod {modName} in profile {id}");
+            throw new KeyNotFoundException($"No container {containerId} in profile {id}");
         }
         list[idx] = list[idx] with { Enabled = enabled };
     }
 
-    public void AddMod(Guid id, string modName) => AddMod(id, modName, ModVersionPolicy.Latest);
-
-    public void AddMod(Guid id, string modName, ModVersionPolicy policy)
+    public void AddMod(Guid id, Guid containerId, ModVersionPolicy policy)
     {
-        ((List<(Guid, string)>)AddModCalls).Add((id, modName));
+        ((List<(Guid, Guid, ModVersionPolicy)>)AddModCalls).Add((id, containerId, policy));
 
         var list = EnsureList(id);
-        if (list.Any(m => m.Name == modName))
+        if (list.Any(m => m.ContainerId == containerId))
         {
             return; // idempotent
         }
         list.Add(new ModListEntry
         {
-            Name = modName,
+            ContainerId = containerId,
             Enabled = true,
             Order = list.Count,
             Policy = policy,
         });
     }
 
-    public void SetModPolicy(Guid id, string modName, ModVersionPolicy policy)
+    public void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy)
     {
-        ((List<(Guid, string, ModVersionPolicy)>)SetModPolicyCalls).Add((id, modName, policy));
+        ((List<(Guid, Guid, ModVersionPolicy)>)SetModPolicyCalls).Add((id, containerId, policy));
 
         var list = EnsureList(id);
-        var idx = list.FindIndex(m => m.Name == modName);
+        var idx = list.FindIndex(m => m.ContainerId == containerId);
         if (idx < 0)
         {
-            throw new KeyNotFoundException($"No mod {modName} in profile {id}");
+            throw new KeyNotFoundException($"No container {containerId} in profile {id}");
         }
         list[idx] = list[idx] with { Policy = policy };
     }
 
-    public void RemoveMod(Guid id, string modName)
+    public void RemoveMod(Guid id, Guid containerId)
     {
-        ((List<(Guid, string)>)RemoveModCalls).Add((id, modName));
+        ((List<(Guid, Guid)>)RemoveModCalls).Add((id, containerId));
 
         var list = EnsureList(id);
-        var idx = list.FindIndex(m => m.Name == modName);
+        var idx = list.FindIndex(m => m.ContainerId == containerId);
         if (idx < 0)
         {
-            throw new KeyNotFoundException($"No mod {modName} in profile {id}");
+            throw new KeyNotFoundException($"No container {containerId} in profile {id}");
         }
         list.RemoveAt(idx);
     }
@@ -427,54 +425,177 @@ internal sealed class FakeLaunchService : IEnginseerLaunchService
 }
 
 /// <summary>
-/// In-memory <see cref="ISharedModStore"/> for VM tests: backs the lookup / upsert
-/// surface the mod-list VM joins source + version from. Tests seed entries
-/// directly; <see cref="Add"/> upserts (mirrors the real store).
+/// In-memory <see cref="IModRepository"/> for VM tests: backs the lookup surface
+/// the mod-list VM joins source + version from, plus the path-derivation helper
+/// used by staging tests. Tests seed containers directly; mutations update the
+/// in-memory store.
 /// </summary>
-internal sealed class FakeSharedModStore : ISharedModStore
+internal sealed class FakeModRepository : IModRepository
 {
-    private readonly Dictionary<string, SharedModEntry> _entries = new(StringComparer.Ordinal);
+    private readonly Dictionary<Guid, ModContainer> _byId = new();
+    private readonly Dictionary<string, Guid> _untrackedByName = new(StringComparer.Ordinal);
+    private readonly string _fakeRoot = Path.Combine(Path.GetTempPath(), "magos-fakerepo-" + Guid.NewGuid());
 
-    public IReadOnlyList<SharedModEntry> List() => _entries.Values.ToArray();
+    public IReadOnlyList<ModContainer> List() => _byId.Values.ToArray();
 
-    public SharedModEntry? Get(string name) =>
-        _entries.TryGetValue(name, out var entry) ? entry : null;
+    public ModContainer? Get(Guid containerId) =>
+        _byId.TryGetValue(containerId, out var c) ? c : null;
 
-    public void Add(SharedModEntry entry) => _entries[entry.Name] = entry;
+    public ModContainer? FindBySource(ModSource source)
+    {
+        if (source is UntrackedSource)
+        {
+            return null;
+        }
+        return source switch
+        {
+            NexusSource n => _byId.Values.FirstOrDefault(c =>
+                c.Source is NexusSource ns && ns.ModId == n.ModId),
+            GitHubSource g => _byId.Values.FirstOrDefault(c =>
+                c.Source is GitHubSource gs
+                && string.Equals(gs.Owner, g.Owner, StringComparison.Ordinal)
+                && string.Equals(gs.Repo, g.Repo, StringComparison.Ordinal)),
+            _ => null,
+        };
+    }
 
-    public void Remove(string name) => _entries.Remove(name);
+    public ModContainer? FindUntrackedByName(string name) =>
+        _untrackedByName.TryGetValue(name, out var id) ? Get(id) : null;
+
+    public ModContainer CreateContainer(ModSource source, string name)
+    {
+        var container = new ModContainer
+        {
+            Id = Guid.NewGuid(),
+            Source = source,
+            Name = name,
+            Versions = Array.Empty<ModVersion>(),
+        };
+        _byId[container.Id] = container;
+        if (source is UntrackedSource)
+        {
+            _untrackedByName[name] = container.Id;
+        }
+        return container;
+    }
+
+    public ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder)
+    {
+        if (!_byId.TryGetValue(containerId, out var container))
+        {
+            throw new KeyNotFoundException($"No container {containerId}");
+        }
+
+        var existing = container.Versions.FirstOrDefault(v => v.VersionString == versionString);
+        List<ModVersion> versions;
+        if (existing is not null)
+        {
+            versions = container.Versions.ToList();
+        }
+        else
+        {
+            var entry = new ModVersion
+            {
+                Folder = Guid.NewGuid().ToString("N"),
+                VersionString = versionString,
+                IsLatest = true,
+                ImportedAt = DateTimeOffset.UtcNow,
+            };
+            versions = container.Versions
+                .Select(v => v with { IsLatest = false })
+                .Append(entry)
+                .ToList();
+        }
+        var updated = container with { Versions = versions };
+        _byId[containerId] = updated;
+        return updated;
+    }
+
+    public void RemoveVersion(Guid containerId, string versionFolder)
+    {
+        if (!_byId.TryGetValue(containerId, out var container))
+        {
+            return;
+        }
+        var updated = container with
+        {
+            Versions = container.Versions.Where(v => v.Folder != versionFolder).ToArray(),
+        };
+        _byId[containerId] = updated;
+    }
+
+    public string GetVersionFolderPath(Guid containerId, string versionFolder) =>
+        Path.Combine(_fakeRoot, containerId.ToString(), versionFolder);
+
+    public void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced)
+    {
+        // Minimal fake: drop unreferenced versions + empty containers, mirroring
+        // the real repository's behavior.
+        foreach (var container in _byId.Values.ToArray())
+        {
+            var keep = container.Versions
+                .Where(v => referenced.Contains((container.Id, v.Folder)))
+                .ToArray();
+            if (keep.Length == 0)
+            {
+                _byId.Remove(container.Id);
+            }
+            else
+            {
+                _byId[container.Id] = container with { Versions = keep };
+            }
+        }
+    }
+
+    /// <summary>Test helper: seed a container with a single latest version.</summary>
+    public ModContainer Seed(ModSource source, string name, string versionString = "1.0")
+    {
+        var container = CreateContainer(source, name);
+        return AddVersion(container.Id, versionString, _ => { });
+    }
 }
 
 /// <summary>
 /// Recording <see cref="IModImportService"/> for VM tests. Captures each Import
 /// call (source path, mod name, parsed source, version) so tests can assert the
 /// add flow recorded the right metadata. Optionally upserts a wired
-/// <see cref="ISharedModStore"/> so the add flow's reload joins the freshly
-/// imported source + version (mirrors the real import service's upsert).
+/// <see cref="IModRepository"/> so the add flow's reload joins the freshly
+/// imported source + version (mirrors the real import service's behavior).
 /// </summary>
 internal sealed class FakeModImportService : IModImportService
 {
-    private readonly ISharedModStore? _store;
+    private readonly IModRepository? _repo;
 
-    public FakeModImportService(ISharedModStore? store = null) => _store = store;
+    public FakeModImportService(IModRepository? repo = null) => _repo = repo;
 
     public IReadOnlyList<(string SourcePath, string ModName, ModSource Source, string Version)> Imports { get; }
         = new List<(string, string, ModSource, string)>();
 
-    public SharedModEntry Import(string sourcePath, string modName, ModSource source, string version)
+    public (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version)
     {
         ((List<(string, string, ModSource, string)>)Imports).Add((sourcePath, modName, source, version));
 
-        var entry = new SharedModEntry
+        if (_repo is null)
         {
-            Name = modName,
-            Source = source,
-            ActualVersion = version,
-            Path = sourcePath,
-            Policy = ModVersionPolicy.Latest,
-        };
-        _store?.Add(entry);
-        return entry;
+            // No wired repository: return a synthetic container id so the add flow
+            // has something to feed AddMod. Each call gets a fresh id so distinct
+            // imports land as distinct entries.
+            return (Guid.NewGuid(), version);
+        }
+
+        // Mirror the real import service: resolve-or-create the container, then
+        // add the version. This keeps the VM's reload join working in tests.
+        ModContainer container;
+        if (source is UntrackedSource)
+        {
+            container = _repo.FindUntrackedByName(modName) ?? _repo.CreateContainer(source, modName);
+        }
+        else
+        {
+            container = _repo.FindBySource(source) ?? _repo.CreateContainer(source, modName);
+        }
+        _repo.AddVersion(container.Id, version, _ => { });
+        return (container.Id, version);
     }
 }
 

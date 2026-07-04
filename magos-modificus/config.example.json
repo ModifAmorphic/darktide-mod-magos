@@ -6,7 +6,7 @@
     "LogFile": "<app-data>/Magos Modificus/logs/magos.log"
   },
   "ProfilesBaseFolder": "<app-data>/Magos Modificus/profiles",
-  "SharedModsFolder": "<app-data>/Magos Modificus/shared-mods",
+  "ModsFolder": "<app-data>/Magos Modificus/mods",
   "EnginseerRuntimeDir": "<app-data>/Magos Modificus/enginseer",
   "Preferences": {
     "Theme": "System",

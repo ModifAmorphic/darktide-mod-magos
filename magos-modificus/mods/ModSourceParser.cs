@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace Magos.Modificus.SharedMods;
+namespace Magos.Modificus.Mods;
 
 /// <summary>
 /// Pure URL → canonical <see cref="ModSource"/> parsers. UI-agnostic + unit-

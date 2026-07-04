@@ -1,5 +1,5 @@
 using Magos.Modificus.Profiles;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Magos.Modificus.Steam;
 
 namespace Magos.Modificus.EnginseerClient.Tests;
@@ -39,12 +39,11 @@ internal sealed class FakeProfileService : IProfileService
     public void RenameProfile(Guid id, string newName) => throw new NotSupportedException();
     public void DeleteProfile(Guid id) => throw new NotSupportedException();
     public IReadOnlyList<ModListEntry> GetModList(Guid id) => throw new NotSupportedException();
-    public void SetModOrder(Guid id, IReadOnlyList<string> modNamesInOrder) => throw new NotSupportedException();
-    public void SetModEnabled(Guid id, string modName, bool enabled) => throw new NotSupportedException();
-    public void AddMod(Guid id, string modName) => throw new NotSupportedException();
-    public void AddMod(Guid id, string modName, ModVersionPolicy policy) => throw new NotSupportedException();
-    public void SetModPolicy(Guid id, string modName, ModVersionPolicy policy) => throw new NotSupportedException();
-    public void RemoveMod(Guid id, string modName) => throw new NotSupportedException();
+    public void SetModOrder(Guid id, IReadOnlyList<Guid> containerIdsInOrder) => throw new NotSupportedException();
+    public void SetModEnabled(Guid id, Guid containerId, bool enabled) => throw new NotSupportedException();
+    public void AddMod(Guid id, Guid containerId, ModVersionPolicy policy) => throw new NotSupportedException();
+    public void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy) => throw new NotSupportedException();
+    public void RemoveMod(Guid id, Guid containerId) => throw new NotSupportedException();
 }
 
 /// <summary>Hand-rolled test double for <see cref="ISteamService"/>.</summary>
