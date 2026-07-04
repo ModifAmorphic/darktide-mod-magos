@@ -1,22 +1,17 @@
 using System.Text;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 
 namespace Magos.Modificus.Profiles.Tests;
 
 /// <summary>
 /// <see cref="IProfileService.PrepareModRoot"/> + <c>mods.lst</c> generation
-/// contract under the Phase 2 shared-first staging model: enabled mods that
-/// resolve to a present target are symlinked into <c>staged/</c> and written to
+/// contract under the container-based staging model: enabled mods that resolve to
+/// a present version folder are symlinked into <c>staged/</c> and written to
 /// <c>mods.lst</c> in <see cref="ModListEntry.Order"/>; disabled mods and mods
-/// with no staged target are omitted; UTF-8 no BOM; trailing newline; idempotent
-/// (clears + rebuilds <c>staged/</c>); returns the <c>--mod-path</c> (<c>staged/</c>).
+/// with no resolved version are omitted; UTF-8 no BOM; trailing newline;
+/// idempotent (clears + rebuilds <c>staged/</c>); returns the <c>--mod-path</c>
+/// (<c>staged/</c>).
 /// </summary>
-/// <remarks>
-/// These tests were updated for Phase 2 (shared-first staging); under Phase 1
-/// the mod root was a per-profile <c>mods/</c> dir and <c>mods.lst</c> was
-/// written from the enabled list regardless of whether files existed. Phase 2
-/// stages via symlinks and <c>mods.lst</c> reflects what actually got staged.
-/// </remarks>
 public sealed class PrepareModRootTests
 {
     [Fact]
@@ -24,8 +19,8 @@ public sealed class PrepareModRootTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.Service.AddMod(profile.Id, "DMF");
+        var container = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
         var modPath = fx.Service.PrepareModRoot(profile.Id);
 
@@ -39,14 +34,14 @@ public sealed class PrepareModRootTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.AddSharedMod("ModB");
-        fx.AddSharedMod("ModC");
-        fx.Service.AddMod(profile.Id, "DMF");
-        fx.Service.AddMod(profile.Id, "ModB");
-        fx.Service.AddMod(profile.Id, "ModC");
+        var a = fx.AddContainerWithVersion("DMF");
+        var b = fx.AddContainerWithVersion("ModB");
+        var c = fx.AddContainerWithVersion("ModC");
+        fx.Service.AddMod(profile.Id, a.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, b.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, c.Id, ModVersionPolicy.Latest);
         // Reverse the order so we prove Order is honored, not insertion order.
-        fx.Service.SetModOrder(profile.Id, ["ModC", "DMF", "ModB"]);
+        fx.Service.SetModOrder(profile.Id, [c.Id, a.Id, b.Id]);
 
         fx.Service.PrepareModRoot(profile.Id);
 
@@ -58,11 +53,11 @@ public sealed class PrepareModRootTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.AddSharedMod("DisabledMod");
-        fx.Service.AddMod(profile.Id, "DMF");
-        fx.Service.AddMod(profile.Id, "DisabledMod");
-        fx.Service.SetModEnabled(profile.Id, "DisabledMod", enabled: false);
+        var a = fx.AddContainerWithVersion("DMF");
+        var b = fx.AddContainerWithVersion("DisabledMod");
+        fx.Service.AddMod(profile.Id, a.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, b.Id, ModVersionPolicy.Latest);
+        fx.Service.SetModEnabled(profile.Id, b.Id, enabled: false);
 
         fx.Service.PrepareModRoot(profile.Id);
 
@@ -86,9 +81,9 @@ public sealed class PrepareModRootTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.Service.AddMod(profile.Id, "DMF");
-        fx.Service.SetModEnabled(profile.Id, "DMF", enabled: false);
+        var container = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
+        fx.Service.SetModEnabled(profile.Id, container.Id, enabled: false);
 
         fx.Service.PrepareModRoot(profile.Id);
 
@@ -100,13 +95,12 @@ public sealed class PrepareModRootTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.Service.AddMod(profile.Id, "DMF");
+        var container = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
         fx.Service.PrepareModRoot(profile.Id);
 
         var bytes = File.ReadAllBytes(fx.ModsLst(profile.Id));
-        // A UTF-8 BOM would be 0xEF 0xBB 0xBF at the start.
         Assert.False(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF,
             "mods.lst must not carry a UTF-8 BOM.");
         Assert.Equal("DMF\n", Encoding.UTF8.GetString(bytes));
@@ -117,10 +111,10 @@ public sealed class PrepareModRootTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.AddSharedMod("ModB");
-        fx.Service.AddMod(profile.Id, "DMF");
-        fx.Service.AddMod(profile.Id, "ModB");
+        var a = fx.AddContainerWithVersion("DMF");
+        var b = fx.AddContainerWithVersion("ModB");
+        fx.Service.AddMod(profile.Id, a.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, b.Id, ModVersionPolicy.Latest);
 
         var first = fx.Service.PrepareModRoot(profile.Id);
         var firstContent = File.ReadAllText(fx.ModsLst(profile.Id));
@@ -137,14 +131,14 @@ public sealed class PrepareModRootTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.AddSharedMod("ModB");
-        fx.Service.AddMod(profile.Id, "DMF");
+        var a = fx.AddContainerWithVersion("DMF");
+        var b = fx.AddContainerWithVersion("ModB");
+        fx.Service.AddMod(profile.Id, a.Id, ModVersionPolicy.Latest);
         fx.Service.PrepareModRoot(profile.Id);
         Assert.Equal("DMF\n", File.ReadAllText(fx.ModsLst(profile.Id)));
 
-        fx.Service.AddMod(profile.Id, "ModB");
-        fx.Service.SetModEnabled(profile.Id, "DMF", enabled: false);
+        fx.Service.AddMod(profile.Id, b.Id, ModVersionPolicy.Latest);
+        fx.Service.SetModEnabled(profile.Id, a.Id, enabled: false);
         fx.Service.PrepareModRoot(profile.Id);
 
         // DMF now disabled -> omitted; ModB only.
@@ -157,45 +151,5 @@ public sealed class PrepareModRootTests
         using var fx = new ProfileServiceFixture();
 
         Assert.Throws<KeyNotFoundException>(() => fx.Service.PrepareModRoot(Guid.NewGuid()));
-    }
-
-    [Fact]
-    public void ModsLst_faithful_to_stored_entries_with_duplicate_names()
-    {
-        // Duplicate names can't arise through the public AddMod (it's
-        // idempotent), but staging must remain graceful + deterministic if the
-        // persisted list ever contains them: one symlink (created by the first
-        // occurrence), and the name listed once per entry in Order — faithful to
-        // the Phase 1 contract, no crash.
-        using var fx = new ProfileServiceFixture();
-        var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.AddSharedMod("ModB");
-        fx.Service.AddMod(profile.Id, "DMF");
-        fx.Service.AddMod(profile.Id, "ModB");
-
-        // Hand-craft a profile.json with a duplicate entry (real entries, so the
-        // Policy $kind discriminator round-trips), bypassing AddMod's idempotency.
-        var dupProfile = new Profile
-        {
-            Id = profile.Id,
-            Name = "P",
-            CreatedAt = profile.CreatedAt,
-            Mods = new[]
-            {
-                new ModListEntry { Name = "DMF", Enabled = true, Order = 0, Policy = ModVersionPolicy.Latest },
-                new ModListEntry { Name = "DMF", Enabled = true, Order = 1, Policy = ModVersionPolicy.Latest },
-                new ModListEntry { Name = "ModB", Enabled = true, Order = 2, Policy = ModVersionPolicy.Latest },
-            }
-        };
-        File.WriteAllText(fx.ProfileJson(profile.Id),
-            System.Text.Json.JsonSerializer.Serialize(dupProfile),
-            new UTF8Encoding(false));
-
-        fx.Service.PrepareModRoot(profile.Id);
-
-        // Faithful: both DMF entries are listed, in Order. One symlink backs them.
-        Assert.Equal("DMF\nDMF\nModB\n", File.ReadAllText(fx.ModsLst(profile.Id)));
-        Assert.True(Directory.Exists(fx.StagedModLink(profile.Id, "DMF")));
     }
 }

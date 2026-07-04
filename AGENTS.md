@@ -81,17 +81,25 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
   profiles/             Magos.Modificus.Profiles — profile data model, persistence,
-                        shared-first staging (ProfileService.PrepareModRoot builds the
-                        staged/ symlink projection + mods.lst) + SetModPolicy transitions
-                        + the auto-sort seam (IModOrderResolver/IdentityModOrderResolver,
-                        identity stub now; real dependency-driven resolver later)
-  shared-mods/          Magos.Modificus.SharedMods — the global shared mod store
-                        (ISharedModStore manifest) + the version-policy model
-                        (ModVersionPolicy: PinnedPolicy/LatestPolicy; version is a raw
-                        string tag) + the mod-source provenance model (ModSource:
-                        NoneSource/NexusSource/GitHubSource + ModSourceParser URL parsing)
-                        + allocation resolution (AllocationResolver, string-equality pins)
-                        + the local-import service (IModImportService: folder/.zip → store)
+                        container-based staging (ProfileService.PrepareModRoot resolves
+                        each enabled mod's policy to a repository version folder +
+                        symlinks staged/<displayName> to it, then writes mods.lst) +
+                        SetModPolicy transitions + the auto-sort seam
+                        (IModOrderResolver/IdentityModOrderResolver, identity stub now;
+                        real dependency-driven resolver later) + ModCleanup (the startup
+                        prune orchestration)
+  mods/          Magos.Modificus.Mods — the unified mod repository
+                        (IModRepository: UUID containers per (source, identity),
+                        opaque-ID version subfolders, per-container container.json
+                        manifests, in-memory index rebuilt from a scan, PruneUnreferenced
+                        GC at startup) + the version-policy model (ModVersionPolicy:
+                        PinnedPolicy/LatestPolicy; PinnedPolicy pins by VersionId, a foreign
+                        key to ModVersion.Folder, so the repo is the sole source of truth for
+                        version details) + the
+                        mod-source provenance model (ModSource: UntrackedSource/
+                        NexusSource/GitHubSource + ModSourceParser URL parsing) + the
+                        local-import service (IModImportService: folder/.zip -> container/
+                        version).
   integrations/         Magos.Modificus.Integrations — GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
@@ -108,7 +116,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   tests/
     Magos.Modificus.General.Tests/         xUnit tests for the general library
     Magos.Modificus.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
-    Magos.Modificus.SharedMods.Tests/      xUnit tests for the shared-mod store + allocation
+    Magos.Modificus.Mods.Tests/      xUnit tests for the mod repository + import
     Magos.Modificus.Integrations.Tests/    xUnit tests for the GitHub Releases client
     Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
@@ -170,40 +178,37 @@ dotnet test  magos-modificus/magos-modificus.sln --configuration Release
 dotnet run   --project magos-modificus/ui --configuration Release   # app shell window
 ```
 - The composition root is `magos-modificus/ui/MagosComposition.cs` (loads
-  config → builds the Serilog logger → wires every `Add<Library>()`).
+  config → builds the Serilog logger → wires every `Add<Library>()` → runs the
+  startup `ModCleanup.PruneUnreferenced` pass).
 - **Config** is `MagosConfig` (`magos-modificus/config/`) — defaults under the
   OS local-app-data dir; loaded from JSON by `general/ConfigLoader.cs`. Missing
   file/dir → defaults (first-run safe).
 - **Logging** is Serilog (console + file) bridged into
   `Microsoft.Extensions.Logging`; honors `Logging:Level` + `Logging:LogFile`.
-- The backend libraries are all implemented: **Profiles** (Phase 1: profile data
-  model + lifecycle; stages **shared-first** — `PrepareModRoot` builds a `staged/`
-  symlink projection (Share → shared store, Diverge → profile's `mods/` copy)
-  + writes `mods.lst`), **Steam** (Phase 1: Steam + Darktide + Proton discovery
-  + `IsGameRunning` — `WinProcessLookup` via process comm on Windows,
-  `LinuxProcessLookup` via `/proc` argv[0] under Proton), **Integrations**
-  (Phase 1: GitHub Releases client), **Enginseer-client** (Phase 1: the launch
-  façade), **SharedMods** (Phase 2: shared mod store + version-policy model
-  + allocation resolution; Phase 3 Track B backend: version is a raw string tag,
-  the mod-source provenance model `ModSource` + `ModSourceParser`, and the local-
-  import service `IModImportService`; allocation uses string-equality pins). **General** carries cross-cutting infra: logging,
-  `ConfigLoader` (load + `Save` write-back for Preferences), and `AppStateStore`
-  (runtime app-state: the active-profile id, persisted to a separate
-  `app-state.json`, not `MagosConfig`). **Phase 3 Track A UI** (the shell + profile
-  management: dropdown switch, persisted active profile, create/rename/delete
-  dialog) is wired, with an `IProfileSession` (ui/) as the single authority for
-  the active profile, the switch-block gate, and the live running-state (polled).
-  **Phase 3 Track D** (global Preferences: theme + font scale + language, plus
-  the i18n infrastructure: `Strings.resx` + `LocalizationService` for dynamic
-  culture switching, all Track A UI strings backfilled to resource keys) is
-  wired. **Phase 3 Track B** (the mod-list UI: view mods with source/version
-  badges, enable/disable, remove-with-confirm, reorder, per-mod Latest/Pinned
-  policy, auto-sort identity stub, and local folder/`.zip` import via file picker
-  + drag-and-drop, over the `ModSource` + raw-string version model +
-  `IModImportService`) is wired. Next: Track C (launch); the **Launcher** is a
-  stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
-- **CI** (`magos-build.yml`) is scoped to `magos-modificus/**` + the workflow
-  file, matrixed on Windows + Ubuntu; gates on build + tests.
+- The backend libraries are all implemented: **Profiles** (profile data model +
+  lifecycle; container-based staging — `PrepareModRoot` resolves each enabled
+  mod's policy to a repository version folder via `IModRepository` + symlinks
+  `staged/<displayName>` to it, then writes `mods.lst`; no per-profile mod
+  files), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
+  **Integrations** (GitHub Releases client), **Enginseer-client** (the launch
+  façade), **Mods** (Phase 1 of the storage refactor: the unified
+  `IModRepository` — UUID containers per (source, identity), opaque-ID version
+  subfolders, per-container `container.json` manifests, in-memory index rebuilt
+  from a scan, `PruneUnreferenced` GC; the version-policy model
+  `ModVersionPolicy`; the mod-source provenance model `ModSource`
+  (`UntrackedSource`/`NexusSource`/`GitHubSource`) + `ModSourceParser`; the
+  local-import service `IModImportService`). **General** carries cross-cutting
+  infra: logging, `ConfigLoader`, and `AppStateStore` (the active-profile id,
+  persisted to `app-state.json`). **Phase 3 Track A UI** (the shell + profile
+  management) is wired, with an `IProfileSession` (ui/) as the single authority
+  for the active profile, the switch-block gate, and the live running-state.
+  **Phase 3 Track D** (global Preferences + i18n infrastructure) is wired.
+  **Phase 3 Track B** (the mod-list UI: view mods with source/version badges,
+  enable/disable, remove-with-confirm, reorder, per-mod Latest/Pinned policy,
+  auto-sort identity stub, and local folder/`.zip` import via file picker +
+  drag-and-drop, joined to containers via `IModRepository` by `ContainerId`)
+  is wired. Next: Track C (launch); the **Launcher** is a stub (Phase 5). See
+  `docs/architecture/MAGOS-MODIFICUS.md`.
 
 ## Key docs
 

@@ -1,4 +1,4 @@
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Magos.Modificus.UI.Dialogs;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.ViewModels;
@@ -25,7 +25,7 @@ public sealed class ImportModViewModelTests
     public void Local_source_hides_the_remote_fields()
     {
         var vm = Build();
-        vm.SourceChoice = ImportModViewModel.ImportSource.Local;
+        vm.SourceChoice = ImportModViewModel.ImportSource.Untracked;
 
         Assert.False(vm.IsRemote);
         Assert.False(vm.IsVersionVisible);
@@ -63,20 +63,20 @@ public sealed class ImportModViewModelTests
         Assert.Equal(1, vm.SourceChoiceIndex);
     }
 
-    // ---- Local needs nothing -----------------------------------------------
+    // ---- Untracked needs nothing -------------------------------------------
 
     [Fact]
-    public void Local_can_confirm_with_nothing_extra_and_records_NoneSource()
+    public void Untracked_can_confirm_with_nothing_extra_and_records_UntrackedSource()
     {
         var vm = Build("MyMod");
-        vm.SourceChoice = ImportModViewModel.ImportSource.Local;
+        vm.SourceChoice = ImportModViewModel.ImportSource.Untracked;
 
         Assert.True(vm.CanConfirm);
 
         vm.ConfirmCommand.Execute(null);
 
         Assert.NotNull(vm.Result);
-        Assert.IsType<NoneSource>(vm.Result!.Source);
+        Assert.IsType<UntrackedSource>(vm.Result!.Source);
         Assert.Equal(string.Empty, vm.Result.Version);
     }
 
@@ -261,12 +261,12 @@ public sealed class ImportModViewModelTests
         var request = new ImportModRequest("MyMod", "/mods/MyMod");
         var vm = new ImportModViewModel(request, Localization);
         vm.ModName = "  RenamedMod  ";
-        vm.SourceChoice = ImportModViewModel.ImportSource.Local;
+        vm.SourceChoice = ImportModViewModel.ImportSource.Untracked;
 
         vm.ConfirmCommand.Execute(null);
 
         Assert.Equal("RenamedMod", request.ModName);
-        Assert.IsType<NoneSource>(vm.Result!.Source);
+        Assert.IsType<UntrackedSource>(vm.Result!.Source);
     }
 
     // ---- cancel ------------------------------------------------------------

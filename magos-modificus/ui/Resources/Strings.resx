@@ -139,7 +139,7 @@
     <comment>Title of the delete-profile confirmation prompt.</comment>
   </data>
   <data name="ManageProfiles_DeleteMessage" xml:space="preserve">
-    <value>Delete profile {0}? This removes its mod list and any local mod copies in mods/.</value>
+    <value>Delete profile {0}? This removes its mod list and staged launch root (the mod repository is untouched).</value>
     <comment>Body of the delete-profile confirmation prompt. {0} is the profile name.</comment>
   </data>
 
@@ -287,8 +287,8 @@
     <value>Remove from this profile</value>
     <comment>Tooltip on the trash (remove) button on each mod row.</comment>
   </data>
-  <data name="ModRow_SourceLocal" xml:space="preserve">
-    <value>Local</value>
+  <data name="ModRow_SourceUntracked" xml:space="preserve">
+    <value>Untracked</value>
     <comment>Source badge text for a local / untracked mod.</comment>
   </data>
   <data name="ModRow_SourceNexus" xml:space="preserve">
@@ -301,7 +301,7 @@
   </data>
   <data name="ModRow_NotFound" xml:space="preserve">
     <value>Not found</value>
-    <comment>Source badge text when a mod has no shared-store entry (stale profile reference).</comment>
+    <comment>Source badge text when a mod has no mod-store entry (stale profile reference).</comment>
   </data>
 
   <!-- ============================================================ -->
@@ -320,9 +320,9 @@
     <value>Source</value>
     <comment>Label over the source chooser in the import modal.</comment>
   </data>
-  <data name="Import_SourceLocal" xml:space="preserve">
-    <value>Local</value>
-    <comment>Source chooser option: local / untracked.</comment>
+  <data name="Import_SourceUntracked" xml:space="preserve">
+    <value>Untracked</value>
+    <comment>Source chooser option: untracked / local.</comment>
   </data>
   <data name="Import_SourceNexus" xml:space="preserve">
     <value>Nexus Mods</value>

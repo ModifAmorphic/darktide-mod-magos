@@ -47,11 +47,11 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.Integration
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.EnginseerClient.Tests", "tests\Magos.Modificus.EnginseerClient.Tests\Magos.Modificus.EnginseerClient.Tests.csproj", "{2441E9E9-8D30-4BE9-AB19-CFB8AB8EF3F9}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "shared-mods", "shared-mods", "{82E21D46-CB55-58F2-B30A-44B68825D3B3}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "mods", "mods", "{82E21D46-CB55-58F2-B30A-44B68825D3B3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.SharedMods", "shared-mods\Magos.Modificus.SharedMods.csproj", "{D457B28D-3409-4BDB-8180-06C53999C23A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.Mods", "mods\Magos.Modificus.Mods.csproj", "{D457B28D-3409-4BDB-8180-06C53999C23A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.SharedMods.Tests", "tests\Magos.Modificus.SharedMods.Tests\Magos.Modificus.SharedMods.Tests.csproj", "{E5644330-721B-48A6-B4E9-120A2C8ABDF2}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.Mods.Tests", "tests\Magos.Modificus.Mods.Tests\Magos.Modificus.Mods.Tests.csproj", "{E5644330-721B-48A6-B4E9-120A2C8ABDF2}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Magos.Modificus.UI.Tests", "tests\Magos.Modificus.UI.Tests\Magos.Modificus.UI.Tests.csproj", "{336516CA-10CA-4357-A949-E3F4163B2D3C}"
 EndProject

@@ -13,12 +13,16 @@
   <ItemGroup>
     <ProjectReference Include="..\config\Magos.Modificus.Config.csproj" />
     <!--
-      SharedMods owns the version-policy model (ModVersionPolicy), the allocation
-      logic (AllocationResolver), and ISharedModStore — all consumed by the
-      staging seam in ProfileService. The dependency direction is clean: Profiles
-      depends on SharedMods (the shared store knows nothing of profiles).
+      Mods owns the version-policy model (ModVersionPolicy), the mod-source
+      provenance model (ModSource + ModSourceParser), the unified mod repository
+      (IModRepository / ModRepository + the container/version model), and the
+      local-import service (IModImportService). Profiles consumes IModRepository
+      for staging (resolving each profile mod's policy to a version folder) and
+      ModContainer / ModVersion for the resolution types. The dependency
+      direction is clean: Profiles depends on Mods (the repository knows
+      nothing of profiles).
     -->
-    <ProjectReference Include="..\shared-mods\Magos.Modificus.SharedMods.csproj" />
+    <ProjectReference Include="..\mods\Magos.Modificus.Mods.csproj" />
   </ItemGroup>
 
 </Project>

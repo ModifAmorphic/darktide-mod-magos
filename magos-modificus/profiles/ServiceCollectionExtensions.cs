@@ -1,4 +1,4 @@
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -11,10 +11,10 @@ public static class ServiceCollectionExtensions
     /// Registers <see cref="IProfileService"/> → <see cref="ProfileService"/>,
     /// plus the staging dependencies it needs: the <see cref="SymlinkCreator"/>
     /// default (wraps <see cref="System.IO.Directory.CreateSymbolicLink"/>) and,
-    /// defensively, <see cref="ISharedModStore"/> via <c>AddSharedMods()</c>
+    /// defensively, <see cref="IModRepository"/> via <c>AddMods()</c>
     /// so a lone <c>AddProfiles()</c> yields a resolvable
     /// <see cref="IProfileService"/> (idempotent; the composition root also
-    /// calls <c>AddSharedMods()</c> for discoverability). Also registers
+    /// calls <c>AddMods()</c> for discoverability). Also registers
     /// <see cref="IModOrderResolver"/> → <see cref="IdentityModOrderResolver"/>
     /// (the auto-sort seam; identity stub now, real dependency-driven resolver
     /// later, DI-swappable without a UI change).
@@ -25,9 +25,9 @@ public static class ServiceCollectionExtensions
     /// </remarks>
     public static IServiceCollection AddProfiles(this IServiceCollection services)
     {
-        // Bring in the shared store the staging seam depends on. Idempotent,
+        // Bring in the mod repository the staging seam depends on. Idempotent,
         // safe to call again from the composition root / other libraries.
-        services.AddSharedMods();
+        services.AddMods();
 
         // Default symlink impl: the BCL primitive. TryAdd so a caller may
         // pre-register an override (e.g. tests inject a throwing delegate to

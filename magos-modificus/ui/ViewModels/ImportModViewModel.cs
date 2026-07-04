@@ -1,6 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Magos.Modificus.UI.Dialogs;
 using Magos.Modificus.UI.Localization;
 
@@ -17,13 +17,13 @@ namespace Magos.Modificus.UI.ViewModels;
 /// <para><b>One modal per imported path:</b> the mod-list add flow (picker +
 /// drag-and-drop) shows this modal sequentially, once per path. The
 /// <see cref="ImportModRequest.ModName"/> is pre-filled from the folder / archive
-/// stem and is editable; the edited name becomes the canonical shared-store key
+/// stem and is editable; the edited name becomes the canonical mod-store key
 /// (the import service upserts).</para>
 /// <para><b>Source chooser:</b> a ComboBox over <see cref="ImportSource"/>
-/// (Local / Nexus / GitHub). Switching it shows / hides the conditional fields:
+/// (Untracked / Nexus / GitHub). Switching it shows / hides the conditional fields:
 /// Nexus + GitHub require a Version tag + a URL that parses (the actual release
-/// tag is fetched in Phase 4); Local needs nothing extra (the mod imports as
-/// <see cref="NoneSource"/> with an empty version).</para>
+/// tag is fetched in Phase 4); Untracked needs nothing extra (the mod imports as
+/// <see cref="UntrackedSource"/> with an empty version).</para>
 /// <para><b>Single URL field:</b> Nexus + GitHub share one <see cref="Url"/>
 /// entry (they are mutually exclusive; only one shows at a time). The label +
 /// placeholder + parser adapt to the chosen source. This keeps the state surface
@@ -41,14 +41,14 @@ public partial class ImportModViewModel : ObservableObject
     /// <summary>
     /// Creates the modal VM from the add-flow request. The mod name is pre-filled
     /// from the request (folder / archive stem) and editable; the source defaults
-    /// to Local (the common case for a dropped folder / <c>.zip</c>).
+    /// to Untracked (the common case for a dropped folder / <c>.zip</c>).
     /// </summary>
     public ImportModViewModel(ImportModRequest request, LocalizationService localization)
     {
         _localization = localization;
         _request = request;
         _modName = request.ModName;
-        _sourceChoice = ImportSource.Local;
+        _sourceChoice = ImportSource.Untracked;
     }
 
     /// <summary>
@@ -56,8 +56,8 @@ public partial class ImportModViewModel : ObservableObject
     /// </summary>
     public enum ImportSource
     {
-        /// <summary>Local / untracked import (no remote identity, no version).</summary>
-        Local,
+        /// <summary>Untracked import (no remote identity, no version).</summary>
+        Untracked,
 
         /// <summary>Nexus Mods (collects a mod URL parsed to a mod id).</summary>
         Nexus,
@@ -68,7 +68,7 @@ public partial class ImportModViewModel : ObservableObject
 
     /// <summary>
     /// The mod name (editable; pre-filled from the folder / archive stem). The
-    /// shared-store key + the on-disk folder name; an edited name becomes the
+    /// mod-store key + the on-disk folder name; an edited name becomes the
     /// canonical key (the import service upserts).
     /// </summary>
     [ObservableProperty]
@@ -136,7 +136,7 @@ public partial class ImportModViewModel : ObservableObject
 
     /// <summary>Whether a remote source (Nexus / GitHub) is chosen, driving the
     /// Version + URL fields' visibility.</summary>
-    public bool IsRemote => SourceChoice != ImportSource.Local;
+    public bool IsRemote => SourceChoice != ImportSource.Untracked;
 
     /// <summary>Whether the Version field is visible (Nexus / GitHub). The field
     /// is required for remote sources; it shows so the user must enter the
@@ -202,7 +202,7 @@ public partial class ImportModViewModel : ObservableObject
 
     /// <summary>
     /// Whether OK may be enabled. The mod name must be non-empty (it is the
-    /// shared-store key); a remote source additionally needs a non-empty
+    /// mod-store key); a remote source additionally needs a non-empty
     /// Version + a URL that parses. Local needs only the name.
     /// </summary>
     public bool CanConfirm =>
@@ -226,14 +226,14 @@ public partial class ImportModViewModel : ObservableObject
         }
 
         var name = ModName.Trim();
-        // Version is required for remote sources and always "" for Local. Phase
-        // 4 fetches the actual release tag.
+        // Version is required for remote sources and always "" for Untracked.
+        // Phase 4 fetches the actual release tag.
         var recordedVersion = (Version ?? string.Empty).Trim();
 
         ModSource source;
-        if (SourceChoice == ImportSource.Local)
+        if (SourceChoice == ImportSource.Untracked)
         {
-            source = new NoneSource();
+            source = new UntrackedSource();
             recordedVersion = string.Empty;
         }
         else if (!TryParseUrl(SourceChoice, Url ?? string.Empty, out var parsed))
@@ -247,7 +247,7 @@ public partial class ImportModViewModel : ObservableObject
         }
 
         // Write the trimmed edited name back to the request so the add flow uses
-        // the canonical (possibly renamed) name as the shared-store key.
+        // the canonical (possibly renamed) name as the mod-store key.
         _request.ModName = name;
 
         Result = new ImportModResult(source, recordedVersion);
@@ -260,7 +260,7 @@ public partial class ImportModViewModel : ObservableObject
     /// </summary>
     private static bool TryParseUrl(ImportSource source, string url, out ModSource parsed)
     {
-        parsed = new NoneSource();
+        parsed = new UntrackedSource();
         if (string.IsNullOrWhiteSpace(url))
         {
             return false;

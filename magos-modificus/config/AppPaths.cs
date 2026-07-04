@@ -15,6 +15,6 @@ internal static class AppPaths
 
     public static readonly string DefaultLogFile = Path.Combine(AppDataDir, "logs", "magos.log");
     public static readonly string DefaultProfilesBaseFolder = Path.Combine(AppDataDir, "profiles");
-    public static readonly string DefaultSharedModsFolder = Path.Combine(AppDataDir, "shared-mods");
+    public static readonly string DefaultModsFolder = Path.Combine(AppDataDir, "mods");
     public static readonly string DefaultEnginseerRuntimeDir = Path.Combine(AppDataDir, "enginseer");
 }

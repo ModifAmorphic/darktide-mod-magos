@@ -3,8 +3,8 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <RootNamespace>Magos.Modificus.SharedMods.Tests</RootNamespace>
-    <AssemblyName>Magos.Modificus.SharedMods.Tests</AssemblyName>
+    <RootNamespace>Magos.Modificus.Mods.Tests</RootNamespace>
+    <AssemblyName>Magos.Modificus.Mods.Tests</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,7 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\shared-mods\Magos.Modificus.SharedMods.csproj" />
+    <ProjectReference Include="..\..\mods\Magos.Modificus.Mods.csproj" />
   </ItemGroup>
 
 </Project>

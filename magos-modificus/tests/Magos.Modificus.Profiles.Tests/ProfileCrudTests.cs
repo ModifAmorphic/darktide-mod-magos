@@ -10,7 +10,7 @@ namespace Magos.Modificus.Profiles.Tests;
 public sealed class ProfileCrudTests
 {
     [Fact]
-    public void CreateProfile_scaffolds_dir_and_staged_and_diverged_and_persists_profile_json()
+    public void CreateProfile_scaffolds_dir_and_staged_and_persists_profile_json()
     {
         using var fx = new ProfileServiceFixture();
 
@@ -21,10 +21,10 @@ public sealed class ProfileCrudTests
         Assert.Equal(DateTimeOffset.UtcNow, profile.CreatedAt, TimeSpan.FromSeconds(5));
         Assert.Empty(profile.Mods);
 
-        // Dir + staged/ + mods/ + profile.json all created.
+        // Dir + staged/ + profile.json all created. There is no per-profile mods/
+        // dir under the container-based storage model (mods live in the repository).
         Assert.True(Directory.Exists(fx.ProfileDir(profile.Id)));
         Assert.True(Directory.Exists(fx.StagedDir(profile.Id)));
-        Assert.True(Directory.Exists(fx.DivergedDir(profile.Id)));
         Assert.True(File.Exists(fx.ProfileJson(profile.Id)));
     }
 
@@ -179,8 +179,9 @@ public sealed class ProfileCrudTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("Doomed");
-        fx.Service.AddMod(profile.Id, "SomeMod");
-        var modPath = fx.Service.PrepareModRoot(profile.Id); // writes mods/ + mods.lst + populates
+        var container = fx.AddContainerWithVersion("SomeMod");
+        fx.Service.AddMod(profile.Id, container.Id, Magos.Modificus.Mods.ModVersionPolicy.Latest);
+        var modPath = fx.Service.PrepareModRoot(profile.Id); // writes mods.lst + populates staged/
         Assert.True(Directory.Exists(fx.ProfileDir(profile.Id)));
 
         fx.Service.DeleteProfile(profile.Id);

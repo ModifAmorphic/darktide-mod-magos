@@ -5,7 +5,7 @@ using Magos.Modificus.Config;
 using Magos.Modificus.General;
 using Magos.Modificus.Integrations;
 using Magos.Modificus.Profiles;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Magos.Modificus.Steam;
 using Magos.Modificus.UI.Dialogs;
 using Magos.Modificus.UI.Localization;
@@ -37,12 +37,12 @@ public static class MagosComposition
         var loggerFactory = LoggingBootstrap.CreateLoggerFactory(config);
 
         // 3. Compose services: General infra + every domain library + UI.
-        //    AddSharedMods() is called explicitly (and idempotently again inside
-        //    AddProfiles()) so the shared store is discoverable at the root +
+        //    AddMods() is called explicitly (and idempotently again inside
+        //    AddProfiles()) so the repository is discoverable at the root +
         //    IProfileService always resolves its staging dependency.
         var services = new ServiceCollection();
         services.AddGeneral(config, loggerFactory);
-        services.AddSharedMods();
+        services.AddMods();
         services.AddProfiles();
         services.AddIntegrations();
         services.AddSteam();
@@ -65,7 +65,7 @@ public static class MagosComposition
         services.AddSingleton<IPreferencesService, PreferencesService>();
         services.AddSingleton<MainWindow>();
         // The active profile's mod-list VM: a singleton (one list, the dominant
-        // content area). Resolves IModImportService (via AddSharedMods) +
+        // content area). Resolves IModImportService (via AddMods) +
         // IModOrderResolver (via AddProfiles), both already registered above.
         services.AddSingleton<ModListViewModel>();
         services.AddSingleton<ShellViewModel>();
@@ -78,7 +78,39 @@ public static class MagosComposition
                 sp.GetRequiredService<LocalizationService>(),
                 sp.GetRequiredService<MagosConfig>()));
 
-        return services.BuildServiceProvider();
+        var provider = services.BuildServiceProvider();
+
+        // Startup prune: drop repository versions no profile references + empty
+        // containers (spec §5). Best-effort: a failure is logged + swallowed so
+        // cleanup never blocks startup (the repository is still usable, and the
+        // next startup retries).
+        RunStartupPrune(provider, loggerFactory);
+
+        return provider;
+    }
+
+    /// <summary>
+    /// Runs <see cref="ModCleanup.PruneUnreferenced"/> once after composition.
+    /// Best-effort: any failure is logged + swallowed so a cleanup failure never
+    /// blocks app startup (the repository is still usable; the next startup
+    /// retries).
+    /// </summary>
+    private static void RunStartupPrune(IServiceProvider provider, ILoggerFactory loggerFactory)
+    {
+        try
+        {
+            var logger = loggerFactory.CreateLogger(nameof(MagosComposition));
+            var profiles = provider.GetRequiredService<IProfileService>();
+            var repo = provider.GetRequiredService<IModRepository>();
+            ModCleanup.PruneUnreferenced(profiles, repo);
+            logger.LogInformation("Startup mod prune complete.");
+        }
+        catch (Exception ex)
+        {
+            // Swallow: cleanup is best-effort. Log + continue.
+            loggerFactory.CreateLogger(nameof(MagosComposition))
+                .LogWarning(ex, "Startup mod prune failed (best-effort; will retry next startup).");
+        }
     }
 
     /// <summary>

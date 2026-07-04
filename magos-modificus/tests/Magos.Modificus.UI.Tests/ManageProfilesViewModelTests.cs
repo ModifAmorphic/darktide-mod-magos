@@ -224,7 +224,7 @@ public sealed class ManageProfilesViewModelTests
 
         Assert.Equal(1, dialogs.ConfirmCalls);
         Assert.Contains("Alpha", dialogs.LastConfirmMessage);
-        Assert.Contains("mods/", dialogs.LastConfirmMessage!);
+        Assert.Contains("mod list", dialogs.LastConfirmMessage!);
     }
 
     [Fact]

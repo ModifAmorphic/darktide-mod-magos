@@ -1,11 +1,11 @@
 using System.Text.Json;
 
-namespace Magos.Modificus.SharedMods.Tests;
+namespace Magos.Modificus.Mods.Tests;
 
 /// <summary>
 /// <see cref="ModSource"/> JSON polymorphism: the <c>$kind</c> discriminator
-/// round-trips for none/nexus/github, and the default for an absent source is
-/// <see cref="NoneSource"/>. Mirrors the established
+/// round-trips for untracked/nexus/github, and the default for an absent source
+/// is <see cref="UntrackedSource"/>. Mirrors the established
 /// <see cref="ModVersionPolicy"/> serialization tests.
 /// </summary>
 public sealed class ModSourceTests
@@ -13,7 +13,7 @@ public sealed class ModSourceTests
     private static readonly JsonSerializerOptions WriteIndented = new() { WriteIndented = true };
 
     [Theory]
-    [InlineData("none", typeof(NoneSource))]
+    [InlineData("untracked", typeof(UntrackedSource))]
     [InlineData("nexus", typeof(NexusSource))]
     [InlineData("github", typeof(GitHubSource))]
     public void Kind_discriminator_round_trips(string kind, Type expectedType)
@@ -21,7 +21,7 @@ public sealed class ModSourceTests
         // The serialized discriminator is the stable lowercase identifier.
         var source = kind switch
         {
-            "none" => (ModSource)new NoneSource(),
+            "untracked" => (ModSource)new UntrackedSource(),
             "nexus" => new NexusSource { ModId = 4242 },
             "github" => new GitHubSource { Owner = "o", Repo = "r" },
             _ => throw new ArgumentException($"unknown kind: {kind}", nameof(kind)),
@@ -35,11 +35,11 @@ public sealed class ModSourceTests
     }
 
     [Fact]
-    public void NoneSource_serializes_with_no_extra_fields()
+    public void UntrackedSource_serializes_with_no_extra_fields()
     {
-        var json = JsonSerializer.Serialize<ModSource>(new NoneSource());
+        var json = JsonSerializer.Serialize<ModSource>(new UntrackedSource());
         // Only the discriminator; no payload fields.
-        Assert.Equal("{\"$kind\":\"none\"}", json);
+        Assert.Equal("{\"$kind\":\"untracked\"}", json);
     }
 
     [Fact]
@@ -75,10 +75,10 @@ public sealed class ModSourceTests
     public void Defaults_are_empty_strings_and_zero()
     {
         // NexusSource.ModId defaults to 0; GitHubSource.Owner/Repo default to "".
-        // NoneSource carries no payload. These defaults are the read-back shape
-        // when fields are absent in the JSON (legacy/Phase-2 entries).
-        var noneJson = "{\"$kind\":\"none\"}";
-        Assert.IsType<NoneSource>(JsonSerializer.Deserialize<ModSource>(noneJson));
+        // UntrackedSource carries no payload. These defaults are the read-back shape
+        // when fields are absent in the JSON (legacy entries).
+        var untrackedJson = "{\"$kind\":\"untracked\"}";
+        Assert.IsType<UntrackedSource>(JsonSerializer.Deserialize<ModSource>(untrackedJson));
 
         var nexusJson = "{\"$kind\":\"nexus\"}";
         Assert.Equal(0, Assert.IsType<NexusSource>(JsonSerializer.Deserialize<ModSource>(nexusJson)!).ModId);
@@ -94,7 +94,7 @@ public sealed class ModSourceTests
     {
         // Records compare by value: important for set-comparison + identity
         // checks elsewhere (e.g. "does this entry match this source").
-        Assert.Equal(new NoneSource(), new NoneSource());
+        Assert.Equal(new UntrackedSource(), new UntrackedSource());
         Assert.Equal(new NexusSource { ModId = 7 }, new NexusSource { ModId = 7 });
         Assert.NotEqual(new NexusSource { ModId = 7 }, new NexusSource { ModId = 8 });
         Assert.Equal(

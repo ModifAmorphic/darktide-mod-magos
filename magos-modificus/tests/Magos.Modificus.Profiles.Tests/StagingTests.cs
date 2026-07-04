@@ -1,68 +1,96 @@
 using System.Text;
 using Magos.Modificus.Config;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Magos.Modificus.Profiles.Tests;
 
 /// <summary>
-/// Phase 2 shared-first staging contract: shared mods symlink to the shared
-/// store; diverged mods symlink to <c>mods/</c>; <c>staged/</c> holds only
-/// symlinks + <c>mods.lst</c> (no copied files); regeneration clears + rebuilds;
-/// a missing <c>mods/</c> copy is skipped + warned (not a crash); a
-/// symlink-creation failure throws <see cref="SymlinkStagingException"/> (never
-/// silently copies); and <see cref="IProfileService.SetModPolicy"/> reconciles
-/// the diverged copy on share↔diverge transitions.
+/// Container-based staging contract: each enabled mod resolves its
+/// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/>
+/// (<see cref="LatestPolicy"/> -> the container's isLatest version folder;
+/// <see cref="PinnedPolicy"/> -> the version whose <see cref="ModVersion.Folder"/>
+/// matches the pin's <see cref="PinnedPolicy.VersionId"/>) and is symlinked
+/// into <c>staged/&lt;displayName&gt;</c>; missing containers/versions are
+/// skipped + warned; symlink-name collisions are disambiguated; the staged root
+/// holds only symlinks + <c>mods.lst</c> (no copied files); a symlink-creation
+/// failure throws <see cref="SymlinkStagingException"/> (never silently copies).
 /// </summary>
 public sealed class StagingTests
 {
-    // ---- Share / Diverge symlink targets -----------------------------------
+    // ---- Latest / Pinned symlink targets -----------------------------------
 
     [Fact]
-    public void Shared_mod_is_symlinked_into_shared_store()
+    public void Latest_policy_symlinks_to_the_isLatest_version_folder()
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.Service.AddMod(profile.Id, "DMF"); // Latest, shared is Latest -> Share
+        var container = fx.AddContainerWithVersion("DMF", "1.0");
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
         fx.Service.PrepareModRoot(profile.Id);
 
         var link = fx.StagedModLink(profile.Id, "DMF");
-        Assert.True(Directory.Exists(link), "staged symlink should resolve to the shared mod dir");
+        Assert.True(Directory.Exists(link), "staged symlink should resolve to the version folder");
         Assert.True(IsSymlink(link), "staged entry should be a symlink, not a copy");
-        Assert.Equal(fx.SharedModDir("DMF"), ResolveLink(link));
+        Assert.Equal(fx.VersionDir(container.Id, container.Versions[0].Folder), ResolveLink(link));
     }
 
     [Fact]
-    public void Diverged_mod_is_symlinked_into_profile_diverged_dir()
+    public void Pinned_policy_symlinks_to_the_version_matching_the_pin()
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        // Profile pins a different version -> Diverge.
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("2.0.0"));
-        // Simulate Phase 4 having placed the diverged copy.
-        Directory.CreateDirectory(fx.DivergedModDir(profile.Id, "DMF"));
+        // Add v1.0 (becomes isLatest), then v2.0 (becomes isLatest). Pin to 1.0
+        // by its version id (the ModVersion.Folder value).
+        var container = fx.AddContainerWithVersion("DMF", "1.0");
+        fx.AddVersion(container.Id, "2.0");
+        var v1Folder = container.Versions.Single(v => v.VersionString == "1.0").Folder;
+        fx.Service.AddMod(profile.Id, container.Id, new PinnedPolicy(v1Folder));
 
         fx.Service.PrepareModRoot(profile.Id);
 
         var link = fx.StagedModLink(profile.Id, "DMF");
         Assert.True(Directory.Exists(link));
         Assert.True(IsSymlink(link));
-        Assert.Equal(fx.DivergedModDir(profile.Id, "DMF"), ResolveLink(link));
+        Assert.Equal(fx.VersionDir(container.Id, v1Folder), ResolveLink(link));
     }
+
+    [Fact]
+    public void Moving_isLatest_requires_zero_profile_entry_changes()
+    {
+        // Acceptance #4: re-keying which version is "latest" is a repository-only
+        // change. Two profiles, both Latest, share the same entry; the entry
+        // never changes when the container's isLatest moves.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var container = fx.AddContainerWithVersion("DMF", "1.0");
+        var v1Folder = container.Versions.Single(v => v.VersionString == "1.0").Folder;
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
+        fx.Service.PrepareModRoot(profile.Id);
+        var link1 = fx.StagedModLink(profile.Id, "DMF");
+        Assert.Equal(fx.VersionDir(container.Id, v1Folder), ResolveLink(link1));
+
+        // Add v2.0 (becomes isLatest). The profile entry is unchanged; staging
+        // re-resolves dynamically.
+        fx.AddVersion(container.Id, "2.0");
+        var v2Folder = fx.Repo.Get(container.Id)!.Versions.Single(v => v.VersionString == "2.0").Folder;
+        fx.Service.PrepareModRoot(profile.Id);
+
+        Assert.Equal(fx.VersionDir(container.Id, v2Folder), ResolveLink(link1));
+        var modEntry = Assert.Single(fx.Service.GetModList(profile.Id));
+        Assert.Equal(container.Id, modEntry.ContainerId); // unchanged
+    }
+
+    // ---- staging shape: symlinks only + mods.lst --------------------------
 
     [Fact]
     public void Staged_root_contains_only_symlinks_and_mods_lst_no_copied_files()
     {
-        // The whole point of shared-mod storage: one copy, symlinked. Staging
-        // must not duplicate mod files into staged/ — every mod entry is a
-        // symlink (ReparsePoint), and only mods.lst is a real file.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.Service.AddMod(profile.Id, "DMF");
+        var container = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
         fx.Service.PrepareModRoot(profile.Id);
 
@@ -85,8 +113,8 @@ public sealed class StagingTests
             }
         }
 
-        // The mod's actual files live only in the shared store.
-        Assert.True(File.Exists(Path.Combine(fx.SharedModDir("DMF"), "marker.txt")));
+        // The mod's actual files live only in the repository.
+        Assert.True(File.Exists(Path.Combine(fx.VersionDir(container.Id, container.Versions[0].Folder), "marker.txt")));
     }
 
     // ---- regeneration ------------------------------------------------------
@@ -96,17 +124,15 @@ public sealed class StagingTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("OldMod");
-        fx.Service.AddMod(profile.Id, "OldMod");
+        var oldContainer = fx.AddContainerWithVersion("OldMod");
+        fx.Service.AddMod(profile.Id, oldContainer.Id, ModVersionPolicy.Latest);
         fx.Service.PrepareModRoot(profile.Id);
         Assert.True(Directory.Exists(fx.StagedModLink(profile.Id, "OldMod")));
 
-        // Remove OldMod from the profile + shared store; add NewMod.
-        fx.Service.RemoveMod(profile.Id, "OldMod");
-        fx.SharedStore.Remove("OldMod");
-        Directory.Delete(fx.SharedModDir("OldMod"), recursive: true);
-        fx.AddSharedMod("NewMod");
-        fx.Service.AddMod(profile.Id, "NewMod");
+        // Remove OldMod from the profile; add NewMod.
+        fx.Service.RemoveMod(profile.Id, oldContainer.Id);
+        var newContainer = fx.AddContainerWithVersion("NewMod");
+        fx.Service.AddMod(profile.Id, newContainer.Id, ModVersionPolicy.Latest);
 
         fx.Service.PrepareModRoot(profile.Id);
 
@@ -117,39 +143,61 @@ public sealed class StagingTests
     }
 
     [Fact]
-    public void Regeneration_never_follows_stale_symlinks_into_shared_store()
+    public void Regeneration_never_follows_stale_symlinks_into_the_repository()
     {
-        // Data-safety: a prior staged/DMF symlink pointing into the shared store
-        // must be removed as a LINK (not followed), so the shared files survive a
-        // regenerate. This guards ClearStagedDir's symlink-awareness.
+        // Data-safety: a prior staged/DMF symlink pointing into the repository
+        // must be removed as a LINK (not followed), so the files survive a
+        // regenerate. Guards ClearStagedDir's symlink-awareness.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.Service.AddMod(profile.Id, "DMF");
+        var container = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
         fx.Service.PrepareModRoot(profile.Id);
-        var sharedMarker = Path.Combine(fx.SharedModDir("DMF"), "marker.txt");
-        Assert.True(File.Exists(sharedMarker));
+        var versionPath = fx.VersionDir(container.Id, container.Versions[0].Folder);
+        var marker = Path.Combine(versionPath, "marker.txt");
+        Assert.True(File.Exists(marker));
 
-        // Regenerate (DMF now disabled -> not staged). The shared copy must be intact.
-        fx.Service.SetModEnabled(profile.Id, "DMF", enabled: false);
+        // Regenerate (DMF now disabled -> not staged). The repository files survive.
+        fx.Service.SetModEnabled(profile.Id, container.Id, enabled: false);
         fx.Service.PrepareModRoot(profile.Id);
 
-        Assert.True(File.Exists(sharedMarker), "shared mod files must survive staged/ regeneration");
+        Assert.True(File.Exists(marker), "repository mod files must survive staged/ regeneration");
         Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "DMF")));
     }
 
-    // ---- missing-diverged grace --------------------------------------------
+    // ---- missing-version grace --------------------------------------------
 
     [Fact]
-    public void Diverged_mod_without_local_copy_is_skipped_not_crashed()
+    public void Mod_whose_container_is_missing_is_skipped_not_crashed()
     {
-        // Phase 4 hasn't acquired the diverged copy -> the mod is omitted from
-        // staged/ + mods.lst, with a warning. No exception.
+        // A profile entry whose container is gone (a stale reference, or pruned)
+        // is omitted from staged/ + mods.lst, with a warning. No exception.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("2.0.0"));
-        // mods/DMF intentionally NOT created (acquisition pending).
+        var realContainer = fx.AddContainerWithVersion("RealMod");
+        // A ghost: add an entry pointing at a non-existent container.
+        fx.Service.AddMod(profile.Id, realContainer.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, Guid.NewGuid(), ModVersionPolicy.Latest);
+
+        fx.Service.PrepareModRoot(profile.Id); // must not throw
+
+        Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "Ghost")));
+        // Only RealMod appears.
+        Assert.Equal("RealMod\n", File.ReadAllText(fx.ModsLst(profile.Id)));
+    }
+
+    [Fact]
+    public void Pinned_policy_with_unknown_version_is_skipped_with_warning()
+    {
+        // A pin to a version id that does not exist on the container: skip + warn.
+        // The mod is omitted from staged/ + mods.lst. (The UI dropdown can't
+        // produce such an id; this covers a programmatic / stale-id call.)
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var container = fx.AddContainerWithVersion("DMF", "1.0");
+        // AddMod does not validate the versionId (only SetModPolicy does); so a
+        // phantom pin can be seeded here for the staging-skip assertion.
+        fx.Service.AddMod(profile.Id, container.Id, new PinnedPolicy("no-such-version-id"));
 
         fx.Service.PrepareModRoot(profile.Id); // must not throw
 
@@ -158,35 +206,73 @@ public sealed class StagingTests
     }
 
     [Fact]
-    public void Mod_not_in_shared_store_is_skipped_when_no_diverged_copy()
+    public void Latest_policy_on_a_container_with_no_versions_is_skipped()
     {
-        // A profile mod whose name isn't in the shared store at all, and has no
-        // mods/ copy, is skipped (nothing to stage). Other mods still stage.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("RealMod");
-        fx.Service.AddMod(profile.Id, "GhostMod"); // not in shared store, no mods/
-        fx.Service.AddMod(profile.Id, "RealMod");
+        var empty = fx.Repo.CreateContainer(new UntrackedSource(), "Empty");
+        fx.Service.AddMod(profile.Id, empty.Id, ModVersionPolicy.Latest);
 
         fx.Service.PrepareModRoot(profile.Id);
 
-        Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "GhostMod")));
-        Assert.Equal("RealMod\n", File.ReadAllText(fx.ModsLst(profile.Id)));
+        Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "Empty")));
+        Assert.Equal(string.Empty, File.ReadAllText(fx.ModsLst(profile.Id)));
+    }
+
+    // ---- symlink-name disambiguation --------------------------------------
+
+    [Fact]
+    public void Two_containers_with_the_same_name_disambiguate_the_symlink()
+    {
+        // Goal: the loader is agnostic to the symlink name. Two containers with
+        // the same display name in one profile must each get a distinct symlink.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var a = fx.AddContainerWithVersion("DMF");
+        var b = fx.AddContainerWithVersion("DMF"); // same name, different container
+        fx.Service.AddMod(profile.Id, a.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, b.Id, ModVersionPolicy.Latest);
+
+        fx.Service.PrepareModRoot(profile.Id);
+
+        // One symlink is named "DMF"; the other is "DMF-<short-id>" (or similar).
+        // Both resolve to distinct version folders; both are listed.
+        var entries = Directory.GetFileSystemEntries(fx.StagedDir(profile.Id))
+            .Where(p => Path.GetFileName(p) != "mods.lst")
+            .ToArray();
+        Assert.Equal(2, entries.Length);
+        Assert.Equal(2, entries.Select(p => ResolveLink(p)).Distinct().Count());
+
+        var modsLst = File.ReadAllText(fx.ModsLst(profile.Id));
+        Assert.Equal(2, modsLst.Count(c => c == '\n'));
     }
 
     [Fact]
-    public void Diverged_mod_without_shared_entry_uses_diverged_copy()
+    public void Symlink_name_is_sanitized_for_filesystem_illegal_chars()
     {
-        // No shared entry, but a mods/ copy exists -> stage the local copy.
+        // A container whose Name contains filesystem-illegal chars still stages:
+        // the symlink name is sanitized (illegal chars replaced with '_'). The
+        // forward-slash is invalid as a filename char on every platform, so it
+        // makes a cross-platform test.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.Service.AddMod(profile.Id, "LocalOnly");
-        Directory.CreateDirectory(fx.DivergedModDir(profile.Id, "LocalOnly"));
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "Weapon/Tweaks");
+        fx.Repo.AddVersion(container.Id, "1.0", dir =>
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "marker.txt"), "x");
+        });
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
         fx.Service.PrepareModRoot(profile.Id);
 
-        Assert.True(Directory.Exists(fx.StagedModLink(profile.Id, "LocalOnly")));
-        Assert.Equal("LocalOnly\n", File.ReadAllText(fx.ModsLst(profile.Id)));
+        // mods.lst reflects a sanitized name (the slash is replaced, no subdir).
+        var modsLst = File.ReadAllText(fx.ModsLst(profile.Id));
+        Assert.DoesNotContain('/', modsLst);
+        Assert.Contains("Weapon", modsLst);
+        Assert.Contains("Tweaks", modsLst);
+        // Exactly one line (the sanitized name did not split into two entries).
+        Assert.Equal(1, modsLst.Count(c => c == '\n'));
     }
 
     // ---- symlink-failure path ----------------------------------------------
@@ -194,14 +280,13 @@ public sealed class StagingTests
     [Fact]
     public void Symlink_creation_failure_throws_clear_error_not_silent_copy()
     {
-        // Inject a SymlinkCreator that simulates Windows-without-symlink-perms.
         SymlinkCreator throwing = (_, _) =>
             throw new UnauthorizedAccessException("simulated: symlink not permitted");
 
         using var fx = new ProfileServiceFixture(symlink: throwing);
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF");
-        fx.Service.AddMod(profile.Id, "DMF");
+        var container = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
         var ex = Assert.Throws<SymlinkStagingException>(() => fx.Service.PrepareModRoot(profile.Id));
         Assert.Contains("Symlinks are required", ex.Message);
@@ -211,90 +296,42 @@ public sealed class StagingTests
         Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "DMF")));
     }
 
-    // ---- divergence transitions (SetModPolicy) -----------------------------
+    // ---- SetModPolicy (no on-disk transition) ------------------------------
 
     [Fact]
-    public void SetModPolicy_share_to_diverge_marks_metadata_only()
+    public void SetModPolicy_persists_and_round_trips_policy_with_no_on_disk_transition()
     {
-        // share->diverge: the policy is recorded; mods/ is Phase 4's job, so
-        // it is NOT created here. Staging looks for it (absent -> skip + warn).
+        // The new model has no diverged copy to reconcile. SetModPolicy just
+        // records the policy; staging re-resolves on the next PrepareModRoot.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("1.0.0")); // Share (same pin)
+        var container = fx.AddContainerWithVersion("DMF", "1.0");
+        fx.AddVersion(container.Id, "2.0"); // v2.0 is isLatest
+        var v1Folder = container.Versions.Single(v => v.VersionString == "1.0").Folder;
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest); // -> v2.0
 
-        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy("2.0.0")); // -> Diverge
-
-        var entry = Assert.Single(fx.Service.GetModList(profile.Id));
-        Assert.Equal("2.0.0", Assert.IsType<PinnedPolicy>(entry.Policy).Version);
-        // mods/ not created by SetModPolicy (acquisition is Phase 4).
-        Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")));
-
-        // Staging: diverged copy absent -> skipped.
-        fx.Service.PrepareModRoot(profile.Id);
-        Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "DMF")));
-    }
-
-    [Fact]
-    public void SetModPolicy_diverge_to_share_drops_diverged_copy()
-    {
-        // diverge->share: the local copy is no longer needed; dropped.
-        using var fx = new ProfileServiceFixture();
-        var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("2.0.0")); // Diverge
-        // Pretend Phase 4 placed the diverged copy.
-        Directory.CreateDirectory(fx.DivergedModDir(profile.Id, "DMF"));
-        Assert.True(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")));
-
-        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy("1.0.0")); // -> Share
-
-        Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")),
-            "converging to Share should reclaim the mods/ copy");
-
-        // Staging now symlinks to the shared store.
-        fx.Service.PrepareModRoot(profile.Id);
-        Assert.True(IsSymlink(fx.StagedModLink(profile.Id, "DMF")));
-        Assert.Equal(fx.SharedModDir("DMF"), ResolveLink(fx.StagedModLink(profile.Id, "DMF")));
-    }
-
-    [Fact]
-    public void SetModPolicy_diverge_to_share_graceful_when_no_diverged_copy()
-    {
-        // Converging to Share when there's nothing to drop is a no-op (no throw).
-        using var fx = new ProfileServiceFixture();
-        var profile = fx.Service.CreateProfile("P");
-        fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("2.0.0"));
-
-        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy("1.0.0")); // -> Share
-
-        Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF"))); // never existed
-    }
-
-    [Fact]
-    public void SetModPolicy_persists_and_round_trips_policy()
-    {
-        using var fx = new ProfileServiceFixture();
-        var profile = fx.Service.CreateProfile("P");
-        fx.Service.AddMod(profile.Id, "DMF");
-
-        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy("3.1.4"));
+        // Pin to v1.0 by its version id; staging re-resolves to the v1.0 folder.
+        fx.Service.SetModPolicy(profile.Id, container.Id, new PinnedPolicy(v1Folder));
 
         // Reload from disk (new service instance) to prove persistence.
         var reloadConfig = MagosConfig.CreateDefault();
         reloadConfig.ProfilesBaseFolder = fx.BaseFolder;
-        reloadConfig.SharedModsFolder = fx.SharedFolder;
+        reloadConfig.ModsFolder = fx.ModsFolder;
         using var provider = new ServiceCollection()
             .AddSingleton(reloadConfig)
             .AddLogging()
-            .AddSharedMods()
+            .AddMods()
             .AddProfiles()
             .BuildServiceProvider();
-        var reloaded = provider.GetRequiredService<IProfileService>().GetModList(profile.Id);
+        var reloaded = provider.GetRequiredService<IProfileService>();
 
-        var entry = Assert.Single(reloaded);
-        Assert.Equal("3.1.4", Assert.IsType<PinnedPolicy>(entry.Policy).Version);
+        var entry = Assert.Single(reloaded.GetModList(profile.Id));
+        Assert.Equal(v1Folder, Assert.IsType<PinnedPolicy>(entry.Policy).VersionId);
+
+        // And staging reflects the pin.
+        reloaded.PrepareModRoot(profile.Id);
+        var link = fx.StagedModLink(profile.Id, "DMF");
+        Assert.Equal(fx.VersionDir(container.Id, v1Folder), ResolveLink(link));
     }
 
     // ---- helpers ------------------------------------------------------------

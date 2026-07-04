@@ -21,7 +21,7 @@ public sealed class ConfigLoaderTests
         Assert.Equal("Information", config.Logging.Level);
         Assert.False(string.IsNullOrEmpty(config.Logging.LogFile));
         Assert.False(string.IsNullOrEmpty(config.ProfilesBaseFolder));
-        Assert.False(string.IsNullOrEmpty(config.SharedModsFolder));
+        Assert.False(string.IsNullOrEmpty(config.ModsFolder));
         Assert.False(string.IsNullOrEmpty(config.EnginseerRuntimeDir));
         Assert.EndsWith("profiles", config.ProfilesBaseFolder);
     }

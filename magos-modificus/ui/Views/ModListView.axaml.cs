@@ -5,7 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Magos.Modificus.UI.ViewModels;
 
 namespace Magos.Modificus.UI.Views;
@@ -282,21 +282,44 @@ public partial class ModListView : UserControl
     }
 
     /// <summary>
-    /// Applies the inline pinned-version edit on Enter (commits the row's
-    /// <see cref="ModItemViewModel.PinnedVersion"/> as a new Pinned policy).
+    /// Routes a version-dropdown selection change to the parent's
+    /// <c>SetPolicyPinned</c> command (with the newly selected versionId).
+    /// Skips when the selection already agrees with the row's effective pinned
+    /// versionId, so binding-init + post-Reload <c>SelectionChanged</c> fires
+    /// (which would otherwise re-apply + reload infinitely) are harmless. Only a
+    /// genuine divergence proceeds. No-op when the row's effective policy is not
+    /// Pinned (the policy ComboBox's own change drives the switch-to-Pinned).
     /// </summary>
-    private void PinnedVersion_KeyDown(object? sender, KeyEventArgs e)
+    private void PinnedVersion_Changed(object? sender, SelectionChangedEventArgs e)
     {
-        if (e.Key != Key.Enter)
+        if (sender is not ComboBox cb || cb.DataContext is not ModItemViewModel row)
         {
             return;
         }
 
-        if (sender is TextBox box && box.DataContext is ModItemViewModel row)
+        // Only relevant when the row is already Pinned: the Latest->Pinned switch
+        // is driven by Policy_Changed (which calls SetPolicyPinned itself). This
+        // handler covers a re-pin to a different version while already Pinned.
+        if (row.Policy is not PinnedPolicy pinned)
         {
-            ViewModel?.SetPolicyPinnedCommand.Execute(row);
-            e.Handled = true;
+            return;
         }
+
+        if (cb.SelectedItem is not VersionOption selected)
+        {
+            return;
+        }
+
+        // Skip the init / programmatic fire: when the dropdown's selection matches
+        // the row's effective pinned versionId there is nothing to apply. Reloads
+        // recreate rows + re-init their dropdowns; without this guard each would
+        // re-apply.
+        if (string.Equals(selected.VersionId, pinned.VersionId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ViewModel?.SetPolicyPinnedCommand.Execute(row);
     }
 
     private void MoveUp_Click(object? sender, RoutedEventArgs e)

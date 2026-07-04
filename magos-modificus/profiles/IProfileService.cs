@@ -1,24 +1,24 @@
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 
 namespace Magos.Modificus.Profiles;
 
 /// <summary>
 /// Profile + per-profile mod-list management. Owns the profile data model,
 /// its on-disk persistence, and the projection of the mod list into a staged
-/// mod root (symlinks) + <c>mods.lst</c> for the Enginseer runtime.
+/// mod root (symlinks to the repository's resolved version folders) +
+/// <c>mods.lst</c> for the Enginseer runtime.
 /// </summary>
 /// <remarks>
-/// <para><b>Phase 1 → Phase 2 stability:</b> the storage implementation swapped
-/// (per-profile <c>mods/</c> dir → shared-first + <c>staged/</c> symlinks)
-/// without changing the surface:</para>
-/// <list type="bullet">
-/// <item><see cref="PrepareModRoot"/> abstracts "give me the <c>--mod-path</c>" —
-/// Phase 1 returned the per-profile <c>mods/</c> dir; Phase 2 returns a staged
-/// dir built from shared-first resolution (signature unchanged, impl swapped).</item>
-/// <item><see cref="ModListEntry"/> grew <see cref="ModListEntry.Policy"/>
-/// (additive; default Latest — Phase 1 callers unaffected).</item>
-/// <item>No storage details (paths, shared-vs-local) leak through the interface.</item>
-/// </list>
+/// <para>
+/// A profile references mods by <see cref="ModListEntry.ContainerId"/>; it never
+/// stores mod files of its own. Staging resolves each enabled mod's
+/// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/> (via
+/// <see cref="IModRepository"/>) and symlinks <c>staged/&lt;name&gt;</c> to the
+/// resolved version folder. <b>Symlinks, never copies.</b></para>
+/// <para>
+/// No storage details (paths, version-folder ids) leak through the interface.
+/// Registered as a singleton: the service holds no per-request state, and
+/// <c>MagosConfig</c> (its only config source) is itself a singleton.</para>
 /// </remarks>
 public interface IProfileService
 {
@@ -31,7 +31,7 @@ public interface IProfileService
 
     /// <summary>
     /// Creates a new profile: generates the id, scaffolds its directory tree
-    /// (<c>staged/</c> + <c>mods/</c>) + persists an empty <c>profile.json</c>.
+    /// (<c>staged/</c>) + persists an empty <c>profile.json</c>.
     /// </summary>
     /// <returns>The newly-created profile.</returns>
     Profile CreateProfile(string name);
@@ -50,87 +50,75 @@ public interface IProfileService
 
     /// <summary>
     /// Reassigns <see cref="ModListEntry.Order"/> so the profile's mods follow
-    /// <paramref name="modNamesInOrder"/>. Mods not mentioned keep their relative
-    /// order, appended after the listed ones; names in the list that aren't in
-    /// the profile are ignored. No mods are added or removed.
+    /// <paramref name="containerIdsInOrder"/>. Mods not mentioned keep their
+    /// relative order, appended after the listed ones; ids in the list that
+    /// aren't in the profile are ignored. No mods are added or removed.
     /// </summary>
     /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
-    void SetModOrder(Guid id, IReadOnlyList<string> modNamesInOrder);
+    void SetModOrder(Guid id, IReadOnlyList<Guid> containerIdsInOrder);
 
     /// <summary>Toggles <see cref="ModListEntry.Enabled"/> for a single mod.</summary>
     /// <exception cref="KeyNotFoundException">
-    /// <paramref name="id"/> is unknown, or <paramref name="modName"/> is not in the profile's list.
+    /// <paramref name="id"/> is unknown, or <paramref name="containerId"/> is not in the profile's list.
     /// </exception>
-    void SetModEnabled(Guid id, string modName, bool enabled);
+    void SetModEnabled(Guid id, Guid containerId, bool enabled);
 
     /// <summary>
     /// Adds a mod entry to the end of the list (<see cref="ModListEntry.Enabled"/>
-    /// = true) with the default policy (<see cref="ModVersionPolicy.Latest"/>).
-    /// <b>List entry only — does NOT fetch or install mod files.</b>
-    /// Idempotent: adding a name already in the list is a no-op.
+    /// = true) with the given policy. <b>List entry only: does NOT fetch or
+    /// install mod files</b> (the repository holds the files; staging symlinks
+    /// to them). Idempotent: re-adding a <paramref name="containerId"/> already
+    /// in the list is a no-op (order/enabled/policy untouched).
+    /// </summary>
+    /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
+    void AddMod(Guid id, Guid containerId, ModVersionPolicy policy);
+
+    /// <summary>
+    /// Changes a profile mod's <see cref="ModListEntry.Policy"/>. The new policy
+    /// takes effect at the next <see cref="PrepareModRoot"/> (the resolved
+    /// version folder may change; no on-disk transition is needed because the
+    /// profile never stores mod files).
     /// </summary>
     /// <remarks>
-    /// Phase 1-compatible overload. The spec's <c>AddMod(id, name, policy=Latest)</c>
-    /// is realized as this overload because C# default-parameter values must be
-    /// compile-time constants and <see cref="ModVersionPolicy"/> is a reference
-    /// type (can't be <c>const</c>); this overload preserves the no-policy call
-    /// site <c>AddMod(id, "DMF")</c> unaffected.
+    /// A <see cref="PinnedPolicy"/> is validated against the container's current
+    /// versions: its <see cref="PinnedPolicy.VersionId"/> must reference a
+    /// version that exists on the container (defense-in-depth against a
+    /// programmatic call with a stale id; the UI's pin dropdown can only
+    /// produce ids the container already holds). <see cref="LatestPolicy"/> needs
+    /// no check (it resolves dynamically to the current <see cref="ModVersion.IsLatest"/>).
     /// </remarks>
-    /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
-    void AddMod(Guid id, string modName);
+    /// <exception cref="KeyNotFoundException">
+    /// <paramref name="id"/> is unknown, or <paramref name="containerId"/> is not in the profile's list.
+    /// </exception>
+    /// <exception cref="ArgumentException"><paramref name="policy"/> is a
+    /// <see cref="PinnedPolicy"/> whose <see cref="PinnedPolicy.VersionId"/> does
+    /// not reference a version present in the container (or the container itself
+    /// is missing).</exception>
+    void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy);
 
     /// <summary>
-    /// Adds a mod entry to the end of the list (<see cref="ModListEntry.Enabled"/>
-    /// = true) with an explicit version policy. <b>List entry only — does NOT
-    /// fetch or install mod files.</b> Idempotent: adding a name already in the
-    /// list is a no-op (the existing entry's policy is left unchanged).
-    /// </summary>
-    /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
-    void AddMod(Guid id, string modName, ModVersionPolicy policy);
-
-    /// <summary>
-    /// Changes a profile mod's <see cref="ModListEntry.Policy"/> and recomputes
-    /// the divergence resolution against the shared store:
-    /// <list type="bullet">
-    /// <item><b>share→diverge:</b> records the policy (the profile now needs a
-    /// local copy). The actual file acquisition (creating <c>mods/&lt;mod&gt;/</c>
-    /// at the profile's version) is <b>Phase 4</b>; staging looks for it and
-    /// skips + warns if Phase 4 hasn't placed it yet.</item>
-    /// <item><b>diverge→share:</b> the local copy is no longer needed — drops
-    /// <c>mods/&lt;mod&gt;/</c> to reclaim space (re-divergence re-acquires).</item>
-    /// </list>
-    /// If the mod has no shared-store entry, only the policy is recorded (no
-    /// divergence transition applies until acquisition populates the store).
+    /// Removes the mod entry. The repository copy is <b>not</b> touched (other
+    /// profiles may still reference it; the startup prune reclaims it when no
+    /// profile does).
     /// </summary>
     /// <exception cref="KeyNotFoundException">
-    /// <paramref name="id"/> is unknown, or <paramref name="modName"/> is not in the profile's list.
+    /// <paramref name="id"/> is unknown, or <paramref name="containerId"/> is not in the profile's list.
     /// </exception>
-    void SetModPolicy(Guid id, string modName, ModVersionPolicy policy);
-
-    /// <summary>
-    /// Removes the mod entry and the mod's profile-local (<c>mods/</c>)
-    /// files, if any. A missing local copy for a listed mod is graceful (not a
-    /// crash). The shared-store copy is <b>not</b> touched (other profiles may
-    /// still share it).
-    /// </summary>
-    /// <exception cref="KeyNotFoundException">
-    /// <paramref name="id"/> is unknown, or <paramref name="modName"/> is not in the profile's list.
-    /// </exception>
-    void RemoveMod(Guid id, string modName);
+    void RemoveMod(Guid id, Guid containerId);
 
     /// <summary>
     /// Regenerates the profile's staged mod root (the <c>--mod-path</c>) from the
-    /// current shared-first resolution, and writes <c>mods.lst</c> from the
+    /// current per-mod version resolution, and writes <c>mods.lst</c> from the
     /// successfully-staged enabled mods in <see cref="ModListEntry.Order"/>.
     /// Idempotent (each call clears + rebuilds <c>staged/</c>). Returns the
     /// <c>--mod-path</c> to pass to the Enginseer launcher.
     /// </summary>
     /// <remarks>
-    /// Symlinks, not copies (download once, store once). A symlink-creation
+    /// Symlinks, not copies (the repository holds the files). A symlink-creation
     /// failure (e.g. Windows without symlink permissions / Developer Mode) throws
-    /// <see cref="SymlinkStagingException"/> — it never silently copies. A mod
-    /// that resolves to Diverge but whose <c>mods/</c> copy is absent (Phase 4
-    /// hasn't acquired it) is skipped with a warning, not a crash.
+    /// <see cref="SymlinkStagingException"/>; it never silently copies. A mod
+    /// whose container or resolved version is missing is skipped with a warning
+    /// (not a crash); it has no entry in <c>staged/</c> or <c>mods.lst</c>.
     /// </remarks>
     /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
     /// <exception cref="SymlinkStagingException">A symlink could not be created.</exception>

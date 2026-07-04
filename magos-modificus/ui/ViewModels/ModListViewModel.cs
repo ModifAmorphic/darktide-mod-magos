@@ -3,7 +3,7 @@ using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Magos.Modificus.Profiles;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Magos.Modificus.UI.Dialogs;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Session;
@@ -28,8 +28,8 @@ public enum ModAddMode
 
 /// <summary>
 /// Owns the active profile's mod list, the dominant content area of the app
-/// shell. Loads the profile's mods (joined with source + version from the shared
-/// store for the badge), and applies every edit through
+/// shell. Loads the profile's mods (joined with source + version from the mod
+/// repository for the badge), and applies every edit through
 /// <see cref="IProfileService"/>: enable/disable, reorder (up/down), per-mod
 /// policy (Latest / Pinned), remove (confirmed), auto-sort (identity stub), and
 /// the add flow (file picker + drag-and-drop) via <see cref="IModImportService"/>
@@ -40,31 +40,35 @@ public enum ModAddMode
 /// id; it reads <see cref="IProfileSession.ActiveProfileId"/> and reloads when it
 /// changes. No active profile yields an empty list + the "no profile" empty state
 /// (owned here, not the shell).</para>
-/// <para><b>Row VMs carry state only:</b> each row is a <see cref="ModItemViewModel"/>
-/// (name + source badge + enabled + order + policy + policy-edit state). All
-/// service calls live here; the view routes row interactions (toggle, move,
-/// policy, remove) through code-behind handlers calling these commands with the
-/// row as the parameter (the established <c>ManageProfilesWindow</c> pattern).</para>
+/// <para><b>Rows carry state only:</b> each row is a <see cref="ModItemViewModel"/>
+/// (container id + name + source badge + enabled + order + policy + policy-edit
+/// state). All service calls live here; the view routes row interactions (toggle,
+/// move, policy, remove) through code-behind handlers calling these commands with
+/// the row as the parameter (the established <c>ManageProfilesWindow</c> pattern).</para>
+/// <para><b>The join key is <see cref="ModContainer.Id"/></b> (the profile entry's
+/// identity): on reload, each entry's container is looked up via
+/// <see cref="IModRepository.Get"/> for the display name, source badge, and
+/// resolved version. A missing container yields a <see cref="UntrackedSource"/> +
+/// a "not found" badge (staging warns at launch).</para>
 /// <para><b>Edits are allowed while the game runs:</b> the list is the active
 /// profile's config, not the running game's. The active profile is already locked
 /// against switching by the shell, so the list stays put while the game runs and
-/// edits land on the profile the user will launch next. Allocation
-/// (shared-vs-diverged) is never surfaced (an internal storage optimization).</para>
+/// edits land on the profile the user will launch next.</para>
 /// <para><b>Localized text is live:</b> the header count + empty-state messages
 /// re-resolve from <see cref="LocalizationService"/> on a culture change, and each
 /// row's badge + policy text refresh too (via <see cref="ModItemViewModel.Refresh"/>).</para>
 /// <para><b>Add flow:</b> the Add split button (zip picker + folder picker) +
 /// drag-and-drop all reduce to <see cref="AddModsCommand"/>, which processes
 /// paths sequentially: one import modal per path, then
-/// <c>IModImportService.Import</c> (extract/copy into the shared store) +
-/// <c>IProfileService.AddMod</c> (the profile reference). A cancelled modal
-/// cancels the whole remaining batch.</para>
+/// <c>IModImportService.Import</c> (extract/copy into the repository, returning
+/// the container id) + <c>IProfileService.AddMod</c> (the profile reference). A
+/// cancelled modal cancels the whole remaining batch.</para>
 /// </remarks>
 public partial class ModListViewModel : ObservableObject
 {
     private readonly IProfileService _profiles;
     private readonly IProfileSession _session;
-    private readonly ISharedModStore _sharedStore;
+    private readonly IModRepository _repo;
     private readonly IModImportService _importService;
     private readonly IModOrderResolver _orderResolver;
     private readonly IDialogService _dialogs;
@@ -79,7 +83,7 @@ public partial class ModListViewModel : ObservableObject
     public ModListViewModel(
         IProfileService profiles,
         IProfileSession session,
-        ISharedModStore sharedStore,
+        IModRepository repo,
         IModImportService importService,
         IModOrderResolver orderResolver,
         IDialogService dialogs,
@@ -88,7 +92,7 @@ public partial class ModListViewModel : ObservableObject
     {
         _profiles = profiles;
         _session = session;
-        _sharedStore = sharedStore;
+        _repo = repo;
         _importService = importService;
         _orderResolver = orderResolver;
         _dialogs = dialogs;
@@ -210,10 +214,10 @@ public partial class ModListViewModel : ObservableObject
 
     /// <summary>
     /// Rebuilds <see cref="Mods"/> from the active profile. Each row's source +
-    /// version are joined from the shared store (by name); a missing shared entry
-    /// yields a <see cref="NoneSource"/> + a "not found" badge (staging warns at
-    /// launch). Rows are sorted by <see cref="ModListEntry.Order"/>. No active
-    /// profile clears the list + sets the empty state.
+    /// version are joined from the repository (by container id); a missing
+    /// container yields a <see cref="UntrackedSource"/> + a "not found" badge
+    /// (staging warns at launch). Rows are sorted by <see cref="ModListEntry.Order"/>.
+    /// No active profile clears the list + sets the empty state.
     /// </summary>
     private void Reload()
     {
@@ -232,22 +236,45 @@ public partial class ModListViewModel : ObservableObject
         var entries = _profiles.GetModList(id);
         foreach (var entry in entries.OrderBy(e => e.Order, Comparer<int>.Default))
         {
-            var shared = _sharedStore.Get(entry.Name);
-            var found = shared is not null;
-            var source = shared?.Source ?? new NoneSource();
-            var version = shared?.ActualVersion ?? string.Empty;
+            var container = _repo.Get(entry.ContainerId);
+            var found = container is not null;
+            var source = container?.Source ?? new UntrackedSource();
+            // The displayed version is the resolved one (Latest -> isLatest;
+            // Pinned(id) -> the matching version's tag). An orphan pin (an id
+            // with no matching version in the container) yields empty rather than
+            // surfacing the opaque id; the dropdown exposes the container's
+            // versions for re-pinning.
+            var version = ResolveDisplayVersion(entry, container);
             Mods.Add(new ModItemViewModel(
                 _localization,
-                entry.Name,
+                entry.ContainerId,
+                container?.Name ?? string.Empty,
                 source,
                 version,
                 entry.Enabled,
                 entry.Order,
                 entry.Policy,
+                container?.Versions ?? Array.Empty<ModVersion>(),
                 found));
         }
 
         HasMods = Mods.Count > 0;
+    }
+
+    /// <summary>
+    /// The version string shown in the badge for an entry: the resolved
+    /// version's tag when the container + a matching version exist; empty
+    /// otherwise (an orphan pin surfaces no readable tag, since the pin is an
+    /// opaque id whose version is not present in the container).
+    /// </summary>
+    private static string ResolveDisplayVersion(ModListEntry entry, ModContainer? container)
+    {
+        if (container is null)
+        {
+            return string.Empty;
+        }
+
+        return container.ResolveVersion(entry.Policy)?.VersionString ?? string.Empty;
     }
 
     // ---- enable / disable --------------------------------------------------
@@ -266,15 +293,15 @@ public partial class ModListViewModel : ObservableObject
             return;
         }
 
-        _profiles.SetModEnabled(id, row.Name, row.Enabled);
-        _logger.LogDebug("Toggled {Mod} enabled={Enabled}", row.Name, row.Enabled);
+        _profiles.SetModEnabled(id, row.ContainerId, row.Enabled);
+        _logger.LogDebug("Toggled {Container} enabled={Enabled}", row.ContainerId, row.Enabled);
     }
 
     // ---- reorder (up / down) -----------------------------------------------
 
     /// <summary>
     /// Moves a row up one position: swaps with its predecessor in <see cref="Mods"/>,
-    /// persists the new name order through <see cref="IProfileService.SetModOrder"/>,
+    /// persists the new container-id order through <see cref="IProfileService.SetModOrder"/>,
     /// then reloads (so the persisted <see cref="ModListEntry.Order"/> fields drive
     /// the display). No-op at the top or with no active profile.
     /// </summary>
@@ -302,10 +329,10 @@ public partial class ModListViewModel : ObservableObject
             return;
         }
 
-        var names = Mods.Select(m => m.Name).ToArray();
-        (names[from], names[to]) = (names[to], names[from]);
+        var ids = Mods.Select(m => m.ContainerId).ToArray();
+        (ids[from], ids[to]) = (ids[to], ids[from]);
 
-        _profiles.SetModOrder(id, names);
+        _profiles.SetModOrder(id, ids);
         Reload();
     }
 
@@ -320,11 +347,13 @@ public partial class ModListViewModel : ObservableObject
         ApplyPolicy(row, ModVersionPolicy.Latest);
 
     /// <summary>
-    /// Switches a row's policy to <see cref="PinnedPolicy"/> with the row's edited
-    /// <see cref="ModItemViewModel.PinnedVersion"/> (raw tag string; non-empty
-    /// required), via <see cref="IProfileService.SetModPolicy"/>, then reloads.
-    /// Defense: an empty version falls back to the shared copy's actual version
-    /// (legibility over a blank pin).
+    /// Switches a row's policy to <see cref="PinnedPolicy"/> with the row's
+    /// selected dropdown version id, via <see cref="IProfileService.SetModPolicy"/>,
+    /// then reloads. The dropdown guarantees the id exists in the container (it
+    /// is built from the container's version list), so the call satisfies
+    /// <see cref="IProfileService"/>'s orphan-id validation. A <c>null</c>
+    /// selection (a version-less container) is a no-op: such a container cannot
+    /// be pinned.
     /// </summary>
     [RelayCommand]
     private void SetPolicyPinned(ModItemViewModel? row)
@@ -334,13 +363,15 @@ public partial class ModListViewModel : ObservableObject
             return;
         }
 
-        var version = row.PinnedVersion?.Trim();
-        if (string.IsNullOrEmpty(version))
+        // The dropdown guarantees the id exists in the container. A null
+        // selection means the container has no versions to pin to: no-op (the
+        // policy ComboBox reset is handled on the next genuine change).
+        if (row.SelectedVersion is null)
         {
-            version = row.ActualVersion;
+            return;
         }
 
-        ApplyPolicy(row, new PinnedPolicy(version));
+        ApplyPolicy(row, new PinnedPolicy(row.SelectedVersion.VersionId));
     }
 
     private void ApplyPolicy(ModItemViewModel? row, ModVersionPolicy policy)
@@ -350,18 +381,18 @@ public partial class ModListViewModel : ObservableObject
             return;
         }
 
-        _profiles.SetModPolicy(id, row.Name, policy);
+        _profiles.SetModPolicy(id, row.ContainerId, policy);
         Reload();
-        _logger.LogDebug("Set policy {Policy} on {Mod}", policy, row.Name);
+        _logger.LogDebug("Set policy {Policy} on container {Container}", policy, row.ContainerId);
     }
 
     // ---- remove (confirmed) ------------------------------------------------
 
     /// <summary>
     /// Removes a row from the profile after a confirmation (the user-facing
-    /// "remove from this list" gate). The shared copy survives
+    /// "remove from this list" gate). The repository copy survives
     /// (<c>RemoveMod</c> drops only the profile-local reference); the confirm is
-    /// about the profile edit, not shared data loss. No-op with no active profile.
+    /// about the profile edit, not data loss. No-op with no active profile.
     /// </summary>
     [RelayCommand]
     private async Task Remove(ModItemViewModel? row)
@@ -378,9 +409,9 @@ public partial class ModListViewModel : ObservableObject
             return;
         }
 
-        _profiles.RemoveMod(id, row.Name);
+        _profiles.RemoveMod(id, row.ContainerId);
         Reload();
-        _logger.LogInformation("Removed {Mod} from profile {Id}", row.Name, id);
+        _logger.LogInformation("Removed container {Container} from profile {Id}", row.ContainerId, id);
     }
 
     // ---- auto-sort (identity stub) -----------------------------------------
@@ -411,18 +442,19 @@ public partial class ModListViewModel : ObservableObject
     /// <summary>
     /// Processes a list of local paths (folders or <c>.zip</c> archives) from the
     /// add flow: one import modal per path, sequentially, then
-    /// <see cref="IModImportService.Import"/> (extract / copy into the shared
-    /// store) + <see cref="IProfileService.AddMod"/> (the profile reference). A
-    /// cancelled modal cancels the whole remaining batch (mods already imported
-    /// earlier in the batch stay imported). Used by the Add split button (the zip
-    /// file picker + the folder picker) + the drop handler.
+    /// <see cref="IModImportService.Import"/> (extract / copy into the repository)
+    /// + <see cref="IProfileService.AddMod"/> (the profile reference). A cancelled
+    /// modal cancels the whole remaining batch (mods already imported earlier in
+    /// the batch stay imported). Used by the Add split button (the zip file
+    /// picker + the folder picker) + the drop handler.
     /// </summary>
     /// <remarks>
     /// The name is derived from each path (folder name or archive stem, no
     /// extension) and pre-filled in the modal; the user may rename at import (the
-    /// edited name becomes the canonical shared-store key). The import happens
-    /// before the profile reference is added (order matters: import the shared
-    /// copy, then reference it).
+    /// edited name becomes the container's display name + the untracked dedup
+    /// key). The import happens before the profile reference is added (order
+    /// matters: import the repository copy, then reference it). The new profile
+    /// entry defaults to <see cref="ModVersionPolicy.Latest"/>.
     /// </remarks>
     [RelayCommand]
     private async Task AddMods(IReadOnlyList<string>? paths)
@@ -449,15 +481,15 @@ public partial class ModListViewModel : ObservableObject
                 break;
             }
 
-            // Import the shared copy first (extract/copy + shared-store upsert),
-            // then add the profile reference. The canonical name comes from the
-            // request (the modal wrote the user's edited + trimmed name back), so
-            // a rename at import establishes the shared-store key.
+            // Import the repository copy first (extract/copy + container/version
+            // upsert), then add the profile reference. The canonical name comes
+            // from the request (the modal wrote the user's edited + trimmed name
+            // back), so a rename at import establishes the container's name.
             var canonicalName = string.IsNullOrWhiteSpace(request.ModName) ? modName : request.ModName.Trim();
-            _importService.Import(path, canonicalName, result.Source, result.Version);
-            _profiles.AddMod(id, canonicalName);
-            _logger.LogInformation("Imported {Mod} from {Path} (source={Source}, version={Version})",
-                canonicalName, path, result.Source, result.Version);
+            var (containerId, _) = _importService.Import(path, canonicalName, result.Source, result.Version);
+            _profiles.AddMod(id, containerId, ModVersionPolicy.Latest);
+            _logger.LogInformation("Imported {Mod} from {Path} (source={Source}, version={Version}) onto container {Container}",
+                canonicalName, path, result.Source, result.Version, containerId);
         }
 
         Reload();

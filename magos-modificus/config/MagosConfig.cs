@@ -18,10 +18,11 @@ public sealed class MagosConfig
     public string ProfilesBaseFolder { get; set; } = AppPaths.DefaultProfilesBaseFolder;
 
     /// <summary>
-    /// The global shared mod store. Mods live shared-first across profiles;
-    /// see <c>docs/architecture/MAGOS-MODIFICUS.md</c> (Shared mod storage).
+    /// The unified mod repository root. One UUID container per (source, identity),
+    /// holding opaque-ID version subfolders; see <c>docs/architecture/MAGOS-MODIFICUS.md</c>
+    /// (Mod repository).
     /// </summary>
-    public string SharedModsFolder { get; set; } = AppPaths.DefaultSharedModsFolder;
+    public string ModsFolder { get; set; } = AppPaths.DefaultModsFolder;
 
     /// <summary>
     /// The Enginseer runtime directory: where <c>magos_launcher.exe</c>,

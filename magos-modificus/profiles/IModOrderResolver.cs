@@ -8,10 +8,10 @@ namespace Magos.Modificus.Profiles;
 /// <remarks>
 /// <para>
 /// The current implementation is the identity stub (<see cref="IdentityModOrderResolver"/>):
-/// it returns names in their current <see cref="ModListEntry.Order"/> (a no-op).
-/// The real dependency-driven algorithm lands in a later phase; this interface
-/// is the DI-swappable seam so the UI wires against the abstraction now and the
-/// real resolver drops in later without a UI change.</para>
+/// it returns container ids in their current <see cref="ModListEntry.Order"/> (a
+/// no-op). The real dependency-driven algorithm lands in a later phase; this
+/// interface is the DI-swappable seam so the UI wires against the abstraction
+/// now and the real resolver drops in later without a UI change.</para>
 /// <para>
 /// Pure: no I/O, no logging, no DI. Implementations must be deterministic for a
 /// given input (the UI applies the result and persists).</para>
@@ -22,7 +22,7 @@ public interface IModOrderResolver
     /// Resolves the load order for the given mods.
     /// </summary>
     /// <param name="mods">The profile's current mod list (any order). Non-null.</param>
-    /// <returns>The mod names in resolved load order (lower index loads first).
-    /// The set of names must match the input; only the order changes.</returns>
-    IReadOnlyList<string> ResolveOrder(IReadOnlyList<ModListEntry> mods);
+    /// <returns>The container ids in resolved load order (lower index loads
+    /// first). The set of ids must match the input; only the order changes.</returns>
+    IReadOnlyList<Guid> ResolveOrder(IReadOnlyList<ModListEntry> mods);
 }

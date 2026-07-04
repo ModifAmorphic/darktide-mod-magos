@@ -1,22 +1,22 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Magos.Modificus.Config;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 
 namespace Magos.Modificus.Profiles.Tests;
 
 /// <summary>
 /// Per-test filesystem + DI fixture: fresh temp <c>ProfilesBaseFolder</c> +
-/// <c>SharedModsFolder</c>, and an <see cref="IProfileService"/> +
-/// <see cref="ISharedModStore"/> resolved through the real
-/// <c>AddProfiles()</c> / <c>AddSharedMods()</c> registrations pointing at them.
+/// <c>ModsFolder</c>, and an <see cref="IProfileService"/> +
+/// <see cref="IModRepository"/> resolved through the real
+/// <c>AddProfiles()</c> / <c>AddMods()</c> registrations pointing at them.
 /// Disposes the temp trees (and the service provider) on teardown so tests are
 /// isolated regardless of outcome.
 /// </summary>
 /// <remarks>
-/// Resolving via DI — rather than constructing the implementation directly —
-/// keeps the tests black-box against <see cref="IProfileService"/> /
-/// <see cref="ISharedModStore"/> and proves the real registration paths on every
+/// Resolving via DI, rather than constructing the implementation directly,
+/// keeps the tests black-box against <see cref="IProfileService"/> +
+/// <see cref="IModRepository"/> and proves the real registration paths on every
 /// test. <see cref="SymlinkCreator"/> defaults to the real BCL symlink; pass a
 /// custom one to the constructor to exercise the symlink-failure path.
 /// </remarks>
@@ -25,10 +25,10 @@ internal sealed class ProfileServiceFixture : IDisposable
     private readonly ServiceProvider _provider;
 
     public string BaseFolder { get; } = Path.Combine(Path.GetTempPath(), "magos-profiles-" + Guid.NewGuid());
-    public string SharedFolder { get; } = Path.Combine(Path.GetTempPath(), "magos-shared-" + Guid.NewGuid());
+    public string ModsFolder { get; } = Path.Combine(Path.GetTempPath(), "magos-mods-" + Guid.NewGuid());
 
     public IProfileService Service { get; }
-    public ISharedModStore SharedStore { get; }
+    public IModRepository Repo { get; }
 
     /// <param name="symlink">Optional override for the staging symlink seam
     /// (default: the real BCL <see cref="Directory.CreateSymbolicLink"/>). Pass a
@@ -37,12 +37,12 @@ internal sealed class ProfileServiceFixture : IDisposable
     {
         var config = MagosConfig.CreateDefault();
         config.ProfilesBaseFolder = BaseFolder;
-        config.SharedModsFolder = SharedFolder;
+        config.ModsFolder = ModsFolder;
 
         var services = new ServiceCollection();
         services.AddSingleton(config);
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning)); // quiet by default
-        services.AddSharedMods();
+        services.AddMods();
         if (symlink is not null)
         {
             services.AddSingleton(symlink);
@@ -51,7 +51,7 @@ internal sealed class ProfileServiceFixture : IDisposable
         _provider = services.BuildServiceProvider();
 
         Service = _provider.GetRequiredService<IProfileService>();
-        SharedStore = _provider.GetRequiredService<ISharedModStore>();
+        Repo = _provider.GetRequiredService<IModRepository>();
     }
 
     // ---- profile-tree path helpers -----------------------------------------
@@ -62,37 +62,45 @@ internal sealed class ProfileServiceFixture : IDisposable
     // staged/ is the --mod-path (regenerated each PrepareModRoot).
     public string StagedDir(Guid id) => Path.Combine(ProfileDir(id), "staged");
     public string ModsLst(Guid id) => Path.Combine(StagedDir(id), "mods.lst");
-    public string StagedModLink(Guid id, string modName) => Path.Combine(StagedDir(id), modName);
+    public string StagedModLink(Guid id, string linkName) => Path.Combine(StagedDir(id), linkName);
 
-    // mods/ holds a profile's local copy of a mod.
-    public string DivergedDir(Guid id) => Path.Combine(ProfileDir(id), "mods");
-    public string DivergedModDir(Guid id, string modName) => Path.Combine(DivergedDir(id), modName);
+    // ---- repository path helpers -------------------------------------------
 
-    // ---- shared-store path helpers -----------------------------------------
+    public string ContainerDir(Guid containerId) => Path.Combine(ModsFolder, containerId.ToString());
+    public string VersionDir(Guid containerId, string versionFolder) =>
+        Path.Combine(ContainerDir(containerId), versionFolder);
 
-    public string SharedModDir(string modName) => Path.Combine(SharedFolder, modName);
+    // ---- container seeding -------------------------------------------------
 
     /// <summary>
-    /// Adds a shared-store entry + creates the mod's files at
-    /// <c>&lt;SharedFolder&gt;/&lt;modName&gt;</c> (the acquisition step Phase 2
-    /// assumes). Used by tests to make a mod Share-able.
+    /// Creates a container + a single version (with a marker file) and returns
+    /// the updated container. The version becomes the container's
+    /// <c>IsLatest</c>. Used by tests to make a container stage-able.
     /// </summary>
-    public void AddSharedMod(string modName, string policyLabel = "latest", string? version = null)
+    public ModContainer AddContainerWithVersion(
+        string name,
+        string versionString = "1.0.0",
+        ModSource? source = null)
     {
-        Directory.CreateDirectory(SharedModDir(modName));
-        File.WriteAllText(Path.Combine(SharedModDir(modName), "marker.txt"), modName);
-
-        var versionTag = version ?? "1.0.0";
-        var policy = policyLabel == "pinned"
-            ? (ModVersionPolicy)new PinnedPolicy(versionTag)
-            : ModVersionPolicy.Latest;
-
-        SharedStore.Add(new SharedModEntry
+        var container = Repo.CreateContainer(source ?? new UntrackedSource(), name);
+        return Repo.AddVersion(container.Id, versionString, dir =>
         {
-            Name = modName,
-            Policy = policy,
-            ActualVersion = versionTag,
-            Path = SharedModDir(modName),
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "marker.txt"), name);
+        });
+    }
+
+    /// <summary>
+    /// Adds a second version to an existing container (with a marker file) and
+    /// returns the updated container. The new version becomes the container's
+    /// <c>IsLatest</c>.
+    /// </summary>
+    public ModContainer AddVersion(Guid containerId, string versionString)
+    {
+        return Repo.AddVersion(containerId, versionString, dir =>
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "marker.txt"), versionString);
         });
     }
 
@@ -103,9 +111,9 @@ internal sealed class ProfileServiceFixture : IDisposable
         {
             Directory.Delete(BaseFolder, recursive: true);
         }
-        if (Directory.Exists(SharedFolder))
+        if (Directory.Exists(ModsFolder))
         {
-            Directory.Delete(SharedFolder, recursive: true);
+            Directory.Delete(ModsFolder, recursive: true);
         }
     }
 }

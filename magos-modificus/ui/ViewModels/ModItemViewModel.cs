@@ -1,34 +1,39 @@
 using CommunityToolkit.Mvvm.ComponentModel;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Magos.Modificus.UI.Localization;
 
 namespace Magos.Modificus.UI.ViewModels;
 
 /// <summary>
 /// One row in the active profile's mod list. Carries the mod's display state
-/// (name + source + version + enabled + order + policy) and the per-row policy
-/// edit state (Latest / Pinned). The parent <see cref="ModListViewModel"/> owns
-/// all service calls; this row carries state only and never talks to
+/// (container id + name + source + version + enabled + order + policy) and the
+/// per-row policy edit state (Latest / Pinned). The parent <see cref="ModListViewModel"/>
+/// owns all service calls; this row carries state only and never talks to
 /// <see cref="Profiles.IProfileService"/> directly (mirrors
 /// <see cref="ProfileItemViewModel"/>).
 /// </summary>
 /// <remarks>
-/// <para><b>Identity:</b> <see cref="Name"/> is immutable (the shared-store key +
-/// the <c>mods.lst</c> entry). <see cref="Enabled"/> is two-way bound to the row's
-/// CheckBox; the parent applies the toggle through
+/// <para><b>Identity:</b> <see cref="ContainerId"/> is immutable (the join key
+/// against <see cref="IModRepository"/>). <see cref="Name"/> is the resolved
+/// display name (joined from the container on reload). <see cref="Enabled"/> is
+/// two-way bound to the row's CheckBox; the parent applies the toggle through
 /// <c>IProfileService.SetModEnabled</c>. <see cref="Order"/> drives the display
 /// sort and the up/down moves (the parent re-persists via
 /// <c>IProfileService.SetModOrder</c>).</para>
 /// <para><b>Source / version badge:</b> <see cref="Source"/> +
-/// <see cref="ActualVersion"/> are joined from the shared store by the parent on
-/// reload. <see cref="Found"/> flags a mod whose shared entry is absent (a stale
-/// profile reference); the badge then reads a "not found" marker (staging warns
-/// at launch; resolution is out of scope here).</para>
+/// <see cref="ActualVersion"/> are joined from the repository by the parent on
+/// reload (the resolved version for the row's policy). <see cref="Found"/> flags
+/// a mod whose container is absent (a stale profile reference); the badge then
+/// reads a "not found" marker (staging warns at launch; resolution is out of
+/// scope here).</para>
 /// <para><b>Policy editor:</b> <see cref="PolicyChoice"/> (0 = Latest,
 /// 1 = Pinned) is two-way bound to the row's policy ComboBox; switching it routes
 /// through the view to the parent's <c>SetModPolicy</c> command.
-/// <see cref="PinnedVersion"/> is the editable raw tag, pre-filled from the
-/// current pin or the shared entry's <see cref="ActualVersion"/>.</para>
+/// <see cref="AvailableVersions"/> + <see cref="SelectedVersion"/> drive a
+/// constrained dropdown of the container's versions (the row can only pin to a
+/// version that exists in the container): the dropdown shows the readable
+/// <see cref="ModVersion.VersionString"/> and stores the <see cref="ModVersion.Folder"/>
+/// id, which the parent wraps as <c>PinnedPolicy(selectedVersionId)</c>.</para>
 /// <para><b>Localized text is live:</b> <see cref="SourceBadgeText"/> +
 /// <see cref="PolicyDisplayText"/> resolve from <see cref="LocalizationService"/>
 /// and re-fire on a culture change (the parent calls <see cref="Refresh"/> per
@@ -47,21 +52,31 @@ public partial class ModItemViewModel : ObservableObject
 
     private readonly LocalizationService _localization;
 
-    /// <summary>The mod folder name (immutable); the shared-store key + the
-    /// <c>mods.lst</c> entry.</summary>
+    /// <summary>
+    /// The mod container's id (immutable); the join key against
+    /// <see cref="IModRepository"/> + the value written through
+    /// <c>IProfileService.SetModEnabled/SetModPolicy/SetModOrder/RemoveMod</c>.
+    /// </summary>
+    public Guid ContainerId { get; }
+
+    /// <summary>
+    /// The container's display name (joined from the repository by the parent);
+    /// shown in the row + used in the remove-confirm message. Empty when the
+    /// container is missing.
+    /// </summary>
     public string Name { get; }
 
     /// <summary>
-    /// Where this mod came from (Local / Nexus / GitHub), joined from the shared
-    /// store by the parent. <see cref="NoneSource"/> when the shared entry is
-    /// absent or untracked.
+    /// Where this mod came from (Untracked / Nexus / GitHub), joined from the
+    /// repository by the parent. <see cref="UntrackedSource"/> when the container
+    /// is absent.
     /// </summary>
     public ModSource Source { get; }
 
     /// <summary>
-    /// The raw release tag of the shared copy (joined from the shared store), or
-    /// <see cref="string.Empty"/> when unknown / local. Shown in the source badge;
-    /// never order-compared.
+    /// The resolved version tag of the container (joined from the repository for
+    /// the row's policy), or <see cref="string.Empty"/> when unknown. Shown in
+    /// the policy display text + the source badge; never order-compared.
     /// </summary>
     public string ActualVersion { get; }
 
@@ -85,7 +100,7 @@ public partial class ModItemViewModel : ObservableObject
     public ModVersionPolicy Policy { get; private set; }
 
     /// <summary>
-    /// Whether the shared store had an entry for this mod at reload. <c>false</c>
+    /// Whether the repository had a container for this entry at reload. <c>false</c>
     /// marks a stale profile reference (the badge reads "not found"; staging warns
     /// at launch).
     /// </summary>
@@ -101,17 +116,31 @@ public partial class ModItemViewModel : ObservableObject
     private int _policyChoice;
 
     /// <summary>
-    /// The editable pinned-version string (raw release tag). Pre-filled from the
-    /// current pin's version, or from <see cref="ActualVersion"/> when the policy
-    /// is Latest (so switching to Pinned offers the shared copy's version). Applied
-    /// by the parent's <c>SetModPolicy</c> command when the user confirms.
+    /// The versions the row's pin dropdown can choose between, joined from the
+    /// container by the parent on reload. Each entry pairs the readable
+    /// <see cref="VersionOption.VersionString"/> (shown in the dropdown) with the
+    /// opaque <see cref="VersionOption.VersionId"/> (the value written through
+    /// as <c>PinnedPolicy(versionId)</c>). Empty when the container is missing or
+    /// has no versions; the dropdown then has nothing to offer (a no-version
+    /// container cannot be pinned).
+    /// </summary>
+    public IReadOnlyList<VersionOption> AvailableVersions { get; }
+
+    /// <summary>
+    /// The dropdown's current selection (two-way bound). Pre-selected on
+    /// construction: when the policy is Pinned, the entry matching the pin's
+    /// versionId; when the policy is Latest, the resolved (<c>IsLatest</c>)
+    /// version so a switch to Pinned offers the actual version rather than a
+    /// blank. <c>null</c> when <see cref="AvailableVersions"/> is empty. A user
+    /// selection routes through the view to the parent's <c>SetPolicyPinned</c>
+    /// command with the selected versionId.
     /// </summary>
     [ObservableProperty]
-    private string _pinnedVersion = string.Empty;
+    private VersionOption? _selectedVersion;
 
     /// <summary>
     /// Whether the row's policy is Pinned (derived from <see cref="PolicyChoice"/>),
-    /// driving the inline version editor's visibility.
+    /// driving the inline version dropdown's visibility.
     /// </summary>
     public bool IsPinned => PolicyChoice == PolicyPinned;
 
@@ -133,26 +162,28 @@ public partial class ModItemViewModel : ObservableObject
             {
                 NexusSource n => _localization.Format("ModRow_SourceNexus", n.ModId),
                 GitHubSource g => _localization.Format("ModRow_SourceGitHub", g.Owner, g.Repo),
-                _ => _localization["ModRow_SourceLocal"],
+                _ => _localization["ModRow_SourceUntracked"],
             };
         }
     }
 
     /// <summary>
     /// The policy display text (localized): "Latest", or "Pinned {version}" with
-    /// the pinned tag (falls back to the bare "Pinned" label when the version is
-    /// empty). The version shown is the current effective pin (<see cref="Policy"/>),
-    /// not the in-flight <see cref="PinnedVersion"/> edit.
+    /// the resolved version's readable tag (falls back to the bare "Pinned" label
+    /// when the version is empty, e.g. an orphan pin that no longer resolves).
+    /// The version shown is the current effective resolution
+    /// (<see cref="ActualVersion"/>, joined from the repository for the row's
+    /// policy), not the in-flight <see cref="SelectedVersion"/> edit.
     /// </summary>
     public string PolicyDisplayText
     {
         get
         {
-            if (Policy is PinnedPolicy pinned)
+            if (Policy is PinnedPolicy)
             {
-                return string.IsNullOrEmpty(pinned.Version)
+                return string.IsNullOrEmpty(ActualVersion)
                     ? _localization["ModRow_PolicyPinned"]
-                    : _localization.Format("ModRow_PolicyPinnedDisplay", pinned.Version);
+                    : _localization.Format("ModRow_PolicyPinnedDisplay", ActualVersion);
             }
 
             return _localization["ModRow_PolicyLatest"];
@@ -161,28 +192,36 @@ public partial class ModItemViewModel : ObservableObject
 
     /// <summary>
     /// Creates a row. The parent (<see cref="ModListViewModel"/>) builds rows on
-    /// reload, joining source + version from the shared store.
+    /// reload, joining source + version + the version list from the repository.
     /// </summary>
     /// <param name="localization">The localization service, used for the derived
     /// badge + policy text (re-resolves on a culture change).</param>
-    /// <param name="name">The mod folder name (immutable key).</param>
+    /// <param name="containerId">The mod container's id (immutable join key).</param>
+    /// <param name="name">The container's display name.</param>
     /// <param name="source">The joined source provenance.</param>
-    /// <param name="actualVersion">The joined raw release tag.</param>
+    /// <param name="actualVersion">The joined resolved version tag (readable),
+    /// for the policy display text.</param>
     /// <param name="enabled">Whether the mod is active.</param>
     /// <param name="order">The load-order position.</param>
     /// <param name="policy">The current effective version policy.</param>
-    /// <param name="found">Whether the shared store had an entry for this mod.</param>
+    /// <param name="versions">The container's versions (joined from the
+    /// repository); drives the pin dropdown. Empty when the container is missing
+    /// or version-less.</param>
+    /// <param name="found">Whether the repository had a container for this entry.</param>
     public ModItemViewModel(
         LocalizationService localization,
+        Guid containerId,
         string name,
         ModSource source,
         string actualVersion,
         bool enabled,
         int order,
         ModVersionPolicy policy,
+        IReadOnlyList<ModVersion> versions,
         bool found)
     {
         _localization = localization;
+        ContainerId = containerId;
         Name = name;
         Source = source;
         ActualVersion = actualVersion;
@@ -191,19 +230,28 @@ public partial class ModItemViewModel : ObservableObject
         Policy = policy;
         Found = found;
 
-        // Seed the policy editor from the effective policy: Pinned selects the
-        // Pinned choice + the pin's version; Latest selects Latest + pre-fills the
-        // version editor with the shared copy's tag (so a switch to Pinned offers
-        // the actual version rather than a blank box).
+        // Build the dropdown source from the container's versions: each entry
+        // pairs the readable tag (shown) with the opaque folder id (stored).
+        AvailableVersions = versions
+            .Select(v => new VersionOption(v.VersionString, v.Folder))
+            .ToArray();
+
+        // Seed the policy editor from the effective policy. Pinned selects the
+        // Pinned choice + the dropdown entry matching the pin's versionId; Latest
+        // selects Latest + pre-selects the resolved (IsLatest) version so a switch
+        // to Pinned offers the actual version rather than a blank.
         if (policy is PinnedPolicy pinned)
         {
             _policyChoice = PolicyPinned;
-            _pinnedVersion = pinned.Version;
+            _selectedVersion = AvailableVersions.FirstOrDefault(o => o.VersionId == pinned.VersionId);
         }
         else
         {
             _policyChoice = PolicyLatest;
-            _pinnedVersion = actualVersion;
+            var resolved = versions.FirstOrDefault(v => v.IsLatest);
+            _selectedVersion = resolved is null
+                ? AvailableVersions.FirstOrDefault()
+                : AvailableVersions.FirstOrDefault(o => o.VersionId == resolved.Folder);
         }
     }
 
@@ -218,3 +266,17 @@ public partial class ModItemViewModel : ObservableObject
         OnPropertyChanged(nameof(PolicyDisplayText));
     }
 }
+
+/// <summary>
+/// One entry in a row's pin dropdown: pairs the readable version tag (shown in
+/// the dropdown) with the opaque version id (the <see cref="ModVersion.Folder"/>
+/// value written through as <c>PinnedPolicy(versionId)</c>). A value-equal
+/// record so Avalonia's ComboBox selection matches by (tag, id), not by
+/// reference.
+/// </summary>
+/// <param name="VersionString">The readable release tag (e.g. <c>"1.2"</c>),
+/// shown in the dropdown. Display only.</param>
+/// <param name="VersionId">The version's opaque folder id (a
+/// <see cref="ModVersion.Folder"/>); the value stored on selection + wrapped as
+/// <c>PinnedPolicy(versionId)</c>.</param>
+public sealed record VersionOption(string VersionString, string VersionId);

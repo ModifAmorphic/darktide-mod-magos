@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Magos.Modificus.Config;
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 using Microsoft.Extensions.Logging;
 
 namespace Magos.Modificus.Profiles;
@@ -14,24 +14,24 @@ namespace Magos.Modificus.Profiles;
 /// <code>
 /// &lt;ProfilesBaseFolder&gt;/          (auto-created on first run)
 ///   &lt;guid&gt;/                        (profile dir; id-named)
-///     profile.json                   (metadata + mod list — the source of truth)
-///     mods/&lt;mod&gt;/                    (a profile's diverged copy of a mod, if any)
+///     profile.json                   (metadata + mod list - the source of truth)
 ///     staged/                        (the staged mod root = the --mod-path;
-///                                     REGENERATED each launch — a projection)
-///       &lt;mod&gt;                       (symlink → shared &lt;mod&gt; OR mods/&lt;mod&gt;)
+///                                     REGENERATED each launch - a projection)
+///       &lt;displayName&gt;              (symlink -> repository version folder)
 ///       mods.lst                     (successfully-staged enabled mods, in order)
 /// </code>
 /// <para>
-/// Staging is shared-first: each enabled mod resolves Share/Diverge against the
-/// shared store (<see cref="ISharedModStore"/>); Share symlinks into the shared
-/// store, Diverge symlinks into <c>mods/&lt;mod&gt;/</c> (skipped + warned if
-/// absent — Phase 4 populates it). <b>Symlinks, never copies.</b> The shared
-/// store + <c>mods/</c> hold the files; <c>staged/</c> is a symlink projection.</para>
+/// A profile references mods by <see cref="ModListEntry.ContainerId"/>; it stores
+/// no mod files. Staging resolves each enabled mod's
+/// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/> (via
+/// <see cref="IModRepository"/>) and symlinks <c>staged/&lt;displayName&gt;</c>
+/// to the resolved version folder. <b>Symlinks, never copies.</b> The repository
+/// holds the files; <c>staged/</c> is a symlink projection.</para>
 /// <para>
-/// Registered as a singleton: the service holds no per-request state — all
-/// state lives on disk, and <see cref="MagosConfig"/> (its only config source)
-/// is itself a singleton. Concurrent writes to the same profile are not
-/// coordinated in Phase 2 (single-UI-thread assumption).</para>
+/// Registered as a singleton: the service holds no per-request state (all state
+/// lives on disk), and <see cref="MagosConfig"/> (its only config source) is
+/// itself a singleton. Concurrent writes to the same profile are not coordinated
+/// (single-UI-thread assumption).</para>
 /// </remarks>
 internal sealed class ProfileService : IProfileService
 {
@@ -45,13 +45,13 @@ internal sealed class ProfileService : IProfileService
     private static readonly Encoding ModListEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     private readonly string _baseFolder;
-    private readonly ISharedModStore _sharedStore;
+    private readonly IModRepository _repo;
     private readonly SymlinkCreator _symlink;
     private readonly ILogger<ProfileService> _logger;
 
     public ProfileService(
         MagosConfig config,
-        ISharedModStore sharedStore,
+        IModRepository repo,
         SymlinkCreator symlink,
         ILogger<ProfileService> logger)
     {
@@ -59,7 +59,7 @@ internal sealed class ProfileService : IProfileService
         // <app-data>/profiles). Directory.CreateDirectory is idempotent, so this
         // makes every subsequent op first-run safe without each one re-checking.
         _baseFolder = config.ProfilesBaseFolder;
-        _sharedStore = sharedStore;
+        _repo = repo;
         _symlink = symlink;
         _logger = logger;
         Directory.CreateDirectory(_baseFolder);
@@ -118,13 +118,11 @@ internal sealed class ProfileService : IProfileService
             Mods = Array.Empty<ModListEntry>(),
         };
 
-        // Scaffold the profile dir + staged/ + mods/ before persisting so a
-        // crash between the two never leaves a profile.json without its tree.
-        // staged/ is regenerated each PrepareModRoot; mods/ is populated by
-        // Phase 4 — both pre-created for a predictable first-run shape.
+        // Scaffold the profile dir + staged/ before persisting so a crash between
+        // the two never leaves a profile.json without its tree. staged/ is
+        // regenerated each PrepareModRoot.
         Directory.CreateDirectory(ProfileDir(profile.Id));
         Directory.CreateDirectory(StagedDir(profile.Id));
-        Directory.CreateDirectory(ProfileModsDir(profile.Id));
         WriteProfileFile(profile);
 
         _logger.LogInformation("Created profile {Id} ('{Name}')", profile.Id, profile.Name);
@@ -164,18 +162,20 @@ internal sealed class ProfileService : IProfileService
     public IReadOnlyList<ModListEntry> GetModList(Guid id) => GetProfile(id).Mods;
 
     /// <inheritdoc />
-    public void SetModOrder(Guid id, IReadOnlyList<string> modNamesInOrder)
+    public void SetModOrder(Guid id, IReadOnlyList<Guid> containerIdsInOrder)
     {
+        ArgumentNullException.ThrowIfNull(containerIdsInOrder);
         var profile = GetProfile(id);
         var current = profile.Mods;
 
-        // Index the desired order by name (first occurrence wins for dupes).
-        var desiredIndex = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (var i = 0; i < modNamesInOrder.Count; i++)
+        // Index the desired order by containerId (first occurrence wins for dupes).
+        var desiredIndex = new Dictionary<Guid, int>();
+        for (var i = 0; i < containerIdsInOrder.Count; i++)
         {
-            if (modNamesInOrder[i] is { Length: > 0 } n && !desiredIndex.ContainsKey(n))
+            var cid = containerIdsInOrder[i];
+            if (cid != Guid.Empty && !desiredIndex.ContainsKey(cid))
             {
-                desiredIndex[n] = i;
+                desiredIndex[cid] = i;
             }
         }
 
@@ -184,99 +184,100 @@ internal sealed class ProfileService : IProfileService
         // so equal keys keep storage order. Rebuild (immutable entries) with
         // renumbered Order.
         profile.Mods = current
-            .OrderBy(m => desiredIndex.TryGetValue(m.Name, out var idx) ? idx : int.MaxValue)
+            .OrderBy(m => desiredIndex.TryGetValue(m.ContainerId, out var idx) ? idx : int.MaxValue)
             .Select((m, i) => m with { Order = i })
             .ToList();
         WriteProfileFile(profile);
     }
 
     /// <inheritdoc />
-    public void SetModEnabled(Guid id, string modName, bool enabled)
+    public void SetModEnabled(Guid id, Guid containerId, bool enabled)
     {
         var profile = GetProfile(id);
-        _ = profile.Mods.FirstOrDefault(m => string.Equals(m.Name, modName, StringComparison.Ordinal))
-            ?? throw UnknownMod(id, modName);
+        _ = profile.Mods.FirstOrDefault(m => m.ContainerId == containerId)
+            ?? throw UnknownMod(id, containerId);
 
         // Rebuild (immutable entries): swap the matching entry for a copy with
         // the new Enabled. Write-through persists the whole aggregate.
         profile.Mods = profile.Mods
-            .Select(m => string.Equals(m.Name, modName, StringComparison.Ordinal) ? m with { Enabled = enabled } : m)
+            .Select(m => m.ContainerId == containerId ? m with { Enabled = enabled } : m)
             .ToList();
         WriteProfileFile(profile);
     }
 
     /// <inheritdoc />
-    public void AddMod(Guid id, string modName) => AddMod(id, modName, ModVersionPolicy.Latest);
-
-    /// <inheritdoc />
-    public void AddMod(Guid id, string modName, ModVersionPolicy policy)
+    public void AddMod(Guid id, Guid containerId, ModVersionPolicy policy)
     {
-        if (string.IsNullOrWhiteSpace(modName))
+        if (containerId == Guid.Empty)
         {
-            throw new ArgumentException("Mod name must not be null or whitespace.", nameof(modName));
+            throw new ArgumentException("Container id must not be Guid.Empty.", nameof(containerId));
         }
         ArgumentNullException.ThrowIfNull(policy);
 
         var profile = GetProfile(id);
 
-        // Idempotent: re-adding an existing mod is a no-op (keeps its order,
+        // Idempotent: re-adding an existing container is a no-op (keeps its order,
         // enabled state, and policy). Prevents duplicate entries from re-entrancy.
-        if (profile.Mods.Any(m => string.Equals(m.Name, modName, StringComparison.Ordinal)))
+        if (profile.Mods.Any(m => m.ContainerId == containerId))
         {
             return;
         }
 
         var nextOrder = profile.Mods.Count == 0 ? 0 : profile.Mods.Max(m => m.Order) + 1;
         profile.Mods = profile.Mods
-            .Append(new ModListEntry { Name = modName, Enabled = true, Order = nextOrder, Policy = policy })
+            .Append(new ModListEntry { ContainerId = containerId, Enabled = true, Order = nextOrder, Policy = policy })
             .ToList();
         WriteProfileFile(profile);
     }
 
     /// <inheritdoc />
-    public void SetModPolicy(Guid id, string modName, ModVersionPolicy policy)
+    public void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy)
     {
         ArgumentNullException.ThrowIfNull(policy);
         var profile = GetProfile(id);
-        var entry = profile.Mods.FirstOrDefault(m => string.Equals(m.Name, modName, StringComparison.Ordinal))
-            ?? throw UnknownMod(id, modName);
+        _ = profile.Mods.FirstOrDefault(m => m.ContainerId == containerId)
+            ?? throw UnknownMod(id, containerId);
 
-        // Persist the new policy first (metadata), then reconcile the diverged
-        // copy against the shared store's resolution.
+        // Defense-in-depth: a PinnedPolicy must reference a version that exists
+        // in the container. The UI's pin dropdown can only produce ids the
+        // container already holds, but a programmatic call (or an id held stale
+        // across a repository change) must not silently create a phantom pin
+        // that skips+warns at every stage. LatestPolicy needs no check: it
+        // resolves dynamically to whatever the container currently marks
+        // IsLatest.
+        if (policy is PinnedPolicy pinned)
+        {
+            var container = _repo.Get(containerId);
+            if (container is null || !container.Versions.Any(v => v.Folder == pinned.VersionId))
+            {
+                throw new ArgumentException(
+                    $"No version with id '{pinned.VersionId}' exists on container '{containerId}'. " +
+                    "A Pinned policy must reference a present version.",
+                    nameof(policy));
+            }
+        }
+
+        // Persist the new policy. Resolution happens at stage time, so there's
+        // no on-disk transition (no diverged copy to reconcile).
         profile.Mods = profile.Mods
-            .Select(m => string.Equals(m.Name, modName, StringComparison.Ordinal) ? m with { Policy = policy } : m)
+            .Select(m => m.ContainerId == containerId ? m with { Policy = policy } : m)
             .ToList();
         WriteProfileFile(profile);
-
-        ReconcileDivergedCopy(id, modName, policy);
-        _logger.LogInformation("Set policy for {Mod} on profile {Id} to {Policy}", modName, id, policy);
+        _logger.LogInformation("Set policy for container {Container} on profile {Id} to {Policy}", containerId, id, policy);
     }
 
     /// <inheritdoc />
-    public void RemoveMod(Guid id, string modName)
+    public void RemoveMod(Guid id, Guid containerId)
     {
         var profile = GetProfile(id);
-        var entry = profile.Mods.FirstOrDefault(m => string.Equals(m.Name, modName, StringComparison.Ordinal))
-            ?? throw UnknownMod(id, modName);
+        _ = profile.Mods.FirstOrDefault(m => m.ContainerId == containerId)
+            ?? throw UnknownMod(id, containerId);
 
-        profile.Mods = profile.Mods.Where(m => !string.Equals(m.Name, modName, StringComparison.Ordinal)).ToList();
+        profile.Mods = profile.Mods.Where(m => m.ContainerId != containerId).ToList();
         WriteProfileFile(profile);
 
-        // Drop the profile's diverged copy, if any (best-effort; never throws —
-        // a missing dir is the normal case for a shared mod). The shared-store
-        // copy is NOT touched (other profiles may still share it).
-        var divergedModDir = ProfileModDir(id, modName);
-        if (Directory.Exists(divergedModDir))
-        {
-            try
-            {
-                Directory.Delete(divergedModDir, recursive: true);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _logger.LogWarning(ex, "Could not remove diverged copy for {Mod} on profile {Id}", modName, id);
-            }
-        }
+        // The repository copy is NOT touched: other profiles may still reference
+        // it, and the startup prune reclaims it when no profile does.
     }
 
     /// <inheritdoc />
@@ -287,40 +288,58 @@ internal sealed class ProfileService : IProfileService
 
         // Regenerated each launch: clear the prior projection, then rebuild from
         // the current resolution. ClearStagedDir is symlink-aware (never follows
-        // a symlink into the shared store — see the method).
+        // a symlink into the repository - see the method).
         ClearStagedDir(staged);
         Directory.CreateDirectory(staged);
 
         // Resolve each enabled mod in Order; create the symlink for those that
-        // resolve to a present target. mods.lst reflects what actually got
-        // staged (a skipped mod has no entry in staged/ and must not be listed —
-        // otherwise the loader would look for a mod dir that isn't there).
+        // resolve to a present version folder. mods.lst reflects what actually
+        // got staged (a skipped mod has no entry in staged/ and must not be
+        // listed - otherwise the loader would look for a mod dir that isn't
+        // there).
         var stagedNames = new List<string>();
+        var usedLinkNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var mod in profile.Mods.Where(m => m.Enabled).OrderBy(m => m.Order))
         {
-            var (target, resolve) = ResolveStagingTarget(id, mod.Name, mod.Policy);
-            if (target is null)
+            var container = _repo.Get(mod.ContainerId);
+            if (container is null)
             {
-                // Diverge + no diverged copy yet (Phase 4 hasn't acquired it) →
-                // skip + warn. The mod simply isn't in the staged root.
                 _logger.LogWarning(
-                    "Mod {Mod} on profile {Id} could not be staged (no shared copy, and mods/ copy absent — acquisition pending). Skipping.",
-                    mod.Name, id);
+                    "Mod {Container} on profile {Id} could not be staged (container not found). Skipping.",
+                    mod.ContainerId, id);
                 continue;
             }
 
-            var linkPath = Path.Combine(staged, mod.Name);
-            // A duplicate name can't arise through AddMod (idempotent) but a
-            // hand-edited profile.json could carry one. The first occurrence
-            // already created the symlink; later occurrences reuse it (graceful —
-            // never crash on weird stored state; the name is listed per entry,
-            // faithful to the Phase 1 contract).
-            if (!Directory.Exists(linkPath) && !File.Exists(linkPath))
+            var version = container.ResolveVersion(mod.Policy);
+            if (version is null)
             {
-                CreateSymlinkOrThrow(linkPath, target);
+                // No matching version (the container has no versions / no
+                // isLatest, or the pinned tag is not present). Skip + warn.
+                _logger.LogWarning(
+                    "Mod {Container} on profile {Id} could not be staged (no version resolves for policy {Policy}). Skipping.",
+                    mod.ContainerId, id, mod.Policy);
+                continue;
             }
-            stagedNames.Add(mod.Name);
-            _logger.LogDebug("Staged {Mod} on profile {Id} via {Resolve} -> {Target}", mod.Name, id, resolve, target);
+
+            var target = _repo.GetVersionFolderPath(mod.ContainerId, version.Folder);
+            if (!Directory.Exists(target))
+            {
+                // Defensive: the manifest points at a folder that is not on disk
+                // (a hand-delete between prune + stage). Skip + warn rather than
+                // crashing the whole stage.
+                _logger.LogWarning(
+                    "Mod {Container} on profile {Id} could not be staged (version folder {Folder} is missing on disk). Skipping.",
+                    mod.ContainerId, id, version.Folder);
+                continue;
+            }
+
+            var linkName = ChooseLinkName(container, usedLinkNames);
+            var linkPath = Path.Combine(staged, linkName);
+            CreateSymlinkOrThrow(linkPath, target);
+            stagedNames.Add(linkName);
+            _logger.LogDebug(
+                "Staged container {Container} on profile {Id} as '{Link}' -> {Target}",
+                mod.ContainerId, id, linkName, target);
         }
 
         WriteModList(stagedNames, staged);
@@ -331,82 +350,37 @@ internal sealed class ProfileService : IProfileService
     // ---- staging helpers ----------------------------------------------------
 
     /// <summary>
-    /// Resolves the symlink target for a profile mod. Returns (target, label):
-    /// a non-null target for Share (always, per the manifest) or Diverge-when-
-    /// diverged-copy-present; null when Diverge-when-copy-absent (skip + warn).
+    /// Picks the symlink name for a container: sanitized container
+    /// <see cref="ModContainer.Name"/> (filesystem-illegal chars replaced with
+    /// <c>_</c>, fall back to the container id prefix if empty). Disambiguates
+    /// intra-profile collisions by appending the first 8 hex chars of the
+    /// container id (the loader is agnostic to the symlink name).
     /// </summary>
-    private (string? Target, string Resolve) ResolveStagingTarget(Guid id, string modName, ModVersionPolicy profilePolicy)
+    private static string ChooseLinkName(ModContainer container, HashSet<string> used)
     {
-        var shared = _sharedStore.Get(modName);
+        var invalid = Path.GetInvalidFileNameChars();
+        var baseName = new string(container.Name
+            .Trim()
+            .Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c)
+            .ToArray());
 
-        // No shared entry → there's nothing to share. The profile can only use a
-        // local/diverged copy (if present); else it's skipped.
-        if (shared is null)
+        if (string.IsNullOrWhiteSpace(baseName))
         {
-            return DivergeTarget(id, modName);
+            // Empty after sanitization (e.g. the name was all illegal chars).
+            // Fall back to the container id so staging still produces a usable
+            // link name.
+            baseName = container.Id.ToString("N");
         }
 
-        var resolution = AllocationResolver.Resolve(shared.Policy, shared.ActualVersion, profilePolicy);
-        if (resolution == AllocationResolution.Share)
+        var name = baseName;
+        if (used.Contains(name))
         {
-            // Share: trust the manifest — the files are at shared.Path (Phase 4's
-            // job to place them; Add assumes they're there).
-            return (shared.Path, nameof(AllocationResolution.Share));
+            // Collision (two containers with the same display name in one
+            // profile). Append a short id-derived suffix; the loader is agnostic.
+            name = $"{baseName}-{container.Id.ToString("N").Substring(0, 8)}";
         }
-
-        return DivergeTarget(id, modName);
-    }
-
-    private (string? Target, string Resolve) DivergeTarget(Guid id, string modName)
-    {
-        var divergedModDir = ProfileModDir(id, modName);
-        return Directory.Exists(divergedModDir)
-            ? (divergedModDir, nameof(AllocationResolution.Diverge))
-            : (null, nameof(AllocationResolution.Diverge));
-    }
-
-    /// <summary>
-    /// Drops the profile's diverged copy when a policy change converges the mod
-    /// back to Share (the shared copy is used again). Keeps it (no-op) when
-    /// diverging or when there's no shared entry to converge to.
-    /// </summary>
-    private void ReconcileDivergedCopy(Guid id, string modName, ModVersionPolicy profilePolicy)
-    {
-        var shared = _sharedStore.Get(modName);
-        if (shared is null)
-        {
-            // No shared entry → can't converge to Share; leave mods/ as-is
-            // (acquisition will populate the store later).
-            _logger.LogDebug(
-                "Mod {Mod} on profile {Id} has no shared entry; mods/ left as-is.", modName, id);
-            return;
-        }
-
-        var resolution = AllocationResolver.Resolve(shared.Policy, shared.ActualVersion, profilePolicy);
-        if (resolution != AllocationResolution.Share)
-        {
-            // Still diverged (or just diverged) — mods/ is needed (or will be,
-            // once Phase 4 acquires it). Nothing to drop.
-            return;
-        }
-
-        // diverge → share: drop the local copy to reclaim space. Best-effort;
-        // a missing dir (never diverged / not yet acquired) is a no-op.
-        var divergedModDir = ProfileModDir(id, modName);
-        if (Directory.Exists(divergedModDir))
-        {
-            try
-            {
-                Directory.Delete(divergedModDir, recursive: true);
-                _logger.LogInformation(
-                    "Mod {Mod} on profile {Id} converged to Share; dropped mods/ copy.", modName, id);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _logger.LogWarning(ex,
-                    "Could not remove diverged copy for {Mod} on profile {Id} on converge.", modName, id);
-            }
-        }
+        used.Add(name);
+        return name;
     }
 
     /// <summary>
@@ -422,7 +396,7 @@ internal sealed class ProfileService : IProfileService
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new SymlinkStagingException(
-                $"Failed to create symlink '{linkPath}' -> '{targetPath}'. Symlinks are required for shared-mod staging " +
+                $"Failed to create symlink '{linkPath}' -> '{targetPath}'. Symlinks are required for mod staging " +
                 "(the manager never copies). On Windows, enable Developer Mode or run the manager as administrator; " +
                 "on Linux, confirm write access to the profile's staged/ directory.",
                 ex);
@@ -430,11 +404,11 @@ internal sealed class ProfileService : IProfileService
     }
 
     /// <summary>
-    /// Clears <c>staged/</c> for a rebuild — <b>symlink-aware</b>: it removes
+    /// Clears <c>staged/</c> for a rebuild: <b>symlink-aware</b>. It removes
     /// each top-level entry, deleting symlinks as links (never following them
-    /// into the shared store or a diverged copy). This is data-safety-critical:
-    /// a naive <c>Directory.Delete(staged, recursive: true)</c> could follow a
-    /// directory symlink and delete shared mod files.
+    /// into the repository). This is data-safety-critical: a naive
+    /// <c>Directory.Delete(staged, recursive: true)</c> could follow a directory
+    /// symlink and delete the repository's mod files.
     /// </summary>
     private void ClearStagedDir(string staged)
     {
@@ -456,29 +430,29 @@ internal sealed class ProfileService : IProfileService
             }
 
             // ReparsePoint == symlink (file or dir). The link itself is removed
-            // without touching the target — but the delete API must match the
+            // without touching the target - but the delete API must match the
             // link's kind, or Windows throws:
-            //   - Directory symlink (ReparsePoint + Directory) → Directory.Delete.
+            //   - Directory symlink (ReparsePoint + Directory) -> Directory.Delete.
             //     On Windows, File.Delete on a directory (incl. a dir-symlink)
-            //     throws UnauthorizedAccessException ("Access denied" — Windows
+            //     throws UnauthorizedAccessException ("Access denied" - Windows
             //     surfaces "is a directory" via the file-delete API as access-
             //     denied). Directory.Delete on a reparse point removes the point
             //     itself, NOT the target, so it stays data-safe on both platforms.
-            //   - File symlink (ReparsePoint, not Directory) → File.Delete.
+            //   - File symlink (ReparsePoint, not Directory) -> File.Delete.
             if ((attrs & FileAttributes.ReparsePoint) != 0)
             {
                 if ((attrs & FileAttributes.Directory) != 0)
                 {
-                    Directory.Delete(entry); // directory symlink → remove the link only
+                    Directory.Delete(entry); // directory symlink -> remove the link only
                 }
                 else
                 {
-                    File.Delete(entry);      // file symlink → remove the link only
+                    File.Delete(entry);      // file symlink -> remove the link only
                 }
             }
             else if ((attrs & FileAttributes.Directory) != 0)
             {
-                Directory.Delete(entry, recursive: true); // real directory → recurse
+                Directory.Delete(entry, recursive: true); // real directory -> recurse
             }
             else
             {
@@ -517,12 +491,46 @@ internal sealed class ProfileService : IProfileService
         // downstream enumeration never NRE.
         profile.Mods ??= Array.Empty<ModListEntry>();
 
-        // Phase 2: a null/absent Policy on a mod entry (Phase 1 profile.json, or
-        // a hand-edit) defaults to Latest. Same posture as Mods-null coercion.
+        // Fresh-start tolerance + null-Policy coercion. Two passes:
+        //   - drop entries whose ContainerId is Guid.Empty (a legacy Phase 2
+        //     entry deserialized without its container id; the spec is fresh-
+        //     start, so these are dropped + logged, not migrated);
+        //   - coerce a null Policy to Latest (a hand-edit, or a Phase 1 entry).
         if (profile.Mods.Any(m => m.Policy is null))
         {
             profile.Mods = profile.Mods
                 .Select(m => m.Policy is null ? m with { Policy = ModVersionPolicy.Latest } : m)
+                .ToList();
+        }
+
+        var dropped = profile.Mods.Where(m => m.ContainerId == Guid.Empty).ToList();
+        if (dropped.Count > 0)
+        {
+            _logger.LogWarning(
+                "Dropped {Count} legacy mod entries from profile at {Dir} (no ContainerId; Phase 2 shape). " +
+                "The spec is fresh-start: re-add mods through the import flow.",
+                dropped.Count, profileDir);
+            profile.Mods = profile.Mods.Where(m => m.ContainerId != Guid.Empty).ToList();
+        }
+
+        // Fresh-start tolerance: a legacy pinned entry (the pre-versionId shape)
+        // carries a $kind:"pinned" Policy whose JSON has a "Version" tag string.
+        // Under the new shape that property is unrecognized and skipped, leaving
+        // the deserialized PinnedPolicy's VersionId empty. A PinnedPolicy with
+        // an empty VersionId is a phantom pin (no version resolves); drop it +
+        // log so the entry is re-added and re-pinned through the import flow.
+        // Same fresh-start posture as the ContainerId drop above.
+        var droppedPhantomPins = profile.Mods
+            .Where(m => m.Policy is PinnedPolicy p && string.IsNullOrEmpty(p.VersionId))
+            .ToList();
+        if (droppedPhantomPins.Count > 0)
+        {
+            _logger.LogWarning(
+                "Dropped {Count} phantom-pinned mod entries from profile at {Dir} (empty VersionId; legacy pinned shape). " +
+                "The spec is fresh-start: re-pin mods through the policy dropdown.",
+                droppedPhantomPins.Count, profileDir);
+            profile.Mods = profile.Mods
+                .Where(m => !(m.Policy is PinnedPolicy p && string.IsNullOrEmpty(p.VersionId)))
                 .ToList();
         }
 
@@ -543,18 +551,16 @@ internal sealed class ProfileService : IProfileService
         File.WriteAllText(ProfileFilePath(ProfileDir(profile.Id)), json, ModListEncoding);
     }
 
-    // ---- path helpers (all internal-only — never leak through the interface) --
+    // ---- path helpers (all internal-only - never leak through the interface) --
 
     private string ProfileDir(Guid id) => Path.Combine(_baseFolder, id.ToString());
     private static string ProfileFilePath(string profileDir) => Path.Combine(profileDir, "profile.json");
     private string StagedDir(Guid id) => Path.Combine(ProfileDir(id), "staged");
-    private string ProfileModsDir(Guid id) => Path.Combine(ProfileDir(id), "mods");
-    private string ProfileModDir(Guid id, string modName) => Path.Combine(ProfileModsDir(id), modName);
     private static string ModListPath(string stagedRoot) => Path.Combine(stagedRoot, "mods.lst");
 
     private static KeyNotFoundException UnknownProfile(Guid id) =>
         new($"No profile exists with id '{id}'.");
 
-    private static KeyNotFoundException UnknownMod(Guid id, string modName) =>
-        new($"Profile '{id}' has no mod named '{modName}'.");
+    private static KeyNotFoundException UnknownMod(Guid id, Guid containerId) =>
+        new($"Profile '{id}' has no mod with container id '{containerId}'.");
 }

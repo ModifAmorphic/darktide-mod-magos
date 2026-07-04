@@ -1,28 +1,41 @@
-using Magos.Modificus.SharedMods;
+using Magos.Modificus.Mods;
 
 namespace Magos.Modificus.Profiles;
 
 /// <summary>
-/// A single mod entry within a profile's mod list — the source of truth that
+/// A single mod entry within a profile's mod list: the source of truth that
 /// <see cref="IProfileService.PrepareModRoot"/> projects into the staged mod
-/// root (symlinks) + <c>mods.lst</c>.
+/// root (symlinks) + <c>mods.lst</c>. References a mod by its
+/// <see cref="ContainerId"/> (a profile never stores mod files of its own).
 /// </summary>
 /// <remarks>
 /// <para>Immutable: all properties are init-only. Mutations go through the
 /// <see cref="IProfileService"/> methods, which rebuild the changed entry
-/// (via <c>with</c> expressions) and persist — a consumer can't silently edit
+/// (via <c>with</c> expressions) and persist, so a consumer can't silently edit
 /// an entry returned from <see cref="IProfileService.GetModList"/> and have it
 /// look persisted when it isn't.</para>
 /// <para>
-/// <b>Phase 2:</b> the <see cref="Policy"/> field (default <see cref="ModVersionPolicy.Latest"/>)
-/// drives shared-vs-diverged allocation. It is additive — Phase 1 entries in a
-/// persisted <c>profile.json</c> that lack it deserialize to <c>Latest</c>, so
-/// existing profiles upgrade transparently.</para>
+/// <b>Identity is <see cref="ContainerId"/>.</b> The display name, source badge,
+/// and version are resolved at stage/render time through the
+/// <see cref="IModRepository"/>. A profile never carries the mod's name or
+/// version directly, so a container rename or an <c>isLatest</c> flip is
+/// reflected without a profile-entry change.</para>
+/// <para>
+/// <b>Fresh-start tolerance:</b> a legacy <c>profile.json</c> (the pre-refactor
+/// storage shape) carries mod entries with a <c>Name</c> field instead of
+/// <see cref="ContainerId"/>. Those entries deserialize with
+/// <see cref="ContainerId"/> = <see cref="Guid.Empty"/>; the profile service
+/// drops them on read + logs (the operator's data is dev-only at this stage;
+/// the spec specifies a fresh start, not a migration shim).</para>
 /// </remarks>
 public sealed record ModListEntry
 {
-    /// <summary>The mod folder name — the value written to <c>mods.lst</c>.</summary>
-    public string Name { get; init; } = string.Empty;
+    /// <summary>
+    /// The referenced mod container's id. The join key against
+    /// <see cref="IModRepository"/>; the single source of truth for the mod's
+    /// identity across the profile.
+    /// </summary>
+    public Guid ContainerId { get; init; }
 
     /// <summary>
     /// Whether the mod is active. Disabled mods are omitted from
@@ -37,9 +50,12 @@ public sealed record ModListEntry
     public int Order { get; init; }
 
     /// <summary>
-    /// This profile mod's version policy — drives shared-vs-diverged allocation
-    /// against the shared-store entry (see <c>AllocationResolver</c>). Defaults
-    /// to <see cref="ModVersionPolicy.Latest"/> (the Phase 1 baseline behavior).
+    /// This profile mod's version policy: <see cref="LatestPolicy"/> resolves to
+    /// the container's <see cref="ModVersion.IsLatest"/> version at stage time;
+    /// <see cref="PinnedPolicy"/> resolves to the version whose
+    /// <see cref="ModVersion.Folder"/> matches the pin's
+    /// <see cref="PinnedPolicy.VersionId"/>. Defaults to
+    /// <see cref="ModVersionPolicy.Latest"/>.
     /// </summary>
     public ModVersionPolicy Policy { get; init; } = ModVersionPolicy.Latest;
 }
