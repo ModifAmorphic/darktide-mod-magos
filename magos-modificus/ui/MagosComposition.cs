@@ -64,6 +64,10 @@ public static class MagosComposition
         services.AddSingleton<LocalizationService>();
         services.AddSingleton<IPreferencesService, PreferencesService>();
         services.AddSingleton<MainWindow>();
+        // The active profile's mod-list VM: a singleton (one list, the dominant
+        // content area). Resolves IModImportService (via AddSharedMods) +
+        // IModOrderResolver (via AddProfiles), both already registered above.
+        services.AddSingleton<ModListViewModel>();
         services.AddSingleton<ShellViewModel>();
         services.AddSingleton<IDialogService>(sp =>
             new DialogService(

@@ -88,13 +88,13 @@ public sealed class ModListTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        var pinned = new PinnedPolicy(new Version(2, 1, 0));
+        var pinned = new PinnedPolicy("2.1.0");
 
         fx.Service.AddMod(profile.Id, "DMF", pinned);
 
         var entry = Assert.Single(fx.Service.GetModList(profile.Id));
         var pinnedLoaded = Assert.IsType<PinnedPolicy>(entry.Policy);
-        Assert.Equal(new Version(2, 1, 0), pinnedLoaded.Version);
+        Assert.Equal("2.1.0", pinnedLoaded.Version);
     }
 
     [Fact]
@@ -102,7 +102,7 @@ public sealed class ModListTests
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy(new Version(3, 0, 0)));
+        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("3.0.0"));
 
         // Re-add via the no-policy overload: idempotent, keeps the Pinned policy.
         fx.Service.AddMod(profile.Id, "DMF");

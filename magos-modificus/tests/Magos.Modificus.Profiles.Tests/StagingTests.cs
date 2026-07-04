@@ -41,7 +41,7 @@ public sealed class StagingTests
         var profile = fx.Service.CreateProfile("P");
         fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
         // Profile pins a different version -> Diverge.
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy(new Version(2, 0, 0)));
+        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("2.0.0"));
         // Simulate Phase 4 having placed the diverged copy.
         Directory.CreateDirectory(fx.DivergedModDir(profile.Id, "DMF"));
 
@@ -148,7 +148,7 @@ public sealed class StagingTests
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
         fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy(new Version(2, 0, 0)));
+        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("2.0.0"));
         // mods/DMF intentionally NOT created (acquisition pending).
 
         fx.Service.PrepareModRoot(profile.Id); // must not throw
@@ -221,12 +221,12 @@ public sealed class StagingTests
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
         fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy(new Version(1, 0, 0))); // Share (same pin)
+        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("1.0.0")); // Share (same pin)
 
-        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy(new Version(2, 0, 0))); // -> Diverge
+        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy("2.0.0")); // -> Diverge
 
         var entry = Assert.Single(fx.Service.GetModList(profile.Id));
-        Assert.Equal(new Version(2, 0, 0), Assert.IsType<PinnedPolicy>(entry.Policy).Version);
+        Assert.Equal("2.0.0", Assert.IsType<PinnedPolicy>(entry.Policy).Version);
         // mods/ not created by SetModPolicy (acquisition is Phase 4).
         Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")));
 
@@ -242,12 +242,12 @@ public sealed class StagingTests
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
         fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy(new Version(2, 0, 0))); // Diverge
+        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("2.0.0")); // Diverge
         // Pretend Phase 4 placed the diverged copy.
         Directory.CreateDirectory(fx.DivergedModDir(profile.Id, "DMF"));
         Assert.True(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")));
 
-        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy(new Version(1, 0, 0))); // -> Share
+        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy("1.0.0")); // -> Share
 
         Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF")),
             "converging to Share should reclaim the mods/ copy");
@@ -265,9 +265,9 @@ public sealed class StagingTests
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
         fx.AddSharedMod("DMF", policyLabel: "pinned", version: "1.0.0");
-        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy(new Version(2, 0, 0)));
+        fx.Service.AddMod(profile.Id, "DMF", new PinnedPolicy("2.0.0"));
 
-        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy(new Version(1, 0, 0))); // -> Share
+        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy("1.0.0")); // -> Share
 
         Assert.False(Directory.Exists(fx.DivergedModDir(profile.Id, "DMF"))); // never existed
     }
@@ -279,7 +279,7 @@ public sealed class StagingTests
         var profile = fx.Service.CreateProfile("P");
         fx.Service.AddMod(profile.Id, "DMF");
 
-        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy(new Version(3, 1, 4)));
+        fx.Service.SetModPolicy(profile.Id, "DMF", new PinnedPolicy("3.1.4"));
 
         // Reload from disk (new service instance) to prove persistence.
         var reloadConfig = MagosConfig.CreateDefault();
@@ -294,7 +294,7 @@ public sealed class StagingTests
         var reloaded = provider.GetRequiredService<IProfileService>().GetModList(profile.Id);
 
         var entry = Assert.Single(reloaded);
-        Assert.Equal(new Version(3, 1, 4), Assert.IsType<PinnedPolicy>(entry.Policy).Version);
+        Assert.Equal("3.1.4", Assert.IsType<PinnedPolicy>(entry.Policy).Version);
     }
 
     // ---- helpers ------------------------------------------------------------

@@ -99,8 +99,30 @@ Method behavior:
   without symlink permissions / Developer Mode). The staging layer never
   silently copies.
 
-`ModVersionPolicy` (PinnedPolicy/LatestPolicy) and `AllocationResolver` live in
-the [shared-mods](shared-mods.md) library; Profiles consumes them.
+`ModVersionPolicy` (PinnedPolicy/LatestPolicy), `ModSource`, and
+`AllocationResolver` live in the [shared-mods](shared-mods.md) library; Profiles
+consumes them.
+
+### `IModOrderResolver` + `IdentityModOrderResolver`
+
+The auto-sort seam. The mod-list UI's auto-sort toggle resolves an order via
+this interface, then applies it through `IProfileService.SetModOrder`.
+
+```csharp
+public interface IModOrderResolver
+{
+    IReadOnlyList<string> ResolveOrder(IReadOnlyList<ModListEntry> mods);
+}
+
+public sealed class IdentityModOrderResolver : IModOrderResolver;   // identity stub
+```
+
+The current implementation is the **identity stub** (`IdentityModOrderResolver`):
+it returns names in their current `ModListEntry.Order` (a no-op). The real
+dependency-driven auto-sort algorithm lands in a later phase; this interface is
+the DI-swappable seam so the UI wires against the abstraction now and the real
+resolver drops in later without a UI change. Pure + deterministic (stable on
+ties).
 
 ## DI registration
 
@@ -114,6 +136,9 @@ public static IServiceCollection AddProfiles(this IServiceCollection services);
   yields a resolvable `IProfileService`; the composition root also calls it.
 - `TryAddSingleton<SymlinkCreator>(_ => Directory.CreateSymbolicLink)` — the BCL
   default. `TryAdd` so a test may pre-register a throwing/fake delegate.
+- `TryAddSingleton<IModOrderResolver, IdentityModOrderResolver>()`: the auto-
+  sort identity stub. `TryAdd` so a test (or the real dependency-driven resolver,
+  when it lands) may pre-register an override.
 - `AddSingleton<IProfileService, ProfileService>()` — the filesystem-backed
   implementation (internal). Resolves `MagosConfig`, `ISharedModStore`,
   `SymlinkCreator`, and `ILogger<ProfileService>` from the container.

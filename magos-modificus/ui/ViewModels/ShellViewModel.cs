@@ -59,6 +59,7 @@ public partial class ShellViewModel : ObservableObject
         IEnginseerLaunchService launchService,
         IDialogService dialogs,
         LocalizationService localization,
+        ModListViewModel modList,
         ILogger<ShellViewModel> logger)
     {
         _profileService = profiles;
@@ -66,6 +67,7 @@ public partial class ShellViewModel : ObservableObject
         _launchService = launchService;
         _dialogs = dialogs;
         _localization = localization;
+        ModList = modList;
         _logger = logger;
 
         // Set the backing fields directly: no subscribers yet, and setting
@@ -100,8 +102,18 @@ public partial class ShellViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ProfileSwitchTooltip))]
     private IReadOnlyList<ProfileSummary> _profiles = Array.Empty<ProfileSummary>();
 
-    /// <summary>Whether at least one profile exists.</summary>
+    /// <summary>
+    /// Whether at least one profile exists.</summary>
     public bool HasProfiles => Profiles.Count > 0;
+
+    /// <summary>
+    /// The active profile's mod-list view model (the dominant content area). A
+    /// singleton injected here + bound in <c>MainWindow</c> as
+    /// <c>{Binding ModList}</c> onto <c>ModListView</c>. The shell does not touch
+    /// the mod list; all mod-list state + edits live on this VM. Exposed so the
+    /// view's <c>DataContext</c> binding can reach it.
+    /// </summary>
+    public ModListViewModel ModList { get; }
 
     /// <summary>
     /// The currently-selected (active) profile, or <c>null</c>. Bound to the
@@ -111,11 +123,7 @@ public partial class ShellViewModel : ObservableObject
     /// </summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LaunchCommand))]
-    [NotifyPropertyChangedFor(nameof(HasSelectedProfile))]
     private ProfileSummary? _selectedProfile;
-
-    /// <summary>Whether a profile is currently selected (drives the mod-list empty state).</summary>
-    public bool HasSelectedProfile => SelectedProfile is not null;
 
     /// <summary>
     /// Whether Darktide is currently running, mirrored LIVE from

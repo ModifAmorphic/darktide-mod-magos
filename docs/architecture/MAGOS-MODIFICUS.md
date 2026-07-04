@@ -184,22 +184,45 @@ mod where possible while preserving per-profile version control where it's
 needed. Building this in from v1 (rather than retrofitting dedup later) keeps
 the storage model uniform.
 
-Each mod — in the shared store and in a profile — carries a version policy:
+Each mod, in the shared store and in a profile, carries a version policy:
 **pinned `<version>`** (frozen at a specific release) or **latest (auto-update)**
 (tracks the newest release). A profile's mod is resolved against the shared
 copy by policy pair:
 
 | Shared | Profile | Resolution |
 | --- | --- | --- |
-| pinned `v1.0.1` | pinned `v1.0.1` | **share** — same pin |
-| pinned `v1.0.1` | pinned `v2.0.1` | **diverge** — different pins → profile copy |
-| latest (auto-update) | latest (auto-update) | **share** — both track latest; shared is updated to latest |
-| latest (auto-update) | pinned `v2.0.1` | **diverge** — shared will move, profile won't → profile copy |
+| pinned `v1.0.1` | pinned `v1.0.1` | **share**, same pin |
+| pinned `v1.0.1` | pinned `v2.0.1` | **diverge**, different pins → profile copy |
+| latest (auto-update) | latest (auto-update) | **share**, both track latest; shared is updated to latest |
+| latest (auto-update) | pinned `v2.0.1` | **diverge**, shared will move, profile won't → profile copy |
 
 Rule: **share** iff both pinned to the same version OR both auto-update;
-otherwise **diverge**. The resolution is by *policy intent*, not current version
-— a shared auto-update mod and a profile pinned to today's same version still
+otherwise **diverge**. The resolution is by *policy intent*, not current version:
+a shared auto-update mod and a profile pinned to today's same version still
 diverge, because the shared one will move on the next release.
+
+The pin `<version>` is a **raw release tag string** (e.g. `v1.0.1`, `1.2`,
+`1.0.0-beta`), not a parsed `System.Version`. GitHub release tags + Nexus file
+versions are arbitrary strings, not SemVer, so the share check is exact string
+equality (`"1.0"` and `"1.0.0"` are genuinely different pins). There is no
+version ordering at this layer; "newer" is decided later (Phase 4) by fetching
+the latest release tag and checking string inequality.
+
+Each shared-store entry also carries a **source** (Local / Nexus / GitHub) so a
+pinned version is legible ("WeaponTweaks *(GitHub owner/repo)* pinned to
+`1.2`"). The UI collects URLs; the model stores the canonical identity (Nexus
+mod id; GitHub owner/repo) via a pure parser. Local / untracked mods default to
+the `none` source.
+
+**Import flow:** adding a mod to the active profile goes through
+`IModImportService` (the UI never touches the filesystem). The import service
+places the files (recursive copy for a folder, `ZipFile.ExtractToDirectory` for
+a `.zip`) into `<SharedModsFolder>/<modName>/`, upserts the shared-store entry
+with the declared source + version + path, then the caller adds the profile
+reference via `IProfileService.AddMod`. First import of a mod name establishes
+the shared copy (the shared-first staging); a re-import upserts (replaces files
++ metadata). Remote acquisition (Nexus / GitHub API clients, auto-fetch) stays
+in Phase 4.
 
 **Staging:** at launch (alongside regenerating `mods.lst`), Magos materializes
 the profile's mod root (the `--mod-path` dir) from the resolved set — shared

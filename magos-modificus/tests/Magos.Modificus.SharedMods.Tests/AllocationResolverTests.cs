@@ -1,26 +1,43 @@
 namespace Magos.Modificus.SharedMods.Tests;
 
 /// <summary>
-/// <see cref="AllocationResolver.Resolve"/> — the pure shared-vs-diverged logic.
-/// Covers the four documented cases plus the policy-intent-not-version case.
+/// <see cref="AllocationResolver.Resolve"/>: the pure shared-vs-diverged logic.
+/// Covers the four documented cases plus the policy-intent-not-version case, with
+/// versions as raw strings (string equality for the "both Pinned" share check).
 /// </summary>
 public sealed class AllocationResolverTests
 {
-    private static readonly Version V101 = new(1, 0, 1);
-    private static readonly Version V201 = new(2, 0, 1);
+    // Raw release tags (string equality, no parsing, no normalization). Picked
+    // to look like real GitHub/Nexus tags so the cases read true.
+    private const string V101 = "1.0.1";
+    private const string V201 = "2.0.1";
 
     [Fact]
-    public void Both_pinned_same_version_shares()
+    public void Both_pinned_same_version_string_shares()
     {
         Assert.Equal(AllocationResolution.Share,
             AllocationResolver.Resolve(new PinnedPolicy(V101), V101, new PinnedPolicy(V101)));
     }
 
     [Fact]
-    public void Both_pinned_different_version_diverges()
+    public void Both_pinned_different_version_string_diverges()
     {
         Assert.Equal(AllocationResolution.Diverge,
             AllocationResolver.Resolve(new PinnedPolicy(V101), V101, new PinnedPolicy(V201)));
+    }
+
+    [Fact]
+    public void Both_pinned_same_version_string_is_exact_string_equality()
+    {
+        // "1.0" and "1.0.0" are DIFFERENT version strings: string equality, no
+        // normalization. Two pins share only when the strings are identical.
+        // (This replaced the old System.Version component-count TODO; the raw-
+        // string model makes "1.0" vs "1.0.0" a genuine difference by design:
+        // the source emits one tag, the pin matches exactly that tag.)
+        Assert.Equal(AllocationResolution.Share,
+            AllocationResolver.Resolve(new PinnedPolicy("1.0"), "1.0", new PinnedPolicy("1.0")));
+        Assert.Equal(AllocationResolution.Diverge,
+            AllocationResolver.Resolve(new PinnedPolicy("1.0"), "1.0", new PinnedPolicy("1.0.0")));
     }
 
     [Fact]
@@ -72,9 +89,9 @@ public sealed class AllocationResolverTests
     public void Shared_actual_version_does_not_affect_the_resolution()
     {
         // The signature carries sharedActualVersion for clarity/future-use, but
-        // the decision is by intent — a shared Pinned(V101) with a *stale* actual
-        // version field still shares with a profile Pinned(V101).
+        // the decision is by intent: a shared Pinned(V101) with a *stale* actual
+        // version string still shares with a profile Pinned(V101).
         Assert.Equal(AllocationResolution.Share,
-            AllocationResolver.Resolve(new PinnedPolicy(V101), new Version(9, 9, 9), new PinnedPolicy(V101)));
+            AllocationResolver.Resolve(new PinnedPolicy(V101), "9.9.9", new PinnedPolicy(V101)));
     }
 }
