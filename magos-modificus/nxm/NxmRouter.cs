@@ -5,31 +5,28 @@ namespace Magos.Modificus.Nxm;
 /// <summary>
 /// The default <see cref="INxmRouter"/>. Parses the raw URL via
 /// <see cref="NxmUrlParser"/>, dispatches mod-download URLs to the resolved
-/// <see cref="INxmModDownloadHandler"/> and OAuth-callback URLs to the resolved
-/// <see cref="INxmOAuthCallbackHandler"/>, logs collection URLs as "unsupported
-/// in v1", and logs unparseable URLs as a warning. Handler exceptions are
-/// caught at this boundary so one bad handler invocation cannot kill the IPC
-/// accept loop.
+/// <see cref="INxmModDownloadHandler"/>, logs collection URLs as "unsupported
+/// in v1", logs OAuth-callback URLs as "handled by the loopback listener, not
+/// the nxm handler" (Magos OAuth uses RFC 8252 loopback redirect, independent of
+/// the <c>nxm://</c> handler), and logs unparseable URLs as a warning. Handler
+/// exceptions are caught at this boundary so one bad handler invocation cannot
+/// kill the IPC accept loop.
 /// </summary>
 /// <remarks>
-/// Handlers are injected (not resolved from the provider per-call) because they
-/// are singletons; the router captures the last-registered handler at
-/// construction time, which is exactly the override semantic Stage 2 / 3 rely
-/// on.
+/// The mod-download handler is injected (not resolved from the provider per-call)
+/// because it is a singleton; the router captures the last-registered handler at
+/// construction time, which is exactly the override semantic Stage 3 relies on.
 /// </remarks>
 internal sealed class NxmRouter : INxmRouter
 {
     private readonly INxmModDownloadHandler _modDownload;
-    private readonly INxmOAuthCallbackHandler _oauthCallback;
     private readonly ILogger<NxmRouter> _logger;
 
     public NxmRouter(
         INxmModDownloadHandler modDownload,
-        INxmOAuthCallbackHandler oauthCallback,
         ILogger<NxmRouter> logger)
     {
         _modDownload = modDownload ?? throw new ArgumentNullException(nameof(modDownload));
-        _oauthCallback = oauthCallback ?? throw new ArgumentNullException(nameof(oauthCallback));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -51,8 +48,16 @@ internal sealed class NxmRouter : INxmRouter
                 case NxmModDownloadUrl mod:
                     await _modDownload.HandleAsync(mod, ct).ConfigureAwait(false);
                     break;
-                case NxmOAuthCallbackUrl oauth:
-                    await _oauthCallback.HandleAsync(oauth, ct).ConfigureAwait(false);
+                case NxmOAuthCallbackUrl:
+                    // Nexus OAuth in Magos uses a loopback HTTP redirect (RFC 8252),
+                    // independent of the nxm handler. The parser still recognizes
+                    // the shape (so it parses cleanly rather than classifying as
+                    // unknown); the router just drops it. In normal operation no
+                    // such URL is delivered over IPC because the loopback listener
+                    // receives the callback, not the nxm handler.
+                    _logger.LogInformation(
+                        "OAuth callbacks are handled by the loopback listener, not the nxm handler; dropping {Url}.",
+                        rawUrl);
                     break;
                 case NxmCollectionUrl:
                     _logger.LogInformation("Collection URLs are not supported in v1: {Url}", rawUrl);

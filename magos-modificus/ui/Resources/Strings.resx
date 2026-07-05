@@ -515,4 +515,117 @@
     <value>Launch failed</value>
     <comment>Title of the modal alert shown when a launch returns LaunchStatus.Error.</comment>
   </data>
+
+  <!-- ============================================================ -->
+  <!-- Integrations dialog (IntegrationsWindow / VM)                -->
+  <!-- ============================================================ -->
+
+  <data name="Integrations_ButtonTooltip" xml:space="preserve">
+    <value>Integrations…</value>
+    <comment>Tooltip on the shell button that opens the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_Title" xml:space="preserve">
+    <value>Integrations</value>
+    <comment>Title of the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_NexusHeader" xml:space="preserve">
+    <value>Nexus Mods</value>
+    <comment>Header over the Nexus section of the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_LoginWithNexus" xml:space="preserve">
+    <value>Log in with Nexus</value>
+    <comment>The primary OAuth login button in the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_LoginWithNexusTooltip" xml:space="preserve">
+    <value>Sign in via Nexus Mods (opens your browser to consent).</value>
+    <comment>Tooltip on the Log in with Nexus button.</comment>
+  </data>
+  <data name="Integrations_ApiKeyLabel" xml:space="preserve">
+    <value>API key</value>
+    <comment>Label over the API-key TextBox in the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_ApiKeyWatermark" xml:space="preserve">
+    <value>Paste your Nexus API key…</value>
+    <comment>Watermark in the API-key TextBox.</comment>
+  </data>
+  <data name="Integrations_ValidateButton" xml:space="preserve">
+    <value>Validate</value>
+    <comment>The Validate button next to the API-key TextBox.</comment>
+  </data>
+  <data name="Integrations_ApiKeyHelp" xml:space="preserve">
+    <value>Get an API key</value>
+    <comment>The "Get an API key" link under the API-key field (opens the Nexus API-keys page).</comment>
+  </data>
+  <data name="Integrations_ApiKeyHelpUrl" xml:space="preserve">
+    <value>https://www.nexusmods.com/settings/api-keys</value>
+    <comment>The Nexus API-keys page URL. Used as the link target + the help-link tooltip.</comment>
+  </data>
+  <data name="Integrations_SignOutButton" xml:space="preserve">
+    <value>Sign out</value>
+    <comment>The Sign out button (shown when authenticated).</comment>
+  </data>
+  <data name="Integrations_DoneButton" xml:space="preserve">
+    <value>Done</value>
+    <comment>The Done button at the bottom of the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_RunningTooltip" xml:space="preserve">
+    <value>Darktide is running; close it before changing Nexus credentials.</value>
+    <comment>Tooltip shown over the disabled Integrations controls while Darktide runs.</comment>
+  </data>
+  <data name="Integrations_StatusNotSignedIn" xml:space="preserve">
+    <value>Not signed in.</value>
+    <comment>Status line when no Nexus auth method is configured.</comment>
+  </data>
+  <data name="Integrations_StatusSignedInOAuth" xml:space="preserve">
+    <value>Signed in as {0} (Regular) via Nexus login.</value>
+    <comment>Status line when signed in via OAuth (non-premium). {0} is the user's display name.</comment>
+  </data>
+  <data name="Integrations_StatusSignedInOAuthPremium" xml:space="preserve">
+    <value>Signed in as {0} (Premium) via Nexus login.</value>
+    <comment>Status line when signed in via OAuth with a premium account. {0} is the user's display name.</comment>
+  </data>
+  <data name="Integrations_StatusSignedInOAuthUnverified" xml:space="preserve">
+    <value>Signed in via Nexus login (couldn't verify the account; check your network).</value>
+    <comment>Status line when OAuth is configured but the verify call failed.</comment>
+  </data>
+  <data name="Integrations_StatusSignedInApiKey" xml:space="preserve">
+    <value>Signed in as {0} (Regular) via API key.</value>
+    <comment>Status line when signed in via API key (non-premium). {0} is the user's display name.</comment>
+  </data>
+  <data name="Integrations_StatusSignedInApiKeyPremium" xml:space="preserve">
+    <value>Signed in as {0} (Premium) via API key.</value>
+    <comment>Status line when signed in via API key with a premium account. {0} is the user's display name.</comment>
+  </data>
+  <data name="Integrations_StatusSignedInApiKeyUnverified" xml:space="preserve">
+    <value>Signed in via API key (couldn't verify the account; check your network).</value>
+    <comment>Status line when an API key is configured but the verify call failed.</comment>
+  </data>
+  <data name="Integrations_StatusSignedInGeneric" xml:space="preserve">
+    <value>Signed in.</value>
+    <comment>Fallback status line for an unexpected auth-state shape. Not expected in practice (None is null; OAuth + ApiKey are the only non-None values).</comment>
+  </data>
+  <data name="Integrations_ShowApiKeyTooltip" xml:space="preserve">
+    <value>Show the API key</value>
+    <comment>Tooltip on the eye-toggle button in the masked state (click to reveal).</comment>
+  </data>
+  <data name="Integrations_HideApiKeyTooltip" xml:space="preserve">
+    <value>Hide the API key</value>
+    <comment>Tooltip on the eye-toggle button in the revealed state (click to mask).</comment>
+  </data>
+  <data name="Integrations_ErrorFormat" xml:space="preserve">
+    <value>{0}</value>
+    <comment>Inline status format for an auth failure (carries the error message). {0} is the error message.</comment>
+  </data>
+  <data name="Integrations_StartingOAuth" xml:space="preserve">
+    <value>Opening your browser to sign in…</value>
+    <comment>Status line shown while the OAuth flow is starting (before the browser opens).</comment>
+  </data>
+  <data name="Integrations_Validating" xml:space="preserve">
+    <value>Validating…</value>
+    <comment>Status line shown while the API-key Validate call is in flight.</comment>
+  </data>
+  <data name="Integrations_ApiKeyEmpty" xml:space="preserve">
+    <value>Paste an API key first.</value>
+    <comment>Status line shown when the user clicks Validate with an empty API-key TextBox.</comment>
+  </data>
 </root>

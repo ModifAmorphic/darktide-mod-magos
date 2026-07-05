@@ -17,7 +17,12 @@ namespace Magos.Modificus.Nxm;
 /// <item>Mod download: <c>nxm://&lt;game&gt;/mods/&lt;modId&gt;/files/&lt;fileId&gt;</c>
 /// with optional <c>key</c> (string), <c>expires</c> (epoch seconds),
 /// <c>user_id</c> query parameters.</item>
-/// <item>OAuth callback: <c>nxm://oauth/callback?code=&lt;code&gt;&amp;state=&lt;state&gt;</c>.</item>
+/// <item>OAuth callback: <c>nxm://oauth/callback?code=&lt;code&gt;&amp;state=&lt;state&gt;</c>.
+/// Parsed so the router can recognize the shape (rather than classifying it as
+/// unknown); the router logs + drops these. Magos OAuth uses loopback redirect
+/// (RFC 8252), independent of the <c>nxm://</c> handler, so this URL kind is
+/// never actually delivered over IPC in normal operation. Kept for parser
+/// completeness.</item>
 /// <item>Collection: <c>nxm://&lt;game&gt;/collections/&lt;id&gt;/revisions/&lt;rev&gt;</c>.</item>
 /// </list>
 /// <para>The scheme is matched case-insensitively. Numeric path segments must

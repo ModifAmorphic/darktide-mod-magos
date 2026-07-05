@@ -24,6 +24,14 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+    <!--
+      Duende.IdentityModel.OidcClient 7.1.0 (Apache-2.0, FOSS-licensed). The
+      OIDC-certified native-app client library: implements RFC 8252 (loopback
+      redirects), PKCE S256, token refresh. Used by the Nexus OAuth flow
+      (NexusAuthService + LoopbackBrowser). NOT the dual-licensed
+      IdentityServer product.
+    -->
+    <PackageReference Include="Duende.IdentityModel.OidcClient" Version="7.1.0" />
   </ItemGroup>
 
   <ItemGroup>

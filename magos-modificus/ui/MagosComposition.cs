@@ -96,6 +96,7 @@ public static class MagosComposition
                 sp.GetRequiredService<LocalizationService>(),
                 sp.GetRequiredService<IConfigLoader>(),
                 sp.GetRequiredService<IModRepository>(),
+                sp.GetRequiredService<INexusAuthService>(),
                 sp.GetRequiredService<ILoggerFactory>()));
 
         var provider = services.BuildServiceProvider();

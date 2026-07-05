@@ -308,11 +308,13 @@ internal sealed class FakeDialogService : IDialogService
     public Action? OnManageProfiles { get; set; }
     public Action? OnPreferences { get; set; }
     public Action? OnSettings { get; set; }
+    public Action? OnIntegrations { get; set; }
     public int ConfirmCalls { get; private set; }
     public string? LastConfirmMessage { get; private set; }
     public int ManageProfilesCalls { get; private set; }
     public int PreferencesCalls { get; private set; }
     public int SettingsCalls { get; private set; }
+    public int IntegrationsCalls { get; private set; }
 
     /// <summary>
     /// The result returned by the next escape-hatch call: <c>true</c> = the
@@ -371,6 +373,13 @@ internal sealed class FakeDialogService : IDialogService
     {
         SettingsCalls++;
         OnSettings?.Invoke();
+        return Task.CompletedTask;
+    }
+
+    public Task ShowIntegrationsAsync()
+    {
+        IntegrationsCalls++;
+        OnIntegrations?.Invoke();
         return Task.CompletedTask;
     }
 

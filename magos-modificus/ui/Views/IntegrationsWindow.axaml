@@ -1,0 +1,204 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Magos.Modificus.UI.ViewModels"
+        xmlns:views="using:Magos.Modificus.UI.Views"
+        x:Class="Magos.Modificus.UI.Views.IntegrationsWindow"
+        x:DataType="vm:IntegrationsViewModel"
+        Title="{ReflectionBinding [Integrations_Title], Source={StaticResource Loc}}"
+        ExtendClientAreaToDecorationsHint="True"
+        WindowDecorations="None"
+        Width="480" MinWidth="380"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+
+  <!--
+    The Integrations modal. Nexus-only in v1 (no navigation structure; GitHub
+    stays config-file-only). Custom chrome (DialogTitleBar) mirrors the Track
+    A/D modal pattern. The Nexus section is laid out as TWO clearly-alternative,
+    visually-separated option blocks ("Sign in with Nexus" OAuth + "Use an API
+    key"), divided by a Separator, only one of which is active at a time:
+
+      - OAuth block: a "Sign in with Nexus" button (always present, the
+        call-to-action when inactive). When active, a per-block Sign out button
+        appears next to it.
+      - API-key block: a masked TextBox (shows bullets when a key is
+        configured, persisted across reopens) + a Show eye-toggle Path + a
+        Validate button. When active, a per-block Sign out button appears.
+
+    The shared status line above the blocks carries the active-method
+    indicator ("Signed in as X (Premium) via Nexus login" / "...via API key"),
+    so the user always knows WHICH method is configured. All controls gate on
+    IsEnabled (game not running); the eye-toggle is excluded because revealing a
+    masked key is a read-only op that changes no credentials.
+  -->
+  <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+          BorderThickness="1">
+    <Grid RowDefinitions="Auto,*,Auto">
+
+      <views:DialogTitleBar Grid.Row="0" />
+
+      <Border Grid.Row="1" Padding="24">
+        <StackPanel Spacing="16" IsEnabled="{Binding IsEnabled}"
+                    ToolTip.Tip="{Binding TooltipRunning}">
+
+          <!-- ============== Nexus section ============== -->
+          <StackPanel Spacing="8">
+
+            <TextBlock Text="{Binding NexusHeader}"
+                       FontWeight="SemiBold" />
+
+            <!-- Shared status line: signed-in state with the active-method
+                 indicator ("via Nexus login" / "via API key") or an error. -->
+            <TextBlock Text="{Binding StatusLine}"
+                       TextWrapping="Wrap"
+                       Margin="0,4,0,8"
+                       Opacity="0.85" />
+
+            <!-- ============== OAuth block ============== -->
+            <StackPanel Spacing="8" Margin="0,4">
+              <!-- Primary: "Sign in with Nexus" (OAuth loopback). Material
+                   "login" icon (24x24 source): an arrow into a door.
+                   Drawn geometry, themed via the button foreground. Always
+                   present; the call-to-action when OAuth is inactive. -->
+              <Button Command="{Binding LoginWithOAuthCommand}"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Left"
+                      ToolTip.Tip="{ReflectionBinding [Integrations_LoginWithNexusTooltip], Source={StaticResource Loc}}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Path Width="16" Height="16" Stretch="Uniform"
+                        VerticalAlignment="Center"
+                        Fill="{Binding $parent[Button].Foreground}"
+                        Data="M11 7L9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z" />
+                  <TextBlock Text="{Binding LoginWithOAuthLabel}"
+                             VerticalAlignment="Center"
+                             Margin="8,0,0,0" />
+                </StackPanel>
+              </Button>
+
+              <!-- Per-block Sign out: visible only when OAuth is the active
+                   method. Material "logout" icon. -->
+              <Button Command="{Binding SignOutCommand}"
+                      IsVisible="{Binding IsOAuthActive}"
+                      HorizontalAlignment="Left"
+                      MinWidth="120">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Path Width="14" Height="14" Stretch="Uniform"
+                        VerticalAlignment="Center"
+                        Fill="{Binding $parent[Button].Foreground}"
+                        Data="M17 7l-1.4 1.4 1.6 1.6H8v2h9.2l-1.6 1.6L17 15l4-4-4-4zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
+                  <TextBlock Text="{Binding SignOutLabel}"
+                             VerticalAlignment="Center"
+                             Margin="8,0,0,0" />
+                </StackPanel>
+              </Button>
+            </StackPanel>
+
+            <!-- Visual divider between the two alternative blocks. Lean
+                 separator (the operator's lean: just two options, no card
+                 chrome). -->
+            <Separator Margin="0,4" />
+
+            <!-- ============== API-key block ============== -->
+            <StackPanel Spacing="8" Margin="0,4">
+
+              <!-- Block header. -->
+              <TextBlock Text="{Binding ApiKeyLabel}"
+                         Opacity="0.85" />
+
+              <!-- Masked TextBox + Show eye-toggle + Validate. The TextBox's
+                   PasswordChar binds to ApiKeyMaskChar ('\0' = plain /
+                   revealed, bullet = masked). The eye toggle is two stacked
+                   Buttons (show / hide) with their visibility flipped by
+                   IsApiKeyRevealed; the active one re-resolves its own
+                   tooltip via the matching VM property. -->
+              <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBox Grid.Column="0"
+                         Text="{Binding ApiKey, Mode=TwoWay}"
+                         PasswordChar="{Binding ApiKeyMaskChar}"
+                         PlaceholderText="{ReflectionBinding [Integrations_ApiKeyWatermark], Source={StaticResource Loc}}" />
+
+                <!-- Show eye toggle (revealed state -> click to hide). Material
+                     "visibility_off" icon. -->
+                <Button Grid.Column="1"
+                        Command="{Binding ToggleApiKeyRevealCommand}"
+                        IsVisible="{Binding IsApiKeyRevealed}"
+                        MinWidth="36"
+                        Margin="8,0,0,0"
+                        VerticalAlignment="Stretch"
+                        HorizontalAlignment="Stretch"
+                        Padding="0"
+                        ToolTip.Tip="{Binding HideApiKeyTooltip}">
+                  <Path Width="16" Height="16" Stretch="Uniform"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Fill="{Binding $parent[Button].Foreground}"
+                        Data="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27z" />
+                </Button>
+
+                <!-- Hide eye toggle (masked state -> click to reveal). Material
+                     "visibility" icon. -->
+                <Button Grid.Column="1"
+                        Command="{Binding ToggleApiKeyRevealCommand}"
+                        IsVisible="{Binding !IsApiKeyRevealed}"
+                        MinWidth="36"
+                        Margin="8,0,0,0"
+                        VerticalAlignment="Stretch"
+                        HorizontalAlignment="Stretch"
+                        Padding="0"
+                        ToolTip.Tip="{Binding ShowApiKeyTooltip}">
+                  <Path Width="16" Height="16" Stretch="Uniform"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Fill="{Binding $parent[Button].Foreground}"
+                        Data="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+                </Button>
+
+                <Button Grid.Column="2"
+                        Content="{Binding ValidateLabel}"
+                        Command="{Binding ValidateApiKeyCommand}"
+                        Margin="8,0,0,0"
+                        MinWidth="80" />
+              </Grid>
+
+              <!-- Help link to where the user gets their API key. -->
+              <Button Content="{Binding ApiKeyHelpLabel}"
+                      Classes="link"
+                      HorizontalAlignment="Left"
+                      Margin="0,0,0,4"
+                      Click="ApiKeyHelp_Click"
+                      Padding="0"
+                      ToolTip.Tip="{Binding ApiKeyHelpLink}" />
+
+              <!-- Per-block Sign out: visible only when API key is the active
+                   method. Material "logout" icon. -->
+              <Button Command="{Binding SignOutCommand}"
+                      IsVisible="{Binding IsApiKeyActive}"
+                      HorizontalAlignment="Left"
+                      MinWidth="120">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Path Width="14" Height="14" Stretch="Uniform"
+                        VerticalAlignment="Center"
+                        Fill="{Binding $parent[Button].Foreground}"
+                        Data="M17 7l-1.4 1.4 1.6 1.6H8v2h9.2l-1.6 1.6L17 15l4-4-4-4zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
+                  <TextBlock Text="{Binding SignOutLabel}"
+                             VerticalAlignment="Center"
+                             Margin="8,0,0,0" />
+                </StackPanel>
+              </Button>
+            </StackPanel>
+
+          </StackPanel>
+
+        </StackPanel>
+      </Border>
+
+      <!-- Done -->
+      <Button Grid.Row="2"
+              Content="{Binding DoneLabel}"
+              Click="Done_Click"
+              HorizontalAlignment="Right"
+              MinWidth="96"
+              Margin="24,12" />
+    </Grid>
+  </Border>
+</Window>

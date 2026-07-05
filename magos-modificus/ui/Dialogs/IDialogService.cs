@@ -58,7 +58,15 @@ public interface IDialogService
     Task ShowSettingsAsync();
 
     /// <summary>
-    /// Opens the discovery escape-hatch modal, focused on the missing discovery
+    /// Opens the Integrations modal (Nexus auth: OAuth login + API-key validate
+    /// + sign-out). Nexus-only in v1; GitHub stays config-file-only. Each auth
+    /// action applies + persists immediately through <see cref="Integrations"/>'s
+    /// <c>NexusAuthService</c>; on completion the caller has nothing to do.
+    /// </summary>
+    Task ShowIntegrationsAsync();
+
+    /// <summary>
+    /// Shows the discovery escape-hatch modal, focused on the missing discovery
     /// fields the launch reported. Inputs are shown <em>only</em> for the fields
     /// in <paramref name="missingFields"/>. Returns <c>true</c> when the user
     /// submitted (the entered paths are now persisted into the

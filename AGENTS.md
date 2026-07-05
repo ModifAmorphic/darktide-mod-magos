@@ -84,10 +84,17 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           `SingleInstanceGuard` process enumeration, separate from the `Magos.Nxm`
                           pipe bind which degrades gracefully on IOException; a second Magos exits
                           via `NxmSingleInstanceException` -> `Environment.Exit(1)` before the
-                          window shows))
+                          window shows);
+                          Phase 4 Stage 2: the Integrations dialog (Nexus-only) + its
+                          `OpenIntegrationsCommand` on the shell (left of the profiles button),
+                          wired through `IDialogService.ShowIntegrationsAsync` -> `IntegrationsViewModel`
+                          -> `INexusAuthService` (OAuth loopback + API-key validate + sign-out) +
+                          the running-state gate (auth controls disable while Darktide runs))
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
-  config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
+  config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO),
+                        including the NexusConfig slot under Integrations (Phase 4 Stage 2:
+                        AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs)
   profiles/             Magos.Modificus.Profiles — profile data model, persistence,
                         container-based staging (ProfileService.PrepareModRoot
                         discovers each enabled mod's base folder name inside the
@@ -119,6 +126,17 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   integrations/         Magos.Modificus.Integrations — GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
+                        + the Nexus Mods v1 client + auth (Phase 4 Stage 2:
+                        INexusClient over the v1 REST endpoints with per-request
+                        auth via INexusAuthMessageFactory selector — ApiKey /
+                        OAuth / None factories, the latter doing 401-reactive
+                        refresh; NexusAuthService the OAuth loopback + API-key
+                        validate + sign-out orchestrator; NexusOAuthTokenStore
+                        owns the OidcClient + token persistence; LoopbackBrowser
+                        the IBrowser impl with an HttpListener on an ephemeral
+                        port; Duende.IdentityModel.OidcClient 7.1.0 for the
+                        OAuth machinery; client_id is the build-time const
+                        "magos-modificus")
   steam/                Magos.Modificus.Steam — Steam + Darktide + Proton discovery
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup
                         via process comm on Windows; LinuxProcessLookup via /proc
@@ -155,6 +173,12 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
     Magos.Modificus.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
     Magos.Modificus.Mods.Tests/      xUnit tests for the mod repository + import
     Magos.Modificus.Integrations.Tests/    xUnit tests for the GitHub Releases client
+                                          + the Nexus client (against a fake HttpMessageHandler),
+                                          the auth factories (apikey / OAuth / None + selector),
+                                          the OAuth flow scripted with a fake IBrowser + stub
+                                          discovery+token endpoint (via the OidcClient backchannel
+                                          seam), the LoopbackBrowser/HttpListener against an
+                                          ephemeral port, and the NexusConfig JSON round-trip
     Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
                                             `dotnet test` = xUnit; `dotnet run` = composition smoke harness)

@@ -2,11 +2,16 @@
 
 > The `nxm://` scheme-handler plumbing: URL parsing, length-prefixed IPC framing
 > between the tiny handler exe and the running app, the Magos-side single-instance
-> guard + IPC server, the router, pluggable handler seams (no-op in Stage 1), the
-> OS scheme-handler registration service, and the testable relay helper the
-> handler exe calls. Stage 1 of Phase 4. Status: implemented (Phase 4 Stage 1).
-> Stage 2 (OAuth) and Stage 3 (mod download / acquisition) plug real handlers
-> into the seams shipped here.
+> guard + IPC server, the router, a pluggable mod-download handler seam (no-op in
+> Stage 1), the OS scheme-handler registration service, and the testable relay
+> helper the handler exe calls. Stage 1 of Phase 4. Status: implemented
+> (Phase 4 Stage 1 + the Stage 2 seam cleanup).
+>
+> Stage 2 removed the OAuth-callback seam Stage 1 originally shipped (Magos OAuth
+> uses loopback redirect, not `nxm://`; see the
+> [integrations reference](integrations.md#nexus-client--auth-phase-4-stage-2)).
+> Stage 3 (mod download / acquisition) plugs a real handler into the seam shipped
+> here.
 
 Three projects implement the nxm path:
 
@@ -65,7 +70,10 @@ Three URL kinds, grounded against MO2 `nxmurl.cpp` and NMA `OAuth.cs`:
   `modId`/`fileId` must be positive integers; empty or non-numeric query values
   parse to `null` rather than rejecting the whole URL.
 - **`NxmOAuthCallbackUrl`**: `nxm://oauth/callback?code=<code>&state=<state>`.
-  Both `code` and `state` are required and must be non-empty.
+  Both `code` and `state` are required and must be non-empty. Kept as a parsed
+  type so the router can recognize the shape; the router **logs + drops** these
+  (Stage 2 removed the OAuth-callback handler seam in favor of loopback
+  redirect, RFC 8252). In normal operation no such URL is delivered over IPC.
 - **`NxmCollectionUrl`**: `nxm://<game>/collections/<id>/revisions/<rev>`. Parsed
   so the router can log "unsupported in v1" rather than "unknown URL". No handler
   is invoked.
@@ -198,7 +206,7 @@ public sealed class NxmSingleInstanceException : Exception
 Separating the two concerns means single-instance is fast (no probe timeout) and
 the pipe is its own check that degrades on failure.
 
-### Router + pluggable handlers
+### Router + pluggable handler
 
 ```csharp
 public interface INxmRouter
@@ -210,23 +218,25 @@ public interface INxmModDownloadHandler
 {
     Task HandleAsync(NxmModDownloadUrl url, CancellationToken ct = default);
 }
-
-public interface INxmOAuthCallbackHandler
-{
-    Task HandleAsync(NxmOAuthCallbackUrl url, CancellationToken ct = default);
-}
 ```
 
 The default `NxmRouter` (internal) parses the raw URL via `NxmUrlParser`,
-dispatches mod-download URLs to `INxmModDownloadHandler`, OAuth-callback URLs to
-`INxmOAuthCallbackHandler`, logs collection URLs as "unsupported in v1", and logs
-unparseable URLs as a warning. Handler exceptions are caught at the router
-boundary so one bad handler invocation cannot kill the IPC accept loop.
+dispatches mod-download URLs to `INxmModDownloadHandler`, logs OAuth-callback
+URLs as "handled by the loopback listener, not the nxm handler" + drops them
+(Stage 2 removed the OAuth-callback seam in favor of RFC 8252 loopback
+redirect), logs collection URLs as "unsupported in v1", and logs unparseable
+URLs as a warning. Handler exceptions are caught at the router boundary so one
+bad handler invocation cannot kill the IPC accept loop.
 
-Stage 1 ships **no-op default implementations** of both handlers (internal,
-`NoOpNxmModDownloadHandler` / `NoOpNxmOAuthCallbackHandler`): they log the parsed
-URL at Information and return. Stage 2 replaces the OAuth handler; Stage 3
-replaces the mod-download handler.
+Stage 1 ships a **no-op default implementation** of the mod-download handler
+(internal, `NoOpNxmModDownloadHandler`): it logs the parsed URL at Information
+and returns. Stage 3 replaces it.
+
+**Stage 2 removed the `INxmOAuthCallbackHandler` seam.** Stage 1 originally
+shipped one expecting the OAuth flow to ride on `nxm://`; Stage 2 corrects that
+(Magos OAuth uses loopback, independent of the `nxm://` handler). The
+`NxmOAuthCallbackUrl` parsed type stays (so the parser keeps recognizing the
+shape rather than classifying it as unknown); the router just drops it.
 
 ### Handler-exe relay helper
 
@@ -340,13 +350,16 @@ guards), each behind a `[SupportedOSPlatform]`-annotated factory helper.
 Resolving `INxmHandlerRegistrar` on any other platform fails fast (an honest
 failure rather than a silent no-op).
 
-**Handler override convention (last registration wins).** The no-op defaults are
-registered with plain `AddSingleton` (not `TryAdd`). Stage 2 and Stage 3 register
-real implementations AFTER `AddNxm()` via
-`services.AddSingleton<INxmOAuthCallbackHandler, ...>()` (or the mod-download
-equivalent); MS DI resolves the LAST registration, so the real handler supersedes
-the no-op. The router captures whichever handler is resolved at its (singleton)
-construction.
+**Handler override convention (last registration wins).** The no-op
+mod-download default is registered with plain `AddSingleton` (not `TryAdd`).
+Stage 3 registers a real implementation AFTER `AddNxm()` via
+`services.AddSingleton<INxmModDownloadHandler, ...>()`; MS DI resolves the LAST
+registration, so the real handler supersedes the no-op. The router captures
+whichever handler is resolved at its (singleton) construction.
+
+(Stage 2 removed the parallel OAuth-callback override convention along with the
+`INxmOAuthCallbackHandler` seam; see the reference doc's "Router + pluggable
+handler" section above.)
 
 ## Composition wiring
 
@@ -431,8 +444,9 @@ Process model:
   (proceeds); the production enumerator path is not exercised against real
   processes.
 - **`NxmRouter`**: a mod-download URL routes to the mod handler with parsed
-  fields; an OAuth callback routes to the OAuth handler; collection and
-  unparseable URLs route to neither; a throwing handler does not propagate.
+  fields; an OAuth callback URL is logged + dropped (Stage 2 removed the OAuth
+  handler seam); collection and unparseable URLs route to neither; a throwing
+  handler does not propagate.
 - **`NxmHandlerRelay`**: hot path (connect first try, no launch), cold start
   (refuse, launch, retry, deliver), cold-start timeout, no-URL arg, multi-arg,
   and the missing-sibling-exe path (`MagosMainExeNotFoundException` exits
@@ -440,9 +454,10 @@ Process model:
 - **`LinuxNxmHandlerRegistrar`** (Linux-gated): Register writes the `.desktop`
   file with the expected content; `IsRegistered` reflects the faked `xdg-mime`;
   `Unregister` removes the file; a missing `xdg-mime` is tolerated.
-- **`AddNxm`** (service collection): the no-op defaults, router, server, and the
-  platform registrar are registered; the override (last-registration-wins)
-  convention is exercised.
+- **`AddNxm`** (service collection): the no-op mod-download default, router,
+  server, and the platform registrar are registered; the override
+  (last-registration-wins) convention is exercised for the mod-download handler.
+  (The OAuth-callback handler resolution is gone with the seam.)
 
 The assembly is annotated
 `[assembly: CollectionBehavior(DisableTestParallelization = true)]`: real named
