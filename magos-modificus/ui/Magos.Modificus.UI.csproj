@@ -26,6 +26,7 @@
     <ProjectReference Include="..\general\Magos.Modificus.General.csproj" />
     <ProjectReference Include="..\integrations\Magos.Modificus.Integrations.csproj" />
     <ProjectReference Include="..\launcher\Magos.Modificus.Launcher.csproj" />
+    <ProjectReference Include="..\nxm\Magos.Modificus.Nxm.csproj" />
     <ProjectReference Include="..\profiles\Magos.Modificus.Profiles.csproj" />
     <ProjectReference Include="..\steam\Magos.Modificus.Steam.csproj" />
   </ItemGroup>

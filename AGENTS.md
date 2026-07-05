@@ -79,7 +79,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           Phase 3 Track C: Launch wiring + Settings window +
                           discovery escape-hatch over the shared `Settings/DiscoveryField`
                           descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist +
-                          `IModRepository.Relocate/Rescan`)
+                          `IModRepository.Relocate/Rescan`;
+                          Phase 4 Stage 1: `AddNxm()` + `StartNxmServer` (binds the `Magos.Nxm`
+                          pipe, the single-instance claim; a second Magos exits before the
+                          window shows via `NxmSingleInstanceException`))
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
@@ -124,6 +127,22 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         env + Z:\-translated paths)
   launcher/             Magos.Modificus.Launcher — stub (slim profile launcher exe;
                           the Steam non-steam-shortcut target)
+  nxm/                  Magos.Modificus.Nxm — the nxm:// scheme-handler plumbing
+                        (Phase 4 Stage 1): NxmUrlParser (mod-download / oauth-callback /
+                        collection URL types), NxmIpcFraming (length-prefixed UTF-8 frames),
+                        NxmIpcServer (the named-pipe server whose Bind is the single-instance
+                        claim, accept loop Disconnects between clients), INxmRouter +
+                        no-op INxmModDownloadHandler / INxmOAuthCallbackHandler defaults
+                        (Stage 2/3 register real impls via AddSingleton last-wins), the OS
+                        scheme-handler registrar (INxmHandlerRegistrar: WindowsNxmHandlerRegistrar
+                        writes HKCU\Software\Classes\nxm; LinuxNxmHandlerRegistrar writes a
+                        .desktop file + xdg-mime default), + NxmHandlerRelay (the testable core
+                        the handler exe calls: hot-path IPC delivery + cold-start launch+retry).
+                        AOT-friendly (IsAotCompatible; only raw byte/UTF-8 IO in the handler path).
+  nxm-handler/          Magos.Modificus.NxmHandler — the OS-registered nxm:// scheme handler
+                        (console exe, native AOT). Program.cs is one line: NxmHandlerRelay.RunAsync.
+                        Forwards the raw URL to running Magos over the fixed pipe, or (cold start)
+                        launches Magos (no args) + retries the pipe ~250ms/30s, then delivers.
   tests/
     Magos.Modificus.General.Tests/         xUnit tests for the general library
     Magos.Modificus.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
@@ -136,6 +155,11 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                                             view models (profile CRUD/switch, active-profile
                                             persist, switch-blocked-while-running; dialog via
                                             an injectable IDialogService seam)
+    Magos.Modificus.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
+                                            IPC server resilience + single-instance, router,
+                                            relay helper, Linux registrar; serialized via
+                                            DisableTestParallelization since real named pipes
+                                            are an OS-level shared resource)
 docs/               architecture/ + reference/ (darktide/, community-tools/, magos-modificus/)
 .github/workflows/  CI: mingw-build + msvc-build (Enginseer) + magos-build (Magos Modificus)
 .gitignore          ignores enginseer/target, enginseer/bin, .NET bin/obj, build artifacts, _local/

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Magos.Modificus.General;
+using Magos.Modificus.Nxm;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Preferences;
 using Magos.Modificus.UI.ViewModels;
@@ -27,8 +28,26 @@ public class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        var services = MagosComposition.Build();
-        var logger = services.GetRequiredService<ILogger<App>>();
+        IServiceProvider services;
+        ILogger<App> logger;
+
+        try
+        {
+            services = MagosComposition.Build();
+            logger = services.GetRequiredService<ILogger<App>>();
+        }
+        catch (NxmSingleInstanceException ex)
+        {
+            // Single-instance enforcement: another Magos process owns the nxm
+            // IPC pipe (the bind is the claim). Exit cleanly before any window
+            // shows. Surface the reason on stderr (the provider isn't available
+            // here since Build threw).
+            Console.Error.WriteLine(
+                $"Magos is already running (nxm pipe '{ex.PipeName}' is owned by another instance); exiting.");
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktopLifetime)
+                desktopLifetime.Shutdown(1);
+            return;
+        }
 
         // A one-off startup snapshot for the startup log + applying initial
         // preferences before any window shows. This is NOT a cache: every

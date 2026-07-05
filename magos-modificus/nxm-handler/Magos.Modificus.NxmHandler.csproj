@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The OS-registered nxm:// scheme handler. A tiny console exe: it forwards the
+    raw URL to the running Magos app over the fixed named pipe, or (cold start)
+    launches Magos (no args) + retries the pipe until Magos binds it, then
+    delivers + exits. The testable orchestration lives in
+    NxmHandlerRelay (in the Nxm library); Program.cs is a one-liner.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Magos.NxmHandler</AssemblyName>
+    <RootNamespace>Magos.NxmHandler</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Native AOT: the handler is OS-invoked on every nxm:// click, so it must
+    start fast (tens of ms) and stay tiny. AOT is mature in .NET 10 for console
+    apps. TrimMode=full aggressively trims the Nxm library's router / server /
+    registrar types (which the handler never touches; only the relay + framing +
+    parser are reachable from Program.Main). InvariantGlobalization drops
+    culture-data file dependencies (the handler does no culture-aware work).
+  -->
+  <PropertyGroup>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TrimMode>full</TrimMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\nxm\Magos.Modificus.Nxm.csproj" />
+  </ItemGroup>
+
+</Project>
