@@ -28,7 +28,7 @@
 
       <views:DialogTitleBar Grid.Row="0" />
 
-      <ScrollViewer Grid.Row="1" Padding="24,16">
+      <ScrollViewer Grid.Row="1" Padding="24,16" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Spacing="20">
 
           <!-- ============== Discovery section ============== -->
@@ -42,14 +42,10 @@
                     <TextBlock Grid.Column="0"
                                Text="{Binding Label}"
                                VerticalAlignment="Center" />
-                    <!-- MaxWidth keeps long paths from pushing the Browse button
-                         off the right edge of the modal. Matches the Storage
-                         section's TextBox so the two sections align visually. -->
-                    <TextBox Grid.Column="1"
-                             Text="{Binding Value, Mode=TwoWay}"
-                             Margin="8,0,0,0"
-                             MaxWidth="300"
-                             VerticalAlignment="Center" />
+                     <TextBox Grid.Column="1"
+                              Text="{Binding Value, Mode=TwoWay}"
+                              Margin="8,0,0,0"
+                              VerticalAlignment="Center" />
                     <Button Grid.Column="2"
                             Content="{ReflectionBinding [Discovery_BrowseButton], Source={StaticResource Loc}}"
                             Click="BrowseDiscovery_Click"
@@ -70,14 +66,10 @@
               <TextBlock Grid.Column="0"
                          Text="{Binding ModsFolderLabel}"
                          VerticalAlignment="Center" />
-              <!-- MaxWidth keeps the (potentially very long) ModsFolder path
-                   from pushing the Browse button off the right edge. Matches the
-                   Discovery section's layout. -->
               <TextBox Grid.Column="1"
                        Text="{Binding ModsFolder, Mode=OneWay}"
                        IsReadOnly="True"
                        Margin="8,0,0,0"
-                       MaxWidth="300"
                        VerticalAlignment="Center" />
               <Button Grid.Column="2"
                       Content="{ReflectionBinding [Discovery_BrowseButton], Source={StaticResource Loc}}"

@@ -67,8 +67,8 @@
                        FontSize="11" />
           </StackPanel>
 
-          <!-- Version policy: Latest (default) or Pinned to this version. -->
-          <StackPanel Spacing="4">
+          <!-- Version policy: Latest (default) or Pinned to this version (remote only). -->
+          <StackPanel Spacing="4" IsVisible="{Binding IsVersionVisible}">
             <TextBlock Text="{ReflectionBinding [Import_PolicyLabel], Source={StaticResource Loc}}" />
             <ComboBox SelectedIndex="{Binding PolicyChoiceIndex, Mode=TwoWay}" MinWidth="160">
               <ComboBoxItem Content="{ReflectionBinding [Import_PolicyLatest], Source={StaticResource Loc}}" />
