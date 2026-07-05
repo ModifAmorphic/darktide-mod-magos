@@ -18,16 +18,23 @@ namespace Magos.Modificus.Profiles;
 ///     profile.json                   (metadata + mod list - the source of truth)
 ///     staged/                        (the staged mod root = the --mod-path;
 ///                                     REGENERATED each launch - a projection)
-///       &lt;displayName&gt;              (symlink -> repository version folder)
+///       &lt;baseName&gt;                 (symlink -> &lt;versionFolder&gt;/&lt;baseName&gt;/)
 ///       mods.lst                     (successfully-staged enabled mods, in order)
 /// </code>
 /// <para>
 /// A profile references mods by <see cref="ModListEntry.ContainerId"/>; it stores
 /// no mod files. Staging resolves each enabled mod's
 /// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/> (via
-/// <see cref="IModRepository"/>) and symlinks <c>staged/&lt;displayName&gt;</c>
-/// to the resolved version folder. <b>Symlinks, never copies.</b> The repository
-/// holds the files; <c>staged/</c> is a symlink projection.</para>
+/// <see cref="IModRepository"/>), discovers the mod's base folder inside the
+/// resolved version folder, and symlinks <c>staged/&lt;baseName&gt;</c> to
+/// <c>&lt;versionFolder&gt;/&lt;baseName&gt;/</c>. <b>The base name (not the
+/// container's display name) is the link + mods.lst name</b>: mods bake their
+/// folder name into their code, so the link must carry the base name for the
+/// mod's hardcoded paths to resolve. Staging is a simple loop: base-name
+/// collisions are blocked at import time (<see cref="GetBaseNameCollision"/>),
+/// so staging never sees two mods with the same base folder name in normal use.
+/// <b>Symlinks, never copies.</b> The repository holds the files;
+/// <c>staged/</c> is a symlink projection.</para>
 /// <para>
 /// Registered as a singleton: the service holds no per-request state (all state
 /// lives on disk). The profiles base folder is read live from
@@ -323,49 +330,35 @@ internal sealed class ProfileService : IProfileService
         // got staged (a skipped mod has no entry in staged/ and must not be
         // listed - otherwise the loader would look for a mod dir that isn't
         // there).
+        //
+        // This is a SIMPLE loop: base-name collisions are blocked at import time
+        // (the add flow calls GetBaseNameCollision), so staging never sees two
+        // mods with the same base folder name in normal use. No dedupe / no
+        // last-wins / no disambiguation. (A hand-edited profile.json that somehow
+        // creates a duplicate base name would throw SymlinkStagingException here
+        // on the second link - an accepted edge; no defensive logic is added.)
         var stagedNames = new List<string>();
-        var usedLinkNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var mod in profile.Mods.Where(m => m.Enabled).OrderBy(m => m.Order))
         {
-            var container = _repo.Get(mod.ContainerId);
-            if (container is null)
+            var (baseName, target, skipReason) = ResolveStagingTarget(mod);
+            if (baseName is null || target is null)
             {
+                // The mod couldn't be resolved to a stageable base folder
+                // (missing container/version, missing version folder, or a
+                // corrupted version folder with zero/multiple subdirs). Skip +
+                // warn; it has no entry in staged/ or mods.lst.
                 _logger.LogWarning(
-                    "Mod {Container} on profile {Id} could not be staged (container not found). Skipping.",
-                    mod.ContainerId, id);
+                    "Mod {Container} on profile {Id} could not be staged ({Reason}). Skipping.",
+                    mod.ContainerId, id, skipReason);
                 continue;
             }
 
-            var version = container.ResolveVersion(mod.Policy);
-            if (version is null)
-            {
-                // No matching version (the container has no versions / no
-                // isLatest, or the pinned tag is not present). Skip + warn.
-                _logger.LogWarning(
-                    "Mod {Container} on profile {Id} could not be staged (no version resolves for policy {Policy}). Skipping.",
-                    mod.ContainerId, id, mod.Policy);
-                continue;
-            }
-
-            var target = _repo.GetVersionFolderPath(mod.ContainerId, version.Folder);
-            if (!Directory.Exists(target))
-            {
-                // Defensive: the manifest points at a folder that is not on disk
-                // (a hand-delete between prune + stage). Skip + warn rather than
-                // crashing the whole stage.
-                _logger.LogWarning(
-                    "Mod {Container} on profile {Id} could not be staged (version folder {Folder} is missing on disk). Skipping.",
-                    mod.ContainerId, id, version.Folder);
-                continue;
-            }
-
-            var linkName = ChooseLinkName(container, usedLinkNames);
-            var linkPath = Path.Combine(staged, linkName);
+            var linkPath = Path.Combine(staged, baseName);
             CreateSymlinkOrThrow(linkPath, target);
-            stagedNames.Add(linkName);
+            stagedNames.Add(baseName);
             _logger.LogDebug(
                 "Staged container {Container} on profile {Id} as '{Link}' -> {Target}",
-                mod.ContainerId, id, linkName, target);
+                mod.ContainerId, id, baseName, target);
         }
 
         WriteModList(stagedNames, staged);
@@ -376,37 +369,102 @@ internal sealed class ProfileService : IProfileService
     // ---- staging helpers ----------------------------------------------------
 
     /// <summary>
-    /// Picks the symlink name for a container: sanitized container
-    /// <see cref="ModContainer.Name"/> (filesystem-illegal chars replaced with
-    /// <c>_</c>, fall back to the container id prefix if empty). Disambiguates
-    /// intra-profile collisions by appending the first 8 hex chars of the
-    /// container id (the loader is agnostic to the symlink name).
+    /// Resolves a profile mod entry to its on-disk staging target: the mod's base
+    /// folder name + the absolute symlink target (<c>&lt;versionFolder&gt;/&lt;baseName&gt;/</c>).
+    /// Returns a non-null <c>SkipReason</c> (and null base name + target) when the
+    /// entry can't be staged. Pure: no logging, no side effects. Shared by
+    /// <see cref="PrepareModRoot"/> (staging, warns on skip) and
+    /// <see cref="GetBaseNameCollision"/> (silent), so the two paths cannot drift.
     /// </summary>
-    private static string ChooseLinkName(ModContainer container, HashSet<string> used)
+    /// <remarks>
+    /// The base name is <b>not stored</b>; it is derived from the validated
+    /// on-disk structure (the single subdirectory inside the version folder,
+    /// which the import validation guarantees). Mods bake their folder name into
+    /// their code, so the symlink MUST carry the base name (not the container's
+    /// display name) for the mod's hardcoded paths to resolve. A version folder
+    /// with zero or multiple subdirs (corrupted / legacy data predating the
+    /// import validation) can't yield a base name and is skipped.
+    /// </remarks>
+    private (string? BaseName, string? Target, string? SkipReason) ResolveStagingTarget(ModListEntry mod)
     {
-        var invalid = Path.GetInvalidFileNameChars();
-        var baseName = new string(container.Name
-            .Trim()
-            .Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c)
-            .ToArray());
+        var container = _repo.Get(mod.ContainerId);
+        if (container is null)
+        {
+            return (null, null, "container not found");
+        }
 
+        var version = container.ResolveVersion(mod.Policy);
+        if (version is null)
+        {
+            return (null, null, $"no version resolves for policy {mod.Policy}");
+        }
+
+        var versionFolder = _repo.GetVersionFolderPath(mod.ContainerId, version.Folder);
+        if (!Directory.Exists(versionFolder))
+        {
+            // Defensive: the manifest points at a folder that is not on disk
+            // (a hand-delete between prune + stage).
+            return (null, null, $"version folder {version.Folder} is missing on disk");
+        }
+
+        // Discover the mod's base folder: the import validation guarantees the
+        // version folder contains exactly one subdirectory (the base, named to
+        // match its <base>.mod descriptor). A corrupted/inconsistent version
+        // folder (zero/multiple subdirs) can't yield a base name.
+        string[] baseDirs;
+        try
+        {
+            baseDirs = Directory.GetDirectories(versionFolder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (null, null, $"version folder {version.Folder} is not readable");
+        }
+
+        if (baseDirs.Length != 1)
+        {
+            return (null, null,
+                $"version folder {version.Folder} has {baseDirs.Length} subdirectories; expected exactly one base folder");
+        }
+
+        var baseName = Path.GetFileName(baseDirs[0]);
+        // The symlink target is the base folder inside the version folder:
+        // <versionFolder>/<baseName>/.
+        return (baseName, Path.Combine(versionFolder, baseName), null);
+    }
+
+    /// <inheritdoc />
+    public ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId)
+    {
         if (string.IsNullOrWhiteSpace(baseName))
         {
-            // Empty after sanitization (e.g. the name was all illegal chars).
-            // Fall back to the container id so staging still produces a usable
-            // link name.
-            baseName = container.Id.ToString("N");
+            throw new ArgumentException("Base name must not be null or whitespace.", nameof(baseName));
         }
 
-        var name = baseName;
-        if (used.Contains(name))
+        // Throws KeyNotFoundException via GetProfile if the profile is unknown.
+        var profile = GetProfile(id);
+
+        // Consider ALL mods (enabled + disabled): a disabled colliding mod could
+        // be enabled later. excludeContainerId skips a re-add of the same
+        // container (AddMod is idempotent on it, so a re-add is a no-op, not a
+        // collision). A mod whose base name can't be resolved (missing
+        // container/version/corrupted folder) is skipped silently: it can't
+        // collide. Base-name comparison is ordinal (folder names are case-sensitive
+        // on Linux; an ordinal match is the conservative choice cross-platform).
+        foreach (var mod in profile.Mods)
         {
-            // Collision (two containers with the same display name in one
-            // profile). Append a short id-derived suffix; the loader is agnostic.
-            name = $"{baseName}-{container.Id.ToString("N").Substring(0, 8)}";
+            if (excludeContainerId is Guid exclude && mod.ContainerId == exclude)
+            {
+                continue;
+            }
+
+            var (resolved, _, _) = ResolveStagingTarget(mod);
+            if (resolved is not null && string.Equals(resolved, baseName, StringComparison.Ordinal))
+            {
+                return mod;
+            }
         }
-        used.Add(name);
-        return name;
+        return null;
     }
 
     /// <summary>
@@ -431,8 +489,9 @@ internal sealed class ProfileService : IProfileService
 
     /// <summary>
     /// Clears <c>staged/</c> for a rebuild: <b>symlink-aware</b>. It removes
-    /// each top-level entry, deleting symlinks as links (never following them
-    /// into the repository). This is data-safety-critical: a naive
+    /// each top-level entry via <see cref="DeleteStagedEntry"/>, which deletes
+    /// symlinks as links (never following them into the repository). This is
+    /// data-safety-critical: a naive
     /// <c>Directory.Delete(staged, recursive: true)</c> could follow a directory
     /// symlink and delete the repository's mod files.
     /// </summary>
@@ -445,45 +504,67 @@ internal sealed class ProfileService : IProfileService
 
         foreach (var entry in Directory.EnumerateFileSystemEntries(staged))
         {
-            FileAttributes attrs;
-            try
-            {
-                attrs = File.GetAttributes(entry);
-            }
-            catch (FileNotFoundException)
-            {
-                continue; // raced away; nothing to delete
-            }
+            DeleteStagedEntry(entry);
+        }
+    }
 
-            // ReparsePoint == symlink (file or dir). The link itself is removed
-            // without touching the target - but the delete API must match the
-            // link's kind, or Windows throws:
-            //   - Directory symlink (ReparsePoint + Directory) -> Directory.Delete.
-            //     On Windows, File.Delete on a directory (incl. a dir-symlink)
-            //     throws UnauthorizedAccessException ("Access denied" - Windows
-            //     surfaces "is a directory" via the file-delete API as access-
-            //     denied). Directory.Delete on a reparse point removes the point
-            //     itself, NOT the target, so it stays data-safe on both platforms.
-            //   - File symlink (ReparsePoint, not Directory) -> File.Delete.
-            if ((attrs & FileAttributes.ReparsePoint) != 0)
+    /// <summary>
+    /// Deletes a single staged entry, <b>symlink-aware</b>: a reparse point
+    /// (file or directory symlink) is removed as a link only, never followed
+    /// into the repository. A real directory is recursed; a real file is deleted.
+    /// This is data-safety-critical: the staged root holds symlinks into the
+    /// repository, so a naive recursive delete would follow them and destroy the
+    /// mod files.
+    /// </summary>
+    /// <remarks>
+    /// The delete API must match the link's kind, or Windows throws:
+    /// <list type="bullet">
+    /// <item><description>Directory symlink (ReparsePoint + Directory):
+    /// <see cref="Directory.Delete(string)"/>. On Windows,
+    /// <see cref="File.Delete(string)"/> on a directory (incl. a dir-symlink)
+    /// throws <see cref="UnauthorizedAccessException"/> ("Access denied"; Windows
+    /// surfaces "is a directory" via the file-delete API as access-denied).
+    /// <see cref="Directory.Delete(string)"/> on a reparse point removes the
+    /// point itself, NOT the target, so it stays data-safe on both platforms.
+    /// </description></item>
+    /// <item><description>File symlink (ReparsePoint, not Directory):
+    /// <see cref="File.Delete(string)"/>.</description></item>
+    /// </list>
+    /// </remarks>
+    private static void DeleteStagedEntry(string entry)
+    {
+        FileAttributes attrs;
+        try
+        {
+            attrs = File.GetAttributes(entry);
+        }
+        catch (FileNotFoundException)
+        {
+            return; // raced away; nothing to delete
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return; // raced away; nothing to delete
+        }
+
+        if ((attrs & FileAttributes.ReparsePoint) != 0)
+        {
+            if ((attrs & FileAttributes.Directory) != 0)
             {
-                if ((attrs & FileAttributes.Directory) != 0)
-                {
-                    Directory.Delete(entry); // directory symlink -> remove the link only
-                }
-                else
-                {
-                    File.Delete(entry);      // file symlink -> remove the link only
-                }
-            }
-            else if ((attrs & FileAttributes.Directory) != 0)
-            {
-                Directory.Delete(entry, recursive: true); // real directory -> recurse
+                Directory.Delete(entry); // directory symlink -> remove the link only
             }
             else
             {
-                File.Delete(entry);                        // real file (mods.lst, etc.)
+                File.Delete(entry);      // file symlink -> remove the link only
             }
+        }
+        else if ((attrs & FileAttributes.Directory) != 0)
+        {
+            Directory.Delete(entry, recursive: true); // real directory -> recurse
+        }
+        else
+        {
+            File.Delete(entry);                        // real file (mods.lst, etc.)
         }
     }
 

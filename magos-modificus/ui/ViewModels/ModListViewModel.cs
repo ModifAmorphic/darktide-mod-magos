@@ -447,20 +447,27 @@ public partial class ModListViewModel : ObservableObject
 
     /// <summary>
     /// Processes a list of local paths (folders or <c>.zip</c> archives) from the
-    /// add flow: one import modal per path, sequentially, then
+    /// add flow: one import modal per path, sequentially. Per path the flow is:
+    /// <b>(1)</b> peek the base folder name from the source (validates structure,
+    /// throws on an invalid source); <b>(2)</b> hard-block a base-name collision
+    /// against the active profile (refuse, create nothing, alert); <b>(3)</b>
     /// <see cref="IModImportService.Import"/> (extract / copy into the repository)
     /// + <see cref="IProfileService.AddMod"/> (the profile reference). A cancelled
-    /// modal cancels the whole remaining batch (mods already imported earlier in
-    /// the batch stay imported). Used by the Add split button (the zip file
-    /// picker + the folder picker) + the drop handler.
+    /// modal, a failed peek/import, OR a collision cancels the whole remaining
+    /// batch (mods imported earlier in the batch stay imported). Used by the Add
+    /// split button (the zip file picker + the folder picker) + the drop handler.
     /// </summary>
     /// <remarks>
     /// The name is derived from each path (folder name or archive stem, no
     /// extension) and pre-filled in the modal; the user may rename at import (the
     /// edited name becomes the container's display name + the untracked dedup
     /// key). The import happens before the profile reference is added (order
-    /// matters: import the repository copy, then reference it). The new profile
-    /// entry defaults to <see cref="ModVersionPolicy.Latest"/>.
+    /// matters: import the repository copy, then reference it). A re-add of a mod
+    /// already in the profile is NOT a collision: the would-be container is
+    /// peeked (<see cref="IModImportService.FindExistingContainer"/>) and excluded
+    /// from the collision check, so the idempotent <see cref="IProfileService.AddMod"/>
+    /// stays a no-op. The new profile entry defaults to
+    /// <see cref="ModVersionPolicy.Latest"/>.
     /// </remarks>
     [RelayCommand]
     private async Task AddMods(IReadOnlyList<string>? paths)
@@ -487,18 +494,87 @@ public partial class ModListViewModel : ObservableObject
                 break;
             }
 
-            // Import the repository copy first (extract/copy + container/version
+            var canonicalName = string.IsNullOrWhiteSpace(request.ModName) ? modName : request.ModName.Trim();
+
+            // (1) Peek the base folder name. This validates the source structure
+            // (exactly one base dir with a matching <base>.mod) BEFORE any
+            // container/version is created. An invalid source throws here; catch
+            // it per mod, surface an alert naming the failing source, and abort
+            // the remaining batch (the cancel-aborts-batch posture).
+            string baseName;
+            try
+            {
+                baseName = _importService.GetBaseName(path);
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException
+                    or IOException or UnauthorizedAccessException
+                    or System.IO.InvalidDataException)
+            {
+                await AlertImportFailed(path, ex);
+                break;
+            }
+
+            // (2) Base-name collision hard-block. Two mods with the same base
+            // folder name can't coexist in one profile (the loader can't tell
+            // them apart). Exclude the container a re-add would dedup to: a
+            // re-add resolves to the same container, and AddMod is idempotent on
+            // it, so it must NOT be treated as a collision. On a collision, name
+            // the conflicting mod + the base folder, then abort the batch
+            // (nothing is created: no Import, no AddMod).
+            var existing = _importService.FindExistingContainer(result.Source, canonicalName);
+            var collision = _profiles.GetBaseNameCollision(id, baseName, existing?.Id);
+            if (collision is not null)
+            {
+                var conflictingName = _repo.Get(collision.ContainerId)?.Name ?? baseName;
+                _logger.LogWarning(
+                    "Add blocked at {Path}: base folder '{Base}' collides with existing mod '{Conflicting}' (container {Container}) on profile {Id}",
+                    path, baseName, conflictingName, collision.ContainerId, id);
+                await _dialogs.ShowAlertAsync(
+                    _localization["Import_CollisionTitle"],
+                    _localization.Format("Import_CollisionMessage", path, baseName, conflictingName));
+                break;
+            }
+
+            // (3) Import the repository copy (extract/copy + container/version
             // upsert), then add the profile reference. The canonical name comes
             // from the request (the modal wrote the user's edited + trimmed name
-            // back), so a rename at import establishes the container's name.
-            var canonicalName = string.IsNullOrWhiteSpace(request.ModName) ? modName : request.ModName.Trim();
-            var (containerId, _) = _importService.Import(path, canonicalName, result.Source, result.Version);
+            // back), so a rename at import establishes the container's name. A
+            // late I/O failure (copy/extract) is caught per mod.
+            Guid containerId;
+            try
+            {
+                var (importedId, _) = _importService.Import(path, canonicalName, result.Source, result.Version);
+                containerId = importedId;
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException
+                    or IOException or UnauthorizedAccessException
+                    or System.IO.InvalidDataException)
+            {
+                await AlertImportFailed(path, ex);
+                break;
+            }
+
             _profiles.AddMod(id, containerId, ModVersionPolicy.Latest);
             _logger.LogInformation("Imported {Mod} from {Path} (source={Source}, version={Version}) onto container {Container}",
                 canonicalName, path, result.Source, result.Version, containerId);
         }
 
         Reload();
+    }
+
+    /// <summary>
+    /// Surfaces an import-failure alert for a source path + the underlying
+    /// exception, using the localized <c>Import_Failed</c> strings. Logs the
+    /// exception with its stack + shows the message text to the user.
+    /// </summary>
+    private async Task AlertImportFailed(string path, Exception ex)
+    {
+        _logger.LogError(ex, "Import of {Path} failed", path);
+        await _dialogs.ShowAlertAsync(
+            _localization["Import_FailedTitle"],
+            _localization.Format("Import_FailedMessage", path) + " " + ex.Message);
     }
 
     /// <summary>

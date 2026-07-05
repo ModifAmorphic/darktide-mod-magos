@@ -243,6 +243,33 @@ internal sealed class FakeProfileService : IProfileService
         list.RemoveAt(idx);
     }
 
+    /// <summary>The (profileId, baseName, excludeContainerId) triples passed to
+    /// <see cref="GetBaseNameCollision"/>, in call order. Tests assert on
+    /// <c>ExcludeContainerId</c> to verify the add flow carried the re-add
+    /// container id through.</summary>
+    public IReadOnlyList<(Guid ProfileId, string BaseName, Guid? ExcludeContainerId)> GetBaseNameCollisionCalls { get; }
+        = new List<(Guid, string, Guid?)>();
+
+    /// <summary>
+    /// The <see cref="ModListEntry"/> returned by the next
+    /// <see cref="GetBaseNameCollision"/> call (default <c>null</c> = no
+    /// collision). The fake does no real base-name resolution (that is exercised
+    /// against the real service in <c>Profiles.Tests</c>); a VM test sets this to
+    /// simulate a collision.
+    /// </summary>
+    public ModListEntry? GetBaseNameCollisionResult { get; set; }
+
+    /// <summary>
+    /// Records the call (for the exclude-container assertion) + returns
+    /// <see cref="GetBaseNameCollisionResult"/>. The real resolution lives in
+    /// <c>ProfileService</c> + is tested there.
+    /// </summary>
+    public ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId)
+    {
+        ((List<(Guid, string, Guid?)>)GetBaseNameCollisionCalls).Add((id, baseName, excludeContainerId));
+        return GetBaseNameCollisionResult;
+    }
+
     public string PrepareModRoot(Guid id) => throw new NotImplementedException();
 }
 
@@ -644,7 +671,9 @@ internal class FakeModRepository : IModRepository
 /// call (source path, mod name, parsed source, version) so tests can assert the
 /// add flow recorded the right metadata. Optionally upserts a wired
 /// <see cref="IModRepository"/> so the add flow's reload joins the freshly
-/// imported source + version (mirrors the real import service's behavior).
+/// imported source + version (mirrors the real import service's behavior). A
+/// per-call exception queue lets a test simulate an import failure (an invalid
+/// source) to exercise the add flow's catch + alert + abort path.
 /// </summary>
 internal sealed class FakeModImportService : IModImportService
 {
@@ -655,9 +684,26 @@ internal sealed class FakeModImportService : IModImportService
     public IReadOnlyList<(string SourcePath, string ModName, ModSource Source, string Version)> Imports { get; }
         = new List<(string, string, ModSource, string)>();
 
+    /// <summary>
+    /// Optional per-call queue: each Import call dequeues one exception and
+    /// throws it (after recording the call), simulating an invalid source. A
+    /// <c>null</c> slot means "succeed for this call". When empty / unset, Import
+    /// proceeds normally. Mirrors <see cref="FakeDialogService.ImportResultQueue"/>.
+    /// </summary>
+    public Queue<Exception?>? ImportExceptionQueue { get; set; }
+
     public (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version)
     {
         ((List<(string, string, ModSource, string)>)Imports).Add((sourcePath, modName, source, version));
+
+        if (ImportExceptionQueue is { Count: > 0 })
+        {
+            var ex = ImportExceptionQueue.Dequeue();
+            if (ex is not null)
+            {
+                throw ex;
+            }
+        }
 
         if (_repo is null)
         {
@@ -680,6 +726,62 @@ internal sealed class FakeModImportService : IModImportService
         }
         _repo.AddVersion(container.Id, version, _ => { });
         return (container.Id, version);
+    }
+
+    /// <summary>The source paths passed to <see cref="GetBaseName"/>, in order.</summary>
+    public IReadOnlyList<string> GetBaseNameCalls { get; } = new List<string>();
+
+    /// <summary>
+    /// Optional override for <see cref="GetBaseName"/>: receives the source path
+    /// and returns the base name (or throws, to simulate an invalid source).
+    /// When unset, the base name is derived from the path (folder name or
+    /// <c>.zip</c> stem), never throwing.
+    /// </summary>
+    public Func<string, string>? GetBaseNameFunc { get; set; }
+
+    /// <summary>
+    /// Peeks the base folder name (mirrors <see cref="IModImportService.GetBaseName"/>).
+    /// The default derivation never throws; a test that needs an invalid-source
+    /// failure sets <see cref="GetBaseNameFunc"/> to throw.
+    /// </summary>
+    public string GetBaseName(string sourcePath)
+    {
+        ((List<string>)GetBaseNameCalls).Add(sourcePath);
+        if (GetBaseNameFunc is not null)
+        {
+            return GetBaseNameFunc(sourcePath);
+        }
+        var trimmed = sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = Path.GetFileName(trimmed);
+        const string zip = ".zip";
+        if (name.EndsWith(zip, StringComparison.OrdinalIgnoreCase) && name.Length > zip.Length)
+        {
+            name = name.Substring(0, name.Length - zip.Length);
+        }
+        return name;
+    }
+
+    /// <summary>The (source, modName) pairs passed to
+    /// <see cref="FindExistingContainer"/>, in order.</summary>
+    public IReadOnlyList<(ModSource Source, string ModName)> FindExistingContainerCalls { get; }
+        = new List<(ModSource, string)>();
+
+    /// <summary>
+    /// Mirrors <see cref="IModImportService.FindExistingContainer"/>: resolves the
+    /// container an import would dedup to, against the wired repo, without
+    /// creating anything. Returns <c>null</c> when no repo is wired or no
+    /// existing container matches.
+    /// </summary>
+    public ModContainer? FindExistingContainer(ModSource source, string modName)
+    {
+        ((List<(ModSource, string)>)FindExistingContainerCalls).Add((source, modName));
+        if (_repo is null)
+        {
+            return null;
+        }
+        return source is UntrackedSource
+            ? _repo.FindUntrackedByName(modName)
+            : _repo.FindBySource(source);
     }
 }
 

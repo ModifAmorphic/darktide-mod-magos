@@ -90,10 +90,15 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
   profiles/             Magos.Modificus.Profiles — profile data model, persistence,
-                        container-based staging (ProfileService.PrepareModRoot resolves
-                        each enabled mod's policy to a repository version folder +
-                        symlinks staged/<displayName> to it, then writes mods.lst) +
-                        SetModPolicy transitions + the auto-sort seam
+                        container-based staging (ProfileService.PrepareModRoot
+                        discovers each enabled mod's base folder name inside the
+                        resolved version folder + symlinks staged/<baseName> ->
+                        <versionFolder>/<baseName>/, then writes mods.lst; the
+                        base name, not the container's display name, is the link
+                        + mods.lst name) + SetModPolicy transitions + the
+                        import-time base-name collision hard-block
+                        (GetBaseNameCollision; two same-folder mods can't coexist
+                        in a profile) + the auto-sort seam
                         (IModOrderResolver/IdentityModOrderResolver, identity stub now;
                         real dependency-driven resolver later) + ModCleanup (the startup
                         prune orchestration)
@@ -107,8 +112,11 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         version details) + the
                         mod-source provenance model (ModSource: UntrackedSource/
                         NexusSource/GitHubSource + ModSourceParser URL parsing) + the
-                        local-import service (IModImportService: folder/.zip -> container/
-                        version).
+                        local-import service (IModImportService: folder/.zip ->
+                        container/version; validates the source has exactly one
+                        base dir with a matching <base>.mod + preserves the base
+                        folder under <versionFolder>/<base>/; exposes GetBaseName
+                        + FindExistingContainer peeks for the collision block).
   integrations/         Magos.Modificus.Integrations — GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
@@ -195,10 +203,13 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
 - **Logging** is Serilog (console + file) bridged into
   `Microsoft.Extensions.Logging`; honors `Logging:Level` + `Logging:LogFile`.
 - The backend libraries are all implemented: **Profiles** (profile data model +
-  lifecycle; container-based staging — `PrepareModRoot` resolves each enabled
-  mod's policy to a repository version folder via `IModRepository` + symlinks
-  `staged/<displayName>` to it, then writes `mods.lst`; no per-profile mod
-  files), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
+  lifecycle; container-based staging, where `PrepareModRoot` discovers each
+  enabled mod's base folder name inside the resolved version folder via
+  `IModRepository` + symlinks `staged/<baseName>` -> `<versionFolder>/<baseName>/`,
+  then writes `mods.lst`; the base name, not the container's display name, is the
+  link + mods.lst name; no per-profile mod files) + the import-time base-name
+  collision hard-block (`GetBaseNameCollision`; two same-folder mods can't
+  coexist in a profile), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
   **Integrations** (GitHub Releases client), **Enginseer-client** (the launch
   façade), **Mods** (Phase 1 of the storage refactor: the unified
   `IModRepository` — UUID containers per (source, identity), opaque-ID version

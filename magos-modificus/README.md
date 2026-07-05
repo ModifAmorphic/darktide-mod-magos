@@ -103,12 +103,13 @@ copying would duplicate repository files). On-disk layout:
 <ProfilesBaseFolder>/<guid>/
   profile.json                       # metadata + mod list (entries carry ContainerId + Policy)
   staged/                            # the staged mod root = the --mod-path (REGENERATED each launch)
-    <displayName>                    #   symlink → repository version folder (Latest → isLatest; Pinned(versionId) → matching Folder)
+    <baseName>                       #   symlink → <versionFolder>/<baseName>/ (Latest → isLatest; Pinned(versionId) → matching Folder); the base name, not the container display name
     mods.lst                         #   successfully-staged enabled mods, in order
 ```
 
 `Profiles` owns the staging seam (`ProfileService.PrepareModRoot` clears +
-rebuilds `staged/`, then writes `mods.lst`); `Mods` owns the repository
+rebuilds `staged/`, discovering each enabled mod's base folder name inside its
+resolved version folder, then writes `mods.lst`); `Mods` owns the repository
 (`IModRepository`) + the version-policy model + the source model + the
 local-import service. Version resolution at stage time is by policy: Latest →
 the container's `isLatest` version; Pinned(vId) → the version whose `Folder`

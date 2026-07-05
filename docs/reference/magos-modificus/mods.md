@@ -98,6 +98,10 @@ UI never touches the filesystem directly.
 public interface IModImportService
 {
     (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version);
+
+    // Read-only peeks used by the add flow's base-name collision hard-block:
+    string GetBaseName(string sourcePath);                       // validates structure, returns the base folder name (no container/version created)
+    ModContainer? FindExistingContainer(ModSource source, string modName);  // the container an import would dedup to (no create)
 }
 ```
 
@@ -119,6 +123,27 @@ public interface IModImportService
 - The `modName` path-traversal confinement (rejects path separators, `..`,
   absolute paths) is retained from Track B as defense-in-depth, even though the
   import target is now an opaque UUID folder (not `modName`-derived).
+
+**Source structure (both kinds):** a mod source (zip or folder) must contain
+exactly one base directory with a `<basefoldername>.mod` descriptor inside it
+(the descriptor filename matches the base folder name). A `.zip` is inspected
+**before** extraction (single top-level folder, no loose top-level files,
+matching `<base>.mod`); a folder is checked directly (non-empty + matching
+descriptor) and is copied **as the folder itself** (not its contents). Both
+produce `<versionId>/<base>/<files>`. An invalid structure throws immediately,
+placing no files and creating no container/version.
+
+**Base-name collision hard-block:** two mods with the same base folder name can't
+coexist in one profile (the mod loader can't tell them apart). The add flow
+peeks the base name (`GetBaseName`) + the would-be container
+(`FindExistingContainer`) **before** importing, then asks
+`IProfileService.GetBaseNameCollision` whether any existing profile mod (a
+different container) resolves to the same base name. On a hit, the import is
+**refused**: nothing is created (no version, no profile entry). The would-be
+container is excluded from the check, so a re-add of a mod already in the
+profile (same container, `AddMod` idempotent) is **not** a collision. The block
+lives at the add flow (not in `Import` itself), so direct programmatic imports
+remain unconditional.
 
 ### Key types
 
@@ -254,10 +279,21 @@ change via the Settings window takes effect immediately.
 <ModsFolder>/                 (auto-created on first run)
   <containerUUID>/                  (container dir; id-named, opaque)
     container.json                  (id + source + name + versions[] - the manifest)
-    <versionFolder>/                (opaque-ID version subfolder; the mod files)
+    <versionFolder>/                (opaque-ID version subfolder)
+      <baseFolder>/                 (the mod's base folder; name matches <base>.mod)
+        <baseFolder>.mod            (the descriptor the loader resolves)
+        <files...>                  (scripts/, etc.)
     <versionFolder>/
       ...
 ```
+
+The version folder always contains exactly one subdirectory: the mod's **base
+folder**, whose name matches its `<base>.mod` descriptor. Both import kinds
+produce this shape (a `.zip` is validated to have a single top-level folder with
+a matching descriptor before extraction; a folder is copied as itself). The base
+folder name is load-bearing at staging time: mods bake their folder name into
+their code, so the staged symlink must carry the base name (not the container's
+display name).
 
 `container.json` is UTF-8 without BOM. Paths are derived (`ModsFolder` +
 UUIDs), never stored absolute.
@@ -288,8 +324,14 @@ UUIDs), never stored absolute.
   `.git`, plain id; malformed rejections: wrong host, wrong game slug, too few
   segments, non-numeric/zero/negative id).
 - `ModImportService`: container find/create + version dedup + `isLatest` flip +
-  folder/`.zip` import + error paths (missing source, malformed zip, bad mod
-  name) + the retained `modName` path-traversal confinement.
+  folder/`.zip` import + the source-structure validation (both kinds require
+  exactly one base directory with a matching `<base>.mod` descriptor; the base
+  folder is preserved under `<versionFolder>/<base>/`) + error paths (missing
+  source, malformed zip, multiple top-level folders, loose files, missing /
+  mismatched descriptor, bad mod name) + the retained `modName` path-traversal
+  confinement + the two import-time peeks (`GetBaseName` validates + returns the
+  base name without creating anything; `FindExistingContainer` resolves the
+  would-be dedup container without creating it).
 
 The internal `ModRepository` + `ModImportService` are visible to tests via
 `InternalsVisibleTo` (tests resolve them through the interface via DI).

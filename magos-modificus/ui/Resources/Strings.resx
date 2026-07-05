@@ -391,6 +391,32 @@
   </data>
 
   <!-- ============================================================ -->
+  <!-- Import failure (add flow)                                     -->
+  <!-- ============================================================ -->
+
+  <data name="Import_FailedTitle" xml:space="preserve">
+    <value>Could not import mod</value>
+    <comment>Title of the modal alert shown when an import fails on an invalid source (bad zip/folder structure).</comment>
+  </data>
+  <data name="Import_FailedMessage" xml:space="preserve">
+    <value>Could not import '{0}'.</value>
+    <comment>Prefix of the import-failure alert body. {0} is the source path. The import's detail message follows.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Import base-name collision (add flow)                         -->
+  <!-- ============================================================ -->
+
+  <data name="Import_CollisionTitle" xml:space="preserve">
+    <value>Mod folder conflict</value>
+    <comment>Title of the modal alert shown when a mod's base folder name collides with an existing mod in the profile (the loader can't tell two same-folder mods apart).</comment>
+  </data>
+  <data name="Import_CollisionMessage" xml:space="preserve">
+    <value>Could not import '{0}': its mod folder '{1}' is already used by '{2}' in this profile. Two mods with the same folder name can't coexist in one profile (the mod loader can't tell them apart).</value>
+    <comment>Body of the base-name collision alert. {0} is the source path; {1} is the conflicting base folder name; {2} is the existing mod's display name.</comment>
+  </data>
+
+  <!-- ============================================================ -->
   <!-- Settings dialog (SettingsWindow / SettingsViewModel)         -->
   <!-- ============================================================ -->
 

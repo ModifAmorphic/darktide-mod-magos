@@ -11,11 +11,15 @@ namespace Magos.Modificus.Profiles.Tests;
 /// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/>
 /// (<see cref="LatestPolicy"/> -> the container's isLatest version folder;
 /// <see cref="PinnedPolicy"/> -> the version whose <see cref="ModVersion.Folder"/>
-/// matches the pin's <see cref="PinnedPolicy.VersionId"/>) and is symlinked
-/// into <c>staged/&lt;displayName&gt;</c>; missing containers/versions are
-/// skipped + warned; symlink-name collisions are disambiguated; the staged root
-/// holds only symlinks + <c>mods.lst</c> (no copied files); a symlink-creation
-/// failure throws <see cref="SymlinkStagingException"/> (never silently copies).
+/// matches the pin's <see cref="PinnedPolicy.VersionId"/>) and is symlinked into
+/// <c>staged/&lt;baseName&gt;</c>, where the base name is discovered on the fly as
+/// the single subdirectory inside the version folder (the mod's base folder);
+/// missing containers/versions and corrupted version folders (zero/multiple
+/// subdirs) are skipped + warned; same-base-name collisions are blocked at import
+/// time (<see cref="IProfileService.GetBaseNameCollision"/>), so staging is a
+/// simple loop with no dedupe; the staged root holds only symlinks +
+/// <c>mods.lst</c> (no copied files); a symlink-creation failure throws
+/// <see cref="SymlinkStagingException"/> (never silently copies).
 /// </summary>
 public sealed class StagingTests
 {
@@ -32,9 +36,11 @@ public sealed class StagingTests
         fx.Service.PrepareModRoot(profile.Id);
 
         var link = fx.StagedModLink(profile.Id, "DMF");
-        Assert.True(Directory.Exists(link), "staged symlink should resolve to the version folder");
+        Assert.True(Directory.Exists(link), "staged symlink should resolve to the base folder");
         Assert.True(IsSymlink(link), "staged entry should be a symlink, not a copy");
-        Assert.Equal(fx.VersionDir(container.Id, container.Versions[0].Folder), ResolveLink(link));
+        Assert.Equal(
+            Path.Combine(fx.VersionDir(container.Id, container.Versions[0].Folder), "DMF"),
+            ResolveLink(link));
     }
 
     [Fact]
@@ -54,7 +60,9 @@ public sealed class StagingTests
         var link = fx.StagedModLink(profile.Id, "DMF");
         Assert.True(Directory.Exists(link));
         Assert.True(IsSymlink(link));
-        Assert.Equal(fx.VersionDir(container.Id, v1Folder), ResolveLink(link));
+        Assert.Equal(
+            Path.Combine(fx.VersionDir(container.Id, v1Folder), "DMF"),
+            ResolveLink(link));
     }
 
     [Fact]
@@ -70,7 +78,9 @@ public sealed class StagingTests
         fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
         fx.Service.PrepareModRoot(profile.Id);
         var link1 = fx.StagedModLink(profile.Id, "DMF");
-        Assert.Equal(fx.VersionDir(container.Id, v1Folder), ResolveLink(link1));
+        Assert.Equal(
+            Path.Combine(fx.VersionDir(container.Id, v1Folder), "DMF"),
+            ResolveLink(link1));
 
         // Add v2.0 (becomes isLatest). The profile entry is unchanged; staging
         // re-resolves dynamically.
@@ -78,7 +88,9 @@ public sealed class StagingTests
         var v2Folder = fx.Repo.Get(container.Id)!.Versions.Single(v => v.VersionString == "2.0").Folder;
         fx.Service.PrepareModRoot(profile.Id);
 
-        Assert.Equal(fx.VersionDir(container.Id, v2Folder), ResolveLink(link1));
+        Assert.Equal(
+            Path.Combine(fx.VersionDir(container.Id, v2Folder), "DMF"),
+            ResolveLink(link1));
         var modEntry = Assert.Single(fx.Service.GetModList(profile.Id));
         Assert.Equal(container.Id, modEntry.ContainerId); // unchanged
     }
@@ -114,8 +126,9 @@ public sealed class StagingTests
             }
         }
 
-        // The mod's actual files live only in the repository.
-        Assert.True(File.Exists(Path.Combine(fx.VersionDir(container.Id, container.Versions[0].Folder), "marker.txt")));
+        // The mod's actual files live only in the repository, under the base folder.
+        Assert.True(File.Exists(Path.Combine(
+            fx.VersionDir(container.Id, container.Versions[0].Folder), "DMF", "marker.txt")));
     }
 
     // ---- regeneration ------------------------------------------------------
@@ -155,7 +168,7 @@ public sealed class StagingTests
         fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
         fx.Service.PrepareModRoot(profile.Id);
         var versionPath = fx.VersionDir(container.Id, container.Versions[0].Folder);
-        var marker = Path.Combine(versionPath, "marker.txt");
+        var marker = Path.Combine(versionPath, "DMF", "marker.txt");
         Assert.True(File.Exists(marker));
 
         // Regenerate (DMF now disabled -> not staged). The repository files survive.
@@ -220,60 +233,88 @@ public sealed class StagingTests
         Assert.Equal(string.Empty, File.ReadAllText(fx.ModsLst(profile.Id)));
     }
 
-    // ---- symlink-name disambiguation --------------------------------------
+    // ---- base-name discovery (link name == on-disk base folder) -----------
 
     [Fact]
-    public void Two_containers_with_the_same_name_disambiguate_the_symlink()
+    public void Symlink_and_mods_lst_use_the_base_folder_name_not_the_display_name()
     {
-        // Goal: the loader is agnostic to the symlink name. Two containers with
-        // the same display name in one profile must each get a distinct symlink.
+        // The link name + mods.lst entry are the BASE folder name discovered
+        // inside the version folder, not the container's display name. Mods bake
+        // their folder name into their code, so the link must carry the base
+        // name. Here the display name differs from the on-disk base on purpose.
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
-        var a = fx.AddContainerWithVersion("DMF");
-        var b = fx.AddContainerWithVersion("DMF"); // same name, different container
-        fx.Service.AddMod(profile.Id, a.Id, ModVersionPolicy.Latest);
-        fx.Service.AddMod(profile.Id, b.Id, ModVersionPolicy.Latest);
-
-        fx.Service.PrepareModRoot(profile.Id);
-
-        // One symlink is named "DMF"; the other is "DMF-<short-id>" (or similar).
-        // Both resolve to distinct version folders; both are listed.
-        var entries = Directory.GetFileSystemEntries(fx.StagedDir(profile.Id))
-            .Where(p => Path.GetFileName(p) != "mods.lst")
-            .ToArray();
-        Assert.Equal(2, entries.Length);
-        Assert.Equal(2, entries.Select(p => ResolveLink(p)).Distinct().Count());
-
-        var modsLst = File.ReadAllText(fx.ModsLst(profile.Id));
-        Assert.Equal(2, modsLst.Count(c => c == '\n'));
-    }
-
-    [Fact]
-    public void Symlink_name_is_sanitized_for_filesystem_illegal_chars()
-    {
-        // A container whose Name contains filesystem-illegal chars still stages:
-        // the symlink name is sanitized (illegal chars replaced with '_'). The
-        // forward-slash is invalid as a filename char on every platform, so it
-        // makes a cross-platform test.
-        using var fx = new ProfileServiceFixture();
-        var profile = fx.Service.CreateProfile("P");
-        var container = fx.Repo.CreateContainer(new UntrackedSource(), "Weapon/Tweaks");
-        fx.Repo.AddVersion(container.Id, "1.0", dir =>
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "My Display Name");
+        var withVersion = fx.Repo.AddVersion(container.Id, "1.0", dir =>
         {
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(Path.Combine(dir, "marker.txt"), "x");
+            Directory.CreateDirectory(Path.Combine(dir, "actualbase"));
+            File.WriteAllText(Path.Combine(dir, "actualbase", "actualbase.mod"), "x");
         });
         fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
         fx.Service.PrepareModRoot(profile.Id);
 
-        // mods.lst reflects a sanitized name (the slash is replaced, no subdir).
-        var modsLst = File.ReadAllText(fx.ModsLst(profile.Id));
-        Assert.DoesNotContain('/', modsLst);
-        Assert.Contains("Weapon", modsLst);
-        Assert.Contains("Tweaks", modsLst);
-        // Exactly one line (the sanitized name did not split into two entries).
-        Assert.Equal(1, modsLst.Count(c => c == '\n'));
+        // The symlink is named after the base folder; the display name is UI-only.
+        var link = fx.StagedModLink(profile.Id, "actualbase");
+        Assert.True(Directory.Exists(link));
+        Assert.True(IsSymlink(link));
+        Assert.Equal(
+            Path.Combine(fx.VersionDir(container.Id, withVersion.Versions[0].Folder), "actualbase"),
+            ResolveLink(link));
+        Assert.Equal("actualbase\n", File.ReadAllText(fx.ModsLst(profile.Id)));
+    }
+
+    // NOTE: two mods with the same base folder name can't reach staging in normal
+    // use: the add flow refuses them via IProfileService.GetBaseNameCollision
+    // before importing (see ModListViewModelTests + ModListTests). Staging is a
+    // simple loop with no dedupe, so a hand-edited profile.json that forces a
+    // duplicate base name throws SymlinkStagingException on the second link (the
+    // accepted "whatever it is" edge). No test asserts that edge: it is undefined
+    // behavior the operator explicitly chose not to support.
+
+    [Fact]
+    public void Corrupted_version_folder_with_zero_subdirectories_is_skipped_with_warning()
+    {
+        // A version folder with no base subdir (e.g. legacy data predating the
+        // import validation) cannot yield a base name; it is skipped + warned,
+        // not crashed.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var real = fx.AddContainerWithVersion("RealMod");
+        var bad = fx.Repo.CreateContainer(new UntrackedSource(), "BadMod");
+        fx.Repo.AddVersion(bad.Id, "1.0", dir =>
+        {
+            // A loose file at the version root, no base subdir.
+            File.WriteAllText(Path.Combine(dir, "loose.txt"), "x");
+        });
+        fx.Service.AddMod(profile.Id, real.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, bad.Id, ModVersionPolicy.Latest);
+
+        fx.Service.PrepareModRoot(profile.Id); // must not throw
+
+        Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "BadMod")));
+        Assert.Equal("RealMod\n", File.ReadAllText(fx.ModsLst(profile.Id)));
+    }
+
+    [Fact]
+    public void Corrupted_version_folder_with_multiple_subdirectories_is_skipped_with_warning()
+    {
+        // A version folder with more than one subdir is ambiguous (which is the
+        // base?); it is skipped + warned rather than guessing.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var bad = fx.Repo.CreateContainer(new UntrackedSource(), "AmbiguousMod");
+        fx.Repo.AddVersion(bad.Id, "1.0", dir =>
+        {
+            Directory.CreateDirectory(Path.Combine(dir, "a"));
+            Directory.CreateDirectory(Path.Combine(dir, "b"));
+        });
+        fx.Service.AddMod(profile.Id, bad.Id, ModVersionPolicy.Latest);
+
+        fx.Service.PrepareModRoot(profile.Id); // must not throw
+
+        Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "AmbiguousMod")));
+        Assert.Equal(string.Empty, File.ReadAllText(fx.ModsLst(profile.Id)));
     }
 
     // ---- symlink-failure path ----------------------------------------------
@@ -332,7 +373,9 @@ public sealed class StagingTests
         // And staging reflects the pin.
         reloaded.PrepareModRoot(profile.Id);
         var link = fx.StagedModLink(profile.Id, "DMF");
-        Assert.Equal(fx.VersionDir(container.Id, v1Folder), ResolveLink(link));
+        Assert.Equal(
+            Path.Combine(fx.VersionDir(container.Id, v1Folder), "DMF"),
+            ResolveLink(link));
     }
 
     // ---- helpers ------------------------------------------------------------

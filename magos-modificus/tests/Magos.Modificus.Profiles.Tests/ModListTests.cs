@@ -5,7 +5,9 @@ namespace Magos.Modificus.Profiles.Tests;
 /// <summary>
 /// Mod-list management on a known profile: <see cref="IProfileService.AddMod"/>,
 /// <see cref="IProfileService.RemoveMod"/>, <see cref="IProfileService.SetModOrder"/>,
-/// <see cref="IProfileService.SetModEnabled"/>, <see cref="IProfileService.GetModList"/>.
+/// <see cref="IProfileService.SetModEnabled"/>, <see cref="IProfileService.GetModList"/>,
+/// and <see cref="IProfileService.GetBaseNameCollision"/> (the import-time
+/// base-name collision hard-block the add flow consults before importing).
 /// Container-keyed (the new shape): every per-mod mutation takes the
 /// <see cref="ModListEntry.ContainerId"/>.
 /// </summary>
@@ -385,5 +387,138 @@ public sealed class ModListTests
         using var fx = new ProfileServiceFixture();
 
         Assert.Throws<KeyNotFoundException>(() => fx.Service.SetModOrder(Guid.NewGuid(), [Guid.NewGuid()]));
+    }
+
+    // ---- GetBaseNameCollision (import-time hard-block) ---------------------
+    //
+    // GetBaseNameCollision resolves each profile mod's base folder name (via the
+    // same resolution as staging) + returns the first that matches the candidate,
+    // excluding a would-be re-add container. Used by the add flow to REFUSE a mod
+    // whose base folder name matches an existing profile mod (the loader can't
+    // tell two same-folder mods apart).
+
+    [Fact]
+    public void GetBaseNameCollision_returns_null_when_no_mod_shares_the_base_name()
+    {
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var dmf = fx.AddContainerWithVersion("DMF"); // base folder 'DMF'
+        fx.Service.AddMod(profile.Id, dmf.Id, ModVersionPolicy.Latest);
+
+        var hit = fx.Service.GetBaseNameCollision(profile.Id, "OtherMod", excludeContainerId: null);
+
+        Assert.Null(hit);
+    }
+
+    [Fact]
+    public void GetBaseNameCollision_returns_the_colliding_entry_for_a_shared_base_name()
+    {
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var existing = fx.AddContainerWithVersion("DMF"); // base folder 'DMF'
+        fx.Service.AddMod(profile.Id, existing.Id, ModVersionPolicy.Latest);
+
+        var hit = fx.Service.GetBaseNameCollision(profile.Id, "DMF", excludeContainerId: null);
+
+        Assert.NotNull(hit);
+        Assert.Equal(existing.Id, hit!.ContainerId);
+    }
+
+    [Fact]
+    public void GetBaseNameCollision_excludes_the_given_container_id_the_re_add_case()
+    {
+        // A re-add resolves to the same container; the add flow excludes it, so
+        // the collision check returns null even though the base name matches.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var dmf = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, dmf.Id, ModVersionPolicy.Latest);
+
+        var hit = fx.Service.GetBaseNameCollision(profile.Id, "DMF", excludeContainerId: dmf.Id);
+
+        Assert.Null(hit);
+    }
+
+    [Fact]
+    public void GetBaseNameCollision_considers_disabled_mods()
+    {
+        // A disabled colliding mod could be enabled later, so it counts: the
+        // check considers ALL profile mods, not just enabled ones.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var disabled = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, disabled.Id, ModVersionPolicy.Latest);
+        fx.Service.SetModEnabled(profile.Id, disabled.Id, enabled: false);
+
+        var hit = fx.Service.GetBaseNameCollision(profile.Id, "DMF", excludeContainerId: null);
+
+        Assert.NotNull(hit);
+        Assert.Equal(disabled.Id, hit!.ContainerId);
+    }
+
+    [Fact]
+    public void GetBaseNameCollision_skips_a_mod_whose_base_name_cannot_be_resolved()
+    {
+        // A mod whose version folder is corrupted (zero/multiple subdirs) can't
+        // yield a base name; it is skipped silently (can't collide). Only a
+        // resolvable mod with the matching base name is returned.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var real = fx.AddContainerWithVersion("RealMod"); // base folder 'RealMod'
+        var bad = fx.Repo.CreateContainer(new UntrackedSource(), "BadMod");
+        fx.Repo.AddVersion(bad.Id, "1.0", dir =>
+        {
+            // A loose file at the version root, no base subdir.
+            File.WriteAllText(Path.Combine(dir, "loose.txt"), "x");
+        });
+        fx.Service.AddMod(profile.Id, real.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, bad.Id, ModVersionPolicy.Latest);
+
+        var hitReal = fx.Service.GetBaseNameCollision(profile.Id, "RealMod", excludeContainerId: null);
+        var hitBad = fx.Service.GetBaseNameCollision(profile.Id, "BadMod", excludeContainerId: null);
+
+        Assert.NotNull(hitReal);
+        Assert.Equal(real.Id, hitReal!.ContainerId);
+        Assert.Null(hitBad); // 'BadMod' has no resolvable base folder name
+    }
+
+    [Fact]
+    public void GetBaseNameCollision_returns_the_first_match_when_several_share_the_base_name()
+    {
+        // Two distinct containers seeded with the same base name (a hand-edit
+        // only; the import block forbids this in normal use): the first in
+        // profile order is returned (either is enough to refuse the import).
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var first = fx.AddContainerWithVersion("DMF");
+        var second = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, first.Id, ModVersionPolicy.Latest);
+        fx.Service.AddMod(profile.Id, second.Id, ModVersionPolicy.Latest);
+
+        var hit = fx.Service.GetBaseNameCollision(profile.Id, "DMF", excludeContainerId: null);
+
+        Assert.NotNull(hit);
+        Assert.Equal(first.Id, hit!.ContainerId);
+    }
+
+    [Fact]
+    public void GetBaseNameCollision_unknown_profile_throws_KeyNotFoundException()
+    {
+        using var fx = new ProfileServiceFixture();
+
+        Assert.Throws<KeyNotFoundException>(() =>
+            fx.Service.GetBaseNameCollision(Guid.NewGuid(), "DMF", excludeContainerId: null));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void GetBaseNameCollision_rejects_an_empty_or_whitespace_base_name(string baseName)
+    {
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+
+        Assert.Throws<ArgumentException>(() =>
+            fx.Service.GetBaseNameCollision(profile.Id, baseName, excludeContainerId: null));
     }
 }

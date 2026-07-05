@@ -232,21 +232,42 @@ mod id; GitHub owner/repo) via a pure parser. Local / untracked mods use the
 
 **Import flow:** adding a mod to the active profile goes through
 `IModImportService` (the UI never touches the filesystem). The import service
-resolves (or creates) the container for the source, then extracts a `.zip` /
-copies a folder into the repository-managed opaque version folder via
-`IModRepository.AddVersion`. Container dedup: Untracked by name, Nexus by mod
-id, GitHub by owner/repo. Version dedup: re-importing the same tag reuses its
-folder (refreshed); a new tag creates a new version + flips `isLatest`. The
-service returns `(containerId, versionString)`; the caller then adds the
-profile reference via `IProfileService.AddMod`. Remote acquisition (Nexus /
-GitHub API clients, auto-fetch) stays in Phase 4.
+validates the source structure (the source must contain exactly one base
+directory with a matching `<base>.mod` descriptor inside it), then resolves (or
+creates) the container for the source + extracts a `.zip` / copies a folder into
+the repository-managed opaque version folder via
+`IModRepository.AddVersion`. The validated base folder is **preserved** under
+`<versionFolder>/<base>/` (the folder import copies the folder itself, not its
+contents; the zip is validated to have a single top-level folder before
+extraction). Container dedup: Untracked by name, Nexus by mod id, GitHub by
+owner/repo. Version dedup: re-importing the same tag reuses its folder
+(refreshed); a new tag creates a new version + flips `isLatest`. The service
+returns `(containerId, versionString)`; the caller then adds the profile
+reference via `IProfileService.AddMod`. Remote acquisition (Nexus / GitHub API
+clients, auto-fetch) stays in Phase 4.
+
+**Base-name collision hard-block:** two mods with the same base folder name
+can't coexist in one profile (the mod loader can't tell them apart). Before
+importing, the add flow peeks the base name (`IModImportService.GetBaseName`)
+and the would-be container (`IModImportService.FindExistingContainer`), then
+asks `IProfileService.GetBaseNameCollision` whether any existing profile mod (a
+different container) resolves to the same base name. On a hit, the import is
+**refused**: nothing is created. The would-be container is excluded, so a re-add
+of a mod already in the profile (same container, `AddMod` idempotent) is not a
+collision.
 
 **Staging:** at launch (alongside regenerating `mods.lst`), Magos materializes
-the profile's mod root (the `--mod-path` dir) by symlinking `staged/<displayName>`
-to each enabled mod's resolved version folder. Like `mods.lst`, the mod root is
-a projection of the profile's mod-list metadata, regenerated each launch.
-**Symlinks, never copies** — the repository holds the files; `staged/` is a
-symlink projection.
+the profile's mod root (the `--mod-path` dir) by, for each enabled mod,
+discovering its base folder name (the single subdirectory inside the resolved
+version folder) and symlinking `staged/<baseName>` to
+`<versionFolder>/<baseName>/`. The base name, not the container's display name,
+is the link + `mods.lst` name: mods bake their folder name into their code, so
+the link must carry the base name for the mod's hardcoded paths to resolve. Like
+`mods.lst`, the mod root is a projection of the profile's mod-list metadata,
+regenerated each launch. Staging is a simple loop: base-name collisions are
+blocked at import time, so staging never sees two mods with the same base folder
+name in normal use. **Symlinks, never copies**: the repository holds the files;
+`staged/` is a symlink projection.
 
 **Startup cleanup:** `ModCleanup.PruneUnreferenced` runs once after composition,
 dropping version folders no profile references + removing empty containers.
