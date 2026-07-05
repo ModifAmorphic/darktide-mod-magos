@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Magos.Modificus.General;
 using Magos.Modificus.Integrations;
+using Magos.Modificus.Nxm;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.Mods;
 using Magos.Modificus.Steam;
@@ -59,6 +60,12 @@ public static class MagosComposition
         services.AddSteam();
         services.AddEnginseerClient();
         services.AddLauncher();
+        // The nxm scheme-handler plumbing: IPC server (single-instance via
+        // process enumeration, pipe bind degrades gracefully on failure), router
+        // + no-op handler defaults, and the platform OS registrar. The IPC
+        // server is bound + started after the provider is built (see
+        // StartNxmServer).
+        services.AddNxm();
 
         // UI surface. MainWindow is a singleton: the desktop lifetime installs
         // the resolved instance as desktop.MainWindow, and DialogService resolves
@@ -107,6 +114,16 @@ public static class MagosComposition
         // cannot launch until resolved (the launch-time Discover re-checks and
         // surfaces the escape-hatch when incomplete).
         RunStartupDiscovery(provider, loggerFactory);
+
+        // Start the nxm IPC server. Bind runs two checks: (1) single-instance via
+        // process enumeration, which throws NxmSingleInstanceException if another
+        // Magos is running (propagates out of Build() so the caller, App, shuts
+        // down before the window shows); and (2) the pipe bind, which degrades
+        // gracefully on IOException (the app continues without the IPC server).
+        // Intentionally NOT wrapped in a try/catch (unlike the best-effort prune
+        // + discovery above): a single-instance violation is fatal-by-design for
+        // this process. The pipe-bind degradation is handled inside Bind itself.
+        StartNxmServer(provider, loggerFactory.CreateLogger(nameof(MagosComposition)));
 
         return provider;
     }
@@ -196,5 +213,70 @@ public static class MagosComposition
         };
         timer.Tick += (_, _) => onTick();
         timer.Start();
+    }
+
+    /// <summary>
+    /// Binds + starts the nxm IPC server. <see cref="NxmIpcServer.Bind"/> runs
+    /// two separate checks: (1) single-instance via process enumeration, which
+    /// throws <see cref="NxmSingleInstanceException"/> if another Magos process
+    /// is running (this method rethrows it so the caller,
+    /// <c>App.OnFrameworkInitializationCompleted</c>, can shut down before the
+    /// main window shows); and (2) the IPC pipe bind, which is its own check
+    /// that degrades gracefully on <see cref="IOException"/> (a real pipe
+    /// problem, not another instance). On a successful bind the accept loop is
+    /// kicked off on a background task (fire-and-forget; process exit reclaims
+    /// the pipe). On a degraded bind, the loop is skipped and the app continues
+    /// without the IPC server (nxm click-to-download won't work this session;
+    /// everything else is unaffected).
+    /// </summary>
+    /// <remarks>
+    /// Called from <see cref="Build"/> after the provider is built. Throwing
+    /// (rather than returning a flag) on the single-instance violation keeps
+    /// <see cref="Build"/>'s signature unchanged and makes the violation an
+    /// explicit, unmissable signal at the call site. The composition root never
+    /// catches <see cref="NxmSingleInstanceException"/>, so it propagates to the
+    /// App. The pipe-bind degradation, by contrast, is non-fatal: the warning is
+    /// logged inside <see cref="NxmIpcServer.Bind"/> and this method simply skips
+    /// the accept loop when <see cref="NxmIpcServer.IsBound"/> is false.
+    /// </remarks>
+    private static void StartNxmServer(IServiceProvider provider, ILogger logger)
+    {
+        var server = provider.GetRequiredService<NxmIpcServer>();
+
+        // Bind runs Check 1 (process enumeration -> NxmSingleInstanceException on
+        // collision, fatal) and Check 2 (pipe ctor -> IOException degrades to a
+        // not-bound server with a warning logged, non-fatal).
+        server.Bind();
+
+        if (!server.IsBound)
+        {
+            // Degraded: Bind already logged the detailed warning (with the
+            // IOException). Skip the accept loop; the app continues without nxm
+            // IPC. Everything else (window, profiles, mods, launch) is unaffected.
+            logger.LogWarning(
+                "nxm IPC server is not running; nxm click-to-download from Nexus is unavailable this session.");
+            return;
+        }
+
+        // Kick off the accept loop. The cancellation token is captured for a
+        // future graceful-shutdown hook; for v1, process exit reclaims the pipe.
+        var cts = new CancellationTokenSource();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await server.RunAsync(cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected on shutdown.
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "The nxm IPC server accept loop exited unexpectedly.");
+            }
+        });
+
+        logger.LogInformation("nxm IPC server accept loop started.");
     }
 }

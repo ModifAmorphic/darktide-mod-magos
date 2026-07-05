@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Magos.Modificus.Nxm</RootNamespace>
+    <AssemblyName>Magos.Modificus.Nxm</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    AOT-friendly: the NXM handler exe references this library and publishes
+    native AOT. IsAotCompatible enables the trim/AOT analyzers on this library
+    so any non-AOT-safe code (reflection-based serialization, dynamic assembly
+    load, JSON) is flagged at build time. The handler path (the relay helper +
+    framing + parser) uses only raw byte / UTF-8 IO; the router / server /
+    registrar types are DI-activated only by the main app, never by the handler,
+    so the trimmer drops them from the handler's AOT closure.
+  -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <!--
+    Exposes the internal router / server / handler / registrar implementations
+    to the test assembly so they can be unit-tested directly without widening
+    the library's public surface. The implementations stay internal and are
+    also exercised through their interfaces via DI in the service-collection
+    tests.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Magos.Modificus.Nxm.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The Microsoft.Extensions.* packages ride the .NET 10 LTS versions
+      (10.0.9 is the current latest stable), matching the codebase convention
+      for libraries with DI seams.
+    -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,18 @@
+namespace Magos.Modificus.Nxm;
+
+/// <summary>
+/// Parses a raw <c>nxm://</c> URL and dispatches it to the appropriate handler.
+/// The IPC server delegates every incoming connection to the router; the router
+/// owns URL semantics (parse, classify, dispatch) and catches handler failures
+/// at the boundary so a single bad handler invocation cannot kill the accept
+/// loop.
+/// </summary>
+public interface INxmRouter
+{
+    /// <summary>
+    /// Parses <paramref name="rawUrl"/> and dispatches to the resolved handler
+    /// (mod download, OAuth callback). Collection URLs and unparseable URLs are
+    /// logged and dropped. Handler exceptions are caught and logged.
+    /// </summary>
+    Task RouteAsync(string rawUrl, CancellationToken ct = default);
+}

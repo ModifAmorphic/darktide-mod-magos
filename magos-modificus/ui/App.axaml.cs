@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Magos.Modificus.General;
+using Magos.Modificus.Nxm;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Preferences;
 using Magos.Modificus.UI.ViewModels;
@@ -27,8 +28,31 @@ public class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        var services = MagosComposition.Build();
-        var logger = services.GetRequiredService<ILogger<App>>();
+        IServiceProvider services;
+        ILogger<App> logger;
+
+        try
+        {
+            services = MagosComposition.Build();
+            logger = services.GetRequiredService<ILogger<App>>();
+        }
+        catch (NxmSingleInstanceException ex)
+        {
+            // Single-instance enforcement: another Magos process is already
+            // running. Exit before any window shows. Surface the reason on
+            // stderr (the provider isn't available here since Build threw).
+            //
+            // Environment.Exit (not desktopLifetime.Shutdown): Shutdown called
+            // from inside OnFrameworkInitializationCompleted breaks Avalonia's
+            // MainLoop (StartCore tries to push a frame after the dispatcher
+            // shut down -> unhandled InvalidOperationException -> SIGABRT).
+            // At this point nothing important is initialized (no window, no
+            // background tasks, the check is first in NxmIpcServer.Bind before
+            // the pipe or accept loop), so an abrupt exit is safe.
+            Console.Error.WriteLine($"Magos is already running; exiting. ({ex.Message})");
+            Environment.Exit(1);
+            return; // unreachable (Environment.Exit terminates); satisfies definite-assignment.
+        }
 
         // A one-off startup snapshot for the startup log + applying initial
         // preferences before any window shows. This is NOT a cache: every
