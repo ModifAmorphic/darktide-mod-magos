@@ -5,16 +5,16 @@ top of the Enginseer runtime. It owns profiles, mod staging, load order,
 dependency resolution, mod-source integrations (Nexus Mods, GitHub Releases,
 Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
 
-> **Status: Phases 0–2 complete; Phase 3 Tracks A–D wired.** The foundation +
-> all backend libraries are implemented: Profiles, Steam, Integrations,
-> Enginseer-client (Phase 1) + Mods (Phase 2). Phase 3 wires the UI: Track A
-> (app shell + profile management: dropdown switch, persisted active profile,
-> create/rename/delete dialog, switch-blocked-while-running), Track D (global
-> Preferences: theme + font scale + language, with dynamic culture switching),
-> Track B (the mod-list UI: view, enable/disable, reorder, per-mod version
-> policy, local folder/`.zip` import), and Track C (Launch flow + Settings
-> window + discovery escape-hatch). The Launcher is a stub (Phase 5). Target
-> architecture:
+> **Status: Phases 0–3 complete.** The foundation + all backend libraries are
+> implemented (Profiles, Steam, Integrations, Enginseer-client from Phase 1;
+> Mods from Phase 2) and the Phase 3 UI is in place across all four tracks:
+> Track A (app shell + profile management: dropdown switch, persisted active
+> profile, create/rename/delete dialog, switch-blocked-while-running), Track D
+> (global Preferences: theme + font scale + language, with dynamic culture
+> switching), Track B (the mod-list UI: view, enable/disable, reorder, per-mod
+> version policy, local folder/`.zip` import), and Track C (Launch flow +
+> Settings window + discovery escape-hatch). The Launcher is a stub (Phase 5).
+> Target architecture:
 > [`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md).
 
 ## Tech stack

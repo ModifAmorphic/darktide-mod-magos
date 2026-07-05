@@ -5,7 +5,7 @@
 > container. Status: implemented (Phase 0; app-state store added in Phase 3).
 
 The composition root (`magos-modificus/ui/MagosComposition.cs`) calls into this
-library first: before any domain library: to load `MagosConfig` and build the
+library first, before any domain library, to load `MagosConfig` and build the
 logger the rest of the app shares.
 
 ## Public surface
@@ -39,14 +39,17 @@ public static class LoggingBootstrap
 ### `IConfigLoader` / `ConfigLoader`
 
 Loads `MagosConfig` from JSON with full defaults, and (Phase 3 Track D) writes it
-back through `Save`. A missing or partial file yields a fully-usable config on
-load: every field has a platform-appropriate default (see [config](config.md)).
+back through `Save`. Consumers inject `IConfigLoader` and re-read on each
+operation (config is read live from disk, not cached at startup; #31), so runtime
+writes via the Settings window or mod-repo relocation are visible immediately.
+A missing or partial file yields a fully-usable config on load: every field has
+a platform-appropriate default (see [config](config.md)).
 
 ```csharp
 public interface IConfigLoader
 {
     MagosConfig Load();
-    void Save(MagosConfig config);   // Phase 3 Track D: write-back
+    void Save(MagosConfig config);   // Phase 3 Track D: atomic write-back
 }
 
 public sealed class ConfigLoader : IConfigLoader
@@ -64,16 +67,21 @@ public sealed class ConfigLoader : IConfigLoader
   parent directory exists, binds the JSON file onto the defaults via
   `Microsoft.Extensions.Configuration` (`AddJsonFile(optional: true)`); if the
   directory is absent (a fresh first run), skips straight to the defaults rather
-  than letting `SetBasePath` throw. Unset keys keep their defaults.
+  than letting `SetBasePath` throw. Unset keys keep their defaults. Cheap to
+  call per op (the file is tiny); the live-read model avoids a startup cache that
+  would only create staleness.
 - `Save(config)` (Phase 3 Track D): writes the whole `MagosConfig` back to the
   JSON file via `System.Text.Json` (config is machine-managed; rewriting it
   wholesale is fine and simpler than per-section merges). The `ThemeMode` enum
   is serialized as a string (camelCase) so the persisted file is human-readable
   and stable across enum renumbering. The parent directory is created if missing
-  (first-run safe). Writes are best-effort: a persistence failure (unwritable
-  dir, full disk) is swallowed rather than crashing the app mid-interaction (the
-  in-memory config already reflects the change; the persisted copy is
-  non-critical).
+  (first-run safe). **Atomic publish:** serialize to a temp file in the same
+  directory as the target, then `File.Move(overwrite: true)` renames it into
+  place (same-directory guarantees same-volume, so the rename is atomic); a crash
+  mid-write never leaves a half-written config, and concurrent `Load()` callers
+  see either the prior file or the new one, never truncated JSON. Writes are
+  best-effort: a persistence failure (unwritable dir, full disk) is swallowed
+  rather than crashing the app mid-interaction.
 - `DefaultConfigPath()`: `<LocalApplicationData>/Magos Modificus/config.json`
   (`%LOCALAPPDATA%` on Windows, `~/.local/share` on Linux).
 
@@ -116,26 +124,29 @@ public sealed class AppStateStore : IAppStateStore
 ```csharp
 public static IServiceCollection AddGeneral(
     this IServiceCollection services,
-    MagosConfig config,
     ILoggerFactory loggerFactory);
 ```
 
-`AddGeneral(config, loggerFactory)` is called by the composition root **after**
-config is loaded and the logger built (both are constructed outside DI because
-DI itself needs them). It registers:
+`AddGeneral(loggerFactory)` is called by the composition root **after** config is
+loaded and the logger built (both are constructed outside DI because DI itself
+needs them). It registers:
 
-- `AddSingleton(config)`: the loaded `MagosConfig` (other libraries resolve this).
 - `AddSingleton(loggerFactory)`: the Serilog-backed `ILoggerFactory`.
 - `AddLogging()`: wires `ILogger<T>` resolution through the factory.
-- `AddSingleton<IConfigLoader, ConfigLoader>()`: so a re-load is available if
-  ever needed (the path is re-resolved to the default location).
+- `TryAddSingleton<IConfigLoader, ConfigLoader>()`: the live-read config loader.
+  `TryAdd` (not `Add`) so the composition root pre-registers the same loader
+  instance it used for its one-off startup snapshot (one shared live-read
+  singleton) before calling `AddGeneral`; the typed default is the fallback for
+  hosts that do not pre-register (tests, smoke harnesses).
 - `TryAddSingleton<IAppStateStore, AppStateStore>()`: the runtime app-state
   store. `TryAdd` (not `Add`) so a test or host may pre-register an override
   (e.g. an in-memory or temp-path store) before `AddGeneral` runs.
 
-`config` and `loggerFactory` are constructed objects passed in, not overridable
-from the container; `IAppStateStore` is the one seam here (overridable via
-pre-registration).
+`MagosConfig` is intentionally **not** registered as a singleton here: config is
+read live from disk via `IConfigLoader` on each access (the startup snapshot used
+to build the logger is a one-off; logging config does not change at runtime in
+v1). `loggerFactory` is a constructed object passed in; `IConfigLoader` +
+`IAppStateStore` are the seams (overridable via pre-registration).
 
 ## Dependencies
 
@@ -153,7 +164,8 @@ round-trip, parent-dir creation, sibling-section preservation, enum-as-string
 serialization), `AppStateStore` (round-trip + first-run + corrupt-file safety +
 the app-data default path), `LoggingBootstrap` (level parsing, truncation,
 file/dir creation), and the `AddGeneral` DI wiring (including the `TryAdd`
-`IAppStateStore` override).
+`IConfigLoader` + `IAppStateStore` overrides, so the composition root + tests
+may pre-register their own instances).
 
 ```sh
 dotnet test magos-modificus/magos-modificus.sln -c Release

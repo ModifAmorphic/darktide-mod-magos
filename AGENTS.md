@@ -10,10 +10,11 @@ launches the game modded via DLL injection (no game-directory footprint, no
 bundle-database patching) and stays out of the way for vanilla play (launch
 from Steam = unmodified game).
 
-Architecture: a **Hybrid** — Enginseer (runtime): a Rust discovery pure-library
+Architecture: a **Hybrid**: Enginseer (runtime), a Rust discovery pure-library
 (C-ABI staticlib) + a C live-game shell, linked into one DLL, delivered by
-`CreateRemoteThread`. Magos Modificus (the mod manager app) is planned, not yet
-built. See `docs/architecture/` for the full architecture.
+`CreateRemoteThread`; and Magos Modificus, the mod manager app (.NET 10 +
+Avalonia 12), built through Phase 3 (the app is user-usable; Phase 4 + 5
+remain). See `docs/architecture/` for the full architecture.
 
 ## Baseline (read before planning)
 
@@ -28,23 +29,15 @@ Requirements, architecture, and technology choices are made fresh.
 ## Repository state
 
 - **`main`** — production. Enginseer (the injected modding runtime + launcher) is
-  merged as the production seed; Magos Modificus has the backend libraries
-  implemented (Phases 1–2) and the Phase 3 UI under construction: Track A (the app
-  shell + profile management: dropdown switch, persisted active profile,
-  create/rename/delete dialog, switch-blocked-while-running), Track D (global
-  Preferences: theme + font scale + language, with the i18n infrastructure:
-  `Strings.resx` + `LocalizationService` for dynamic culture switching, all Track
-  A UI strings backfilled to resource keys), Track B (the mod-list UI: view
-  mods with source/version badges, enable/disable, remove-with-confirm, reorder,
-  per-mod Latest/Pinned policy, auto-sort identity stub, and local folder/`.zip`
-  import via file picker + drag-and-drop, over the `ModSource` + raw-string version
-  model + `IModImportService`), and Track C (Launch: `LaunchCommand` ->
-  `IEnginseerLaunchService.Launch` -> branch on `LaunchResult.Status` with the
-  discovery escape-hatch modal for `DiscoveryIncomplete` + a Settings window
-  editing `MagosConfig.Discovery` user overrides + `ModsFolder` live-relocate,
-  over the `DiscoveryConfig` + `SteamService.Discover()` validate+heal+persist
-  pipeline (runs at startup non-blocking + at launch blocking) +
-  `IModRepository.Relocate/Rescan`) are wired; the Launcher is a stub (Phase 5).
+  merged as the production seed; Magos Modificus is built through Phase 3 (all
+  four tracks merged: Track A the app shell + profile management, Track D global
+  Preferences + i18n, Track B the mod-list UI + local import, Track C the Launch
+  flow + Settings window + discovery escape-hatch). The app is user-usable:
+  create profiles, import mods (folder/`.zip`, Nexus/GitHub/Untracked), manage
+  the mod list (enable/disable/reorder/policy/remove), configure Settings
+  (discovery paths + mod-repo location), and launch modded Darktide. The
+  Launcher is a stub (Phase 5). Backend libraries: Profiles, Mods (the unified
+  mod repository), Steam, Integrations, Enginseer-client, General.
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -197,9 +190,12 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
 ```
 - The composition root is `magos-modificus/ui/MagosComposition.cs` (loads
   config → builds the Serilog logger → wires every `Add<Library>()` → runs the
-  startup `ModCleanup.PruneUnreferenced` pass).
+  startup `ModCleanup.PruneUnreferenced` pass + the startup
+  `ISteamService.Discover()` validate/heal/persist pass).
 - **Config** is `MagosConfig` (`magos-modificus/config/`) — defaults under the
-  OS local-app-data dir; loaded from JSON by `general/ConfigLoader.cs`. Missing
+  OS local-app-data dir; loaded live from JSON by `general/ConfigLoader.cs`
+  (consumers inject `IConfigLoader` and re-read per op, so runtime config
+  changes via the Settings window take effect immediately; #31). Missing
   file/dir → defaults (first-run safe).
 - **Logging** is Serilog (console + file) bridged into
   `Microsoft.Extensions.Logging`; honors `Logging:Level` + `Logging:LogFile`.
@@ -212,34 +208,31 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   collision hard-block (`GetBaseNameCollision`; two same-folder mods can't
   coexist in a profile), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
   **Integrations** (GitHub Releases client), **Enginseer-client** (the launch
-  façade), **Mods** (Phase 1 of the storage refactor: the unified
-  `IModRepository` — UUID containers per (source, identity), opaque-ID version
-  subfolders, per-container `container.json` manifests, in-memory index rebuilt
-  from a scan, `PruneUnreferenced` GC; the version-policy model
-  `ModVersionPolicy`; the mod-source provenance model `ModSource`
+  façade), **Mods** (the unified `IModRepository`: UUID containers per
+  (source, identity), opaque-ID version subfolders, per-container
+  `container.json` manifests, in-memory index rebuilt from a scan,
+  `PruneUnreferenced` GC; the version-policy model `ModVersionPolicy`; the
+  mod-source provenance model `ModSource`
   (`UntrackedSource`/`NexusSource`/`GitHubSource`) + `ModSourceParser`; the
   local-import service `IModImportService`). **General** carries cross-cutting
   infra: logging, `ConfigLoader`, and `AppStateStore` (the active-profile id,
-  persisted to `app-state.json`). **Phase 3 Track A UI** (the shell + profile
-  management) is wired, with an `IProfileSession` (ui/) as the single authority
-  for the active profile, the switch-block gate, and the live running-state.
-  **Phase 3 Track D** (global Preferences + i18n infrastructure) is wired.
-  **Phase 3 Track B** (the mod-list UI: view mods with source/version badges,
-  enable/disable, remove-with-confirm, reorder, per-mod Latest/Pinned policy,
-  auto-sort identity stub, and local folder/`.zip` import via file picker +
-  drag-and-drop, joined to containers via `IModRepository` by `ContainerId`)
-  is wired. **Phase 3 Track C** (Launch: `LaunchCommand` ->
-  `IEnginseerLaunchService.Launch` -> branch on `LaunchResult.Status`
-  (`Launched` -> status note + immediate `IsGameRunning` refresh;
-  `DiscoveryIncomplete` -> the focused discovery escape-hatch modal over the
-  shared `DiscoveryField` descriptor; `Error` -> modal alert) + a Settings
-  window editing `MagosConfig.Discovery` user overrides (per-field
+  persisted to `app-state.json`). **Phase 3** (all four tracks) is done: Track A
+  the shell + profile management (with an `IProfileSession` (ui/) as the single
+  authority for the active profile, the switch-block gate, and the live
+  running-state), Track D global Preferences + i18n infrastructure, Track B the
+  mod-list UI (view mods with source/version badges, enable/disable,
+  remove-with-confirm, reorder, per-mod Latest/Pinned policy, auto-sort identity
+  stub, and local folder/`.zip` import via file picker + drag-and-drop, joined
+  to containers via `IModRepository` by `ContainerId`), and Track C Launch
+  (`LaunchCommand` -> `IEnginseerLaunchService.Launch` -> branch on
+  `LaunchResult.Status` (`Launched` -> status note + immediate `IsGameRunning`
+  refresh; `DiscoveryIncomplete` -> the focused discovery escape-hatch modal
+  over the shared `DiscoveryField` descriptor; `Error` -> modal alert) + a
+  Settings window editing `MagosConfig.Discovery` user overrides (per-field
   read-modify-save) + `ModsFolder` live-relocate via the atomic
-  `IModRepository.Relocate` (move + save + rescan in one call, rolling the move
-  back on save failure) over the `DiscoveryConfig` + `SteamService.Discover()`
-  validate+heal+persist pipeline (runs at startup non-blocking + at launch
-  blocking) + `IModRepository.Relocate/Rescan`) is wired; the **Launcher** is a stub
-  (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
+  `IModRepository.Relocate` over the `DiscoveryConfig` +
+  `SteamService.Discover()` validate+heal+persist pipeline). The **Launcher**
+  is a stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
 
 ## Key docs
 

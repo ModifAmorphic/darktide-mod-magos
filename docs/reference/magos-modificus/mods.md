@@ -3,14 +3,13 @@
 > The unified mod repository: one UUID container per `(source, identity)`,
 > holding opaque-ID version subfolders indexed by per-container manifests.
 > Plus the version-policy model, the mod-source provenance model, and the
-> local-import service. Status: implemented (Phase 1 of the shared-mod-storage
-> refactor).
+> local-import service. Status: implemented (the unified mod repository
+> replaced the earlier shared-store + per-profile allocation model in #30).
 
 A mod is stored exactly once, in the repository, keyed by a UUID container per
 `(source-type, identity)`. Profiles reference a mod by `(containerId, policy)`
 and never store mod files of their own. At stage time the profile resolves the
-policy to a version folder and symlinks into the repository. This eliminates the
-old divergence / allocation model entirely.
+policy to a version folder and symlinks into the repository.
 
 ## Public surface
 
