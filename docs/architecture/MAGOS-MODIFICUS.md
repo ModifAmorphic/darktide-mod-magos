@@ -8,15 +8,16 @@ Mods, Steam), and the "Launch Darktide" button that invokes the Enginseer
 launcher. Enginseer does the injection + mod loading; Magos Modificus owns the
 management experience around it.
 
-> **Status: Phases 0–2 complete; Phase 3 UI in progress.** The foundation
-> (.NET 10 + Avalonia 12 layout, DI composition, structured logging, global
-> config schema/loader) plus the backend libraries are built: Profiles, Steam,
-> Integrations, Enginseer-client (Phase 1) + Mods (Phase 2). The Phase 3 UI is
-> wired: Track A (app shell + profile management), Track D (global Preferences +
-> i18n), Track B (the mod-list UI + local import), and Track C (Launch wiring +
-> Settings window + discovery escape-hatch). The **Launcher** is a stub
-> (Phase 5). Enginseer (the runtime it builds on) is built; see
-> `docs/architecture/ENGINSEER.md`.
+> **Status: Phases 0–3 complete.** The foundation (.NET 10 + Avalonia 12 layout,
+> DI composition, structured logging, global config schema/loader) plus the
+> backend libraries are built: Profiles, Steam, Integrations, Enginseer-client
+> (Phase 1) + Mods (Phase 2). The Phase 3 UI is in place across all four tracks:
+> Track A (app shell + profile management), Track D (global Preferences + i18n),
+> Track B (the mod-list UI + local import), and Track C (Launch wiring + Settings
+> window + discovery escape-hatch). The app is user-usable: create profiles,
+> import mods, manage the mod list, configure Settings, and launch modded
+> Darktide. The **Launcher** is a stub (Phase 5). Enginseer (the runtime it
+> builds on) is built; see `docs/architecture/ENGINSEER.md`.
 
 ## In scope for this document
 
@@ -89,30 +90,41 @@ through a registered library interface. The UI registers only its own surface
 
 `MagosComposition.Build()` runs this sequence, in order:
 
-1. **Load config** — `new ConfigLoader().Load()` produces a fully-defaulted
-   `MagosConfig` (defaults + JSON overrides; first-run safe). Logging needs this
-   first.
-2. **Build the logger** — `LoggingBootstrap.CreateLoggerFactory(config)`
+1. **Config loader**: `new ConfigLoader()`, registered as the live-read
+   `IConfigLoader` singleton (one shared instance). The startup snapshot is a
+   one-off `Load()` to build the logger; every consumer thereafter re-reads the
+   current disk state per op via `IConfigLoader.Load()` (config is tiny; a
+   startup cache would only create staleness for the Settings window + mod-repo
+   relocation, which write config at runtime; #31).
+2. **Build the logger**: `LoggingBootstrap.CreateLoggerFactory(config)`
    (Serilog console + file, level-honored, truncated on startup). Both config
    and the logger are constructed **outside** DI because DI itself needs them.
-3. **Compose services** — `new ServiceCollection()`, then the `Add<Library>()`
+3. **Compose services**: `new ServiceCollection()`, then the `Add<Library>()`
    extensions in their real order:
-   - `AddGeneral(config, loggerFactory)` — registers the config singleton, the
-     logger factory, `AddLogging()`, and the config loader.
-   - `AddMods()` — the unified mod repository + import service (called explicitly here and
+   - `AddSingleton<IConfigLoader>(loader)`: pre-registered before `AddGeneral`
+     so the same live-read instance is shared.
+   - `AddGeneral(loggerFactory)`: registers the logger factory, `AddLogging()`,
+     and the runtime app-state store. `MagosConfig` is intentionally NOT
+     registered as a singleton (config is read live via `IConfigLoader`).
+   - `AddMods()`: the unified mod repository + import service (called explicitly here and
      idempotently again inside `AddProfiles()`, so the store is discoverable at
      the root and `IProfileService` always resolves its staging dependency).
-   - `AddProfiles()` — profile service + the `SymlinkCreator` staging seam.
-   - `AddIntegrations()` — the typed GitHub HTTP client.
-   - `AddSteam()` — Steam discovery + the platform process-lookup seam.
-   - `AddEnginseerClient()` — the launch façade + the process-launcher seam.
-   - `AddLauncher()` — the slim profile launcher stub (Phase 5).
-   - `AddTransient<MainWindow>()` + `AddSingleton<MainViewModel>()` — the UI
+   - `AddProfiles()`: profile service + the `SymlinkCreator` staging seam.
+   - `AddIntegrations()`: the typed GitHub HTTP client.
+   - `AddSteam()`: Steam discovery + the platform process-lookup seam.
+   - `AddEnginseerClient()`: the launch façade + the process-launcher seam.
+   - `AddLauncher()`: the slim profile launcher stub (Phase 5).
+   - `AddSingleton<MainWindow>()` + `AddSingleton<MainViewModel>()`: the UI
      surface.
-4. **Build** — `BuildServiceProvider()`.
-5. **Startup prune** — `ModCleanup.PruneUnreferenced` runs once (best-effort,
+4. **Build**: `BuildServiceProvider()`.
+5. **Startup prune**: `ModCleanup.PruneUnreferenced` runs once (best-effort,
    logged + swallowed on failure) to drop repository versions no profile
    references + empty containers.
+6. **Startup discovery**: `ISteamService.Discover()` runs once (best-effort +
+   non-blocking, logged + swallowed on failure) to validate + heal + persist the
+   discovery overrides up front, so the Settings window shows resolved paths
+   rather than blanks. Missing fields block launch (re-checked at launch), not
+   app startup.
 
 **The DI contract:** each library exposes one `Add<Library>()` extension and
 accepts only interfaces or primitives (never concrete UI models). Supporting

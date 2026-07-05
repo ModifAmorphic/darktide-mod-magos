@@ -3,8 +3,9 @@
 > Profile + per-profile mod-list management: the profile data model, its on-disk
 > persistence, and the projection of the mod list into a staged mod root
 > (symlinks to the repository's resolved version folders) + `mods.lst` for the
-> Enginseer runtime. Status: implemented (Phase 1 of the shared-mod-storage
-> refactor).
+> Enginseer runtime. Status: implemented (the unified mod repository replaced
+> the earlier shared-store + per-profile allocation model in #30; staging now
+> symlinks into the repository rather than copying).
 
 A profile owns its own mod list, mod settings, and load order. The profile's
 staged mod root is what Magos passes to the Enginseer launcher as `--mod-path`;
@@ -70,8 +71,8 @@ Method behavior:
   repository holds the files; staging symlinks to them). Idempotent: re-adding a
   `containerId` already in the list is a no-op (order/enabled/policy untouched).
 - `SetModPolicy(id, containerId, policy)` — records the new policy. Resolution
-  happens at stage time, so there is no on-disk transition (no diverged copy to
-  reconcile; the old model's share/diverge branch is gone). A `PinnedPolicy` is
+  happens at stage time, so there is no on-disk transition (the policy is just
+  metadata; `PrepareModRoot` re-resolves on the next launch). A `PinnedPolicy` is
   validated: its `VersionId` must reference a version present on the container,
   else `ArgumentException` (the UI dropdown can't produce a bad id; this guards
   programmatic / stale-id calls). `LatestPolicy` needs no check.

@@ -11,11 +11,11 @@ way for vanilla play (launch from Steam = the unmodified game).
   one DLL, delivered by `CreateRemoteThread`; the C shell stages the
   **mod loader** — the runtime-controlled Lua loader that loads DMF + user mods.
   See `docs/architecture/ENGINSEER.md` for the full subcomponent breakdown.
-- **Magos Modificus — `magos-modificus/`** (Phases 0–2 built): the user-facing
-  app — staging-directory management, load order, profiles, dependency
-  resolution, the "Launch Modded" button. The backend libraries are implemented;
-  the UI is still the bare Phase-0 window (Phase 3). See
-  [`MAGOS-MODIFICUS.md`](MAGOS-MODIFICUS.md) for the target architecture.
+- **Magos Modificus (`magos-modificus/`)** (Phases 0–3 built): the user-facing
+  app: staging-directory management, load order, profiles, dependency
+  resolution, the "Launch Modded" button. The backend libraries + the UI are
+  implemented (the app is user-usable); the Launcher is a stub (Phase 5). See
+  [`MAGOS-MODIFICUS.md`](MAGOS-MODIFICUS.md) for the architecture.
 - **DMF + user mods** (Lua, not our code): the Darktide-Mod-Framework Lua
   files, preserved as-is; only the harness is replaced. Loaded by the mod loader
   at runtime, from the user-controlled mod root (`--mod-path`) — distinct from

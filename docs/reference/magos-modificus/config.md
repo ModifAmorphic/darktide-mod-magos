@@ -38,7 +38,7 @@ public sealed class MagosConfig
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `Logging` | see `LoggingConfig` | Log level + file (consumed by `LoggingBootstrap`). |
-| `ProfilesBaseFolder` | `<app-data>/profiles` | Where profiles, per-profile mods, and profile settings are stored. |
+| `ProfilesBaseFolder` | `<app-data>/profiles` | Where profiles and per-profile settings are stored (mods live in `ModsFolder`; see [mods](mods.md)). |
 | `ModsFolder` | `<app-data>/mods` | The global mod store (see [mods](mods.md)). |
 | `EnginseerRuntimeDir` | `<app-data>/enginseer` | Where `magos_launcher.exe`, `magos_shell.dll`, and `mod_loader/` live (consumed by [enginseer-client](enginseer-client.md)). |
 | `Discovery` | see `DiscoveryConfig` | User-supplied discovery overrides (Steam / Darktide / compatdata / Proton paths). Validated on disk + healed from the discoverer + persisted by `SteamService.Discover()`. Phase 3 Track C. |
