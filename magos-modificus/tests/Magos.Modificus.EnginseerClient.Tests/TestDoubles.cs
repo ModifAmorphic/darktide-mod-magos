@@ -72,6 +72,7 @@ internal sealed class FakeProfileService : IProfileService
     public void AddMod(Guid id, Guid containerId, ModVersionPolicy policy) => throw new NotSupportedException();
     public void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy) => throw new NotSupportedException();
     public void RemoveMod(Guid id, Guid containerId) => throw new NotSupportedException();
+    public ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId) => throw new NotSupportedException();
 }
 
 /// <summary>Hand-rolled test double for <see cref="ISteamService"/>.</summary>

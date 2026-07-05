@@ -54,7 +54,8 @@ internal sealed class WindowsSteamDiscoverer : ISteamDiscoverer
         var libraries = _core.ReadLibraries(resolved.Path, warnings);
         var darktide = _core.FindDarktide(libraries);
 
-        var status = StatusForWindows(resolved.Path, darktide);
+        var status = SteamDiscoveryCore.ComputeStatus(
+            _options.Platform, resolved.Path, darktide, compatdataPath: null, protonBinaryPath: null);
         _logger.LogInformation(
             "Windows discovery: {Status} (steam={Steam}, darktide={Darktide}).",
             status, resolved.Path, darktide ?? "(missing)");
@@ -69,9 +70,4 @@ internal sealed class WindowsSteamDiscoverer : ISteamDiscoverer
             Status: status,
             Warnings: warnings);
     }
-
-    private static DiscoveryStatus StatusForWindows(string? steam, string? darktide) =>
-        steam is null ? DiscoveryStatus.Failed
-        : darktide is null ? DiscoveryStatus.Partial
-        : DiscoveryStatus.Complete;
 }

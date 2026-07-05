@@ -30,6 +30,16 @@ public sealed class MagosConfig
     /// </summary>
     public string EnginseerRuntimeDir { get; set; } = AppPaths.DefaultEnginseerRuntimeDir;
 
+    /// <summary>
+    /// User-supplied discovery overrides. <c>SteamService.Discover()</c> reads
+    /// these live per call (via <see cref="General.IConfigLoader"/>), validates
+    /// each field's path on disk, heals the missing/non-existent ones from the
+    /// platform discoverer, and persists ONLY the healed fields back here so
+    /// the next call is a fast validation. See
+    /// <see cref="DiscoveryConfig"/> for the per-field semantics.
+    /// </summary>
+    public DiscoveryConfig Discovery { get; set; } = new();
+
     /// <summary>External-service (mod-source) integration settings.</summary>
     public IntegrationsConfig Integrations { get; set; } = new();
 

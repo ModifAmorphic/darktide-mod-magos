@@ -40,13 +40,20 @@ public sealed record ImportModRequest
 /// <summary>
 /// The outcome of a confirmed import modal: the parsed canonical
 /// <see cref="ModSource"/> (Local / Nexus / GitHub, URL resolved to identity) +
-/// the raw version string the user typed. A cancelled modal yields <c>null</c>
-/// (the caller stops the batch). The version is a raw release tag (arbitrary
-/// GitHub / Nexus string), never parsed or normalized.
+/// the raw version string the user typed + the chosen version policy (Latest or
+/// Pinned). A cancelled modal yields <c>null</c> (the caller stops the batch).
+/// The version is a raw release tag (arbitrary GitHub / Nexus string), never
+/// parsed or normalized.
 /// </summary>
 /// <param name="Source">The parsed canonical source. <see cref="UntrackedSource"/>
 /// for an untracked import; <see cref="NexusSource"/> / <see cref="GitHubSource"/>
 /// when the user supplied a URL the parser resolved.</param>
 /// <param name="Version">The raw release tag string (e.g. <c>"1.2"</c>,
 /// <c>"v2.0.1"</c>). <see cref="string.Empty"/> for a local / untracked import.</param>
-public sealed record ImportModResult(ModSource Source, string Version);
+/// <param name="Policy">The chosen version policy: <see cref="LatestPolicy"/>
+/// (the default) tracks the newest release; <see cref="PinnedPolicy"/> freezes
+/// the profile entry to the version being imported. For Pinned, the policy
+/// carries an empty <see cref="PinnedPolicy.VersionId"/> here (the modal does not
+/// know the opaque version id; the add flow substitutes the id returned by
+/// <c>IModImportService.Import</c>).</param>
+public sealed record ImportModResult(ModSource Source, string Version, ModVersionPolicy Policy);

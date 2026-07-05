@@ -5,15 +5,16 @@ top of the Enginseer runtime. It owns profiles, mod staging, load order,
 dependency resolution, mod-source integrations (Nexus Mods, GitHub Releases,
 Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
 
-> **Status: Phases 0–2 complete; Phase 3 Track A in progress.** The foundation +
+> **Status: Phases 0–2 complete; Phase 3 Tracks A–D wired.** The foundation +
 > all backend libraries are implemented: Profiles, Steam, Integrations,
-> Enginseer-client (Phase 1) + Mods (Phase 2). Phase 3 Track A wires the
-> UI: milestone 1 landed the app shell (top bar + status strip, live
-> profile/game-running state) and milestone 2 makes the profile controls work
-> (dropdown switch + persisted active profile + a "Manage profiles…" create /
-> rename / delete dialog, switch-blocked-while-running). Mod-list UI (Track B)
-> and Launch behavior (Track C) are still pending; the Launcher is a stub
-> (Phase 5). Target architecture:
+> Enginseer-client (Phase 1) + Mods (Phase 2). Phase 3 wires the UI: Track A
+> (app shell + profile management: dropdown switch, persisted active profile,
+> create/rename/delete dialog, switch-blocked-while-running), Track D (global
+> Preferences: theme + font scale + language, with dynamic culture switching),
+> Track B (the mod-list UI: view, enable/disable, reorder, per-mod version
+> policy, local folder/`.zip` import), and Track C (Launch flow + Settings
+> window + discovery escape-hatch). The Launcher is a stub (Phase 5). Target
+> architecture:
 > [`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md).
 
 ## Tech stack
@@ -35,7 +36,8 @@ magos-modificus/
   Directory.Build.props           shared MSBuild properties (net10.0, nullable)
   config.example.json             sample global config (schema reference)
   ui/                             Magos.Modificus.UI       Avalonia executable + DI composition root
-                                                            (Phase 3 Track A: shell + profile management)
+                                                            (Phase 3 Tracks A–D: shell + profiles, Preferences,
+                                                             mod-list UI, Launch + Settings)
   general/                        Magos.Modificus.General  cross-cutting infra: logging, config loader,
                                                             app-state store, DI
   config/                         Magos.Modificus.Config   the MagosConfig schema + defaults (POCO)
@@ -103,12 +105,13 @@ copying would duplicate repository files). On-disk layout:
 <ProfilesBaseFolder>/<guid>/
   profile.json                       # metadata + mod list (entries carry ContainerId + Policy)
   staged/                            # the staged mod root = the --mod-path (REGENERATED each launch)
-    <displayName>                    #   symlink → repository version folder (Latest → isLatest; Pinned(versionId) → matching Folder)
+    <baseName>                       #   symlink → <versionFolder>/<baseName>/ (Latest → isLatest; Pinned(versionId) → matching Folder); the base name, not the container display name
     mods.lst                         #   successfully-staged enabled mods, in order
 ```
 
 `Profiles` owns the staging seam (`ProfileService.PrepareModRoot` clears +
-rebuilds `staged/`, then writes `mods.lst`); `Mods` owns the repository
+rebuilds `staged/`, discovering each enabled mod's base folder name inside its
+resolved version folder, then writes `mods.lst`); `Mods` owns the repository
 (`IModRepository`) + the version-policy model + the source model + the
 local-import service. Version resolution at stage time is by policy: Latest →
 the container's `isLatest` version; Pinned(vId) → the version whose `Folder`

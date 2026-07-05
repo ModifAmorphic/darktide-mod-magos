@@ -69,4 +69,13 @@ public interface IProfileSession : INotifyPropertyChanged
     /// chosen).
     /// </summary>
     void ReconcileActive();
+
+    /// <summary>
+    /// Re-checks <see cref="IsRunning"/> against the running-state source right
+    /// now, rather than waiting for the next polling-timer tick. Used by callers
+    /// that just caused a state change (e.g. the shell after a successful launch)
+    /// so the indicator + launch-availability react immediately. The polling
+    /// timer would catch up eventually; this is the eager path.
+    /// </summary>
+    void Refresh();
 }

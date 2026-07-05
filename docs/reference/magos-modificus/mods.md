@@ -32,6 +32,8 @@ public interface IModRepository
     void RemoveVersion(Guid containerId, string versionFolder);
     void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
     string GetVersionFolderPath(Guid containerId, string versionFolder);  // derived, never stored
+    void Rescan();                 // rebuild the index from the live ModsFolder
+    void Relocate(string newBasePath);   // atomic: move + save config + rescan (rollback on save failure)
 }
 ```
 
@@ -60,6 +62,30 @@ public interface IModRepository
 - `GetVersionFolderPath(containerId, versionFolder)`: the absolute path
   `<ModsFolder>/<containerUUID>/<versionFolder>`. Derived (the repository
   owns `<ModsFolder>`); never stored. Used for staging symlink targets.
+- `Rescan()`: rebuild the in-memory index from the **live** `ModsFolder` (the
+  path `IConfigLoader.Load().ModsFolder` currently returns), clearing first.
+  Container ids are stable across a relocation (the move never changes ids,
+  whether a same-volume rename or a cross-volume copy + delete), so `Relocate`
+  leaves the index valid by construction; `Rescan` is the defensive guarantee
+  the index reflects whatever is actually on disk. Also useful after an
+  out-of-band change (hand-edit, external tool, backup restore).
+- `Relocate(newBasePath)`: the **atomic** repository relocation, owned by the
+  repository so a save failure can never strand files at the new path with config
+  still pointing at the old one. Steps: (1) read `oldPath = Load().ModsFolder`;
+  (2) validate `newBasePath` (absolute, parent creatable; reject a conflicting
+  tracked-UUID dir); (3) move every indexed container dir `oldPath → newPath`
+  via the volume-appropriate strategy (same-volume = a fast, atomic
+  `Directory.Move` rename; cross-volume = copy the tree + delete the source,
+  because `Directory.Move` throws `IOException` across volumes, e.g. Windows
+  `C:\` → `D:\`, rather than falling back to a copy), best-effort per container,
+  tracking which moved; (4) save `ModsFolder =
+  newPath` via `IConfigLoader`, and on save failure (a thrown exception, OR a
+  silent failure since the production `ConfigLoader.Save` swallows write errors)
+  roll the moved container dirs back to `oldPath` so files + config agree there
+  again, then throw; (5) `Rescan` at `newPath`. The caller (the Settings VM)
+  makes a single call; it does not save config or rescan separately. Throws
+  `ArgumentException` (bad path), `InvalidOperationException` (UUID conflict), or
+  `IOException` (rolled-back save failure).
 
 The repository builds an in-memory index at construction by scanning every
 `<ModsFolder>/*/container.json` (dozens of containers, cheap). There is no
@@ -76,7 +102,11 @@ UI never touches the filesystem directly.
 ```csharp
 public interface IModImportService
 {
-    (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version);
+    (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version);
+
+    // Read-only peeks used by the add flow's base-name collision hard-block:
+    string GetBaseName(string sourcePath);                       // validates structure, returns the base folder name (no container/version created)
+    ModContainer? FindExistingContainer(ModSource source, string modName);  // the container an import would dedup to (no create)
 }
 ```
 
@@ -86,6 +116,11 @@ public interface IModImportService
 - Version resolution: dedup by `versionString` (`AddVersion` reuses the existing
   folder + refreshes its files); a new `versionString` creates a new version +
   flips `IsLatest`.
+- **Return:** the imported version's opaque folder id (`ModVersion.Folder`,
+  not the display tag), so the caller can construct a `PinnedPolicy(versionId)`
+  pinning the profile entry to exactly the version just imported. The display
+  tag (`VersionString`) is recorded in the container manifest; it is not
+  returned.
 - `.zip` detection is by extension (ordinal ignore-case); anything else is
   treated as a folder path. A `.zip` is extracted via
   `System.IO.Compression.ZipFile.ExtractToDirectory` (in-box for net10.0); a
@@ -98,6 +133,27 @@ public interface IModImportService
 - The `modName` path-traversal confinement (rejects path separators, `..`,
   absolute paths) is retained from Track B as defense-in-depth, even though the
   import target is now an opaque UUID folder (not `modName`-derived).
+
+**Source structure (both kinds):** a mod source (zip or folder) must contain
+exactly one base directory with a `<basefoldername>.mod` descriptor inside it
+(the descriptor filename matches the base folder name). A `.zip` is inspected
+**before** extraction (single top-level folder, no loose top-level files,
+matching `<base>.mod`); a folder is checked directly (non-empty + matching
+descriptor) and is copied **as the folder itself** (not its contents). Both
+produce `<versionId>/<base>/<files>`. An invalid structure throws immediately,
+placing no files and creating no container/version.
+
+**Base-name collision hard-block:** two mods with the same base folder name can't
+coexist in one profile (the mod loader can't tell them apart). The add flow
+peeks the base name (`GetBaseName`) + the would-be container
+(`FindExistingContainer`) **before** importing, then asks
+`IProfileService.GetBaseNameCollision` whether any existing profile mod (a
+different container) resolves to the same base name. On a hit, the import is
+**refused**: nothing is created (no version, no profile entry). The would-be
+container is excluded from the check, so a re-add of a mod already in the
+profile (same container, `AddMod` idempotent) is **not** a collision. The block
+lives at the add flow (not in `Import` itself), so direct programmatic imports
+remain unconditional.
 
 ### Key types
 
@@ -221,9 +277,11 @@ public static IServiceCollection AddMods(this IServiceCollection services)
 Uses `TryAddSingleton` (mirroring the `SymlinkCreator` seam in Profiles):
 production behavior is unchanged, but a caller may pre-register an
 `IModRepository` or `IModImportService` fake and have it survive `AddProfiles()`
-(which calls `AddMods()` unconditionally). Resolves `MagosConfig` +
+(which calls `AddMods()` unconditionally). Resolves `IConfigLoader` +
 `ILogger<>` from the container. Registered as singletons: the repository holds
-the in-memory index (cheap to rebuild), and `MagosConfig` is itself a singleton.
+the in-memory index (cheap to rebuild), and `ModsFolder` is read live from
+`IConfigLoader` on each operation (one snapshot per op) so a runtime folder
+change via the Settings window takes effect immediately.
 
 ## On-disk layout
 
@@ -231,10 +289,21 @@ the in-memory index (cheap to rebuild), and `MagosConfig` is itself a singleton.
 <ModsFolder>/                 (auto-created on first run)
   <containerUUID>/                  (container dir; id-named, opaque)
     container.json                  (id + source + name + versions[] - the manifest)
-    <versionFolder>/                (opaque-ID version subfolder; the mod files)
+    <versionFolder>/                (opaque-ID version subfolder)
+      <baseFolder>/                 (the mod's base folder; name matches <base>.mod)
+        <baseFolder>.mod            (the descriptor the loader resolves)
+        <files...>                  (scripts/, etc.)
     <versionFolder>/
       ...
 ```
+
+The version folder always contains exactly one subdirectory: the mod's **base
+folder**, whose name matches its `<base>.mod` descriptor. Both import kinds
+produce this shape (a `.zip` is validated to have a single top-level folder with
+a matching descriptor before extraction; a folder is copied as itself). The base
+folder name is load-bearing at staging time: mods bake their folder name into
+their code, so the staged symlink must carry the base name (not the container's
+display name).
 
 `container.json` is UTF-8 without BOM. Paths are derived (`ModsFolder` +
 UUIDs), never stored absolute.
@@ -255,15 +324,28 @@ UUIDs), never stored absolute.
   `FindUntrackedByName`, manifest round-trip + in-memory index rebuild from a
   scan (skips non-container dirs + corrupt manifests), `PruneUnreferenced`
   (drops unreferenced version folders + empty containers, keeps referenced),
-  opaque version-folder naming, derived paths.
+  opaque version-folder naming, derived paths, and the relocation surface:
+  `Relocate` (atomic move + config save + rescan; rolls the move back when the
+  save fails, whether the loader throws or silently fails; the cross-volume path
+  is covered by forcing the volume detector, proving a copy + delete relocate
+  succeeds where `Directory.Move` would throw) + `Rescan`
+  (drops/Adds index entries to match the live disk state).
+- `DirectoryCopy`: faithful recursive copy (files + nested subdirs reproduced,
+  target created as it goes).
 - `ModSource` JSON `$kind` round-trip (untracked/nexus/github) + defaults +
   record equality.
 - `ModSourceParser` URL/id parsing (valid variants, trailing slash, query,
   `.git`, plain id; malformed rejections: wrong host, wrong game slug, too few
   segments, non-numeric/zero/negative id).
 - `ModImportService`: container find/create + version dedup + `isLatest` flip +
-  folder/`.zip` import + error paths (missing source, malformed zip, bad mod
-  name) + the retained `modName` path-traversal confinement.
+  folder/`.zip` import + the source-structure validation (both kinds require
+  exactly one base directory with a matching `<base>.mod` descriptor; the base
+  folder is preserved under `<versionFolder>/<base>/`) + error paths (missing
+  source, malformed zip, multiple top-level folders, loose files, missing /
+  mismatched descriptor, bad mod name) + the retained `modName` path-traversal
+  confinement + the two import-time peeks (`GetBaseName` validates + returns the
+  base name without creating anything; `FindExistingContainer` resolves the
+  would-be dedup container without creating it).
 
 The internal `ModRepository` + `ModImportService` are visible to tests via
 `InternalsVisibleTo` (tests resolve them through the interface via DI).

@@ -107,6 +107,36 @@ public interface IProfileService
     void RemoveMod(Guid id, Guid containerId);
 
     /// <summary>
+    /// Pre-checks a base-name collision for the add flow: returns the profile mod
+    /// (if any) whose resolved base folder name matches <paramref name="baseName"/>,
+    /// excluding <paramref name="excludeContainerId"/> (a re-add of a mod already
+    /// in the profile). Used to REFUSE an import that would stage two mods under
+    /// the same folder name (the mod loader can't tell them apart).
+    /// </summary>
+    /// <param name="id">The profile to check.</param>
+    /// <param name="baseName">The candidate base folder name (peeked via
+    /// <c>IModImportService.GetBaseName</c>).</param>
+    /// <param name="excludeContainerId">A container id to skip (the container the
+    /// import would dedup to, from
+    /// <c>IModImportService.FindExistingContainer</c>); pass <c>null</c> for a
+    /// brand-new container.</param>
+    /// <returns>The colliding <see cref="ModListEntry"/>, or <c>null</c> if no
+    /// profile mod (other than the excluded one) resolves to
+    /// <paramref name="baseName"/>.</returns>
+    /// <remarks>
+    /// Considers <b>all</b> profile mods (enabled <em>and</em> disabled): a
+    /// disabled colliding mod could be enabled later. A mod whose base name can't
+    /// be resolved (missing container/version, or a corrupted version folder with
+    /// zero/multiple subdirs) is skipped silently; it can't collide. Pure query:
+    /// no logging, no side effects (the caller decides what to do with a hit).
+    /// </remarks>
+    /// <exception cref="KeyNotFoundException"><paramref name="id"/> is
+    /// unknown.</exception>
+    /// <exception cref="ArgumentException"><paramref name="baseName"/> is null,
+    /// empty, or whitespace.</exception>
+    ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId);
+
+    /// <summary>
     /// Regenerates the profile's staged mod root (the <c>--mod-path</c>) from the
     /// current per-mod version resolution, and writes <c>mods.lst</c> from the
     /// successfully-staged enabled mods in <see cref="ModListEntry.Order"/>.

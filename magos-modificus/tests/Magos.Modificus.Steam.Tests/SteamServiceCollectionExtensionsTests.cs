@@ -1,3 +1,4 @@
+using Magos.Modificus.General;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -14,7 +15,11 @@ public sealed class SteamServiceCollectionExtensionsTests
     [Fact]
     public void AddSteam_registers_resolvable_ISteamService_with_defaults()
     {
+        // SteamService depends on IConfigLoader (provided by AddGeneral in
+        // production; the live Discovery overrides are read through it). The
+        // fake satisfies the dependency without touching the real config file.
         var services = new ServiceCollection();
+        services.AddSingleton<IConfigLoader>(new FakeConfigLoader());
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.AddSteam();
         using var provider = services.BuildServiceProvider();

@@ -51,6 +51,12 @@ internal sealed class ModRepository : IModRepository
     private readonly IConfigLoader _configLoader;
     private readonly ILogger<ModRepository> _logger;
 
+    // Same-volume detector used by Relocate to pick the move strategy (rename
+    // vs copy + delete). Injectable so a test can force the cross-volume path
+    // without a real second volume (cross-volume cannot be simulated under one
+    // temp root). The DI constructor wires the real path-root comparison.
+    private readonly Func<string, string, bool> _sameVolume;
+
     // Primary index: containerId -> container. Source identity lookups are
     // served by scanning this (cheap for dozens of containers); the untracked-
     // name index below is the only dedicated secondary index (untracked dedup
@@ -61,10 +67,25 @@ internal sealed class ModRepository : IModRepository
     // Nexus/GitHub lookups scan _byId (identity is fully on the source record).
     private readonly Dictionary<string, Guid> _untrackedByName = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// DI constructor. Wires the real same-volume detector (path-root
+    /// comparison, see <see cref="SameVolumeByRoot"/>).
+    /// </summary>
     public ModRepository(IConfigLoader configLoader, ILogger<ModRepository> logger)
+        : this(configLoader, logger, SameVolumeByRoot)
+    {
+    }
+
+    /// <summary>
+    /// Internal constructor that lets a test inject the same-volume detector
+    /// (force the cross-volume copy + delete path). Production resolves the
+    /// public constructor through DI.
+    /// </summary>
+    internal ModRepository(IConfigLoader configLoader, ILogger<ModRepository> logger, Func<string, string, bool> sameVolume)
     {
         _configLoader = configLoader;
         _logger = logger;
+        _sameVolume = sameVolume;
 
         // Build the in-memory index from the current mods root. The index is
         // construction-time state (a scan of the disk); live-read changes the
@@ -316,6 +337,276 @@ internal sealed class ModRepository : IModRepository
             }
             _logger.LogInformation("Pruned empty container {Id} ('{Name}')", empty.Id, empty.Name);
         }
+    }
+
+    /// <inheritdoc />
+    public void Rescan()
+    {
+        // Read the live mods root (the path the config currently points at) and
+        // rebuild the index from it. Clear first: RebuildIndex only adds, so
+        // without a clear a container removed from disk between scans would
+        // survive as a stale entry.
+        var baseFolder = EnsureBaseFolder();
+        _byId.Clear();
+        _untrackedByName.Clear();
+        RebuildIndex(baseFolder);
+        _logger.LogInformation("Rescanned mods repository at {Path} ({Count} containers).", baseFolder, _byId.Count);
+    }
+
+    /// <inheritdoc />
+    public void Relocate(string newBasePath)
+    {
+        ValidateNewBasePath(newBasePath);
+
+        // Atomic contract: Relocate owns the whole move + config save + rescan
+        // so a save failure can never strand the files at the new path with the
+        // config still pointing at the old one. The OLD path is read live first
+        // (before the save flips ModsFolder to the new path).
+        var config = _configLoader.Load();
+        var oldBasePath = config.ModsFolder;
+
+        // No-op when the destination is the same as the source: the subsequent
+        // save + Rescan would be a confusing no-op anyway, and the conflict
+        // check below would otherwise always fire (the current root is full of
+        // the indexed UUIDs).
+        if (SamePath(oldBasePath, newBasePath))
+        {
+            _logger.LogInformation(
+                "Relocate target {Path} is the current mods root; no move needed.", newBasePath);
+            return;
+        }
+
+        // Refuse to relocate into a directory that already contains one of the
+        // indexed container UUIDs: that would silently shadow an existing
+        // container (the scan would pick up the pre-existing dir's manifest,
+        // not the moved one). The caller picks a fresh or empty destination.
+        foreach (var containerId in _byId.Keys)
+        {
+            var conflictDir = Path.Combine(newBasePath, containerId.ToString());
+            if (Directory.Exists(conflictDir))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot relocate into '{newBasePath}': it already contains a directory " +
+                    $"named '{containerId}', which is a container UUID the repository tracks.");
+            }
+        }
+
+        Directory.CreateDirectory(newBasePath);
+
+        // Volume strategy, detected once from the two base paths (it is not
+        // per-container): same-volume keeps the fast, atomic directory rename
+        // (Directory.Move); cross-volume copies the tree + deletes the source,
+        // because Directory.Move throws IOException across volumes (e.g.
+        // Windows C: -> D:) rather than falling back to a copy. Without this
+        // branch, a cross-volume relocate would throw on every container, the
+        // save would still flip ModsFolder, Rescan would rebuild against an
+        // empty new path, and the containers would be stranded (invisible, no
+        // UI recovery).
+        var crossVolume = !_sameVolume(oldBasePath, newBasePath);
+
+        // Best-effort per-container move: one locked directory must not abort
+        // the rest. Each container dir is moved whole via MoveContainerDir,
+        // which picks its strategy from the volume flag above. The ids that
+        // actually moved are tracked so a save failure can roll exactly them
+        // back; containers that fail to move remain under the old path (their
+        // files are untouched, but the relocated index at the new path will
+        // not include them).
+        var movedIds = new List<Guid>();
+        var failed = 0;
+        foreach (var containerId in _byId.Keys.ToArray())
+        {
+            var sourceDir = Path.Combine(oldBasePath, containerId.ToString());
+            var destDir = Path.Combine(newBasePath, containerId.ToString());
+            try
+            {
+                MoveContainerDir(sourceDir, destDir, crossVolume);
+                movedIds.Add(containerId);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failed++;
+                _logger.LogError(
+                    ex,
+                    "Could not move container {Id} from {Source} to {Dest} during relocate; " +
+                    "its files remain at the old location; the relocated index will not include this container.",
+                    containerId, sourceDir, destDir);
+            }
+        }
+
+        // Persist ModsFolder = newPath. Two failure modes: a thrown exception
+        // (a loader that reports failure) OR a silent failure (the production
+        // ConfigLoader.Save swallows write errors by design, for the best-
+        // effort Preferences flow). Either one strands the moved files at the
+        // new path while the config still points at the old one, so either
+        // triggers a rollback: the moved container dirs go back to the old
+        // path, files + config agree again, and the failure surfaces to the
+        // caller. The catch is deliberately broad (any exception, not just
+        // IO/auth): the rollback is safe to run on any save failure, and the
+        // re-load verification below catches the silent-swallow case.
+        config.ModsFolder = newBasePath;
+        Exception? saveFailure = null;
+        try
+        {
+            _configLoader.Save(config);
+        }
+        catch (Exception ex)
+        {
+            saveFailure = ex;
+        }
+
+        if (saveFailure is null && !SamePath(_configLoader.Load().ModsFolder, newBasePath))
+        {
+            // The save did not throw but also did not persist (the swallowing
+            // loader's silent-failure mode). Fabricate the failure so the
+            // rollback + rethrow path is shared.
+            saveFailure = new IOException(
+                $"Config save did not persist ModsFolder='{newBasePath}' (silent failure).");
+        }
+
+        if (saveFailure is not null)
+        {
+            RollbackMoves(movedIds, newBasePath, oldBasePath, crossVolume);
+            _logger.LogWarning(
+                saveFailure,
+                "Relocate config save failed after moving {Count} container(s) to {New}; " +
+                "rolled them back to {Old} so files + config agree.",
+                movedIds.Count, newBasePath, oldBasePath);
+            throw saveFailure;
+        }
+
+        _logger.LogInformation(
+            "Relocated {Moved} container(s) from {Old} to {New} ({Failed} failed to move) " +
+            "and persisted the new mods root.",
+            movedIds.Count, oldBasePath, newBasePath, failed);
+
+        // Rebuild the index at the new path, which is now the live config path.
+        Rescan();
+    }
+
+    /// <summary>
+    /// Moves the given container dirs <paramref name="fromBasePath"/> back to
+    /// <paramref name="toBasePath"/> (best-effort per container). Used only by
+    /// <see cref="Relocate"/> to undo the move when the config save fails, so
+    /// files + config agree at the old path again. A rollback move failure is
+    /// logged + skipped (the container's files stay where they are; an operator
+    /// can reconcile by hand) so one locked dir does not abort the rest of the
+    /// rollback. <paramref name="crossVolume"/> selects the same move strategy
+    /// <see cref="Relocate"/> used for the forward move (the volume
+    /// relationship is symmetric).
+    /// </summary>
+    private void RollbackMoves(IReadOnlyList<Guid> movedIds, string fromBasePath, string toBasePath, bool crossVolume)
+    {
+        foreach (var containerId in movedIds)
+        {
+            var src = Path.Combine(fromBasePath, containerId.ToString());
+            var dst = Path.Combine(toBasePath, containerId.ToString());
+            try
+            {
+                MoveContainerDir(src, dst, crossVolume);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError(
+                    ex,
+                    "Rollback: could not move container {Id} back from {Src} to {Dst}; " +
+                    "its files remain at the source path and need manual reconciliation.",
+                    containerId, src, dst);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Moves a single container directory from <paramref name="sourceDir"/> to
+    /// <paramref name="destDir"/>. Same-volume is a fast, atomic
+    /// <see cref="Directory.Move"/> (a directory rename); cross-volume copies
+    /// the tree via <see cref="DirectoryCopy.Copy"/> + deletes the source,
+    /// because <see cref="Directory.Move"/> throws <see cref="IOException"/>
+    /// across volumes (e.g. Windows C: -&gt; D:) rather than falling back to a
+    /// copy.
+    /// </summary>
+    private static void MoveContainerDir(string sourceDir, string destDir, bool crossVolume)
+    {
+        if (crossVolume)
+        {
+            DirectoryCopy.Copy(sourceDir, destDir);
+            Directory.Delete(sourceDir, recursive: true);
+        }
+        else
+        {
+            Directory.Move(sourceDir, destDir);
+        }
+    }
+
+    /// <summary>
+    /// Determines whether two absolute paths share a volume root (so a
+    /// <see cref="Directory.Move"/> rename is valid). On Windows the roots are
+    /// drive letters (e.g. <c>C:\</c>, <c>D:\</c>); on Linux every absolute
+    /// path shares <c>/</c>, so paths under one tree resolve as same-volume.
+    /// The comparison is ordinal; case-insensitive on Windows (drive-letter
+    /// case). A path whose root cannot be determined is treated as
+    /// cross-volume so the safe copy + delete path runs.
+    /// </summary>
+    private static bool SameVolumeByRoot(string pathA, string pathB)
+    {
+        var rootA = Path.GetPathRoot(Path.GetFullPath(pathA));
+        var rootB = Path.GetPathRoot(Path.GetFullPath(pathB));
+        if (string.IsNullOrEmpty(rootA) || string.IsNullOrEmpty(rootB))
+        {
+            return false;
+        }
+        return string.Equals(
+            rootA,
+            rootB,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Validates the relocate target: non-null/whitespace, absolute, and its
+    /// parent directory must be creatable (a reasonable proxy for "writable
+    /// location"). Throws <see cref="ArgumentException"/> otherwise.
+    /// </summary>
+    private static void ValidateNewBasePath(string newBasePath)
+    {
+        if (string.IsNullOrWhiteSpace(newBasePath))
+        {
+            throw new ArgumentException("Relocate target path must not be null or whitespace.", nameof(newBasePath));
+        }
+
+        if (!Path.IsPathRooted(newBasePath))
+        {
+            throw new ArgumentException(
+                $"Relocate target path must be absolute (received '{newBasePath}').", nameof(newBasePath));
+        }
+
+        var parent = Path.GetDirectoryName(newBasePath);
+        if (string.IsNullOrEmpty(parent))
+        {
+            // A rooted path with no parent component (e.g. "/" on Linux, a bare
+            // drive root on Windows): not a usable mods root.
+            throw new ArgumentException(
+                $"Relocate target path '{newBasePath}' has no parent directory.", nameof(newBasePath));
+        }
+
+        try
+        {
+            Directory.CreateDirectory(parent);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ArgumentException(
+                $"Relocate target parent directory '{parent}' cannot be created: {ex.Message}", nameof(newBasePath), ex);
+        }
+    }
+
+    /// <summary>
+    /// Ordinal, case-insensitive path equality after full-path normalization.
+    /// Used to short-circuit a relocate-to-same-path as a no-op.
+    /// </summary>
+    private static bool SamePath(string a, string b)
+    {
+        var na = Path.GetFullPath(a);
+        var nb = Path.GetFullPath(b);
+        return string.Equals(na, nb, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     // ---- index rebuild ------------------------------------------------------

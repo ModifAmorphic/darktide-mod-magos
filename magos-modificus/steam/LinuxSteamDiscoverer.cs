@@ -55,7 +55,8 @@ internal sealed class LinuxSteamDiscoverer : ISteamDiscoverer
         var compatdata = FindCompatdata(resolved.Path, libraries);
         var proton = FindProton(resolved.Path, _options.LinuxCompatibilityToolsDir, warnings);
 
-        var status = StatusForLinux(resolved.Path, darktide, compatdata, proton?.Path);
+        var status = SteamDiscoveryCore.ComputeStatus(
+            _options.Platform, resolved.Path, darktide, compatdata, proton?.Path);
         _logger.LogInformation(
             "Linux discovery: {Status} (steam={Steam}, darktide={Darktide}, compatdata={Compatdata}, proton={Proton}).",
             status, resolved.Path, darktide ?? "(missing)", compatdata ?? "(missing)", proton?.Path ?? "(missing)");
@@ -233,14 +234,4 @@ internal sealed class LinuxSteamDiscoverer : ISteamDiscoverer
             : 0;
         return new Version(major, minor);
     }
-
-    private static DiscoveryStatus StatusForLinux(string? steam, string? darktide, string? compatdata, string? proton) =>
-        (steam, darktide, compatdata, proton) switch
-        {
-            (null, _, _, _) => DiscoveryStatus.Failed,
-            (_, null, _, _) => DiscoveryStatus.Partial,
-            (_, _, null, _) => DiscoveryStatus.Partial,
-            (_, _, _, null) => DiscoveryStatus.Partial,
-            _ => DiscoveryStatus.Complete,
-        };
 }

@@ -243,6 +243,33 @@ internal sealed class FakeProfileService : IProfileService
         list.RemoveAt(idx);
     }
 
+    /// <summary>The (profileId, baseName, excludeContainerId) triples passed to
+    /// <see cref="GetBaseNameCollision"/>, in call order. Tests assert on
+    /// <c>ExcludeContainerId</c> to verify the add flow carried the re-add
+    /// container id through.</summary>
+    public IReadOnlyList<(Guid ProfileId, string BaseName, Guid? ExcludeContainerId)> GetBaseNameCollisionCalls { get; }
+        = new List<(Guid, string, Guid?)>();
+
+    /// <summary>
+    /// The <see cref="ModListEntry"/> returned by the next
+    /// <see cref="GetBaseNameCollision"/> call (default <c>null</c> = no
+    /// collision). The fake does no real base-name resolution (that is exercised
+    /// against the real service in <c>Profiles.Tests</c>); a VM test sets this to
+    /// simulate a collision.
+    /// </summary>
+    public ModListEntry? GetBaseNameCollisionResult { get; set; }
+
+    /// <summary>
+    /// Records the call (for the exclude-container assertion) + returns
+    /// <see cref="GetBaseNameCollisionResult"/>. The real resolution lives in
+    /// <c>ProfileService</c> + is tested there.
+    /// </summary>
+    public ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId)
+    {
+        ((List<(Guid, string, Guid?)>)GetBaseNameCollisionCalls).Add((id, baseName, excludeContainerId));
+        return GetBaseNameCollisionResult;
+    }
+
     public string PrepareModRoot(Guid id) => throw new NotImplementedException();
 }
 
@@ -270,18 +297,37 @@ internal sealed class FakeAppStateStore : IAppStateStore
 /// deleting profiles and routing active changes through the session). For the
 /// import modal, either a single <see cref="ImportResult"/> is returned for every
 /// call, or a per-call <see cref="ImportResultQueue"/> is dequeued (so a test can
-/// cancel mid-batch by enqueuing a <c>null</c>). Records the requests so tests
-/// can assert on the sequence.
+/// cancel mid-batch by enqueuing a <c>null</c>). The Settings, escape-hatch, and
+/// alert calls are recorded for assertion; the escape-hatch also exposes its
+/// drive flag (<see cref="EscapeHatchResult"/>) so a test can simulate a submit
+/// vs. a cancel. Records the requests so tests can assert on the sequence.
 /// </summary>
 internal sealed class FakeDialogService : IDialogService
 {
     public bool ConfirmResult { get; set; } = true;
     public Action? OnManageProfiles { get; set; }
     public Action? OnPreferences { get; set; }
+    public Action? OnSettings { get; set; }
     public int ConfirmCalls { get; private set; }
     public string? LastConfirmMessage { get; private set; }
     public int ManageProfilesCalls { get; private set; }
     public int PreferencesCalls { get; private set; }
+    public int SettingsCalls { get; private set; }
+
+    /// <summary>
+    /// The result returned by the next escape-hatch call: <c>true</c> = the
+    /// user submitted, <c>false</c> = cancelled. Default <c>false</c>.
+    /// </summary>
+    public bool EscapeHatchResult { get; set; }
+
+    /// <summary>The missing-field lists the shell asked the escape-hatch to show,
+    /// in call order. Tests assert on this to verify which fields the launch
+    /// reported missing.</summary>
+    public IReadOnlyList<IReadOnlyList<string>> EscapeHatchCalls { get; } = new List<IReadOnlyList<string>>();
+
+    /// <summary>The (title, message) pairs passed to <see cref="ShowAlertAsync"/>,
+    /// in call order.</summary>
+    public IReadOnlyList<(string Title, string Message)> AlertCalls { get; } = new List<(string, string)>();
 
     /// <summary>
     /// The result returned for every import modal call when
@@ -321,6 +367,25 @@ internal sealed class FakeDialogService : IDialogService
         return Task.CompletedTask;
     }
 
+    public Task ShowSettingsAsync()
+    {
+        SettingsCalls++;
+        OnSettings?.Invoke();
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> ShowDiscoveryEscapeHatchAsync(IReadOnlyList<string> missingFields)
+    {
+        ((List<IReadOnlyList<string>>)EscapeHatchCalls).Add(missingFields);
+        return Task.FromResult(EscapeHatchResult);
+    }
+
+    public Task ShowAlertAsync(string title, string message)
+    {
+        ((List<(string, string)>)AlertCalls).Add((title, message));
+        return Task.CompletedTask;
+    }
+
     public Task<ImportModResult?> ShowImportModAsync(ImportModRequest request)
     {
         ImportCalls++;
@@ -333,12 +398,15 @@ internal sealed class FakeDialogService : IDialogService
     }
 }
 
-/// <summary><see cref="ISteamService"/> with a configurable running flag.</summary>
+/// <summary><see cref="ISteamService"/> with a configurable running flag +
+/// discovery result.</summary>
 internal sealed class FakeSteamService : ISteamService
 {
     public bool Running { get; set; }
+    public DiscoveryResult? Discovery { get; set; }
     public bool IsGameRunning() => Running;
-    public DiscoveryResult Discover() => throw new NotImplementedException();
+    public DiscoveryResult Discover() =>
+        Discovery ?? throw new NotImplementedException();
 }
 
 /// <summary>
@@ -415,13 +483,46 @@ internal sealed class FakeProfileSession : ObservableObject, IProfileSession
 
         ActiveProfileId = null;
     }
+
+    /// <summary>Number of times <see cref="Refresh"/> was called.</summary>
+    public int RefreshCalls { get; private set; }
+
+    /// <summary>
+    /// Optional callback invoked on each <see cref="Refresh"/>; tests use it to
+    /// drive a deterministic running-state change (e.g. flip <see cref="IsRunning"/>
+    /// to <c>true</c> to simulate the game having just started).
+    /// </summary>
+    public Action? OnRefresh { get; set; }
+
+    /// <summary>
+    /// Records the call + runs the optional <see cref="OnRefresh"/> callback so a
+    /// test can simulate the running-state change a real Refresh would observe.
+    /// </summary>
+    public void Refresh()
+    {
+        RefreshCalls++;
+        OnRefresh?.Invoke();
+    }
 }
 
-/// <summary>No-op launch service (launch is Track C; not exercised here).</summary>
+/// <summary>
+/// Configurable <see cref="IEnginseerLaunchService"/> for shell-VM launch tests.
+/// <see cref="NextResult"/> is returned for every Launch call (default:
+/// Launched). <see cref="LaunchCalls"/> records the ids the shell asked to
+/// launch.
+/// </summary>
 internal sealed class FakeLaunchService : IEnginseerLaunchService
 {
-    public LaunchResult Launch(Guid profileId) =>
+    public LaunchResult NextResult { get; set; } =
         new(LaunchStatus.Launched, null, Array.Empty<string>());
+
+    public IReadOnlyList<Guid> LaunchCalls { get; } = new List<Guid>();
+
+    public LaunchResult Launch(Guid profileId)
+    {
+        ((List<Guid>)LaunchCalls).Add(profileId);
+        return NextResult;
+    }
 }
 
 /// <summary>
@@ -430,7 +531,7 @@ internal sealed class FakeLaunchService : IEnginseerLaunchService
 /// used by staging tests. Tests seed containers directly; mutations update the
 /// in-memory store.
 /// </summary>
-internal sealed class FakeModRepository : IModRepository
+internal class FakeModRepository : IModRepository
 {
     private readonly Dictionary<Guid, ModContainer> _byId = new();
     private readonly Dictionary<string, Guid> _untrackedByName = new(StringComparer.Ordinal);
@@ -547,6 +648,16 @@ internal sealed class FakeModRepository : IModRepository
         }
     }
 
+    // Rescan + Relocate are repository-lifecycle operations exercised by the
+    // Mods-layer tests; the VM tests never drive them. Recorded as no-ops so a
+    // future VM test that wires them can assert on the call.
+    public int RescanCalls { get; private set; }
+    public virtual void Rescan() => RescanCalls++;
+
+    public IReadOnlyList<string> RelocateArgs { get; } = new List<string>();
+    public virtual void Relocate(string newBasePath) =>
+        ((List<string>)RelocateArgs).Add(newBasePath);
+
     /// <summary>Test helper: seed a container with a single latest version.</summary>
     public ModContainer Seed(ModSource source, string name, string versionString = "1.0")
     {
@@ -560,7 +671,9 @@ internal sealed class FakeModRepository : IModRepository
 /// call (source path, mod name, parsed source, version) so tests can assert the
 /// add flow recorded the right metadata. Optionally upserts a wired
 /// <see cref="IModRepository"/> so the add flow's reload joins the freshly
-/// imported source + version (mirrors the real import service's behavior).
+/// imported source + version (mirrors the real import service's behavior). A
+/// per-call exception queue lets a test simulate an import failure (an invalid
+/// source) to exercise the add flow's catch + alert + abort path.
 /// </summary>
 internal sealed class FakeModImportService : IModImportService
 {
@@ -571,20 +684,38 @@ internal sealed class FakeModImportService : IModImportService
     public IReadOnlyList<(string SourcePath, string ModName, ModSource Source, string Version)> Imports { get; }
         = new List<(string, string, ModSource, string)>();
 
-    public (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version)
+    /// <summary>
+    /// Optional per-call queue: each Import call dequeues one exception and
+    /// throws it (after recording the call), simulating an invalid source. A
+    /// <c>null</c> slot means "succeed for this call". When empty / unset, Import
+    /// proceeds normally. Mirrors <see cref="FakeDialogService.ImportResultQueue"/>.
+    /// </summary>
+    public Queue<Exception?>? ImportExceptionQueue { get; set; }
+
+    public (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version)
     {
         ((List<(string, string, ModSource, string)>)Imports).Add((sourcePath, modName, source, version));
 
+        if (ImportExceptionQueue is { Count: > 0 })
+        {
+            var ex = ImportExceptionQueue.Dequeue();
+            if (ex is not null)
+            {
+                throw ex;
+            }
+        }
+
         if (_repo is null)
         {
-            // No wired repository: return a synthetic container id so the add flow
-            // has something to feed AddMod. Each call gets a fresh id so distinct
-            // imports land as distinct entries.
-            return (Guid.NewGuid(), version);
+            // No wired repository: return a synthetic container id + version id
+            // so the add flow has something to feed AddMod. Each call gets fresh
+            // ids so distinct imports land as distinct entries.
+            return (Guid.NewGuid(), Guid.NewGuid().ToString("N"));
         }
 
         // Mirror the real import service: resolve-or-create the container, then
-        // add the version. This keeps the VM's reload join working in tests.
+        // add the version. This keeps the VM's reload join working in tests +
+        // yields the version's opaque folder id (the real service's new return).
         ModContainer container;
         if (source is UntrackedSource)
         {
@@ -594,8 +725,65 @@ internal sealed class FakeModImportService : IModImportService
         {
             container = _repo.FindBySource(source) ?? _repo.CreateContainer(source, modName);
         }
-        _repo.AddVersion(container.Id, version, _ => { });
-        return (container.Id, version);
+        var updated = _repo.AddVersion(container.Id, version, _ => { });
+        var versionId = updated.Versions.First(v => v.VersionString == version).Folder;
+        return (container.Id, versionId);
+    }
+
+    /// <summary>The source paths passed to <see cref="GetBaseName"/>, in order.</summary>
+    public IReadOnlyList<string> GetBaseNameCalls { get; } = new List<string>();
+
+    /// <summary>
+    /// Optional override for <see cref="GetBaseName"/>: receives the source path
+    /// and returns the base name (or throws, to simulate an invalid source).
+    /// When unset, the base name is derived from the path (folder name or
+    /// <c>.zip</c> stem), never throwing.
+    /// </summary>
+    public Func<string, string>? GetBaseNameFunc { get; set; }
+
+    /// <summary>
+    /// Peeks the base folder name (mirrors <see cref="IModImportService.GetBaseName"/>).
+    /// The default derivation never throws; a test that needs an invalid-source
+    /// failure sets <see cref="GetBaseNameFunc"/> to throw.
+    /// </summary>
+    public string GetBaseName(string sourcePath)
+    {
+        ((List<string>)GetBaseNameCalls).Add(sourcePath);
+        if (GetBaseNameFunc is not null)
+        {
+            return GetBaseNameFunc(sourcePath);
+        }
+        var trimmed = sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = Path.GetFileName(trimmed);
+        const string zip = ".zip";
+        if (name.EndsWith(zip, StringComparison.OrdinalIgnoreCase) && name.Length > zip.Length)
+        {
+            name = name.Substring(0, name.Length - zip.Length);
+        }
+        return name;
+    }
+
+    /// <summary>The (source, modName) pairs passed to
+    /// <see cref="FindExistingContainer"/>, in order.</summary>
+    public IReadOnlyList<(ModSource Source, string ModName)> FindExistingContainerCalls { get; }
+        = new List<(ModSource, string)>();
+
+    /// <summary>
+    /// Mirrors <see cref="IModImportService.FindExistingContainer"/>: resolves the
+    /// container an import would dedup to, against the wired repo, without
+    /// creating anything. Returns <c>null</c> when no repo is wired or no
+    /// existing container matches.
+    /// </summary>
+    public ModContainer? FindExistingContainer(ModSource source, string modName)
+    {
+        ((List<(ModSource, string)>)FindExistingContainerCalls).Add((source, modName));
+        if (_repo is null)
+        {
+            return null;
+        }
+        return source is UntrackedSource
+            ? _repo.FindUntrackedByName(modName)
+            : _repo.FindBySource(source);
     }
 }
 
@@ -622,8 +810,11 @@ internal sealed class FakePreferencesService : IPreferencesService
 
 /// <summary>
 /// Recording <see cref="IConfigLoader"/> for tests. <see cref="Save"/> captures
-/// the last-written config without touching disk. Returns a configurable config
-/// from <see cref="Load"/> (defaults to a fresh <see cref="MagosConfig.CreateDefault"/>).
+/// the last-written config AND mirrors the real loader's round-trip by
+/// promoting it to the live <see cref="Config"/> (so a subsequent
+/// <see cref="Load"/> returns what was saved, like the real on-disk file).
+/// Returns a configurable config from <see cref="Load"/> (defaults to a fresh
+/// <see cref="MagosConfig.CreateDefault"/>).
 /// </summary>
 internal sealed class FakeConfigLoader : IConfigLoader
 {
@@ -637,5 +828,8 @@ internal sealed class FakeConfigLoader : IConfigLoader
     {
         SaveCalls++;
         LastSaved = config;
+        // Promote to the live Config so a subsequent Load returns the saved
+        // state (mirrors the real loader's round-trip through the disk file).
+        Config = config;
     }
 }

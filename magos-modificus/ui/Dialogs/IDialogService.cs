@@ -47,4 +47,35 @@ public interface IDialogService
     /// cancels the remaining batch.
     /// </summary>
     Task<ImportModResult?> ShowImportModAsync(ImportModRequest request);
+
+    /// <summary>
+    /// Opens the Settings modal (discovery paths + mod-repository location).
+    /// Each setting applies + persists immediately through the dialog (the
+    /// Track D Preferences pattern), so on completion the running app + the
+    /// persisted config already reflect the user's choices. The caller has
+    /// nothing to do on completion (no return value).
+    /// </summary>
+    Task ShowSettingsAsync();
+
+    /// <summary>
+    /// Opens the discovery escape-hatch modal, focused on the missing discovery
+    /// fields the launch reported. Inputs are shown <em>only</em> for the fields
+    /// in <paramref name="missingFields"/>. Returns <c>true</c> when the user
+    /// submitted (the entered paths are now persisted into the
+    /// <c>Discovery.User*Path</c> section), <c>false</c> when they cancelled (no
+    /// writes). There is no auto-retry: the caller does not re-launch on a
+    /// <c>true</c> return; the user clicks Launch again.
+    /// </summary>
+    /// <param name="missingFields">The discovery field names the launch result
+    /// reported missing (the values of <c>LaunchResult.MissingDiscoveryFields</c>,
+    /// which match the <c>DiscoveryResult</c> property names).</param>
+    Task<bool> ShowDiscoveryEscapeHatchAsync(IReadOnlyList<string> missingFields);
+
+    /// <summary>
+    /// Shows a simple modal alert (a single OK button, no cancel). Used to
+    /// surface a launch <c>Error</c> (the launcher missing, the profile gone, a
+    /// spawn failure) where there is nothing for the user to decide, only
+    /// acknowledge. The caller does not branch on the return.
+    /// </summary>
+    Task ShowAlertAsync(string title, string message);
 }

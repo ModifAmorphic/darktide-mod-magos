@@ -319,4 +319,129 @@ public sealed class ConfigLoaderTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // ---- Discovery section (Phase 3 Track C, Phase 1) ----------------------
+
+    [Fact]
+    public void Load_yields_default_discovery_when_section_is_absent()
+    {
+        // Absent Discovery section: all four override fields are null (the
+        // "auto-discover everything" default).
+        var dir = Path.Combine(Path.GetTempPath(), "magos-cfg-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+        File.WriteAllText(configPath, """{ "Logging": { "Level": "Debug" } }""");
+
+        try
+        {
+            var discovery = new ConfigLoader(configPath).Load().Discovery;
+
+            Assert.Null(discovery.UserSteamInstallPath);
+            Assert.Null(discovery.UserDarktideGameBinaryPath);
+            Assert.Null(discovery.UserCompatdataPath);
+            Assert.Null(discovery.UserProtonBinaryPath);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Load_applies_json_overrides_onto_default_discovery()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "magos-cfg-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+        File.WriteAllText(configPath, """
+            {
+              "Discovery": {
+                "UserSteamInstallPath": "/custom/steam",
+                "UserDarktideGameBinaryPath": "/custom/darktide.exe",
+                "UserCompatdataPath": "/custom/compatdata",
+                "UserProtonBinaryPath": "/custom/proton"
+              }
+            }
+            """);
+
+        try
+        {
+            var discovery = new ConfigLoader(configPath).Load().Discovery;
+
+            Assert.Equal("/custom/steam", discovery.UserSteamInstallPath);
+            Assert.Equal("/custom/darktide.exe", discovery.UserDarktideGameBinaryPath);
+            Assert.Equal("/custom/compatdata", discovery.UserCompatdataPath);
+            Assert.Equal("/custom/proton", discovery.UserProtonBinaryPath);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Save_round_trips_discovery_through_a_subsequent_Load()
+    {
+        // A partially-populated Discovery section round-trips: set fields
+        // persist; null fields stay null (no defaulting to empty strings, which
+        // would change the overlay semantics).
+        var dir = Path.Combine(Path.GetTempPath(), "magos-cfg-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+
+        try
+        {
+            var loader = new ConfigLoader(configPath);
+            var config = MagosConfig.CreateDefault();
+            config.Discovery.UserSteamInstallPath = "/persisted/steam";
+            config.Discovery.UserProtonBinaryPath = "/persisted/proton";
+            // Leave the other two null.
+
+            loader.Save(config);
+            var reloaded = loader.Load().Discovery;
+
+            Assert.Equal("/persisted/steam", reloaded.UserSteamInstallPath);
+            Assert.Null(reloaded.UserDarktideGameBinaryPath);
+            Assert.Null(reloaded.UserCompatdataPath);
+            Assert.Equal("/persisted/proton", reloaded.UserProtonBinaryPath);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Save_preserves_the_other_sections_alongside_discovery()
+    {
+        // Save writes the whole MagosConfig; verify it does not drop a sibling
+        // field when the Discovery section is populated.
+        var dir = Path.Combine(Path.GetTempPath(), "magos-cfg-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+        File.WriteAllText(configPath, """
+            {
+              "Logging": { "Level": "Warning" },
+              "EnginseerRuntimeDir": "/custom/runtime"
+            }
+            """);
+
+        try
+        {
+            var loader = new ConfigLoader(configPath);
+            var config = loader.Load();
+            config.Discovery.UserSteamInstallPath = "/override/steam";
+
+            loader.Save(config);
+            var reloaded = loader.Load();
+
+            Assert.Equal("Warning", reloaded.Logging.Level);
+            Assert.Equal("/custom/runtime", reloaded.EnginseerRuntimeDir);
+            Assert.Equal("/override/steam", reloaded.Discovery.UserSteamInstallPath);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }

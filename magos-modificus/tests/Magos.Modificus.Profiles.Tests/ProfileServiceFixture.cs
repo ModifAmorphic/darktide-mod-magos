@@ -74,8 +74,12 @@ internal sealed class ProfileServiceFixture : IDisposable
     // ---- container seeding -------------------------------------------------
 
     /// <summary>
-    /// Creates a container + a single version (with a marker file) and returns
-    /// the updated container. The version becomes the container's
+    /// Creates a container + a single version whose version folder contains the
+    /// mod's base folder (named after the container, sanitized), with a
+    /// <c>&lt;base&gt;.mod</c> descriptor + a marker file inside it. Mirrors the
+    /// shape <c>ModImportService</c> now produces, so staging's base-folder
+    /// discovery resolves the container name as the base name (existing mods.lst
+    /// assertions stay valid). The version becomes the container's
     /// <c>IsLatest</c>. Used by tests to make a container stage-able.
     /// </summary>
     public ModContainer AddContainerWithVersion(
@@ -86,23 +90,43 @@ internal sealed class ProfileServiceFixture : IDisposable
         var container = Repo.CreateContainer(source ?? new UntrackedSource(), name);
         return Repo.AddVersion(container.Id, versionString, dir =>
         {
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(Path.Combine(dir, "marker.txt"), name);
+            var baseName = SanitizeBaseName(name);
+            var baseDir = Path.Combine(dir, baseName);
+            Directory.CreateDirectory(baseDir);
+            File.WriteAllText(Path.Combine(baseDir, baseName + ".mod"), name);
+            File.WriteAllText(Path.Combine(baseDir, "marker.txt"), name);
         });
     }
 
     /// <summary>
-    /// Adds a second version to an existing container (with a marker file) and
-    /// returns the updated container. The new version becomes the container's
-    /// <c>IsLatest</c>.
+    /// Adds a second version to an existing container whose version folder
+    /// contains the mod's base folder (named after the container, sanitized) +
+    /// marker, and returns the updated container. The new version becomes the
+    /// container's <c>IsLatest</c>.
     /// </summary>
     public ModContainer AddVersion(Guid containerId, string versionString)
     {
+        var name = Repo.Get(containerId)?.Name ?? "mod";
         return Repo.AddVersion(containerId, versionString, dir =>
         {
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(Path.Combine(dir, "marker.txt"), versionString);
+            var baseName = SanitizeBaseName(name);
+            var baseDir = Path.Combine(dir, baseName);
+            Directory.CreateDirectory(baseDir);
+            File.WriteAllText(Path.Combine(baseDir, baseName + ".mod"), versionString);
+            File.WriteAllText(Path.Combine(baseDir, "marker.txt"), versionString);
         });
+    }
+
+    /// <summary>
+    /// Sanitizes a container name into a valid base folder name (illegal
+    /// filename chars replaced with <c>_</c>), mirroring what a real import can
+    /// place on disk. Normal names ("DMF", "ModB") are unaffected.
+    /// </summary>
+    private static string SanitizeBaseName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sanitized = new string(name.Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c).ToArray());
+        return string.IsNullOrWhiteSpace(sanitized) ? "mod" : sanitized;
     }
 
     public void Dispose()

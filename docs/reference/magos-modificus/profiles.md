@@ -34,6 +34,8 @@ public interface IProfileService
     void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy);
     void RemoveMod(Guid id, Guid containerId);
 
+    ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId);  // import-time hard-block
+
     string PrepareModRoot(Guid id);
 }
 ```
@@ -76,6 +78,16 @@ Method behavior:
 - `RemoveMod(id, containerId)` — drops the entry. The repository copy is **not**
   touched (other profiles may still reference it; the startup prune reclaims it
   when no profile does).
+- `GetBaseNameCollision(id, baseName, excludeContainerId)`: pre-checks a
+  base-name collision for the add flow: returns the profile mod (if any) whose
+  resolved base folder name matches `baseName`, excluding
+  `excludeContainerId` (the container a re-add would dedup to, so a re-add is
+  not flagged). Considers **all** mods (enabled + disabled); a mod whose base
+  name can't be resolved (missing container/version, corrupted version folder)
+  is skipped silently. Pure query: no logging, no side effects. Throws
+  `KeyNotFoundException` for an unknown profile; `ArgumentException` for a
+  null/whitespace `baseName`. Used by the add flow to REFUSE an import that
+  would stage two mods under the same folder name.
 - `PrepareModRoot(id)` — regenerates the staged mod root (the `--mod-path`) from
   the current per-mod version resolution and writes `mods.lst`. Idempotent
   (clears + rebuilds `staged/` each call). Returns the `--mod-path` to pass to
@@ -175,7 +187,7 @@ only config source) is itself a singleton.
     profile.json                   (metadata + mod list - the source of truth)
     staged/                        (the staged mod root = the --mod-path;
                                      REGENERATED each launch - a projection)
-      <displayName>                (symlink -> repository version folder)
+      <baseName>                   (symlink -> <versionFolder>/<baseName>/)
       mods.lst                     (successfully-staged enabled mods, in order)
 ```
 
@@ -184,25 +196,30 @@ only config source) is itself a singleton.
 
 ### Staging (`PrepareModRoot`)
 
-Each enabled mod resolves its `ModVersionPolicy` against its container:
+Each enabled mod resolves its `ModVersionPolicy` against its container, then
+**discovers the base folder name on the fly** as the single subdirectory inside
+the resolved version folder (the import validation guarantees exactly one). The
+link + the `mods.lst` entry carry the **base name**, not the container's display
+name: mods bake their folder name into their code, so the link must carry the
+base name for the mod's hardcoded paths to resolve. The container `Name` is UI
+display only.
 
-- **LatestPolicy** → symlink `staged/<displayName>` → the container's `IsLatest`
-  version folder.
-- **PinnedPolicy(vId)** → symlink `staged/<displayName>` → the version whose
-  `Folder == vId` (resolution by opaque version id, not by tag).
-- **No match** (container missing, no versions, no `IsLatest`, or the pinned
-  version id is absent) → skipped with a warning (no `staged/` entry, no
-  `mods.lst` entry).
+- **LatestPolicy** → symlink `staged/<baseName>` → `<versionFolder>/<baseName>/`
+  where the version is the container's `IsLatest`.
+- **PinnedPolicy(vId)** → symlink `staged/<baseName>` → `<versionFolder>/<baseName>/`
+  where the version's `Folder == vId` (resolution by opaque version id, not by
+  tag).
+- **No match / corrupted** (container missing, no versions, no `IsLatest`, the
+  pinned version id is absent, the version folder is missing on disk, or it has
+  zero/multiple subdirs so no base name can be derived) → skipped with a warning
+  (no `staged/` entry, no `mods.lst` entry).
 
+Staging is a **simple loop**: base-name collisions are blocked at import time
+(`GetBaseNameCollision`), so staging never sees two mods with the same base
+folder name in normal use. No dedupe, no last-wins, no disambiguation.
 **Symlinks, never copies** — the repository holds the files; `staged/` is a
 symlink projection. `mods.lst` lists exactly what got staged, in `Order`: no
 DMF-first enforcement, no auto-sort (those are higher-layer concerns).
-
-The symlink `<displayName>` is the sanitized container `Name`
-(filesystem-illegal chars replaced with `_`, fall back to the container id if
-empty). Intra-profile name collisions (two containers with the same display
-name) are disambiguated by appending a short id-derived suffix; the loader is
-agnostic to the symlink name.
 
 ### Moving `IsLatest` requires zero profile-entry changes
 
@@ -232,10 +249,12 @@ symlinks use `File.Delete` — so it stays data-safe on both OSes.
 ## Testing
 
 `Magos.Modificus.Profiles.Tests` covers profile CRUD (`ProfileCrudTests`), mod
-list ordering/enable/policy (`ModListTests`, including the legacy-Name-entry
-drop + null-Policy coercion), `PrepareModRoot` + symlink staging + the data-safe
-`ClearStagedDir` (`PrepareModRootTests`, `StagingTests`), and the `AddProfiles`
-DI wiring (including the `TryAdd` `SymlinkCreator` override).
+list ordering/enable/policy + the base-name collision hard-block
+(`ModListTests`, including the legacy-Name-entry drop + null-Policy coercion +
+`GetBaseNameCollision` over all/none/disabled/excluded/corrupted cases),
+`PrepareModRoot` + symlink staging + the data-safe `ClearStagedDir`
+(`PrepareModRootTests`, `StagingTests`), and the `AddProfiles` DI wiring
+(including the `TryAdd` `SymlinkCreator` override).
 
 ```sh
 dotnet test magos-modificus/magos-modificus.sln -c Release

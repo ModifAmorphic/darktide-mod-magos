@@ -30,4 +30,14 @@
     -->
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      DiscoveryConfig is the user-override section of MagosConfig overlaid onto
+      the discoverer's result; IConfigLoader (General) is the live reader the
+      SteamService reads the Discovery section from on each Discover() call.
+    -->
+    <ProjectReference Include="..\config\Magos.Modificus.Config.csproj" />
+    <ProjectReference Include="..\general\Magos.Modificus.General.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -34,12 +34,17 @@ Requirements, architecture, and technology choices are made fresh.
   create/rename/delete dialog, switch-blocked-while-running), Track D (global
   Preferences: theme + font scale + language, with the i18n infrastructure:
   `Strings.resx` + `LocalizationService` for dynamic culture switching, all Track
-  A UI strings backfilled to resource keys), and Track B (the mod-list UI: view
+  A UI strings backfilled to resource keys), Track B (the mod-list UI: view
   mods with source/version badges, enable/disable, remove-with-confirm, reorder,
   per-mod Latest/Pinned policy, auto-sort identity stub, and local folder/`.zip`
   import via file picker + drag-and-drop, over the `ModSource` + raw-string version
-  model + `IModImportService`) are wired; Launch behavior (Track C) is still
-  pending, and the Launcher is a stub (Phase 5).
+  model + `IModImportService`), and Track C (Launch: `LaunchCommand` ->
+  `IEnginseerLaunchService.Launch` -> branch on `LaunchResult.Status` with the
+  discovery escape-hatch modal for `DiscoveryIncomplete` + a Settings window
+  editing `MagosConfig.Discovery` user overrides + `ModsFolder` live-relocate,
+  over the `DiscoveryConfig` + `SteamService.Discover()` validate+heal+persist
+  pipeline (runs at startup non-blocking + at launch blocking) +
+  `IModRepository.Relocate/Rescan`) are wired; the Launcher is a stub (Phase 5).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -76,15 +81,25 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           persisted active profile, create/rename/delete dialog;
                           Phase 3 Track D: global Preferences (theme + font scale + language)
                           via `IPreferencesService` + the i18n infrastructure: `Strings.resx`
-                          + `LocalizationService` for dynamic culture switching)
+                          + `LocalizationService` for dynamic culture switching;
+                          Phase 3 Track B: the mod-list UI;
+                          Phase 3 Track C: Launch wiring + Settings window +
+                          discovery escape-hatch over the shared `Settings/DiscoveryField`
+                          descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist +
+                          `IModRepository.Relocate/Rescan`)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
   profiles/             Magos.Modificus.Profiles — profile data model, persistence,
-                        container-based staging (ProfileService.PrepareModRoot resolves
-                        each enabled mod's policy to a repository version folder +
-                        symlinks staged/<displayName> to it, then writes mods.lst) +
-                        SetModPolicy transitions + the auto-sort seam
+                        container-based staging (ProfileService.PrepareModRoot
+                        discovers each enabled mod's base folder name inside the
+                        resolved version folder + symlinks staged/<baseName> ->
+                        <versionFolder>/<baseName>/, then writes mods.lst; the
+                        base name, not the container's display name, is the link
+                        + mods.lst name) + SetModPolicy transitions + the
+                        import-time base-name collision hard-block
+                        (GetBaseNameCollision; two same-folder mods can't coexist
+                        in a profile) + the auto-sort seam
                         (IModOrderResolver/IdentityModOrderResolver, identity stub now;
                         real dependency-driven resolver later) + ModCleanup (the startup
                         prune orchestration)
@@ -98,8 +113,11 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         version details) + the
                         mod-source provenance model (ModSource: UntrackedSource/
                         NexusSource/GitHubSource + ModSourceParser URL parsing) + the
-                        local-import service (IModImportService: folder/.zip -> container/
-                        version).
+                        local-import service (IModImportService: folder/.zip ->
+                        container/version; validates the source has exactly one
+                        base dir with a matching <base>.mod + preserves the base
+                        folder under <versionFolder>/<base>/; exposes GetBaseName
+                        + FindExistingContainer peeks for the collision block).
   integrations/         Magos.Modificus.Integrations — GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
@@ -186,10 +204,13 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
 - **Logging** is Serilog (console + file) bridged into
   `Microsoft.Extensions.Logging`; honors `Logging:Level` + `Logging:LogFile`.
 - The backend libraries are all implemented: **Profiles** (profile data model +
-  lifecycle; container-based staging — `PrepareModRoot` resolves each enabled
-  mod's policy to a repository version folder via `IModRepository` + symlinks
-  `staged/<displayName>` to it, then writes `mods.lst`; no per-profile mod
-  files), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
+  lifecycle; container-based staging, where `PrepareModRoot` discovers each
+  enabled mod's base folder name inside the resolved version folder via
+  `IModRepository` + symlinks `staged/<baseName>` -> `<versionFolder>/<baseName>/`,
+  then writes `mods.lst`; the base name, not the container's display name, is the
+  link + mods.lst name; no per-profile mod files) + the import-time base-name
+  collision hard-block (`GetBaseNameCollision`; two same-folder mods can't
+  coexist in a profile), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
   **Integrations** (GitHub Releases client), **Enginseer-client** (the launch
   façade), **Mods** (Phase 1 of the storage refactor: the unified
   `IModRepository` — UUID containers per (source, identity), opaque-ID version
@@ -207,8 +228,18 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   enable/disable, remove-with-confirm, reorder, per-mod Latest/Pinned policy,
   auto-sort identity stub, and local folder/`.zip` import via file picker +
   drag-and-drop, joined to containers via `IModRepository` by `ContainerId`)
-  is wired. Next: Track C (launch); the **Launcher** is a stub (Phase 5). See
-  `docs/architecture/MAGOS-MODIFICUS.md`.
+  is wired. **Phase 3 Track C** (Launch: `LaunchCommand` ->
+  `IEnginseerLaunchService.Launch` -> branch on `LaunchResult.Status`
+  (`Launched` -> status note + immediate `IsGameRunning` refresh;
+  `DiscoveryIncomplete` -> the focused discovery escape-hatch modal over the
+  shared `DiscoveryField` descriptor; `Error` -> modal alert) + a Settings
+  window editing `MagosConfig.Discovery` user overrides (per-field
+  read-modify-save) + `ModsFolder` live-relocate via the atomic
+  `IModRepository.Relocate` (move + save + rescan in one call, rolling the move
+  back on save failure) over the `DiscoveryConfig` + `SteamService.Discover()`
+  validate+heal+persist pipeline (runs at startup non-blocking + at launch
+  blocking) + `IModRepository.Relocate/Rescan`) is wired; the **Launcher** is a stub
+  (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
 
 ## Key docs
 

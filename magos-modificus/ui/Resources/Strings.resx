@@ -81,6 +81,10 @@
     <value>Preferences…</value>
     <comment>Tooltip on the button that opens the Preferences dialog.</comment>
   </data>
+  <data name="Settings_ButtonTooltip" xml:space="preserve">
+    <value>Settings…</value>
+    <comment>Tooltip on the gear button that opens the Settings dialog (discovery paths + mod-repository location).</comment>
+  </data>
   <data name="Launch_Button" xml:space="preserve">
     <value>Launch Darktide</value>
     <comment>The Launch button in the shell top bar.</comment>
@@ -372,6 +376,18 @@
     <value>This URL does not look right. Check the format and try again.</value>
     <comment>Validation message when the URL does not parse for the chosen source.</comment>
   </data>
+  <data name="Import_PolicyLabel" xml:space="preserve">
+    <value>Version policy</value>
+    <comment>Label for the Latest / Pinned version-policy chooser in the import modal.</comment>
+  </data>
+  <data name="Import_PolicyLatest" xml:space="preserve">
+    <value>Latest</value>
+    <comment>The Latest policy option in the import modal: track the mod's newest release.</comment>
+  </data>
+  <data name="Import_PolicyPinned" xml:space="preserve">
+    <value>Pinned to this version</value>
+    <comment>The Pinned policy option in the import modal: freeze the mod at the version being imported.</comment>
+  </data>
 
   <!-- ============================================================ -->
   <!-- Remove mod confirmation                                       -->
@@ -384,5 +400,119 @@
   <data name="RemoveMod_Message" xml:space="preserve">
     <value>Remove {0} from this profile?</value>
     <comment>Body of the remove-mod confirmation prompt. {0} is the mod name.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Import failure (add flow)                                     -->
+  <!-- ============================================================ -->
+
+  <data name="Import_FailedTitle" xml:space="preserve">
+    <value>Could not import mod</value>
+    <comment>Title of the modal alert shown when an import fails on an invalid source (bad zip/folder structure).</comment>
+  </data>
+  <data name="Import_FailedMessage" xml:space="preserve">
+    <value>Could not import '{0}'.</value>
+    <comment>Prefix of the import-failure alert body. {0} is the source path. The import's detail message follows.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Import base-name collision (add flow)                         -->
+  <!-- ============================================================ -->
+
+  <data name="Import_CollisionTitle" xml:space="preserve">
+    <value>Mod folder conflict</value>
+    <comment>Title of the modal alert shown when a mod's base folder name collides with an existing mod in the profile (the loader can't tell two same-folder mods apart).</comment>
+  </data>
+  <data name="Import_CollisionMessage" xml:space="preserve">
+    <value>Could not import '{0}': its mod folder '{1}' is already used by '{2}' in this profile. Two mods with the same folder name can't coexist in one profile (the mod loader can't tell them apart).</value>
+    <comment>Body of the base-name collision alert. {0} is the source path; {1} is the conflicting base folder name; {2} is the existing mod's display name.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Settings dialog (SettingsWindow / SettingsViewModel)         -->
+  <!-- ============================================================ -->
+
+  <data name="Settings_Title" xml:space="preserve">
+    <value>Settings</value>
+    <comment>Title of the Settings dialog (discovery paths + mod-repository location).</comment>
+  </data>
+  <data name="Settings_DiscoverySection" xml:space="preserve">
+    <value>Discovery</value>
+    <comment>Header over the discovery-override section of the Settings dialog.</comment>
+  </data>
+  <data name="Settings_StorageSection" xml:space="preserve">
+    <value>Storage</value>
+    <comment>Header over the storage section (mod-repository location) of the Settings dialog.</comment>
+  </data>
+  <data name="Settings_DoneButton" xml:space="preserve">
+    <value>Done</value>
+    <comment>The Done button at the bottom of the Settings dialog.</comment>
+  </data>
+  <data name="Settings_ModRepoLabel" xml:space="preserve">
+    <value>Mod repository</value>
+    <comment>Label next to the mod-repository location TextBox in the Settings dialog.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Shared discovery-field labels (Settings + escape-hatch)      -->
+  <!-- ============================================================ -->
+
+  <data name="Discovery_SteamInstallLabel" xml:space="preserve">
+    <value>Steam install</value>
+    <comment>Label for the Steam install directory field (folder picker).</comment>
+  </data>
+  <data name="Discovery_DarktideBinaryLabel" xml:space="preserve">
+    <value>Darktide binary</value>
+    <comment>Label for the Darktide.exe path field (file picker).</comment>
+  </data>
+  <data name="Discovery_CompatdataLabel" xml:space="preserve">
+    <value>Wine prefix (compatdata)</value>
+    <comment>Label for the Wine prefix / compatdata directory field (folder picker, Linux only).</comment>
+  </data>
+  <data name="Discovery_ProtonBinaryLabel" xml:space="preserve">
+    <value>Proton binary</value>
+    <comment>Label for the proton script path field (file picker, Linux only).</comment>
+  </data>
+  <data name="Discovery_BrowseButton" xml:space="preserve">
+    <value>Browse…</value>
+    <comment>The Browse button next to every discovery / ModsFolder row.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Discovery escape-hatch dialog                                -->
+  <!-- ============================================================ -->
+
+  <data name="EscapeHatch_Title" xml:space="preserve">
+    <value>Configure discovery paths</value>
+    <comment>Title of the discovery escape-hatch dialog shown on a DiscoveryIncomplete launch.</comment>
+  </data>
+  <data name="EscapeHatch_Header" xml:space="preserve">
+    <value>We couldn't automatically discover everything needed to launch. Please help configure these paths.</value>
+    <comment>The friendly header of the escape-hatch dialog (NOT framed as an error).</comment>
+  </data>
+  <data name="EscapeHatch_SubmitButton" xml:space="preserve">
+    <value>Submit</value>
+    <comment>The Submit button on the escape-hatch dialog (writes the entered paths + closes).</comment>
+  </data>
+  <data name="EscapeHatch_CancelButton" xml:space="preserve">
+    <value>Cancel</value>
+    <comment>The Cancel button on the escape-hatch dialog.</comment>
+  </data>
+  <data name="EscapeHatch_RetryHint" xml:space="preserve">
+    <value>Click Launch to retry after updating.</value>
+    <comment>Note on the escape-hatch dialog telling the user to click Launch again after submitting (no auto-retry).</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Launch outcomes (status strip + alert)                       -->
+  <!-- ============================================================ -->
+
+  <data name="Launch_LaunchedNote" xml:space="preserve">
+    <value>Launched '{0}'.</value>
+    <comment>The transient status-strip note after a successful launch. {0} is the profile name.</comment>
+  </data>
+  <data name="Launch_ErrorTitle" xml:space="preserve">
+    <value>Launch failed</value>
+    <comment>Title of the modal alert shown when a launch returns LaunchStatus.Error.</comment>
   </data>
 </root>
