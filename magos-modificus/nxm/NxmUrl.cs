@@ -6,10 +6,11 @@ namespace Magos.Modificus.Nxm;
 /// <see cref="NxmUrlParser"/>, dispatched on by <see cref="INxmRouter"/>.
 /// </summary>
 /// <remarks>
-/// Three URL kinds are recognized in Stage 1: mod downloads, OAuth callbacks,
-/// and collections (parsed but not routed to a handler in v1). Anything that
-/// does not match one of these shapes fails to parse and is dropped by the
-/// router with a warning.
+/// Three URL kinds are recognized: mod downloads, OAuth-callback shapes (parsed
+/// so the router can route them, but no longer dispatched to a handler, see
+/// <see cref="NxmOAuthCallbackUrl"/>), and collections (parsed but not routed to
+/// a handler in v1). Anything that does not match one of these shapes fails to
+/// parse and is dropped by the router with a warning.
 /// </remarks>
 public abstract record NxmUrl
 {
@@ -43,9 +44,12 @@ public sealed record NxmModDownloadUrl(
 
 /// <summary>
 /// An OAuth callback URL: <c>nxm://oauth/callback?code=&lt;code&gt;&amp;state=&lt;state&gt;</c>.
-/// Stage 2's OIDC browser flow registers a real <see cref="INxmOAuthCallbackHandler"/>
-/// that awaits the routed callback, matched by <c>state</c>, for its pending
-/// authorize request.
+/// Kept as a parsed type so <see cref="NxmUrlParser"/> continues to recognize
+/// the shape (rather than classifying it as unknown). The router logs + drops
+/// these: Nexus OAuth in Magos uses a loopback HTTP redirect (RFC 8252),
+/// independent of the <c>nxm://</c> handler, so this URL kind is never actually
+/// delivered over the IPC pipe in normal operation. Stage 2 removed the
+/// <c>INxmOAuthCallbackHandler</c> seam this type used to feed.
 /// </summary>
 /// <param name="Raw">The verbatim URL string.</param>
 /// <param name="Code">The authorization code (required, non-empty).</param>

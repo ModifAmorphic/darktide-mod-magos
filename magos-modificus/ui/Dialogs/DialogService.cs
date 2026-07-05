@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Magos.Modificus.General;
+using Magos.Modificus.Integrations;
 using Magos.Modificus.Mods;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.UI.Localization;
@@ -44,6 +45,7 @@ public sealed class DialogService : IDialogService
     private readonly LocalizationService _localization;
     private readonly IConfigLoader _configLoader;
     private readonly IModRepository _mods;
+    private readonly INexusAuthService _nexusAuth;
     private readonly ILoggerFactory _loggerFactory;
 
     /// <param name="owner">The window dialog parents are shown over (the main window).</param>
@@ -62,9 +64,11 @@ public sealed class DialogService : IDialogService
     /// field change), and the escape-hatch VM (one read-modify-save on submit).</param>
     /// <param name="mods">The mod repository; handed to the Settings VM for the
     /// atomic relocate flow (move + save + rescan) on a ModsFolder change.</param>
-    /// <param name="loggerFactory">The logger factory; the Settings VM gets a typed
-    /// logger from it so its relocate success/failure log lines reach the configured
-    /// sinks (the other dialog VMs take no logger).</param>
+    /// <param name="nexusAuth">The Nexus auth service; handed to the Integrations VM
+    /// for OAuth login + API-key validate + sign-out + current-state reads.</param>
+    /// <param name="loggerFactory">The logger factory; the Settings VM + the
+    /// Integrations VM get typed loggers from it so their log lines reach the
+    /// configured sinks (the other dialog VMs take no logger).</param>
     public DialogService(
         Window owner,
         IProfileService profiles,
@@ -73,6 +77,7 @@ public sealed class DialogService : IDialogService
         LocalizationService localization,
         IConfigLoader configLoader,
         IModRepository mods,
+        INexusAuthService nexusAuth,
         ILoggerFactory loggerFactory)
     {
         _owner = owner;
@@ -82,6 +87,7 @@ public sealed class DialogService : IDialogService
         _localization = localization;
         _configLoader = configLoader;
         _mods = mods;
+        _nexusAuth = nexusAuth;
         _loggerFactory = loggerFactory;
     }
 
@@ -196,6 +202,26 @@ public sealed class DialogService : IDialogService
             _localization,
             _loggerFactory.CreateLogger<SettingsViewModel>());
         var window = new SettingsWindow
+        {
+            DataContext = viewModel,
+        };
+
+        using var _ = DisableOwnerForModal();
+        await window.ShowDialog(_owner);
+    }
+
+    /// <inheritdoc />
+    public async Task ShowIntegrationsAsync()
+    {
+        // The VM resolves its initial state server-side on open (Window.OnOpened
+        // calls vm.RefreshAsync). Each auth action applies + persists through
+        // the NexusAuthService; on close there is nothing else to do.
+        var viewModel = new IntegrationsViewModel(
+            _nexusAuth,
+            _localization,
+            _session,
+            _loggerFactory.CreateLogger<IntegrationsViewModel>());
+        var window = new IntegrationsWindow
         {
             DataContext = viewModel,
         };

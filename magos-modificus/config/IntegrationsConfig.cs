@@ -10,6 +10,13 @@ public sealed class IntegrationsConfig
 {
     /// <summary>GitHub Releases client settings.</summary>
     public GitHubConfig GitHub { get; set; } = new();
+
+    /// <summary>
+    /// Nexus Mods auth + API client settings. Phase 4 Stage 2. The auth method is
+    /// the user's explicit choice (set by the Integrations dialog); the auth
+    /// message factory selection reads it live, no fallback.
+    /// </summary>
+    public NexusConfig Nexus { get; set; } = new();
 }
 
 /// <summary>

@@ -283,6 +283,16 @@ public partial class ShellViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Opens the Integrations dialog (Nexus auth: OAuth login + API-key validate
+    /// + sign-out). Nexus-only in v1; GitHub stays config-file-only.
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenIntegrations()
+    {
+        await _dialogs.ShowIntegrationsAsync();
+    }
+
+    /// <summary>
     /// Opens the Settings dialog (discovery paths + mod-repository location),
     /// then reloads the mod list. Each setting applies + persists immediately
     /// through the dialog; on close the only follow-up is a mod-list reload,

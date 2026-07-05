@@ -13,12 +13,12 @@
 
   <Grid RowDefinitions="Auto,*,Auto">
 
-    <!-- Top bar: app title · profile dropdown · Manage… · Preferences… · Settings · Launch Darktide -->
+    <!-- Top bar: app title · profile dropdown · Manage… · Integrations… · Preferences… · Settings · Launch Darktide -->
     <Border Grid.Row="0"
             BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
             BorderThickness="0,0,0,1"
             Padding="20,12">
-      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
 
         <!-- App title (left) -->
         <TextBlock Grid.Column="0"
@@ -63,8 +63,25 @@
           </Button>
         </StackPanel>
 
+        <!-- Integrations… (Nexus auth; left, after profiles) -->
+        <Button Grid.Column="2"
+                Command="{Binding OpenIntegrationsCommand}"
+                ToolTip.Tip="{ReflectionBinding [Integrations_ButtonTooltip], Source={StaticResource Loc}}"
+                MinWidth="36"
+                VerticalAlignment="Center"
+                Margin="8,0,0,0">
+          <!-- Material "extension" puzzle-piece icon (24x24 source): drawn
+               geometry, inherits the button foreground. Chosen for Integrations:
+               the canonical "plug things in" symbol (Nexus is the only
+               integration in v1; a future GitHub UI etc. would slot in here). -->
+          <Path Width="16" Height="16" Stretch="Uniform"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
+                Fill="{Binding $parent[Button].Foreground}"
+                Data="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7s2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z" />
+        </Button>
+
         <!-- Preferences… (right, next to Settings + Launch) -->
-        <Button Grid.Column="3"
+        <Button Grid.Column="4"
                 Command="{Binding OpenPreferencesCommand}"
                 ToolTip.Tip="{ReflectionBinding [Preferences_ButtonTooltip], Source={StaticResource Loc}}"
                 MinWidth="36"
@@ -81,7 +98,7 @@
         </Button>
 
         <!-- Settings (gear; moved here from Manage Profiles) -->
-        <Button Grid.Column="4"
+        <Button Grid.Column="5"
                 Command="{Binding OpenSettingsCommand}"
                 ToolTip.Tip="{ReflectionBinding [Settings_ButtonTooltip], Source={StaticResource Loc}}"
                 MinWidth="36"
@@ -99,7 +116,7 @@
         </Button>
 
         <!-- Launch Darktide (right) -->
-        <Button Grid.Column="5"
+        <Button Grid.Column="6"
                 Content="{ReflectionBinding [Launch_Button], Source={StaticResource Loc}}"
                 Command="{Binding LaunchCommand}"
                 VerticalAlignment="Center" />

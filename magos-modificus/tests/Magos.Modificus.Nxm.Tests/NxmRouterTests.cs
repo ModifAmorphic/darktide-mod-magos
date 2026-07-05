@@ -5,24 +5,21 @@ namespace Magos.Modificus.Nxm.Tests;
 
 /// <summary>
 /// <see cref="NxmRouter"/>: a mod-download URL routes to the mod-download
-/// handler with parsed fields; an OAuth callback routes to the OAuth handler; a
-/// collection URL routes to neither (logged only); an unparseable URL routes to
-/// neither (logged only); a throwing handler does not propagate.
+/// handler with parsed fields; an OAuth callback URL is logged + dropped (Stage 2
+/// removed the OAuth handler seam in favor of loopback redirect); a collection
+/// URL routes to neither (logged only); an unparseable URL routes to neither
+/// (logged only); a throwing handler does not propagate.
 /// </summary>
 public sealed class NxmRouterTests
 {
-    private static NxmRouter CreateRouter(
-        FakeModDownloadHandler? mod = null, FakeOAuthHandler? oauth = null) =>
-        new(mod ?? new FakeModDownloadHandler(),
-            oauth ?? new FakeOAuthHandler(),
-            NullLogger<NxmRouter>.Instance);
+    private static NxmRouter CreateRouter(FakeModDownloadHandler? mod = null) =>
+        new(mod ?? new FakeModDownloadHandler(), NullLogger<NxmRouter>.Instance);
 
     [Fact]
     public async Task Mod_download_url_routes_to_mod_download_handler()
     {
         var mod = new FakeModDownloadHandler();
-        var oauth = new FakeOAuthHandler();
-        var router = CreateRouter(mod, oauth);
+        var router = CreateRouter(mod);
 
         await router.RouteAsync("nxm://warhammer40kdarktide/mods/8/files/5820?key=K&expires=1&user_id=2");
 
@@ -33,49 +30,43 @@ public sealed class NxmRouterTests
         Assert.Equal("K", mod.Handled[0].Key);
         Assert.Equal(1L, mod.Handled[0].Expires);
         Assert.Equal(2L, mod.Handled[0].UserId);
-        Assert.Empty(oauth.Handled);
     }
 
     [Fact]
-    public async Task Oauth_callback_routes_to_oauth_handler()
+    public async Task Oauth_callback_is_logged_and_dropped()
     {
+        // Stage 2: OAuth uses loopback redirect (RFC 8252), independent of the
+        // nxm handler. The parser keeps recognizing the shape; the router just
+        // drops it. No OAuth handler exists anymore.
         var mod = new FakeModDownloadHandler();
-        var oauth = new FakeOAuthHandler();
-        var router = CreateRouter(mod, oauth);
+        var router = CreateRouter(mod);
 
         await router.RouteAsync("nxm://oauth/callback?code=ABC&state=DEF");
 
         Assert.Empty(mod.Handled);
-        Assert.Single(oauth.Handled);
-        Assert.Equal("ABC", oauth.Handled[0].Code);
-        Assert.Equal("DEF", oauth.Handled[0].State);
     }
 
     [Fact]
     public async Task Collection_url_routes_to_neither_handler()
     {
         var mod = new FakeModDownloadHandler();
-        var oauth = new FakeOAuthHandler();
-        var router = CreateRouter(mod, oauth);
+        var router = CreateRouter(mod);
 
         await router.RouteAsync("nxm://warhammer40kdarktide/collections/someid/revisions/5");
 
         Assert.Empty(mod.Handled);
-        Assert.Empty(oauth.Handled);
     }
 
     [Fact]
     public async Task Unparseable_url_routes_to_neither_handler()
     {
         var mod = new FakeModDownloadHandler();
-        var oauth = new FakeOAuthHandler();
-        var router = CreateRouter(mod, oauth);
+        var router = CreateRouter(mod);
 
         await router.RouteAsync("nxm://garbage/path");
         await router.RouteAsync("not even a url");
 
         Assert.Empty(mod.Handled);
-        Assert.Empty(oauth.Handled);
     }
 
     [Fact]
@@ -114,17 +105,6 @@ public sealed class NxmRouterTests
                 _hasThrown = true;
                 throw new InvalidOperationException("test: mod handler throws");
             }
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class FakeOAuthHandler : INxmOAuthCallbackHandler
-    {
-        public List<NxmOAuthCallbackUrl> Handled { get; } = new();
-
-        public Task HandleAsync(NxmOAuthCallbackUrl url, CancellationToken ct = default)
-        {
-            Handled.Add(url);
             return Task.CompletedTask;
         }
     }

@@ -9,7 +9,7 @@ namespace Magos.Modificus.Nxm;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the nxm router, IPC server, no-op handler defaults, and the
+    /// Registers the nxm router, IPC server, no-op mod-download default, and the
     /// platform <see cref="INxmHandlerRegistrar"/>. The composition root binds +
     /// starts the IPC server after building the provider (single-instance is
     /// enforced via process enumeration in <see cref="SingleInstanceGuard"/>
@@ -18,15 +18,20 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Handler override convention (last registration wins).</b> The two
-    /// handler defaults (<see cref="NoOpNxmModDownloadHandler"/> /
-    /// <see cref="NoOpNxmOAuthCallbackHandler"/>) are registered here with plain
-    /// <c>AddSingleton</c> (not <c>TryAdd</c>). Stage 2 / 3 register real
-    /// implementations AFTER <c>AddNxm()</c> via
-    /// <c>services.AddSingleton&lt;INxmOAuthCallbackHandler, ...&gt;()</c>
-    /// (or the mod-download equivalent); MS DI resolves the LAST registration,
-    /// so the real handler supersedes the no-op. The router captures whichever
-    /// handler is resolved at its (singleton) construction.
+    /// <b>Handler override convention (last registration wins).</b> The no-op
+    /// default (<see cref="NoOpNxmModDownloadHandler"/>) is registered here with
+    /// plain <c>AddSingleton</c> (not <c>TryAdd</c>). Stage 3 registers a real
+    /// implementation AFTER <c>AddNxm()</c> via
+    /// <c>services.AddSingleton&lt;INxmModDownloadHandler, ...&gt;()</c>; MS DI
+    /// resolves the LAST registration, so the real handler supersedes the no-op.
+    /// The router captures whichever handler is resolved at its (singleton)
+    /// construction.
+    /// </para>
+    /// <para>
+    /// <b>Stage 2 removed the <c>INxmOAuthCallbackHandler</c> seam.</b> Magos
+    /// OAuth uses a loopback HTTP redirect (RFC 8252), independent of the nxm
+    /// handler; the <c>nxm://oauth/callback</c> URL shape is still parsed so the
+    /// router can recognize it, but it is logged + dropped rather than routed.
     /// </para>
     /// <para>
     /// <b>Platform registrar.</b> <see cref="WindowsNxmHandlerRegistrar"/> is
@@ -43,9 +48,8 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        // No-op handler defaults; plain AddSingleton so later registrations win.
+        // No-op mod-download default; plain AddSingleton so a later registration wins.
         services.AddSingleton<INxmModDownloadHandler, NoOpNxmModDownloadHandler>();
-        services.AddSingleton<INxmOAuthCallbackHandler, NoOpNxmOAuthCallbackHandler>();
 
         services.AddSingleton<INxmRouter, NxmRouter>();
         services.AddSingleton<NxmIpcServer>();

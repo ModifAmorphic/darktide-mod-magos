@@ -115,7 +115,9 @@ through a registered library interface. The UI registers only its own surface
      idempotently again inside `AddProfiles()`, so the store is discoverable at
      the root and `IProfileService` always resolves its staging dependency).
    - `AddProfiles()`: profile service + the `SymlinkCreator` staging seam.
-   - `AddIntegrations()`: the typed GitHub HTTP client.
+    - `AddIntegrations()`: the typed GitHub HTTP client + the typed Nexus v1
+      HTTP client (Phase 4 Stage 2) + the Nexus auth service + the OAuth token
+      store + the loopback `IBrowser`.
    - `AddSteam()`: Steam discovery + the platform process-lookup seam.
    - `AddEnginseerClient()`: the launch façade + the process-launcher seam.
    - `AddLauncher()`: the slim profile launcher stub (Phase 5).
@@ -421,18 +423,90 @@ on first run vs. Settings toggle vs. manual) is deferred to a later stage.
 
 ### Stage 2 and Stage 3 seams
 
-The router dispatches parsed URLs to two handler interfaces:
-`INxmModDownloadHandler` (mod downloads) and `INxmOAuthCallbackHandler` (OAuth
-callbacks). Stage 1 ships no-op defaults that log the parsed URL at Information.
-Stage 2 registers a real OAuth handler (the OIDC browser flow awaits the routed
-callback, matched by `state`); Stage 3 registers a real mod-download handler (the
-acquisition flow downloads via the Nexus client and imports into the unified
-repository). Both are drop-in: the no-op defaults are registered with plain
-`AddSingleton`, and MS DI resolves the last registration, so a later
-`AddSingleton<INxm…Handler, RealImpl>()` after `AddNxm()` supersedes the default.
+The router dispatches parsed mod-download URLs to one handler interface:
+`INxmModDownloadHandler` (mod downloads). Stage 1 ships a no-op default that
+logs the parsed URL at Information; Stage 3 registers a real mod-download
+handler (the acquisition flow downloads via the Nexus client and imports into
+the unified repository). It is drop-in: the no-op default is registered with
+plain `AddSingleton`, and MS DI resolves the last registration, so a later
+`AddSingleton<INxmModDownloadHandler, RealImpl>()` after `AddNxm()` supersedes
+the default.
+
+**Stage 2 removed the OAuth-callback seam.** Stage 1 originally shipped an
+`INxmOAuthCallbackHandler` for an `nxm://oauth/callback` URL kind, expecting
+the OAuth flow to ride on `nxm://`. Stage 2 corrects that: Nexus OAuth in Magos
+uses a **loopback HTTP redirect** (`http://127.0.0.1:<port>/callback`, the RFC
+8252 standard, MO2's pattern), independent of the `nxm://` handler. The
+`nxm://oauth/callback` URL shape is still recognized by the parser (so it
+parses cleanly rather than classifying as unknown), but the router logs it as
+"handled by the loopback listener, not the nxm handler" and drops it. In normal
+operation no such URL is delivered over IPC because the loopback listener
+receives the callback, not the nxm handler.
+
+### Nexus authentication (Phase 4 Stage 2)
+
+Nexus Mods auth has two user-facing paths, both surfaced in the Integrations
+dialog: **OAuth** (the primary, a loopback OIDC flow via
+`Duende.IdentityModel.OidcClient`) and **API key** (the alternative, validated
+against `GET /v1/users/validate.json`). The user's explicit choice is stored in
+`NexusConfig.AuthMethod` (`None` / `OAuth` / `ApiKey`); there is no fallback.
+Switching methods clears the other method's credentials (clean transition, no
+stale leftovers). Sign-out resets to `None`.
+
+**OAuth (loopback, RFC 8252).** `NexusOAuthTokenStore` owns an `OidcClient`
+configured with `Authority = "https://users.nexusmods.com/oauth"`,
+`ClientId = "magos-modificus"` (a build-time const, not config or env var),
+`Scope = "openid profile email"`, and a `LoopbackBrowser` (an `IBrowser` impl).
+The browser pre-grabs an ephemeral loopback port (exposed as `RedirectUri`),
+the service passes it to `OidcClientOptions.RedirectUri`, OidcClient builds the
+authorize URL with PKCE S256 (PKCE is automatic in OidcClient 7.x; there is no
+`Policy.RequirePKCE` flag), the browser opens it via
+`Process.Start(UseShellExecute=true)` (correct here, opening a URL via the OS
+shell-open), the user consents, the loopback `HttpListener` receives the
+callback, OidcClient exchanges the code for tokens, the store persists them.
+Three-minute flow timeout; on expiry the service surfaces "Login timed out".
+
+**API key.** `NexusAuthService.LoginWithApiKeyAsync` does a speculative write
+(`AuthMethod = ApiKey` + the key) so the v1 client's auth factory picks it up,
+calls `INexusClient.ValidateAsync`, and reverts on failure (the user keeps their
+prior session). On success the display name + premium state come from the
+validate response.
+
+**401-reactive refresh.** The OAuth auth message factory refreshes via the
+token store's `RefreshAsync` (OidcClient's refresh API + persisted new tokens)
+on the first 401, serialized through a semaphore so concurrent 401s coalesce
+into one refresh. The client retries the failed request once with the new
+access token. The API-key factory has no refresh; a 401 surfaces "API key
+invalid/expired" (no OAuth fallback). Refresh is reactive (matches MO2), not
+proactive.
+
+**App-identification headers** on every Nexus request: `Application-Name`,
+`Application-Version`, `Protocol-Version: 1.0.0`, `User-Agent` (the MO2/NMA
+convention).
+
+**Rate limits** are parsed from the `x-rl-*` response headers
+(`x-rl-daily-limit` / `x-rl-daily-remaining` / `x-rl-daily-reset` /
+`x-rl-hourly-limit` / `x-rl-hourly-remaining` / `x-rl-hourly-reset`) into a
+`NexusRateLimits` carried on every `Response<T>`. Stage 4 (update-check)
+consumes them to back off; Stage 2 just parses + logs them. A 429 (or a 403
+with `*-remaining: 0`) throws `NexusRateLimitException`.
+
+**v1 endpoints** (grounded against NMA's `NexusApiClient.cs` + node-nexus-api,
+mirroring that shape; v3 is Experimental for the surfaces we need, so v1 only):
+
+- `GET /v1/users/validate.json` (API-key validate)
+- `GET /oauth/userinfo` on the OAuth base URL (user info)
+- `GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}` (recent updates)
+- `GET /v1/games/{domain}/mods/{modId}/files/{fileId}/download_link.json`
+  (premium download links); same endpoint with `?key={nxmKey}&expires={epoch}`
+  for free users
+- `GET /v1/games/{domain}/mods/{modId}.json` (mod info)
+- `GET /v1/games/{domain}/mods/{modId}/files.json` (mod files; unwrapped from
+  `{"files":[...]}`)
 
 Per-library public surfaces, exact signatures, and DI registration are documented
-in [nxm reference](../reference/magos-modificus/nxm.md).
+in [integrations reference](../reference/magos-modificus/integrations.md) and
+[nxm reference](../reference/magos-modificus/nxm.md).
 
 ## Mod list (main view)
 

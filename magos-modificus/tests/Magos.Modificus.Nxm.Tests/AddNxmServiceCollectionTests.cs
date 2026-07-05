@@ -6,15 +6,15 @@ namespace Magos.Modificus.Nxm.Tests;
 
 /// <summary>
 /// <see cref="ServiceCollectionExtensions.AddNxm"/>: the router, IPC server,
-/// and no-op handler defaults are registered; the platform registrar is
-/// registered on the host OS (Windows or Linux); and the "last registration
-/// wins" handler override convention works (a later AddSingleton supersedes the
-/// no-op default).
+/// and no-op mod-download default are registered; the platform registrar is
+/// registered on the host OS (Windows or Linux); the OAuth handler seam is
+/// GONE (Stage 2 removed it); and the "last registration wins" handler override
+/// convention works (a later AddSingleton supersedes the no-op default).
 /// </summary>
 public sealed class AddNxmServiceCollectionTests
 {
     [Fact]
-    public void AddNxm_registers_router_server_and_handlers()
+    public void AddNxm_registers_router_server_and_mod_download_handler()
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -23,9 +23,8 @@ public sealed class AddNxmServiceCollectionTests
         using var provider = services.BuildServiceProvider();
         Assert.IsType<NxmRouter>(provider.GetRequiredService<INxmRouter>());
         Assert.NotNull(provider.GetRequiredService<NxmIpcServer>());
-        // The no-op defaults are internal types; resolve via the interfaces.
+        // The no-op default is an internal type; resolve via the interface.
         Assert.NotNull(provider.GetRequiredService<INxmModDownloadHandler>());
-        Assert.NotNull(provider.GetRequiredService<INxmOAuthCallbackHandler>());
     }
 
     [Fact]
@@ -46,7 +45,7 @@ public sealed class AddNxmServiceCollectionTests
     [Fact]
     public async Task Later_handler_registration_overrides_the_no_op_default()
     {
-        // Documents the "last registration wins" convention Stage 2/3 rely on:
+        // Documents the "last registration wins" convention Stage 3 relies on:
         // register AddNxm() first, then AddSingleton a real handler. MS DI
         // resolves the LAST one.
         var services = new ServiceCollection();
