@@ -192,11 +192,11 @@ public sealed class SettingsViewModelTests
         var (vm, loader, _) = Build();
 
         Row(vm, "DarktideGameBinaryPath").Value = "/darktide.exe";
-        Row(vm, "CompatdataPath").Value = "/compat";
+        Row(vm, "SteamInstallPath").Value = "/new/steam";
 
         Assert.Equal(2, loader.SaveCalls);
         Assert.Equal("/darktide.exe", loader.LastSaved!.Discovery.UserDarktideGameBinaryPath);
-        Assert.Equal("/compat", loader.LastSaved.Discovery.UserCompatdataPath);
+        Assert.Equal("/new/steam", loader.LastSaved.Discovery.UserSteamInstallPath);
     }
 
     // ---- ModsFolder relocate flow ----------------------------------------
