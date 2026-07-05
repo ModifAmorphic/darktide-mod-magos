@@ -28,8 +28,7 @@
 
       <views:DialogTitleBar Grid.Row="0" />
 
-      <ScrollViewer Grid.Row="1" Padding="24,16" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Spacing="20">
+      <StackPanel Grid.Row="1" Spacing="20" Margin="24,16">
 
           <!-- ============== Discovery section ============== -->
           <StackPanel Spacing="8">
@@ -84,8 +83,7 @@
                        TextWrapping="Wrap" />
           </StackPanel>
 
-        </StackPanel>
-      </ScrollViewer>
+      </StackPanel>
 
       <!-- Done -->
       <Button Grid.Row="2"
