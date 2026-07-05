@@ -8,13 +8,15 @@ Mods, Steam), and the "Launch Darktide" button that invokes the Enginseer
 launcher. Enginseer does the injection + mod loading; Magos Modificus owns the
 management experience around it.
 
-> **Status: Phases 0–2 complete.** The foundation (.NET 10 + Avalonia 12 layout,
-> DI composition, structured logging, global config schema/loader, a bare UI
-> shell) plus the backend libraries are built: Profiles, Steam, Integrations,
-> Enginseer-client (Phase 1) + Mods (Phase 2). The **UI is still the bare
-> Phase-0 window** (no profile/mod-management UI yet) and the **Launcher** is a
-> stub (Phase 5). Next: Phase 3 (UI build-out). Enginseer (the runtime it builds
-> on) is built — see `docs/architecture/ENGINSEER.md`.
+> **Status: Phases 0–2 complete; Phase 3 UI in progress.** The foundation
+> (.NET 10 + Avalonia 12 layout, DI composition, structured logging, global
+> config schema/loader) plus the backend libraries are built: Profiles, Steam,
+> Integrations, Enginseer-client (Phase 1) + Mods (Phase 2). The Phase 3 UI is
+> wired: Track A (app shell + profile management), Track D (global Preferences +
+> i18n), Track B (the mod-list UI + local import), and Track C (Launch wiring +
+> Settings window + discovery escape-hatch). The **Launcher** is a stub
+> (Phase 5). Enginseer (the runtime it builds on) is built; see
+> `docs/architecture/ENGINSEER.md`.
 
 ## In scope for this document
 
@@ -250,9 +252,11 @@ symlink projection.
 dropping version folders no profile references + removing empty containers.
 Keeps the on-disk tree in sync with what the profiles actually use.
 
-**Relocation:** because paths are derived, changing `<ModsFolder>` is a
-physical move of the tree plus a config update. No manifest rewriting, no drift
-detection.
+**Relocation:** because paths are derived, changing `<ModsFolder>` is a physical
+move of the tree plus a config update. `IModRepository.Relocate` owns the move +
+config save + rescan as one atomic operation (rolling the move back on save
+failure so files + config can never disagree); no manifest rewriting, no drift
+detection. The Settings window's Storage section is the UI for it.
 
 ## Mod sources / integrations
 
@@ -347,6 +351,48 @@ set by Magos.
 isn't supervising the session (no overlay / playtime tracking). The **Steam
 non-steam shortcut** path is the answer for users who want full Steam
 integration — see below.
+
+### Launch wiring + Settings + escape-hatch (Phase 3 Track C)
+
+The shell's `LaunchCommand` invokes `IEnginseerLaunchService.Launch(activeProfileId)`
+(gated by `CanLaunch`: a profile is selected and the game is not running) and
+branches on `LaunchResult.Status`:
+
+- **`Launched`**: a brief localized status note ("Launched 'X'") + an immediate
+  `IsGameRunning` refresh (the session's `Refresh`), so the running indicator +
+  launch-availability react at once rather than waiting for the next poll.
+- **`DiscoveryIncomplete`**: opens the focused escape-hatch dialog (below) with
+  `LaunchResult.MissingDiscoveryFields`. **No auto-retry:** the user submits the
+  paths, closes the dialog, and clicks Launch again. This avoids a loop if the
+  user cannot get the paths right; the escape-hatch is a form, not a retry.
+- **`Error`**: a modal alert surfacing `LaunchResult.Message`.
+
+A new top-bar **Settings** button (gear) opens the **Settings window** with two
+sections, both persisting through `IConfigLoader` (read live, so the next
+`Discover()` / launch picks them up):
+
+- **Discovery:** the four user-override paths (`MagosConfig.Discovery`).
+  `SteamService.Discover()` runs the platform discoverer, then overlays a
+  non-null override onto the auto result (no re-verify) and recomputes `Status`
+  via the shared `SteamDiscoveryCore.ComputeStatus`.
+- **Storage:** the mod-repository location (`ModsFolder`). Changing it runs the
+  **atomic relocate** on `IModRepository.Relocate`, which owns the move + config
+  save + rescan as one operation (rolling the move back on save failure so files
+  + config can never disagree). After the Settings dialog closes, the shell
+  reloads the mod list so the rescanned index is reflected in the rows.
+
+The **escape-hatch dialog** is the focused form shown on `DiscoveryIncomplete`.
+It shows inputs **only for the missing fields**, pre-filled with the current
+config value (or blank). Submit does one read-modify-save of the entered paths
+into `Discovery.User*Path`, then closes (no retry). A friendly header explains
+auto-discovery could not resolve everything.
+
+Both the Settings discovery rows and the escape-hatch rows are driven by a
+shared **`DiscoveryField` descriptor** (one source of truth for the field
+metadata: canonical name, human label, browse kind (folder/file), current value,
+setter). The canonical names match `DiscoveryResult`'s field names, which are
+what `LaunchResult.MissingDiscoveryFields` carries, so the escape-hatch shows
+exactly the fields launch reported missing.
 
 ### Steam non-steam shortcuts
 

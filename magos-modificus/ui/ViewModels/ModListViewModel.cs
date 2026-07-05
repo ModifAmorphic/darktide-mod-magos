@@ -219,7 +219,13 @@ public partial class ModListViewModel : ObservableObject
     /// (staging warns at launch). Rows are sorted by <see cref="ModListEntry.Order"/>.
     /// No active profile clears the list + sets the empty state.
     /// </summary>
-    private void Reload()
+    /// <remarks>
+    /// Called on construction + on an active-profile change (session-driven), and
+    /// also by the shell after the Settings dialog closes: a Settings relocate
+    /// rescans the repository's index out-of-band, so the <see cref="Mods"/>
+    /// snapshot is stale until this reloads it.
+    /// </remarks>
+    public void Reload()
     {
         var activeId = _session.ActiveProfileId;
         Mods.Clear();

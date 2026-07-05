@@ -34,12 +34,16 @@ Requirements, architecture, and technology choices are made fresh.
   create/rename/delete dialog, switch-blocked-while-running), Track D (global
   Preferences: theme + font scale + language, with the i18n infrastructure:
   `Strings.resx` + `LocalizationService` for dynamic culture switching, all Track
-  A UI strings backfilled to resource keys), and Track B (the mod-list UI: view
+  A UI strings backfilled to resource keys), Track B (the mod-list UI: view
   mods with source/version badges, enable/disable, remove-with-confirm, reorder,
   per-mod Latest/Pinned policy, auto-sort identity stub, and local folder/`.zip`
   import via file picker + drag-and-drop, over the `ModSource` + raw-string version
-  model + `IModImportService`) are wired; Launch behavior (Track C) is still
-  pending, and the Launcher is a stub (Phase 5).
+  model + `IModImportService`), and Track C (Launch: `LaunchCommand` ->
+  `IEnginseerLaunchService.Launch` -> branch on `LaunchResult.Status` with the
+  discovery escape-hatch modal for `DiscoveryIncomplete` + a Settings window
+  editing `MagosConfig.Discovery` user overrides + `ModsFolder` live-relocate,
+  over the `DiscoveryConfig` + `SteamService.Discover()` overlay +
+  `IModRepository.Relocate/Rescan`) are wired; the Launcher is a stub (Phase 5).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
@@ -76,7 +80,12 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           persisted active profile, create/rename/delete dialog;
                           Phase 3 Track D: global Preferences (theme + font scale + language)
                           via `IPreferencesService` + the i18n infrastructure: `Strings.resx`
-                          + `LocalizationService` for dynamic culture switching)
+                          + `LocalizationService` for dynamic culture switching;
+                          Phase 3 Track B: the mod-list UI;
+                          Phase 3 Track C: Launch wiring + Settings window +
+                          discovery escape-hatch over the shared `Settings/DiscoveryField`
+                          descriptor + `DiscoveryConfig`/`SteamService.Discover()` overlay +
+                          `IModRepository.Relocate/Rescan`)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
@@ -207,8 +216,17 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   enable/disable, remove-with-confirm, reorder, per-mod Latest/Pinned policy,
   auto-sort identity stub, and local folder/`.zip` import via file picker +
   drag-and-drop, joined to containers via `IModRepository` by `ContainerId`)
-  is wired. Next: Track C (launch); the **Launcher** is a stub (Phase 5). See
-  `docs/architecture/MAGOS-MODIFICUS.md`.
+  is wired. **Phase 3 Track C** (Launch: `LaunchCommand` ->
+  `IEnginseerLaunchService.Launch` -> branch on `LaunchResult.Status`
+  (`Launched` -> status note + immediate `IsGameRunning` refresh;
+  `DiscoveryIncomplete` -> the focused discovery escape-hatch modal over the
+  shared `DiscoveryField` descriptor; `Error` -> modal alert) + a Settings
+  window editing `MagosConfig.Discovery` user overrides (per-field
+  read-modify-save) + `ModsFolder` live-relocate via the atomic
+  `IModRepository.Relocate` (move + save + rescan in one call, rolling the move
+  back on save failure) over the `DiscoveryConfig` + `SteamService.Discover()`
+  overlay + `IModRepository.Relocate/Rescan`) is wired; the **Launcher** is a stub
+  (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
 
 ## Key docs
 

@@ -81,6 +81,10 @@
     <value>Preferences…</value>
     <comment>Tooltip on the button that opens the Preferences dialog.</comment>
   </data>
+  <data name="Settings_ButtonTooltip" xml:space="preserve">
+    <value>Settings…</value>
+    <comment>Tooltip on the gear button that opens the Settings dialog (discovery paths + mod-repository location).</comment>
+  </data>
   <data name="Launch_Button" xml:space="preserve">
     <value>Launch Darktide</value>
     <comment>The Launch button in the shell top bar.</comment>
@@ -384,5 +388,93 @@
   <data name="RemoveMod_Message" xml:space="preserve">
     <value>Remove {0} from this profile?</value>
     <comment>Body of the remove-mod confirmation prompt. {0} is the mod name.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Settings dialog (SettingsWindow / SettingsViewModel)         -->
+  <!-- ============================================================ -->
+
+  <data name="Settings_Title" xml:space="preserve">
+    <value>Settings</value>
+    <comment>Title of the Settings dialog (discovery paths + mod-repository location).</comment>
+  </data>
+  <data name="Settings_DiscoverySection" xml:space="preserve">
+    <value>Discovery</value>
+    <comment>Header over the discovery-override section of the Settings dialog.</comment>
+  </data>
+  <data name="Settings_StorageSection" xml:space="preserve">
+    <value>Storage</value>
+    <comment>Header over the storage section (mod-repository location) of the Settings dialog.</comment>
+  </data>
+  <data name="Settings_DoneButton" xml:space="preserve">
+    <value>Done</value>
+    <comment>The Done button at the bottom of the Settings dialog.</comment>
+  </data>
+  <data name="Settings_ModRepoLabel" xml:space="preserve">
+    <value>Mod repository</value>
+    <comment>Label next to the mod-repository location TextBox in the Settings dialog.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Shared discovery-field labels (Settings + escape-hatch)      -->
+  <!-- ============================================================ -->
+
+  <data name="Discovery_SteamInstallLabel" xml:space="preserve">
+    <value>Steam install</value>
+    <comment>Label for the Steam install directory field (folder picker).</comment>
+  </data>
+  <data name="Discovery_DarktideBinaryLabel" xml:space="preserve">
+    <value>Darktide binary</value>
+    <comment>Label for the Darktide.exe path field (file picker).</comment>
+  </data>
+  <data name="Discovery_CompatdataLabel" xml:space="preserve">
+    <value>Wine prefix (compatdata)</value>
+    <comment>Label for the Wine prefix / compatdata directory field (folder picker, Linux only).</comment>
+  </data>
+  <data name="Discovery_ProtonBinaryLabel" xml:space="preserve">
+    <value>Proton binary</value>
+    <comment>Label for the proton script path field (file picker, Linux only).</comment>
+  </data>
+  <data name="Discovery_BrowseButton" xml:space="preserve">
+    <value>Browse…</value>
+    <comment>The Browse button next to every discovery / ModsFolder row.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Discovery escape-hatch dialog                                -->
+  <!-- ============================================================ -->
+
+  <data name="EscapeHatch_Title" xml:space="preserve">
+    <value>Configure discovery paths</value>
+    <comment>Title of the discovery escape-hatch dialog shown on a DiscoveryIncomplete launch.</comment>
+  </data>
+  <data name="EscapeHatch_Header" xml:space="preserve">
+    <value>We couldn't automatically discover everything needed to launch. Please help configure these paths.</value>
+    <comment>The friendly header of the escape-hatch dialog (NOT framed as an error).</comment>
+  </data>
+  <data name="EscapeHatch_SubmitButton" xml:space="preserve">
+    <value>Submit</value>
+    <comment>The Submit button on the escape-hatch dialog (writes the entered paths + closes).</comment>
+  </data>
+  <data name="EscapeHatch_CancelButton" xml:space="preserve">
+    <value>Cancel</value>
+    <comment>The Cancel button on the escape-hatch dialog.</comment>
+  </data>
+  <data name="EscapeHatch_RetryHint" xml:space="preserve">
+    <value>Click Launch to retry after updating.</value>
+    <comment>Note on the escape-hatch dialog telling the user to click Launch again after submitting (no auto-retry).</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Launch outcomes (status strip + alert)                       -->
+  <!-- ============================================================ -->
+
+  <data name="Launch_LaunchedNote" xml:space="preserve">
+    <value>Launched '{0}'.</value>
+    <comment>The transient status-strip note after a successful launch. {0} is the profile name.</comment>
+  </data>
+  <data name="Launch_ErrorTitle" xml:space="preserve">
+    <value>Launch failed</value>
+    <comment>Title of the modal alert shown when a launch returns LaunchStatus.Error.</comment>
   </data>
 </root>

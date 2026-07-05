@@ -32,6 +32,8 @@ public interface IModRepository
     void RemoveVersion(Guid containerId, string versionFolder);
     void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
     string GetVersionFolderPath(Guid containerId, string versionFolder);  // derived, never stored
+    void Rescan();                 // rebuild the index from the live ModsFolder
+    void Relocate(string newBasePath);   // atomic: move + save config + rescan (rollback on save failure)
 }
 ```
 
@@ -60,6 +62,25 @@ public interface IModRepository
 - `GetVersionFolderPath(containerId, versionFolder)`: the absolute path
   `<ModsFolder>/<containerUUID>/<versionFolder>`. Derived (the repository
   owns `<ModsFolder>`); never stored. Used for staging symlink targets.
+- `Rescan()`: rebuild the in-memory index from the **live** `ModsFolder` (the
+  path `IConfigLoader.Load().ModsFolder` currently returns), clearing first.
+  Container ids are stable across a relocation (the move is a directory rename),
+  so `Relocate` leaves the index valid by construction; `Rescan` is the defensive
+  guarantee the index reflects whatever is actually on disk. Also useful after an
+  out-of-band change (hand-edit, external tool, backup restore).
+- `Relocate(newBasePath)`: the **atomic** repository relocation, owned by the
+  repository so a save failure can never strand files at the new path with config
+  still pointing at the old one. Steps: (1) read `oldPath = Load().ModsFolder`;
+  (2) validate `newBasePath` (absolute, parent creatable; reject a conflicting
+  tracked-UUID dir); (3) move every indexed container dir `oldPath → newPath`
+  (best-effort per container, tracking which moved); (4) save `ModsFolder =
+  newPath` via `IConfigLoader`, and on save failure (a thrown exception, OR a
+  silent failure since the production `ConfigLoader.Save` swallows write errors)
+  roll the moved container dirs back to `oldPath` so files + config agree there
+  again, then throw; (5) `Rescan` at `newPath`. The caller (the Settings VM)
+  makes a single call; it does not save config or rescan separately. Throws
+  `ArgumentException` (bad path), `InvalidOperationException` (UUID conflict), or
+  `IOException` (rolled-back save failure).
 
 The repository builds an in-memory index at construction by scanning every
 `<ModsFolder>/*/container.json` (dozens of containers, cheap). There is no
@@ -221,9 +242,11 @@ public static IServiceCollection AddMods(this IServiceCollection services)
 Uses `TryAddSingleton` (mirroring the `SymlinkCreator` seam in Profiles):
 production behavior is unchanged, but a caller may pre-register an
 `IModRepository` or `IModImportService` fake and have it survive `AddProfiles()`
-(which calls `AddMods()` unconditionally). Resolves `MagosConfig` +
+(which calls `AddMods()` unconditionally). Resolves `IConfigLoader` +
 `ILogger<>` from the container. Registered as singletons: the repository holds
-the in-memory index (cheap to rebuild), and `MagosConfig` is itself a singleton.
+the in-memory index (cheap to rebuild), and `ModsFolder` is read live from
+`IConfigLoader` on each operation (one snapshot per op) so a runtime folder
+change via the Settings window takes effect immediately.
 
 ## On-disk layout
 
@@ -255,7 +278,10 @@ UUIDs), never stored absolute.
   `FindUntrackedByName`, manifest round-trip + in-memory index rebuild from a
   scan (skips non-container dirs + corrupt manifests), `PruneUnreferenced`
   (drops unreferenced version folders + empty containers, keeps referenced),
-  opaque version-folder naming, derived paths.
+  opaque version-folder naming, derived paths, and the relocation surface:
+  `Relocate` (atomic move + config save + rescan; rolls the move back when the
+  save fails, whether the loader throws or silently fails) + `Rescan`
+  (drops/Adds index entries to match the live disk state).
 - `ModSource` JSON `$kind` round-trip (untracked/nexus/github) + defaults +
   record equality.
 - `ModSourceParser` URL/id parsing (valid variants, trailing slash, query,

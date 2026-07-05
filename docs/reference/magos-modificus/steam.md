@@ -4,7 +4,8 @@
 > **discovers** everything needed to launch Darktide modded on the current OS
 > and reports missing pieces via the result's nullable fields; it does NOT set
 > env vars or invoke Proton — that is [enginseer-client](enginseer-client.md)'s
-> job. Status: implemented (Phase 1).
+> job. Status: implemented (Phase 1; user-override overlay added in Phase 3
+> Track C).
 
 ## Public surface
 
@@ -18,13 +19,16 @@ public interface ISteamService
 }
 ```
 
-- `Discover()` — delegates to the platform `ISteamDiscoverer` (selected once at
-  DI registration from `SteamDiscoveryOptions.Platform`), which probes the
+- `Discover()`: runs the platform `ISteamDiscoverer` (selected once at DI
+  registration from `SteamDiscoveryOptions.Platform`, which probes the
   OS-appropriate Steam install locations and resolves the Steam install, Darktide
-  install, compatdata, and Proton version. **Never throws on missing pieces** —
-  those are reported via `DiscoveryResult.Status` and the nullable fields (the
-  escape hatch the UI prompts against). `SteamService` itself contains no
-  platform dispatch.
+  install, compatdata, and Proton version), then **overlays** the live
+  `MagosConfig.Discovery` user overrides (a non-null/whitespace field replaces
+  the auto-discovered value as-is; null keeps auto) and recomputes `Status` via
+  the shared `SteamDiscoveryCore.ComputeStatus`. **Never throws on missing
+  pieces**; those are reported via `DiscoveryResult.Status` and the nullable
+  fields (the escape hatch the UI prompts against). `SteamService` itself
+  contains no platform dispatch.
 - `IsGameRunning()` — cross-platform best-effort check against Darktide's process
   name. Delegates to the platform `IProcessLookup`; never throws — enumeration
   failures degrade to "not running."
@@ -81,7 +85,13 @@ every OS-specific input + platform seam is injected:
   from `SteamDiscoveryOptions.Platform` (see [Cross-platform notes](#cross-platform-notes)).
 - `SteamDiscoveryCore` (internal) — the shared, platform-agnostic mechanics
   (root resolution, `libraryfolders.vdf` reading, Darktide probing, the all-null
-  failure result) that both discoverers compose. This is composition, not
+  failure result) that both discoverers compose, **plus the single completeness
+  rule** `ComputeStatus(platform, steam, darktide, compatdata, proton)` used by
+  both discoverers (when building their result) and by `SteamService` (when
+  recomputing `Status` after overlaying user overrides). Consolidating the rule
+  here guarantees the overlay's recomputed status is, by construction, the same
+  rule the discoverer used; the discoverers' per-platform `StatusForLinux` /
+  `StatusForWindows` helpers were extracted into it. This is composition, not
   inheritance — each discoverer injects the core and layers its own platform
   steps on top.
 - `ISteamRegistryReader` — reads the Windows registry for the Steam install path
@@ -95,9 +105,24 @@ every OS-specific input + platform seam is injected:
 
 ## Discovery behavior
 
-`SteamService.Discover()` is a one-line delegation to the active
-`ISteamDiscoverer`; all platform logic lives in the discoverer + the shared
-`SteamDiscoveryCore` it composes.
+`SteamService.Discover()` runs the active `ISteamDiscoverer` (all platform logic
+lives in the discoverer + the shared `SteamDiscoveryCore` it composes), then
+overlays `MagosConfig.Discovery` user overrides and recomputes `Status`:
+
+1. **Auto-discover** (platform discoverer): resolves Steam / Darktide /
+   compatdata / Proton as below, producing a `DiscoveryResult` with a status
+   computed via `SteamDiscoveryCore.ComputeStatus`.
+2. **Overlay user overrides:** for each of the four path fields, if the matching
+   `Discovery.User*Path` is non-null/non-whitespace, it replaces the auto value
+   as-is (no re-verify; the user said "use this"); otherwise the auto value is
+   kept. (Read live from `IConfigLoader` once per call, so a Settings or
+   escape-hatch write is visible on the next `Discover()`.) Overriding the Proton
+   binary path nulls the derived `ProtonVersion` label (it no longer describes
+   the path in use).
+3. **Recompute status:** `SteamDiscoveryCore.ComputeStatus` runs again against
+   the final field values, so the reported `Status` reflects the post-overlay
+   fields with the same completeness rule the discoverer used (e.g. a user
+   override that fills the last Linux gap flips `Partial` to `Complete`).
 
 ### Linux (`LinuxSteamDiscoverer`)
 
@@ -220,19 +245,29 @@ its `FakeRegistryReader` + forces `Platform = Windows`, which drives the discove
 selection so the Windows path runs on Linux CI). `ISteamService` is `AddSingleton`
 (holds no per-call state).
 
-Note: this library does **not** reference `MagosConfig` — it reads OS-specific
-inputs entirely from the injected `SteamDiscoveryOptions`. No
-`Microsoft.Win32.Registry` package is required: on `net10.0` the `Registry` type
-is in the reference assembly, gated behind `[SupportedOSPlatform("windows")]`.
-`SteamRegistryReader` is annotated `[SupportedOSPlatform("windows")]` (declaring
-it Windows-only at the type level for CA1416, with no per-call runtime guard) and
-is registered **only on Windows** — on Linux it is intentionally absent so
-resolving `ISteamRegistryReader` fails fast (the honest outcome for a Windows-only
-capability, rather than a silent no-op).
+Note: `AddSteam()` does **not** register `IConfigLoader` itself. `SteamService`
+depends on `IConfigLoader` (it reads `MagosConfig.Discovery` live on each
+`Discover()` call so a Settings / escape-hatch write is visible immediately), so
+an `IConfigLoader` must be registered externally before resolving
+`ISteamService`. In production that is [General](general.md)'s `AddGeneral()`
+(which `TryAdd`s `ConfigLoader`); tests register a fake (e.g. the overlay + DI
+tests register a `FakeConfigLoader`).
+
+`SteamRegistryReader` is Windows-only: no `Microsoft.Win32.Registry` package is
+required (on `net10.0` the `Registry` type is in the reference assembly, gated
+behind `[SupportedOSPlatform("windows")]`), and the reader is annotated
+`[SupportedOSPlatform("windows")]` at the type level (for CA1416, with no
+per-call runtime guard). It is registered **only on Windows** by `AddSteam()`;
+on Linux it is intentionally absent so resolving `ISteamRegistryReader` fails
+fast (the honest outcome for a Windows-only capability, rather than a silent
+no-op).
 
 ## Dependencies
 
-- **Magos libraries:** none (no project references).
+- **Magos libraries:** [config](config.md) (`DiscoveryConfig`, the user-override
+  section of `MagosConfig` overlaid onto the discoverer's result) +
+  [general](general.md) (`IConfigLoader`, the live reader `SteamService` reads
+  `Discovery` from on each `Discover()` call).
 - **NuGet:** `Microsoft.Extensions.DependencyInjection.Abstractions`,
   `Microsoft.Extensions.Logging.Abstractions`.
 
@@ -243,9 +278,14 @@ capability, rather than a silent no-op).
 selection (`ProtonSelectionTests`), the `libraryfolders.vdf` parser
 (`LibraryFoldersVdfTests`), game-running detection (`GameRunningTests`,
 `ArgvMatchTests` — the latter pinning the `MatchesArgv0` backslash normalization),
-and the `AddSteam` DI wiring (the `TryAdd` overrides, the `ISteamDiscoverer`
+the `AddSteam` DI wiring (the `TryAdd` overrides, the `ISteamDiscoverer`
 selection by `SteamDiscoveryOptions.Platform`, and the platform `IProcessLookup`
-selection). `WindowsDiscoveryTests` force `Platform = Windows` + a fake registry
+selection), and the `SteamService.Discover()` user-override overlay
+(`SteamServiceOverlayTests`: a supplied path replaces the auto value as-is, a
+null/whitespace value keeps auto, mixed overlays apply only the set fields, and
+`Status` recomputes via the shared `ComputeStatus` rule, including the live-read
+contract that makes a config write between calls visible on the next
+`Discover()`). `WindowsDiscoveryTests` force `Platform = Windows` + a fake registry
 reader so the Windows discoverer path runs on Linux CI — the load-bearing proof
 that discoverer selection follows `Platform`, not the runtime OS.
 

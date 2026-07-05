@@ -270,18 +270,37 @@ internal sealed class FakeAppStateStore : IAppStateStore
 /// deleting profiles and routing active changes through the session). For the
 /// import modal, either a single <see cref="ImportResult"/> is returned for every
 /// call, or a per-call <see cref="ImportResultQueue"/> is dequeued (so a test can
-/// cancel mid-batch by enqueuing a <c>null</c>). Records the requests so tests
-/// can assert on the sequence.
+/// cancel mid-batch by enqueuing a <c>null</c>). The Settings, escape-hatch, and
+/// alert calls are recorded for assertion; the escape-hatch also exposes its
+/// drive flag (<see cref="EscapeHatchResult"/>) so a test can simulate a submit
+/// vs. a cancel. Records the requests so tests can assert on the sequence.
 /// </summary>
 internal sealed class FakeDialogService : IDialogService
 {
     public bool ConfirmResult { get; set; } = true;
     public Action? OnManageProfiles { get; set; }
     public Action? OnPreferences { get; set; }
+    public Action? OnSettings { get; set; }
     public int ConfirmCalls { get; private set; }
     public string? LastConfirmMessage { get; private set; }
     public int ManageProfilesCalls { get; private set; }
     public int PreferencesCalls { get; private set; }
+    public int SettingsCalls { get; private set; }
+
+    /// <summary>
+    /// The result returned by the next escape-hatch call: <c>true</c> = the
+    /// user submitted, <c>false</c> = cancelled. Default <c>false</c>.
+    /// </summary>
+    public bool EscapeHatchResult { get; set; }
+
+    /// <summary>The missing-field lists the shell asked the escape-hatch to show,
+    /// in call order. Tests assert on this to verify which fields the launch
+    /// reported missing.</summary>
+    public IReadOnlyList<IReadOnlyList<string>> EscapeHatchCalls { get; } = new List<IReadOnlyList<string>>();
+
+    /// <summary>The (title, message) pairs passed to <see cref="ShowAlertAsync"/>,
+    /// in call order.</summary>
+    public IReadOnlyList<(string Title, string Message)> AlertCalls { get; } = new List<(string, string)>();
 
     /// <summary>
     /// The result returned for every import modal call when
@@ -321,6 +340,25 @@ internal sealed class FakeDialogService : IDialogService
         return Task.CompletedTask;
     }
 
+    public Task ShowSettingsAsync()
+    {
+        SettingsCalls++;
+        OnSettings?.Invoke();
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> ShowDiscoveryEscapeHatchAsync(IReadOnlyList<string> missingFields)
+    {
+        ((List<IReadOnlyList<string>>)EscapeHatchCalls).Add(missingFields);
+        return Task.FromResult(EscapeHatchResult);
+    }
+
+    public Task ShowAlertAsync(string title, string message)
+    {
+        ((List<(string, string)>)AlertCalls).Add((title, message));
+        return Task.CompletedTask;
+    }
+
     public Task<ImportModResult?> ShowImportModAsync(ImportModRequest request)
     {
         ImportCalls++;
@@ -333,12 +371,15 @@ internal sealed class FakeDialogService : IDialogService
     }
 }
 
-/// <summary><see cref="ISteamService"/> with a configurable running flag.</summary>
+/// <summary><see cref="ISteamService"/> with a configurable running flag +
+/// discovery result.</summary>
 internal sealed class FakeSteamService : ISteamService
 {
     public bool Running { get; set; }
+    public DiscoveryResult? Discovery { get; set; }
     public bool IsGameRunning() => Running;
-    public DiscoveryResult Discover() => throw new NotImplementedException();
+    public DiscoveryResult Discover() =>
+        Discovery ?? throw new NotImplementedException();
 }
 
 /// <summary>
@@ -415,13 +456,46 @@ internal sealed class FakeProfileSession : ObservableObject, IProfileSession
 
         ActiveProfileId = null;
     }
+
+    /// <summary>Number of times <see cref="Refresh"/> was called.</summary>
+    public int RefreshCalls { get; private set; }
+
+    /// <summary>
+    /// Optional callback invoked on each <see cref="Refresh"/>; tests use it to
+    /// drive a deterministic running-state change (e.g. flip <see cref="IsRunning"/>
+    /// to <c>true</c> to simulate the game having just started).
+    /// </summary>
+    public Action? OnRefresh { get; set; }
+
+    /// <summary>
+    /// Records the call + runs the optional <see cref="OnRefresh"/> callback so a
+    /// test can simulate the running-state change a real Refresh would observe.
+    /// </summary>
+    public void Refresh()
+    {
+        RefreshCalls++;
+        OnRefresh?.Invoke();
+    }
 }
 
-/// <summary>No-op launch service (launch is Track C; not exercised here).</summary>
+/// <summary>
+/// Configurable <see cref="IEnginseerLaunchService"/> for shell-VM launch tests.
+/// <see cref="NextResult"/> is returned for every Launch call (default:
+/// Launched). <see cref="LaunchCalls"/> records the ids the shell asked to
+/// launch.
+/// </summary>
 internal sealed class FakeLaunchService : IEnginseerLaunchService
 {
-    public LaunchResult Launch(Guid profileId) =>
+    public LaunchResult NextResult { get; set; } =
         new(LaunchStatus.Launched, null, Array.Empty<string>());
+
+    public IReadOnlyList<Guid> LaunchCalls { get; } = new List<Guid>();
+
+    public LaunchResult Launch(Guid profileId)
+    {
+        ((List<Guid>)LaunchCalls).Add(profileId);
+        return NextResult;
+    }
 }
 
 /// <summary>
@@ -430,7 +504,7 @@ internal sealed class FakeLaunchService : IEnginseerLaunchService
 /// used by staging tests. Tests seed containers directly; mutations update the
 /// in-memory store.
 /// </summary>
-internal sealed class FakeModRepository : IModRepository
+internal class FakeModRepository : IModRepository
 {
     private readonly Dictionary<Guid, ModContainer> _byId = new();
     private readonly Dictionary<string, Guid> _untrackedByName = new(StringComparer.Ordinal);
@@ -547,6 +621,16 @@ internal sealed class FakeModRepository : IModRepository
         }
     }
 
+    // Rescan + Relocate are repository-lifecycle operations exercised by the
+    // Mods-layer tests; the VM tests never drive them. Recorded as no-ops so a
+    // future VM test that wires them can assert on the call.
+    public int RescanCalls { get; private set; }
+    public virtual void Rescan() => RescanCalls++;
+
+    public IReadOnlyList<string> RelocateArgs { get; } = new List<string>();
+    public virtual void Relocate(string newBasePath) =>
+        ((List<string>)RelocateArgs).Add(newBasePath);
+
     /// <summary>Test helper: seed a container with a single latest version.</summary>
     public ModContainer Seed(ModSource source, string name, string versionString = "1.0")
     {
@@ -622,8 +706,11 @@ internal sealed class FakePreferencesService : IPreferencesService
 
 /// <summary>
 /// Recording <see cref="IConfigLoader"/> for tests. <see cref="Save"/> captures
-/// the last-written config without touching disk. Returns a configurable config
-/// from <see cref="Load"/> (defaults to a fresh <see cref="MagosConfig.CreateDefault"/>).
+/// the last-written config AND mirrors the real loader's round-trip by
+/// promoting it to the live <see cref="Config"/> (so a subsequent
+/// <see cref="Load"/> returns what was saved, like the real on-disk file).
+/// Returns a configurable config from <see cref="Load"/> (defaults to a fresh
+/// <see cref="MagosConfig.CreateDefault"/>).
 /// </summary>
 internal sealed class FakeConfigLoader : IConfigLoader
 {
@@ -637,5 +724,8 @@ internal sealed class FakeConfigLoader : IConfigLoader
     {
         SaveCalls++;
         LastSaved = config;
+        // Promote to the live Config so a subsequent Load returns the saved
+        // state (mirrors the real loader's round-trip through the disk file).
+        Config = config;
     }
 }

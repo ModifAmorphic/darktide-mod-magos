@@ -417,6 +417,301 @@ public sealed class ModRepositoryTests
         Assert.NotNull(provider.GetService<IModRepository>());
     }
 
+    // ---- Relocate ----------------------------------------------------------
+
+    [Fact]
+    public void Relocate_moves_all_containers_from_old_to_new_path()
+    {
+        using var fx = new RepoFixture();
+        var c1 = fx.Repo.CreateContainer(new UntrackedSource(), "A");
+        var c2 = fx.Repo.CreateContainer(new NexusSource { ModId = 7 }, "B");
+        fx.Repo.AddVersion(c1.Id, "1.0", EmptyPopulate);
+        fx.Repo.AddVersion(c2.Id, "2.0", EmptyPopulate);
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-relocated-" + Guid.NewGuid());
+        try
+        {
+            fx.Repo.Relocate(newPath);
+
+            // Every container directory landed under the new path.
+            Assert.True(Directory.Exists(Path.Combine(newPath, c1.Id.ToString())));
+            Assert.True(Directory.Exists(Path.Combine(newPath, c2.Id.ToString())));
+            // The version folders moved with them.
+            Assert.True(File.Exists(Path.Combine(newPath, c1.Id.ToString(),
+                fx.Repo.Get(c1.Id)!.Versions[0].Folder, "marker.txt")));
+            // The old path is empty of container dirs.
+            Assert.False(Directory.Exists(Path.Combine(fx.Folder, c1.Id.ToString())));
+            Assert.False(Directory.Exists(Path.Combine(fx.Folder, c2.Id.ToString())));
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_moves_save_config_and_rescan_in_one_atomic_call()
+    {
+        // Atomic contract: a single Relocate call moves the containers, saves
+        // ModsFolder = newPath into config, and rescans. After it returns, the
+        // config points at the new path, the index reflects the new location,
+        // path derivation uses the new root, and the old path is empty of moved
+        // container dirs.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "DMF");
+        var updated = fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate);
+        var versionFolder = updated.Versions[0].Folder;
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-rescan-" + Guid.NewGuid());
+        try
+        {
+            fx.Repo.Relocate(newPath);
+
+            // Config was saved with the new path (FakeConfigLoader mirrors the
+            // round-trip, so a re-load reflects it).
+            Assert.Equal(newPath, fx.ConfigLoader.Load().ModsFolder);
+
+            // Index reflects the new location.
+            var reloaded = fx.Repo.Get(container.Id);
+            Assert.NotNull(reloaded);
+            Assert.Equal("DMF", reloaded!.Name);
+            Assert.Single(reloaded.Versions);
+
+            // Path derivation now uses the new root.
+            var versionPath = fx.Repo.GetVersionFolderPath(container.Id, versionFolder);
+            Assert.StartsWith(newPath, versionPath);
+            Assert.True(File.Exists(Path.Combine(versionPath, "marker.txt")));
+
+            // Old path is empty of the moved container dir.
+            Assert.False(Directory.Exists(Path.Combine(fx.Folder, container.Id.ToString())));
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_rolls_back_the_move_when_config_save_throws()
+    {
+        // Atomicity: the move succeeded, but the config save threw. Relocate
+        // rolls the moved container dirs back to the old path so files + config
+        // agree at the old path, then rethrows so the caller sees the failure.
+        using var fx = new RepoFixture();
+        fx.ConfigLoader.SaveException = new IOException("disk full");
+        var c1 = fx.Repo.CreateContainer(new UntrackedSource(), "A");
+        var c2 = fx.Repo.CreateContainer(new UntrackedSource(), "B");
+        fx.Repo.AddVersion(c1.Id, "1.0", EmptyPopulate);
+        fx.Repo.AddVersion(c2.Id, "1.0", EmptyPopulate);
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-rollback-throw-" + Guid.NewGuid());
+        try
+        {
+            Assert.Throws<IOException>(() => fx.Repo.Relocate(newPath));
+
+            // Config still points at the old path (the save threw, so nothing
+            // persisted).
+            Assert.Equal(fx.Folder, fx.ConfigLoader.Load().ModsFolder);
+
+            // No container dir landed under the new path (rolled back).
+            Assert.False(Directory.Exists(Path.Combine(newPath, c1.Id.ToString())));
+            Assert.False(Directory.Exists(Path.Combine(newPath, c2.Id.ToString())));
+
+            // Containers are back at the old path.
+            Assert.True(Directory.Exists(Path.Combine(fx.Folder, c1.Id.ToString())));
+            Assert.True(Directory.Exists(Path.Combine(fx.Folder, c2.Id.ToString())));
+            // Their version files came back with them.
+            Assert.True(File.Exists(Path.Combine(
+                fx.Folder, c1.Id.ToString(),
+                fx.Repo.Get(c1.Id)!.Versions[0].Folder, "marker.txt")));
+
+            // Index still resolves them (ids are stable; paths derive from the
+            // live config, which still points at the old path).
+            Assert.NotNull(fx.Repo.Get(c1.Id));
+            Assert.NotNull(fx.Repo.Get(c2.Id));
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_rolls_back_the_move_when_config_save_silently_fails()
+    {
+        // The production ConfigLoader.Save swallows write errors by design (the
+        // best-effort Preferences flow), so a thrown exception is not the only
+        // save-failure mode. Relocate verifies the save persisted by re-loading;
+        // a save that returned without throwing but also without persisting
+        // (PersistOnSave = false) is treated as a failure and rolled back too.
+        using var fx = new RepoFixture();
+        fx.ConfigLoader.PersistOnSave = false;
+        var c1 = fx.Repo.CreateContainer(new UntrackedSource(), "A");
+        fx.Repo.AddVersion(c1.Id, "1.0", EmptyPopulate);
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-rollback-silent-" + Guid.NewGuid());
+        try
+        {
+            Assert.Throws<IOException>(() => fx.Repo.Relocate(newPath));
+
+            // Config still reflects the old path (the save did not persist).
+            Assert.Equal(fx.Folder, fx.ConfigLoader.Load().ModsFolder);
+
+            // The moved container was rolled back to the old path.
+            Assert.False(Directory.Exists(Path.Combine(newPath, c1.Id.ToString())));
+            Assert.True(Directory.Exists(Path.Combine(fx.Folder, c1.Id.ToString())));
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_to_same_path_is_a_noop()
+    {
+        // Relocating to the path the config already points at is a no-op: no
+        // move, no exception. (The conflict check would otherwise always fire,
+        // since the current root contains the indexed UUIDs.)
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "A");
+
+        fx.Repo.Relocate(fx.Folder);
+
+        // Container is still where it was, still indexed.
+        Assert.True(Directory.Exists(Path.Combine(fx.Folder, container.Id.ToString())));
+        Assert.NotNull(fx.Repo.Get(container.Id));
+    }
+
+    [Fact]
+    public void Relocate_rejects_null_or_whitespace_path()
+    {
+        using var fx = new RepoFixture();
+        Assert.Throws<ArgumentException>(() => fx.Repo.Relocate(""));
+        Assert.Throws<ArgumentException>(() => fx.Repo.Relocate("   "));
+        Assert.Throws<ArgumentException>(() => fx.Repo.Relocate(null!));
+    }
+
+    [Fact]
+    public void Relocate_rejects_relative_path()
+    {
+        using var fx = new RepoFixture();
+        Assert.Throws<ArgumentException>(() => fx.Repo.Relocate("relative/path"));
+    }
+
+    [Fact]
+    public void Relocate_throws_when_destination_already_contains_a_tracked_container_uuid()
+    {
+        // The destination already has a directory whose name is one of the
+        // indexed container UUIDs: refuse, so the move cannot silently shadow
+        // an existing container.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "A");
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-conflict-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(newPath);
+            // Pre-create a directory with the SAME uuid name as our container.
+            Directory.CreateDirectory(Path.Combine(newPath, container.Id.ToString()));
+
+            Assert.Throws<InvalidOperationException>(() => fx.Repo.Relocate(newPath));
+
+            // On rejection, nothing moved: the source container is still in place.
+            Assert.True(Directory.Exists(Path.Combine(fx.Folder, container.Id.ToString())));
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_does_not_move_non_container_directories()
+    {
+        // Stray directories under the old root that are NOT indexed container
+        // UUIDs are left in place (the repo does not own them).
+        using var fx = new RepoFixture();
+        fx.Repo.CreateContainer(new UntrackedSource(), "A");
+
+        // A non-UUID stray dir + a UUID dir with no manifest (never indexed).
+        var strayPath = Path.Combine(fx.Folder, "not-a-guid");
+        Directory.CreateDirectory(strayPath);
+        File.WriteAllText(Path.Combine(strayPath, "junk.txt"), "x");
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-stray-" + Guid.NewGuid());
+        try
+        {
+            fx.Repo.Relocate(newPath);
+
+            // The stray dir is NOT moved (out of scope: not a tracked container).
+            Assert.True(Directory.Exists(strayPath));
+            Assert.False(Directory.Exists(Path.Combine(newPath, "not-a-guid")));
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    // ---- Rescan ------------------------------------------------------------
+
+    [Fact]
+    public void Rescan_drops_index_entries_for_containers_removed_from_disk()
+    {
+        // Rescan clears the index first, so a container deleted out-of-band
+        // (between scans) disappears from the index. Without a clear, the prior
+        // entry would survive as stale.
+        using var fx = new RepoFixture();
+        var keep = fx.Repo.CreateContainer(new UntrackedSource(), "Keep");
+        var drop = fx.Repo.CreateContainer(new UntrackedSource(), "Drop");
+
+        // Out-of-band delete of the "Drop" container dir.
+        Directory.Delete(Path.Combine(fx.Folder, drop.Id.ToString()), recursive: true);
+
+        fx.Repo.Rescan();
+
+        Assert.NotNull(fx.Repo.Get(keep.Id));
+        Assert.Null(fx.Repo.Get(drop.Id));
+        Assert.Single(fx.Repo.List());
+    }
+
+    [Fact]
+    public void Rescan_picks_up_containers_added_out_of_band()
+    {
+        // A container.json copied into the mods folder by an external tool
+        // (backup restore, sync) appears in the index after Rescan.
+        using var fx = new RepoFixture();
+        var first = fx.Repo.CreateContainer(new UntrackedSource(), "First");
+
+        // Simulate an external copy: write a fresh container.json for a new UUID
+        // directly to disk (the manifest format the repo reads).
+        var externalId = Guid.NewGuid();
+        var externalDir = Path.Combine(fx.Folder, externalId.ToString());
+        Directory.CreateDirectory(externalDir);
+        File.WriteAllText(
+            Path.Combine(externalDir, "container.json"),
+            $$"""
+            {
+              "$kind": "untracked",
+              "Id": "{{externalId}}",
+              "Name": "External",
+              "Source": { "$kind": "untracked" },
+              "Versions": []
+            }
+            """);
+
+        // Before rescan: only the originally-created container is indexed.
+        Assert.Single(fx.Repo.List());
+
+        fx.Repo.Rescan();
+
+        // After rescan: both are indexed.
+        Assert.Equal(2, fx.Repo.List().Count);
+        Assert.NotNull(fx.Repo.Get(first.Id));
+        Assert.NotNull(fx.Repo.Get(externalId));
+    }
+
     // ---- fixture + helpers -------------------------------------------------
 
     private static readonly Action<string> EmptyPopulate = dir =>
@@ -433,12 +728,30 @@ public sealed class ModRepositoryTests
         public string Folder { get; } = Path.Combine(Path.GetTempPath(), "magos-repo-" + Guid.NewGuid());
         public IModRepository Repo { get; }
 
+        /// <summary>
+        /// The live <see cref="FakeConfigLoader"/> the repository reads
+        /// <c>ModsFolder</c> from. Exposed so tests can set failure hooks
+        /// (<see cref="FakeConfigLoader.SaveException"/> /
+        /// <see cref="FakeConfigLoader.PersistOnSave"/>) for the relocate
+        /// rollback coverage and re-read the persisted state.
+        /// </summary>
+        public FakeConfigLoader ConfigLoader => _configLoader;
+
+        private readonly FakeConfigLoader _configLoader;
+
+        /// <summary>
+        /// The live <see cref="MagosConfig"/> the repository reads
+        /// <c>ModsFolder</c> from.
+        /// </summary>
+        public MagosConfig Config => _configLoader.Config;
+
         public RepoFixture()
         {
             var config = MagosConfig.CreateDefault();
             config.ModsFolder = Folder;
+            _configLoader = new FakeConfigLoader { Config = config };
             _provider = new ServiceCollection()
-                .AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config })
+                .AddSingleton<IConfigLoader>(_configLoader)
                 .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
                 .AddMods()
                 .BuildServiceProvider();

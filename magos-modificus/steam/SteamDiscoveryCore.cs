@@ -116,6 +116,61 @@ internal sealed class SteamDiscoveryCore
             Status: DiscoveryStatus.Failed,
             Warnings: warnings);
 
+    /// <summary>
+    /// Computes the discovery status from the four nullable path fields for the
+    /// given platform. This is the single source of truth for "what counts as
+    /// Complete", used by both discoverers (when building their result) and by
+    /// <see cref="SteamService"/> (when recomputing status after applying user
+    /// overrides from <c>MagosConfig.Discovery</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Linux</b> requires all four fields (Steam + Darktide + compatdata +
+    /// Proton); <b>Windows</b> requires only Steam + Darktide (native: compatdata
+    /// and Proton are unused). Steam itself missing is <see cref="DiscoveryStatus.Failed"/>;
+    /// a present Steam with any other required field missing is
+    /// <see cref="DiscoveryStatus.Partial"/>; everything required present is
+    /// <see cref="DiscoveryStatus.Complete"/>.</para>
+    /// <para>
+    /// Consolidating the rule here (rather than duplicating it in each
+    /// discoverer + the overlay) guarantees the three call sites cannot diverge:
+    /// the overlay's recomputed status is, by construction, the same rule the
+    /// discoverer used.</para>
+    /// </remarks>
+    /// <param name="platform">The platform whose completeness rule applies.</param>
+    /// <param name="steamInstallPath">Resolved Steam client dir (null = not found).</param>
+    /// <param name="darktideGameBinaryPath">Resolved native Darktide binary path (null = not found).</param>
+    /// <param name="compatdataPath">Resolved Wine prefix (Linux only; null on Windows by design).</param>
+    /// <param name="protonBinaryPath">Resolved <c>proton</c> script path (Linux only; null on Windows by design).</param>
+    public static DiscoveryStatus ComputeStatus(
+        DiscoveryPlatform platform,
+        string? steamInstallPath,
+        string? darktideGameBinaryPath,
+        string? compatdataPath,
+        string? protonBinaryPath)
+    {
+        if (steamInstallPath is null)
+        {
+            // No Steam at all: cannot launch. Both platforms agree on Failed.
+            return DiscoveryStatus.Failed;
+        }
+
+        if (darktideGameBinaryPath is null)
+        {
+            return DiscoveryStatus.Partial;
+        }
+
+        // Linux additionally requires compatdata + Proton; Windows is native and
+        // never uses them (they are null by design, not gaps).
+        if (platform == DiscoveryPlatform.Linux
+            && (compatdataPath is null || protonBinaryPath is null))
+        {
+            return DiscoveryStatus.Partial;
+        }
+
+        return DiscoveryStatus.Complete;
+    }
+
     private static bool SteamRootIsValid(string root) =>
         Directory.Exists(root)
         && File.Exists(Path.Combine(root, "steamapps", "libraryfolders.vdf"));

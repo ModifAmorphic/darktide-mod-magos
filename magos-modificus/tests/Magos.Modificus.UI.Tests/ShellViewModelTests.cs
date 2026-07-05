@@ -1,3 +1,5 @@
+using Magos.Modificus.EnginseerClient;
+using Magos.Modificus.Mods;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.ViewModels;
@@ -9,8 +11,10 @@ namespace Magos.Modificus.UI.Tests;
 /// <summary>
 /// Shell-VM profile controls: mirroring the session's active id + running-state,
 /// dropdown switch (routed through the session gate), switch-blocked-while-running,
-/// and dialog-driven list refresh. All against in-memory fakes; the session is
-/// behind the <see cref="UI.Session.IProfileSession"/> seam (a <see cref="FakeProfileSession"/>).
+/// and dialog-driven list refresh. Track C adds the launch wiring tests: the
+/// Launch command calls <see cref="IEnginseerLaunchService.Launch"/> + branches
+/// on the result. All against in-memory fakes; the session is behind the
+/// <see cref="UI.Session.IProfileSession"/> seam (a <see cref="FakeProfileSession"/>).
 /// </summary>
 public sealed class ShellViewModelTests
 {
@@ -20,14 +24,15 @@ public sealed class ShellViewModelTests
     private static ShellViewModel Build(
         FakeProfileService? profiles = null,
         FakeProfileSession? session = null,
-        FakeDialogService? dialogs = null)
+        FakeDialogService? dialogs = null,
+        FakeLaunchService? launch = null)
     {
         profiles ??= TestDoubles.Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
         return new ShellViewModel(
             profiles,
             session,
-            new FakeLaunchService(),
+            launch ?? new FakeLaunchService(),
             dialogs ?? new FakeDialogService(),
             Localization,
             TestDoubles.BuildModList(profiles, session),
@@ -255,5 +260,228 @@ public sealed class ShellViewModelTests
 
         Assert.Null(vm.SelectedProfile);                  // active cleared
         Assert.False(vm.LaunchCommand.CanExecute(null)); // Launch blocked (no selection)
+    }
+
+    // ---- CanLaunch positive case (long-deferred) --------------------------
+
+    [Fact]
+    public void CanLaunch_is_true_when_a_profile_is_selected_and_the_game_is_not_running()
+    {
+        // The long-deferred CanLaunch positive-case test: Launch lights up
+        // once a profile is selected and the game is stopped.
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = false };
+        var vm = Build(TestDoubles.Profiles(a), session);
+
+        Assert.True(vm.LaunchCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void CanLaunch_is_false_when_no_profile_is_selected()
+    {
+        var vm = Build(TestDoubles.Profiles());
+
+        Assert.False(vm.LaunchCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void CanLaunch_is_false_when_the_game_is_running()
+    {
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = true };
+        var vm = Build(TestDoubles.Profiles(a), session);
+
+        Assert.False(vm.LaunchCommand.CanExecute(null));
+    }
+
+    // ---- launch wiring (Track C) ------------------------------------------
+
+    [Fact]
+    public async Task Launch_calls_the_launch_service_with_the_active_profile_id()
+    {
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var launch = new FakeLaunchService();
+        var vm = Build(TestDoubles.Profiles(a),
+            new FakeProfileSession { ActiveProfileId = a.Id }, launch: launch);
+
+        await vm.LaunchCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { a.Id }, launch.LaunchCalls);
+    }
+
+    [Fact]
+    public async Task Launch_Launched_sets_a_status_note_and_refreshes_running_state()
+    {
+        // On a successful launch: a brief "Launched 'X'" note surfaces in the
+        // status strip, and the session's Refresh is called so the running
+        // indicator + CanLaunch react immediately (not on the next poll).
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = false };
+        var launch = new FakeLaunchService(); // default: Launched
+        var vm = Build(TestDoubles.Profiles(a), session, launch: launch);
+
+        Assert.Null(vm.LaunchStatusNote);
+
+        await vm.LaunchCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.LaunchStatusNote);
+        Assert.Contains("Alpha", vm.LaunchStatusNote);
+        Assert.Equal(1, session.RefreshCalls); // immediate refresh, not deferred to the poll
+    }
+
+    [Fact]
+    public async Task Launch_Launched_running_state_refresh_triggers_CanLaunch_re_eval()
+    {
+        // The session's Refresh flips IsRunning to true (the game just started).
+        // The shell mirrors it -> CanLaunch flips to false (the running indicator
+        // + launch-availability react at once).
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var session = new FakeProfileSession
+        {
+            ActiveProfileId = a.Id,
+            IsRunning = false,
+        };
+        // Wire the callback AFTER construction so the lambda can reference the
+        // built session (the game-start simulation flips IsRunning on Refresh).
+        session.OnRefresh = () => session.IsRunning = true;
+        var launch = new FakeLaunchService(); // Launched
+        var vm = Build(TestDoubles.Profiles(a), session, launch: launch);
+        Assert.True(vm.LaunchCommand.CanExecute(null));
+
+        await vm.LaunchCommand.ExecuteAsync(null);
+
+        Assert.True(vm.IsGameRunning);
+        Assert.False(vm.LaunchCommand.CanExecute(null)); // blocked now that it's running
+    }
+
+    [Fact]
+    public async Task Launch_DiscoveryIncomplete_opens_the_escape_hatch_with_the_missing_fields()
+    {
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var dialogs = new FakeDialogService();
+        var launch = new FakeLaunchService
+        {
+            NextResult = new LaunchResult(
+                LaunchStatus.DiscoveryIncomplete,
+                "missing",
+                new[] { "ProtonBinaryPath", "CompatdataPath" }),
+        };
+        var vm = Build(TestDoubles.Profiles(a),
+            new FakeProfileSession { ActiveProfileId = a.Id },
+            dialogs, launch);
+
+        await vm.LaunchCommand.ExecuteAsync(null);
+
+        Assert.Single(dialogs.EscapeHatchCalls);
+        Assert.Equal(
+            new[] { "ProtonBinaryPath", "CompatdataPath" },
+            dialogs.EscapeHatchCalls[0]);
+        // No auto-retry: the shell did not call Launch again.
+        Assert.Single(launch.LaunchCalls);
+    }
+
+    [Fact]
+    public async Task Launch_DiscoveryIncomplete_does_not_retry_when_the_user_submits()
+    {
+        // Even when the user submits (EscapeHatchResult=true), the shell does
+        // not re-launch; the user clicks Launch again. A loop here would trap
+        // the user if they could not get the paths right.
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var dialogs = new FakeDialogService { EscapeHatchResult = true };
+        var launch = new FakeLaunchService
+        {
+            NextResult = new LaunchResult(
+                LaunchStatus.DiscoveryIncomplete, "missing", new[] { "SteamInstallPath" }),
+        };
+        var vm = Build(TestDoubles.Profiles(a),
+            new FakeProfileSession { ActiveProfileId = a.Id },
+            dialogs, launch);
+
+        await vm.LaunchCommand.ExecuteAsync(null);
+
+        Assert.Single(launch.LaunchCalls); // no retry
+    }
+
+    [Fact]
+    public async Task Launch_Error_opens_an_alert_with_the_result_message()
+    {
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var dialogs = new FakeDialogService();
+        var launch = new FakeLaunchService
+        {
+            NextResult = new LaunchResult(LaunchStatus.Error, "boom", Array.Empty<string>()),
+        };
+        var vm = Build(TestDoubles.Profiles(a),
+            new FakeProfileSession { ActiveProfileId = a.Id },
+            dialogs, launch);
+
+        await vm.LaunchCommand.ExecuteAsync(null);
+
+        Assert.Single(dialogs.AlertCalls);
+        Assert.Equal("boom", dialogs.AlertCalls[0].Message);
+    }
+
+    [Fact]
+    public async Task Launch_with_no_selected_profile_is_a_no_op()
+    {
+        // Defense: even though CanLaunch gates this, a programmatic call with
+        // no selection must not throw or call the service.
+        var launch = new FakeLaunchService();
+        var vm = Build(TestDoubles.Profiles(), launch: launch);
+
+        await vm.LaunchCommand.ExecuteAsync(null);
+
+        Assert.Empty(launch.LaunchCalls);
+    }
+
+    // ---- OpenSettings -----------------------------------------------------
+
+    [Fact]
+    public async Task OpenSettings_opens_the_settings_dialog_once()
+    {
+        var dialogs = new FakeDialogService();
+        var vm = Build(dialogs: dialogs);
+
+        await vm.OpenSettingsCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, dialogs.SettingsCalls);
+    }
+
+    [Fact]
+    public async Task OpenSettings_reloads_the_mod_list_after_close()
+    {
+        // A Settings relocate rescans the repository's index out-of-band; the
+        // shell reloads the mod list after the dialog closes so the rows reflect
+        // the rescanned state rather than a stale snapshot.
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var repo = new FakeModRepository();
+        var modList = TestDoubles.BuildModList(profiles, session, repo);
+        var dialogs = new FakeDialogService();
+        var vm = new ShellViewModel(
+            profiles,
+            session,
+            new FakeLaunchService(),
+            dialogs,
+            Localization,
+            modList,
+            Logger);
+
+        // Initially the active profile has no mods.
+        Assert.Empty(modList.Mods);
+
+        // During settings, a mod lands in the profile out-of-band (simulating
+        // the effect of a relocate rescan changing what the join would produce).
+        dialogs.OnSettings = () =>
+        {
+            var container = repo.CreateContainer(new UntrackedSource(), "NewMod");
+            profiles.AddMod(a.Id, container.Id, ModVersionPolicy.Latest);
+        };
+
+        await vm.OpenSettingsCommand.ExecuteAsync(null);
+
+        // The shell reloaded the mod list after Settings closed.
+        Assert.Single(modList.Mods);
     }
 }

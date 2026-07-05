@@ -1,4 +1,6 @@
 using System.Text;
+using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -14,10 +16,12 @@ namespace Magos.Modificus.Steam.Tests;
 /// <remarks>
 /// Resolving via DI (rather than constructing the internal implementation
 /// directly) keeps tests black-box against <see cref="ISteamService"/> and
-/// proves the real registration path — the same approach the Profiles fixture
+/// proves the real registration path, the same approach the Profiles fixture
 /// uses. <see cref="SteamDiscoveryOptions"/> / <see cref="ISteamRegistryReader"/>
-/// / <see cref="IProcessLookup"/> are pre-registered so <c>AddSteam()</c>'s
-/// <c>TryAdd</c> defaults are skipped in favor of the fixture's fakes.
+/// / <see cref="IProcessLookup"/> / <see cref="IConfigLoader"/> are pre-registered
+/// so <c>AddSteam()</c>'s <c>TryAdd</c> defaults are skipped in favor of the
+/// fixture's fakes. <see cref="Config"/> exposes the live <see cref="MagosConfig"/>
+/// so overlay tests can set <see cref="DiscoveryConfig"/> user overrides.
 /// </remarks>
 internal sealed class SteamFixture : IDisposable
 {
@@ -30,6 +34,8 @@ internal sealed class SteamFixture : IDisposable
     public string CompatToolsDir { get; }  // compatibilitytools.d candidate
     public FakeRegistryReader Registry { get; } = new();
     public FakeProcessLookup Processes { get; } = new();
+    public FakeConfigLoader ConfigLoader { get; } = new();
+    public MagosConfig Config => ConfigLoader.Config;
     public ISteamService Service { get; }
 
     public SteamFixture(
@@ -58,6 +64,7 @@ internal sealed class SteamFixture : IDisposable
         services.AddSingleton(_options);
         services.AddSingleton<ISteamRegistryReader>(Registry);
         services.AddSingleton<IProcessLookup>(Processes);
+        services.AddSingleton<IConfigLoader>(ConfigLoader);
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning)); // quiet by default
         services.AddSteam();
         _provider = services.BuildServiceProvider();
@@ -197,4 +204,18 @@ internal sealed class FakeProcessLookup : IProcessLookup
 {
     public HashSet<string> Running { get; } = new(StringComparer.Ordinal);
     public bool IsRunning(string processName) => Running.Contains(processName);
+}
+
+/// <summary>
+/// Minimal <see cref="IConfigLoader"/> double for the steam tests: serves a
+/// mutable <see cref="MagosConfig"/> (so overlay tests can set
+/// <see cref="DiscoveryConfig"/> user overrides before calling
+/// <see cref="ISteamService.Discover"/>). <see cref="Save"/> is unused by
+/// discovery but implemented to satisfy the interface.
+/// </summary>
+internal sealed class FakeConfigLoader : IConfigLoader
+{
+    public MagosConfig Config { get; set; } = MagosConfig.CreateDefault();
+    public MagosConfig Load() => Config;
+    public void Save(MagosConfig config) => Config = config;
 }

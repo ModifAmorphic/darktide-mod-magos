@@ -30,6 +30,15 @@ public sealed class MagosConfig
     /// </summary>
     public string EnginseerRuntimeDir { get; set; } = AppPaths.DefaultEnginseerRuntimeDir;
 
+    /// <summary>
+    /// User-supplied discovery overrides. When a field here is non-null/non-
+    /// whitespace, <c>SteamService.Discover()</c> uses it as-is in place of the
+    /// auto-discovered value (no re-verify); null/whitespace means auto-discover
+    /// that field. Read live per <c>Discover()</c> call via
+    /// <see cref="General.IConfigLoader"/>.
+    /// </summary>
+    public DiscoveryConfig Discovery { get; set; } = new();
+
     /// <summary>External-service (mod-source) integration settings.</summary>
     public IntegrationsConfig Integrations { get; set; } = new();
 

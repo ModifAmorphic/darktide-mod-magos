@@ -125,4 +125,82 @@ public interface IModRepository
     /// pairs still referenced by some profile (the caller collects these by
     /// resolving each profile entry's policy against its container).</param>
     void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
+
+    /// <summary>
+    /// Rebuilds the in-memory index from the <b>live</b> mods root (the path
+    /// <see cref="General.IConfigLoader.Load()"/>.<c>ModsFolder</c> currently
+    /// returns). Clears the existing index first, then re-scans the directory
+    /// tree exactly as the constructor did.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Container ids are stable across a relocation (the move is a directory
+    /// rename, not an id change), so a relocate leaves the index valid by
+    /// construction. <see cref="Relocate"/> calls this <em>internally</em> as
+    /// the final step of its atomic move + save + rescan, so the next
+    /// operation reads the new location with an index that matches it. This
+    /// public surface is also useful after any out-of-band change to the mods
+    /// folder (a hand-edit, an external tool, a backup restore) that bypasses
+    /// <see cref="Relocate"/>.</para>
+    /// </remarks>
+    void Rescan();
+
+    /// <summary>
+    /// Live-moves every container directory from the <b>current</b> mods root
+    /// (read live from config, i.e. the OLD path) to <paramref name="newBasePath"/>
+    /// AND, atomically, persists <c>ModsFolder = newBasePath</c> through
+    /// <see cref="General.IConfigLoader"/> and rescans the index at the new
+    /// path. Best-effort per container on the move: an individual move failure
+    /// is logged + skipped so one locked directory does not abort the rest.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Atomicity (single-call contract):</b> the move, the config save, and
+    /// the rescan are owned by this method so a save failure can never strand
+    /// the files at the new path with the config still pointing at the old one.
+    /// The steps, in order:
+    /// <list type="number">
+    /// <item><description>Read <c>oldPath = Load().ModsFolder</c> (the OLD
+    /// path).</description></item>
+    /// <item><description>Validate <paramref name="newBasePath"/> (absolute,
+    /// parent creatable; reject a conflicting tracked-UUID
+    /// dir).</description></item>
+    /// <item><description>Move every indexed container dir
+    /// <c>oldPath -&gt; newPath</c> (best-effort per container, tracking which
+    /// moved).</description></item>
+    /// <item><description>Save the config with <c>ModsFolder = newPath</c>. On
+    /// save failure (a thrown exception, OR a silent failure: the production
+    /// <see cref="General.ConfigLoader"/> swallows write errors by design), roll
+    /// the moved container dirs back to <c>oldPath</c> so files + config agree
+    /// at <c>oldPath</c> again, then throw to surface the failure to the
+    /// caller.</description></item>
+    /// <item><description>Rescan: rebuild the index at <c>newPath</c> (now the
+    /// live config path).</description></item>
+    /// </list>
+    /// The caller (the Settings VM) makes a single Relocate call; it does not
+    /// save the config or rescan separately.</para>
+    /// <para>
+    /// The index is untouched by the move itself (container ids are unchanged
+    /// by a directory rename); the final <see cref="Rescan"/> is the defensive
+    /// resync that guarantees the index reflects whatever is actually at the
+    /// new path.</para>
+    /// <para>
+    /// <b>Scope of the move:</b> only directories whose name is a container UUID
+    /// <em>in the index</em> are moved (the containers the repository tracks).
+    /// Stray non-UUID directories and corrupt-manifest UUID directories (skipped
+    /// at construction) are left in place; they are not the repository's
+    /// concern.</para>
+    /// </remarks>
+    /// <param name="newBasePath">The absolute path to move container directories
+    /// into. Must be absolute and its parent must be creatable.</param>
+    /// <exception cref="ArgumentException"><paramref name="newBasePath"/> is
+    /// null/whitespace, not absolute, or its parent directory cannot be
+    /// created.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="newBasePath"/>
+    /// already contains a directory whose name is a container UUID the
+    /// repository tracks (a conflicting pre-existing container).</exception>
+    /// <exception cref="IOException">The move succeeded but the config save
+    /// failed (thrown or silent); the moves are rolled back to the old path
+    /// before this throws.</exception>
+    void Relocate(string newBasePath);
 }

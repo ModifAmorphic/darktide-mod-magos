@@ -2,7 +2,8 @@
 
 > The global configuration schema: a POCO model with platform-appropriate
 > defaults, bound from JSON by the [General](general.md) library. Status:
-> implemented (Phase 0; Preferences section added in Phase 3 Track D).
+> implemented (Phase 0; Preferences section added in Phase 3 Track D; Discovery
+> section added in Phase 3 Track C).
 
 `MagosConfig` holds system-level settings shared across all profiles. Per-profile
 settings live with the profile, not here. Every field carries a default, so an
@@ -26,6 +27,7 @@ public sealed class MagosConfig
     public string ProfilesBaseFolder { get; set; }      // default profiles root
     public string ModsFolder { get; set; }         // default mods root
     public string EnginseerRuntimeDir { get; set; }      // default enginseer root
+    public DiscoveryConfig Discovery { get; set; } = new();
     public IntegrationsConfig Integrations { get; set; } = new();
     public PreferencesConfig Preferences { get; set; } = new();
 
@@ -39,6 +41,7 @@ public sealed class MagosConfig
 | `ProfilesBaseFolder` | `<app-data>/profiles` | Where profiles, per-profile mods, and profile settings are stored. |
 | `ModsFolder` | `<app-data>/mods` | The global mod store (see [mods](mods.md)). |
 | `EnginseerRuntimeDir` | `<app-data>/enginseer` | Where `magos_launcher.exe`, `magos_shell.dll`, and `mod_loader/` live (consumed by [enginseer-client](enginseer-client.md)). |
+| `Discovery` | see `DiscoveryConfig` | User-supplied discovery overrides (Steam / Darktide / compatdata / Proton paths). Null = auto-discover. Phase 3 Track C. |
 | `Integrations` | see `IntegrationsConfig` | External-service (mod-source) integration settings. |
 | `Preferences` | see `PreferencesConfig` | User-facing global preferences (theme, font scale, language). Phase 3 Track D. |
 
@@ -117,6 +120,42 @@ public enum ThemeMode
   translated `Strings.<culture>.resx` files (no code change). Switching language
   updates the live UI through the UI-layer `LocalizationService` (dynamic, no
   restart).
+
+### `DiscoveryConfig` (Phase 3 Track C)
+
+User-supplied overrides for Steam/Darktide/Proton discovery. The Settings
+window and the discovery escape-hatch dialog write these;
+`SteamService.Discover()` reads them live (one `Load()` per call, via
+[IConfigLoader](general.md)) and overlays any non-null value onto the
+discoverer's auto result before recomputing `DiscoveryResult.Status`. An absent
+section yields a fully-defaulted (all-null) instance, which leaves discovery
+unchanged (everything auto-discovered).
+
+```csharp
+public sealed class DiscoveryConfig
+{
+    public string? UserSteamInstallPath { get; set; }       // Steam client dir; null = auto
+    public string? UserDarktideGameBinaryPath { get; set; } // native Darktide.exe path; null = auto
+    public string? UserCompatdataPath { get; set; }         // Wine prefix (Linux only); null = auto
+    public string? UserProtonBinaryPath { get; set; }       // proton script path (Linux only); null = auto
+}
+```
+
+- Every field is nullable and defaults to `null`, meaning "auto-discover this
+  field." A null/whitespace value is ignored by the overlay (the auto-discovered
+  value, which may itself be null, is kept).
+- **Trust convention:** a supplied value is used as-is with no re-verify (the
+  user said "use this"). A wrong path surfaces later, at launch, as a
+  `LaunchResult.Status` of `Error`; the user then corrects it in Settings or the
+  escape-hatch. This is why the overlay does not probe supplied paths.
+- Field mapping to `DiscoveryResult` (the overlay replaces the auto-discovered
+  value when non-null/non-whitespace): `UserSteamInstallPath` →
+  `DiscoveryResult.SteamInstallPath`; `UserDarktideGameBinaryPath` →
+  `DarktideGameBinaryPath`; `UserCompatdataPath` → `CompatdataPath`;
+  `UserProtonBinaryPath` → `ProtonBinaryPath`. See [steam](steam.md) for the
+  overlay behavior and the shared completeness rule.
+- `UserCompatdataPath` / `UserProtonBinaryPath` are Linux-only (Windows is
+  native; they are ignored, not probed).
 
 ### `AppPaths` (internal)
 

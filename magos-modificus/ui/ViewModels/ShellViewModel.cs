@@ -31,9 +31,15 @@ namespace Magos.Modificus.UI.ViewModels;
 /// <see cref="ProfileSwitchTooltip"/> re-resolve from <see cref="LocalizationService"/>
 /// when the UI culture changes (Preferences dialog), so the shell copy refreshes
 /// in-step with the rest of the UI on a language switch.</para>
-/// <para>Track C (Launch behavior) and Track B (mod-list contents) are not wired
-/// here yet. <see cref="LaunchCommand"/> stays a no-op placeholder whose guard is
-/// real so it lights up once a profile is selected and the game is stopped.</para>
+/// <para><b>Track C is wired:</b> <see cref="LaunchCommand"/> invokes
+/// <see cref="IEnginseerLaunchService.Launch"/> and branches on
+/// <see cref="LaunchResult.Status"/> (Launched -> status note + an immediate
+/// <see cref="IsGameRunning"/> refresh; DiscoveryIncomplete -> the focused
+/// escape-hatch dialog over the missing fields; Error -> a modal alert), and
+/// <see cref="OpenSettingsCommand"/> opens the Settings window (discovery
+/// overrides + mod-repository relocation). After Settings closes, the bound
+/// <see cref="ModList"/> reloads so a relocate's rescan is reflected in the
+/// mod rows.</para>
 /// </remarks>
 public partial class ShellViewModel : ObservableObject
 {
@@ -144,6 +150,21 @@ public partial class ShellViewModel : ObservableObject
             : _localization["Status_GameNotRunning"];
 
     /// <summary>
+    /// A transient launch-status note surfaced in the status strip ("Launched
+    /// 'X'" on success, or the launch error title on failure). Overwritten on
+    /// each launch attempt; null when no launch has happened since the shell
+    /// loaded. Localized.
+    /// </summary>
+    /// <remarks>
+    /// Brief by design: a subsequent launch overwrites it, and the durable
+    /// running-state signal is the <see cref="IsGameRunning"/> indicator + the
+    /// localized <see cref="GameRunningText"/>. The note is the immediate
+    /// confirmation that the click did something.
+    /// </remarks>
+    [ObservableProperty]
+    private string? _launchStatusNote;
+
+    /// <summary>
     /// Whether the profile dropdown is interactive: a profile must exist and the
     /// game must not be running. The gate itself lives in the session; this just
     /// exposes the running-state so the dropdown can disable while Darktide runs.
@@ -219,6 +240,9 @@ public partial class ShellViewModel : ObservableObject
 
         OnPropertyChanged(nameof(GameRunningText));
         OnPropertyChanged(nameof(ProfileSwitchTooltip));
+        // LaunchStatusNote is a transient formatted string (not a key), so a
+        // culture flip while it happens to be visible is not re-translated. The
+        // next launch overwrites it; the durable signal is GameRunningText.
     }
 
     /// <summary>
@@ -259,6 +283,22 @@ public partial class ShellViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Opens the Settings dialog (discovery paths + mod-repository location),
+    /// then reloads the mod list. Each setting applies + persists immediately
+    /// through the dialog; on close the only follow-up is a mod-list reload,
+    /// because a Settings relocate rescans the repository's index out-of-band
+    /// and the <see cref="ModListViewModel.Mods"/> snapshot would otherwise be
+    /// stale. (Discovery overrides are read live by the next
+    /// <c>Discover()</c> / launch; no shell-side action needed for those.)
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenSettings()
+    {
+        await _dialogs.ShowSettingsAsync();
+        ModList.Reload();
+    }
+
+    /// <summary>
     /// Resolves the session's active id to the matching profile in the current
     /// list (null when the id is unknown or no profile exists).
     /// </summary>
@@ -268,15 +308,61 @@ public partial class ShellViewModel : ObservableObject
             : null;
 
     /// <summary>
-    /// Track C: launch is not wired yet. The command is present so the Launch
-    /// button binds cleanly; <see cref="CanLaunch"/> encodes the real guard (a
-    /// profile must be selected and the game must not already be running), so it
-    /// lights up once selection lands.
+    /// Launches the active profile modded. Branches on
+    /// <see cref="LaunchResult.Status"/>:
+    /// <list type="bullet">
+    /// <item><term><see cref="LaunchStatus.Launched"/></term><description>a
+    /// brief localized "Launched 'X'" note in the status strip + an immediate
+    /// <see cref="IsGameRunning"/> refresh so the indicator + CanLaunch react at
+    /// once (not on the next poll).</description></item>
+    /// <item><term><see cref="LaunchStatus.DiscoveryIncomplete"/></term><description>
+    /// opens the escape-hatch dialog with the missing fields. No retry: the user
+    /// clicks Launch again after submitting.</description></item>
+    /// <item><term><see cref="LaunchStatus.Error"/></term><description>shows a
+    /// modal alert with the result's message.</description></item>
+    /// </list>
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanLaunch))]
-    private void Launch()
+    private async Task Launch()
     {
-        // Track C: _launchService.Launch(SelectedProfile!.Id) + LaunchResult handling.
+        if (SelectedProfile is not { } profile)
+        {
+            return;
+        }
+
+        var result = _launchService.Launch(profile.Id);
+        switch (result.Status)
+        {
+            case LaunchStatus.Launched:
+                LaunchStatusNote = _localization.Format("Launch_LaunchedNote", profile.Name);
+                // Refresh running-state right away so the indicator + CanLaunch
+                // react at once. The session's polling timer would catch up
+                // eventually, but the user just clicked Launch; they should see
+                // the change immediately. The session's Refresh is the source
+                // of truth; the shell mirrors IsRunning from it.
+                _session.Refresh();
+                _logger.LogInformation("Launched profile {Id} ('{Name}').", profile.Id, profile.Name);
+                break;
+
+            case LaunchStatus.DiscoveryIncomplete:
+                // No retry: the user explicitly clicks Launch again after
+                // submitting. A loop here would trap them if they could not get
+                // the paths right.
+                LaunchStatusNote = null;
+                await _dialogs.ShowDiscoveryEscapeHatchAsync(result.MissingDiscoveryFields);
+                _logger.LogInformation(
+                    "Discovery incomplete on launch of {Id}; showed escape-hatch for fields: {Fields}.",
+                    profile.Id, string.Join(", ", result.MissingDiscoveryFields));
+                break;
+
+            case LaunchStatus.Error:
+                LaunchStatusNote = null;
+                await _dialogs.ShowAlertAsync(
+                    _localization["Launch_ErrorTitle"],
+                    result.Message ?? string.Empty);
+                _logger.LogWarning("Launch of {Id} failed: {Message}.", profile.Id, result.Message);
+                break;
+        }
     }
 
     /// <summary>A profile must be selected and the game must not be running.</summary>
