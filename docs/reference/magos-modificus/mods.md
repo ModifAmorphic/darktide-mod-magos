@@ -64,16 +64,21 @@ public interface IModRepository
   owns `<ModsFolder>`); never stored. Used for staging symlink targets.
 - `Rescan()`: rebuild the in-memory index from the **live** `ModsFolder` (the
   path `IConfigLoader.Load().ModsFolder` currently returns), clearing first.
-  Container ids are stable across a relocation (the move is a directory rename),
-  so `Relocate` leaves the index valid by construction; `Rescan` is the defensive
-  guarantee the index reflects whatever is actually on disk. Also useful after an
+  Container ids are stable across a relocation (the move never changes ids,
+  whether a same-volume rename or a cross-volume copy + delete), so `Relocate`
+  leaves the index valid by construction; `Rescan` is the defensive guarantee
+  the index reflects whatever is actually on disk. Also useful after an
   out-of-band change (hand-edit, external tool, backup restore).
 - `Relocate(newBasePath)`: the **atomic** repository relocation, owned by the
   repository so a save failure can never strand files at the new path with config
   still pointing at the old one. Steps: (1) read `oldPath = Load().ModsFolder`;
   (2) validate `newBasePath` (absolute, parent creatable; reject a conflicting
   tracked-UUID dir); (3) move every indexed container dir `oldPath → newPath`
-  (best-effort per container, tracking which moved); (4) save `ModsFolder =
+  via the volume-appropriate strategy (same-volume = a fast, atomic
+  `Directory.Move` rename; cross-volume = copy the tree + delete the source,
+  because `Directory.Move` throws `IOException` across volumes, e.g. Windows
+  `C:\` → `D:\`, rather than falling back to a copy), best-effort per container,
+  tracking which moved; (4) save `ModsFolder =
   newPath` via `IConfigLoader`, and on save failure (a thrown exception, OR a
   silent failure since the production `ConfigLoader.Save` swallows write errors)
   roll the moved container dirs back to `oldPath` so files + config agree there
@@ -316,8 +321,12 @@ UUIDs), never stored absolute.
   (drops unreferenced version folders + empty containers, keeps referenced),
   opaque version-folder naming, derived paths, and the relocation surface:
   `Relocate` (atomic move + config save + rescan; rolls the move back when the
-  save fails, whether the loader throws or silently fails) + `Rescan`
+  save fails, whether the loader throws or silently fails; the cross-volume path
+  is covered by forcing the volume detector, proving a copy + delete relocate
+  succeeds where `Directory.Move` would throw) + `Rescan`
   (drops/Adds index entries to match the live disk state).
+- `DirectoryCopy`: faithful recursive copy (files + nested subdirs reproduced,
+  target created as it goes).
 - `ModSource` JSON `$kind` round-trip (untracked/nexus/github) + defaults +
   record equality.
 - `ModSourceParser` URL/id parsing (valid variants, trailing slash, query,

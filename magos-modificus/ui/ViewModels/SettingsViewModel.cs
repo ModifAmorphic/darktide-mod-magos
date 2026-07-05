@@ -15,14 +15,18 @@ namespace Magos.Modificus.UI.ViewModels;
 /// The view model behind the Settings modal (<see cref="Views.SettingsWindow"/>).
 /// Two sections:
 /// <list type="bullet">
-/// <item><description><b>Discovery:</b> the four user-override paths
-/// (<c>UserSteamInstallPath</c>, <c>UserDarktideGameBinaryPath</c>,
-/// <c>UserCompatdataPath</c>, <c>UserProtonBinaryPath</c>). Each row's TextBox
-/// is pre-filled with the current override (or empty when the field is set to
-/// auto-discover). Editing writes the override immediately via a
-/// read-modify-save through <see cref="IConfigLoader"/> (the Track D Preferences
-/// pattern: apply + persist per change). An empty TextBox clears the override
-/// (writes <c>null</c>, so the field falls back to auto-discovery).</description></item>
+    /// <item><description><b>Discovery:</b> the user-override paths
+    /// (<c>UserSteamInstallPath</c>, <c>UserDarktideGameBinaryPath</c>,
+    /// <c>UserCompatdataPath</c>, <c>UserProtonBinaryPath</c>), platform-gated
+    /// so Windows renders only the Steam install + Darktide binary rows (the
+    /// compatdata + Proton rows are Linux-only: <c>WindowsLaunchStrategy</c>
+    /// ignores them, so they would be silently ineffective on Windows). Each
+    /// row's TextBox is pre-filled with the current override (or empty when the
+    /// field is set to auto-discover). Editing writes the override immediately
+    /// via a read-modify-save through <see cref="IConfigLoader"/> (the Track D
+    /// Preferences pattern: apply + persist per change). An empty TextBox
+    /// clears the override (writes <c>null</c>, so the field falls back to
+    /// auto-discovery).</description></item>
 /// <item><description><b>Storage:</b> the mod-repository location
 /// (<c>ModsFolder</c>). Read-only on open (pre-filled from config); Browse opens
 /// a folder picker, and a change runs the relocate flow as a single atomic call:
@@ -59,9 +63,10 @@ public partial class SettingsViewModel : ObservableObject
     private bool _suppressApply;
 
     /// <summary>
-    /// Creates the Settings VM, pre-fills the four discovery rows + the ModsFolder
-    /// TextBox from the live config, and wires each discovery row's change
-    /// callback to the write-through path.
+    /// Creates the Settings VM, pre-fills the discovery rows (platform-gated:
+    /// Steam install + Darktide binary on Windows; all four on Linux) + the
+    /// ModsFolder TextBox from the live config, and wires each discovery row's
+    /// change callback to the write-through path.
     /// </summary>
     /// <param name="configLoader">The live config reader/writer. Each field change
     /// does a read-modify-save through this.</param>
@@ -90,12 +95,22 @@ public partial class SettingsViewModel : ObservableObject
             // value lands in config (read-modify-save) the moment the TextBox
             // edits (or the Browse picker sets it). Suppressed only during the
             // initial restore, which is what pre-fills the boxes.
+            //
+            // Platform-gated: on Windows the compatdata + Proton overrides are
+            // Linux-only (WindowsLaunchStrategy.ComputeStatus never reads them,
+            // so surfacing them would be silently ineffective rows). Only the
+            // Steam install + Darktide binary rows render on Windows. The
+            // escape-hatch is already correct (it renders only the names in
+            // LaunchResult.MissingDiscoveryFields, which on Windows never
+            // includes the Linux-only ones).
             DiscoveryRows = new ObservableCollection<DiscoveryFieldRowViewModel>(
-                DiscoveryFields.All.Select(field => new DiscoveryFieldRowViewModel(
-                    field,
-                    InitialValue(field, discovery),
-                    _localization,
-                    onValueChanged: WriteThroughDiscovery)));
+                DiscoveryFields.All
+                    .Where(field => OperatingSystem.IsLinux() || !IsLinuxOnlyField(field))
+                    .Select(field => new DiscoveryFieldRowViewModel(
+                        field,
+                        InitialValue(field, discovery),
+                        _localization,
+                        onValueChanged: WriteThroughDiscovery)));
         }
         finally
         {
@@ -111,10 +126,11 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The four discovery-field rows (Steam install, Darktide binary, compatdata,
-    /// Proton binary). Bound to an <c>ItemsControl</c> in the view; each row owns
-    /// its TextBox value + Browse button (the browse kind drives which picker
-    /// opens).
+    /// The discovery-field rows (Steam install, Darktide binary, compatdata,
+    /// Proton binary), platform-gated: Windows renders only the first two (the
+    /// compatdata + Proton rows are Linux-only). Bound to an
+    /// <c>ItemsControl</c> in the view; each row owns its TextBox value + Browse
+    /// button (the browse kind drives which picker opens).
     /// </summary>
     public ObservableCollection<DiscoveryFieldRowViewModel> DiscoveryRows { get; }
 
@@ -300,4 +316,15 @@ public partial class SettingsViewModel : ObservableObject
             "ProtonBinaryPath" => discovery.UserProtonBinaryPath ?? string.Empty,
             _ => string.Empty,
         };
+
+    /// <summary>
+    /// Whether a discovery field is Linux-only (the compatdata + Proton
+    /// overrides, which <c>WindowsLaunchStrategy</c> ignores). Used to
+    /// platform-gate the Settings rows so Windows does not surface
+    /// silently-ineffective rows. The catalog is the single source of truth for
+    /// field identity; this helper is the only place that knows which of those
+    /// fields are Linux-scoped.
+    /// </summary>
+    private static bool IsLinuxOnlyField(DiscoveryField field) =>
+        field.FieldName is "CompatdataPath" or "ProtonBinaryPath";
 }

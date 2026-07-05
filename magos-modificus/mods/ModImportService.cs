@@ -136,7 +136,7 @@ internal sealed class ModImportService : IModImportService
                 _logger.LogInformation(
                     "Importing {Mod} (base '{Base}') from folder '{Source}' -> '{Target}'",
                     modName, baseName, sourcePath, target);
-                CopyDirectory(sourcePath, target);
+                DirectoryCopy.Copy(sourcePath, target);
             }
         }
 
@@ -204,29 +204,6 @@ internal sealed class ModImportService : IModImportService
 
     private static bool IsZip(string path) =>
         Path.GetExtension(path).Equals(ZipExtension, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Recursively copies <paramref name="sourceDir"/> to
-    /// <paramref name="targetDir"/>. Creates the target tree as it goes. Mirrors
-    /// <see cref="ZipFile.ExtractToDirectory"/>'s "faithful copy of the source tree"
-    /// semantics for the folder-import path.
-    /// </summary>
-    private static void CopyDirectory(string sourceDir, string targetDir)
-    {
-        Directory.CreateDirectory(targetDir);
-
-        // Files first (cheap; then recurse into subdirectories).
-        foreach (var file in Directory.EnumerateFiles(sourceDir))
-        {
-            var dest = Path.Combine(targetDir, Path.GetFileName(file));
-            File.Copy(file, dest, overwrite: true);
-        }
-
-        foreach (var dir in Directory.EnumerateDirectories(sourceDir))
-        {
-            CopyDirectory(dir, Path.Combine(targetDir, Path.GetFileName(dir)));
-        }
-    }
 
     // ---- source-structure validation ---------------------------------------
     //

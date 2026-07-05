@@ -14,20 +14,22 @@ Magos has two components:
   production seed of this repo. See
   [`enginseer/README.md`](enginseer/README.md) for build + developer details.
 - **Magos Modificus** — the mod manager app (UI, staging, load order, profiles,
-  dependency resolution). Phases 0–2 complete; Phase 3 Track A in progress: the
-  backend libraries (Profiles, Steam, Integrations, Enginseer-client,
-  Mods) are implemented, and the UI shell + profile management (dropdown
-  switch, persisted active profile, create/rename/delete dialog) are wired.
-  Mod-list UI and Launch behavior are still pending, and the Launcher is a stub
-  (Phase 5). See
+  dependency resolution). Phases 0–2 complete; Phase 3 wired: the backend
+  libraries (Profiles, Steam, Integrations, Enginseer-client, Mods) are
+  implemented, and the UI (Phase 3 Tracks A–D) is in place: the app shell +
+  profile management (dropdown switch, persisted active profile,
+  create/rename/delete dialog), global Preferences (theme, font scale, language),
+  the mod-list UI (view, enable/disable, reorder, per-mod version policy, local
+  folder/`.zip` import), and the Launch flow + Settings window. The Launcher is
+  a stub (Phase 5). See
   [`magos-modificus/README.md`](magos-modificus/README.md) for developer/build
   details.
 
 ## Getting started
 
-> **Early-access / manual setup.** Mod Magos (the app) is not built yet, so for
-> now setup is manual: you run the launcher directly with a mod directory you
-> assemble by hand. This will be replaced by Mod Magos when it ships.
+> **Early-access / manual setup.** Magos Modificus (the app) is not released yet, so
+> for now setup is manual: you run the launcher directly with a mod directory you
+> assemble by hand. This will be replaced by the full app when it ships.
 
 ### 1. Get the runtime
 

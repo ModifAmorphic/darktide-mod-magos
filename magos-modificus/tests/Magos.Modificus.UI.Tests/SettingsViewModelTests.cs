@@ -52,34 +52,56 @@ public sealed class SettingsViewModelTests
 
         var (vm, _, _) = Build(discovery);
 
+        // Steam + Darktide rows always render.
         Assert.Equal("/steam", Row(vm, "SteamInstallPath").Value);
         Assert.Equal("/darktide.exe", Row(vm, "DarktideGameBinaryPath").Value);
-        Assert.Equal("/compat", Row(vm, "CompatdataPath").Value);
-        Assert.Equal("/proton", Row(vm, "ProtonBinaryPath").Value);
+        // Compatdata + Proton rows render on Linux only (platform-gated).
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.Equal("/compat", Row(vm, "CompatdataPath").Value);
+            Assert.Equal("/proton", Row(vm, "ProtonBinaryPath").Value);
+        }
     }
 
     [Fact]
     public void Discovery_rows_are_empty_when_overrides_are_unset()
     {
-        // All-null discovery (the default): every row's TextBox starts empty.
+        // All-null discovery (the default): every rendered row's TextBox starts
+        // empty.
         var (vm, _, _) = Build();
 
         Assert.Equal(string.Empty, Row(vm, "SteamInstallPath").Value);
         Assert.Equal(string.Empty, Row(vm, "DarktideGameBinaryPath").Value);
-        Assert.Equal(string.Empty, Row(vm, "CompatdataPath").Value);
-        Assert.Equal(string.Empty, Row(vm, "ProtonBinaryPath").Value);
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.Equal(string.Empty, Row(vm, "CompatdataPath").Value);
+            Assert.Equal(string.Empty, Row(vm, "ProtonBinaryPath").Value);
+        }
     }
 
     [Fact]
-    public void Discovery_rows_cover_all_four_fields_in_catalog_order()
+    public void Discovery_rows_match_the_platforms_expected_fields_in_catalog_order()
     {
+        // Platform-gated: Windows renders only the Steam install + Darktide
+        // binary rows (the compatdata + Proton overrides are Linux-only:
+        // WindowsLaunchStrategy ignores them, so they would be silently
+        // ineffective rows). Linux renders all four, in catalog order.
         var (vm, _, _) = Build();
 
-        Assert.Equal(4, vm.DiscoveryRows.Count);
-        Assert.Equal("SteamInstallPath", vm.DiscoveryRows[0].Field.FieldName);
-        Assert.Equal("DarktideGameBinaryPath", vm.DiscoveryRows[1].Field.FieldName);
-        Assert.Equal("CompatdataPath", vm.DiscoveryRows[2].Field.FieldName);
-        Assert.Equal("ProtonBinaryPath", vm.DiscoveryRows[3].Field.FieldName);
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.Equal(4, vm.DiscoveryRows.Count);
+            Assert.Equal("SteamInstallPath", vm.DiscoveryRows[0].Field.FieldName);
+            Assert.Equal("DarktideGameBinaryPath", vm.DiscoveryRows[1].Field.FieldName);
+            Assert.Equal("CompatdataPath", vm.DiscoveryRows[2].Field.FieldName);
+            Assert.Equal("ProtonBinaryPath", vm.DiscoveryRows[3].Field.FieldName);
+        }
+        else
+        {
+            Assert.Equal(2, vm.DiscoveryRows.Count);
+            Assert.Equal("SteamInstallPath", vm.DiscoveryRows[0].Field.FieldName);
+            Assert.Equal("DarktideGameBinaryPath", vm.DiscoveryRows[1].Field.FieldName);
+        }
     }
 
     [Fact]

@@ -134,14 +134,14 @@ public interface IModRepository
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Container ids are stable across a relocation (the move is a directory
-    /// rename, not an id change), so a relocate leaves the index valid by
-    /// construction. <see cref="Relocate"/> calls this <em>internally</em> as
-    /// the final step of its atomic move + save + rescan, so the next
-    /// operation reads the new location with an index that matches it. This
-    /// public surface is also useful after any out-of-band change to the mods
-    /// folder (a hand-edit, an external tool, a backup restore) that bypasses
-    /// <see cref="Relocate"/>.</para>
+    /// Container ids are stable across a relocation (the move never changes
+    /// ids, whether a same-volume rename or a cross-volume copy + delete), so
+    /// a relocate leaves the index valid by construction. <see cref="Relocate"/>
+    /// calls this <em>internally</em> as the final step of its atomic move +
+    /// save + rescan, so the next operation reads the new location with an
+    /// index that matches it. This public surface is also useful after any
+    /// out-of-band change to the mods folder (a hand-edit, an external tool, a
+    /// backup restore) that bypasses <see cref="Relocate"/>.</para>
     /// </remarks>
     void Rescan();
 
@@ -166,8 +166,13 @@ public interface IModRepository
     /// parent creatable; reject a conflicting tracked-UUID
     /// dir).</description></item>
     /// <item><description>Move every indexed container dir
-    /// <c>oldPath -&gt; newPath</c> (best-effort per container, tracking which
-    /// moved).</description></item>
+    /// <c>oldPath -&gt; newPath</c> via the move strategy the volume
+    /// relationship dictates: same-volume is a fast, atomic directory rename
+    /// (<c>Directory.Move</c>); cross-volume (e.g. Windows <c>C:\</c> -&gt;
+    /// <c>D:\</c>) is a copy of the tree + source delete, because
+    /// <c>Directory.Move</c> throws <c>IOException</c> across volumes rather
+    /// than falling back to a copy. Best-effort per container, tracking which
+    /// moved.</description></item>
     /// <item><description>Save the config with <c>ModsFolder = newPath</c>. On
     /// save failure (a thrown exception, OR a silent failure: the production
     /// <see cref="General.ConfigLoader"/> swallows write errors by design), roll

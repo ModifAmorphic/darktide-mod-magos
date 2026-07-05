@@ -654,6 +654,144 @@ public sealed class ModRepositoryTests
         }
     }
 
+    // ---- Relocate (cross-volume copy + delete) ----------------------------
+
+    [Fact]
+    public void Relocate_across_volumes_copies_and_deletes_so_no_container_is_stranded()
+    {
+        // The key M1 assertion: a relocate that cannot use Directory.Move (a
+        // cross-volume move, e.g. Windows C: -> D:) still succeeds via copy +
+        // delete instead of throwing on every container. Without the volume
+        // branch, every move would throw, the save would still flip ModsFolder,
+        // Rescan would rebuild against an empty new path, and the containers
+        // would be stranded (invisible, no UI recovery).
+        //
+        // A real second volume cannot be simulated under one temp root, so the
+        // volume detector is forced to "always cross-volume" via the internal
+        // test ctor, exercising the copy + delete path directly.
+        using var fx = new RepoFixture(sameVolume: (_, _) => false);
+        var c1 = fx.Repo.CreateContainer(new UntrackedSource(), "A");
+        var c2 = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "B");
+        fx.Repo.AddVersion(c1.Id, "1.0", EmptyPopulate);
+        fx.Repo.AddVersion(c2.Id, "2.0", EmptyPopulate);
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-xvol-" + Guid.NewGuid());
+        try
+        {
+            fx.Repo.Relocate(newPath);
+
+            // Every container directory landed at the new path (copy ran).
+            Assert.True(Directory.Exists(Path.Combine(newPath, c1.Id.ToString())));
+            Assert.True(Directory.Exists(Path.Combine(newPath, c2.Id.ToString())));
+            // The version files came along (the tree was reproduced, not just
+            // the top dir).
+            Assert.True(File.Exists(Path.Combine(newPath, c1.Id.ToString(),
+                fx.Repo.Get(c1.Id)!.Versions[0].Folder, "marker.txt")));
+            // The source dirs are GONE: the delete ran after the copy, so this
+            // is a real move, not a copy that leaves a stale duplicate.
+            Assert.False(Directory.Exists(Path.Combine(fx.Folder, c1.Id.ToString())));
+            Assert.False(Directory.Exists(Path.Combine(fx.Folder, c2.Id.ToString())));
+            // Config + index reflect the new path (no stranding).
+            Assert.Equal(newPath, fx.ConfigLoader.Load().ModsFolder);
+            Assert.NotNull(fx.Repo.Get(c1.Id));
+            Assert.NotNull(fx.Repo.Get(c2.Id));
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_across_volumes_rolls_back_to_old_path_when_save_fails()
+    {
+        // Cross-volume relocate whose config save throws: the rollback is also
+        // a copy + delete (the volume relationship is symmetric), and it must
+        // restore the moved containers to the old path so files + config agree
+        // there again. Without the volume branch in the rollback, the rollback
+        // would throw on every container (Directory.Move across volumes) and
+        // leave them stranded at the new path.
+        using var fx = new RepoFixture(sameVolume: (_, _) => false);
+        fx.ConfigLoader.SaveException = new IOException("disk full");
+        var c1 = fx.Repo.CreateContainer(new UntrackedSource(), "A");
+        fx.Repo.AddVersion(c1.Id, "1.0", EmptyPopulate);
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-xvol-rollback-" + Guid.NewGuid());
+        try
+        {
+            Assert.Throws<IOException>(() => fx.Repo.Relocate(newPath));
+
+            // Config still points at the old path (the save threw).
+            Assert.Equal(fx.Folder, fx.ConfigLoader.Load().ModsFolder);
+            // Nothing landed at the new path (rolled back + deleted there).
+            Assert.False(Directory.Exists(Path.Combine(newPath, c1.Id.ToString())));
+            // The container is back at the old path (rollback copy + delete).
+            Assert.True(Directory.Exists(Path.Combine(fx.Folder, c1.Id.ToString())));
+            Assert.True(File.Exists(Path.Combine(
+                fx.Folder, c1.Id.ToString(),
+                fx.Repo.Get(c1.Id)!.Versions[0].Folder, "marker.txt")));
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_same_volume_still_uses_atomic_directory_move()
+    {
+        // The fast path is preserved: when the detector reports same-volume,
+        // Relocate uses Directory.Move (a rename), not copy + delete. The
+        // observable difference is that the source is gone after the move
+        // (same end state as copy + delete), but this guards the branch: a
+        // forced same-volume detector must not take the cross-volume path.
+        using var fx = new RepoFixture(sameVolume: (_, _) => true);
+        var c1 = fx.Repo.CreateContainer(new UntrackedSource(), "A");
+        fx.Repo.AddVersion(c1.Id, "1.0", EmptyPopulate);
+
+        var newPath = Path.Combine(Path.GetTempPath(), "magos-repo-samevol-" + Guid.NewGuid());
+        try
+        {
+            fx.Repo.Relocate(newPath);
+
+            Assert.True(Directory.Exists(Path.Combine(newPath, c1.Id.ToString())));
+            Assert.False(Directory.Exists(Path.Combine(fx.Folder, c1.Id.ToString())));
+            Assert.Equal(newPath, fx.ConfigLoader.Load().ModsFolder);
+        }
+        finally
+        {
+            if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void DirectoryCopy_reproduces_the_source_tree_and_leaves_the_source_intact()
+    {
+        // The shared helper behind the cross-volume relocate + the folder
+        // import: a faithful recursive copy. Files + nested subdirs land at the
+        // target exactly; the source is left intact (the caller is responsible
+        // for the delete that turns a copy into a move).
+        using var fx = new RepoFixture();
+        var source = Path.Combine(fx.Folder, "src");
+        Directory.CreateDirectory(Path.Combine(source, "sub", "deep"));
+        File.WriteAllText(Path.Combine(source, "a.txt"), "a");
+        File.WriteAllText(Path.Combine(source, "sub", "b.txt"), "b");
+        File.WriteAllText(Path.Combine(source, "sub", "deep", "c.txt"), "c");
+
+        var target = Path.Combine(fx.Folder, "dst");
+
+        DirectoryCopy.Copy(source, target);
+
+        Assert.True(File.Exists(Path.Combine(target, "a.txt")));
+        Assert.True(File.Exists(Path.Combine(target, "sub", "b.txt")));
+        Assert.True(File.Exists(Path.Combine(target, "sub", "deep", "c.txt")));
+        Assert.Equal("a", File.ReadAllText(Path.Combine(target, "a.txt")));
+        Assert.Equal("c", File.ReadAllText(Path.Combine(target, "sub", "deep", "c.txt")));
+        // Source untouched (copy does not delete).
+        Assert.True(File.Exists(Path.Combine(source, "a.txt")));
+        Assert.True(File.Exists(Path.Combine(source, "sub", "deep", "c.txt")));
+    }
+
     // ---- Rescan ------------------------------------------------------------
 
     [Fact]
@@ -745,17 +883,36 @@ public sealed class ModRepositoryTests
         /// </summary>
         public MagosConfig Config => _configLoader.Config;
 
-        public RepoFixture()
+        public RepoFixture(Func<string, string, bool>? sameVolume = null)
         {
             var config = MagosConfig.CreateDefault();
             config.ModsFolder = Folder;
             _configLoader = new FakeConfigLoader { Config = config };
-            _provider = new ServiceCollection()
-                .AddSingleton<IConfigLoader>(_configLoader)
-                .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
-                .AddMods()
-                .BuildServiceProvider();
-            Repo = _provider.GetRequiredService<IModRepository>();
+
+            if (sameVolume is null)
+            {
+                // Production DI path: AddMods() resolves ModRepository via its
+                // public ctor (real same-volume detector).
+                _provider = new ServiceCollection()
+                    .AddSingleton<IConfigLoader>(_configLoader)
+                    .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
+                    .AddMods()
+                    .BuildServiceProvider();
+                Repo = _provider.GetRequiredService<IModRepository>();
+            }
+            else
+            {
+                // Test-injected detector: construct ModRepository directly via
+                // its internal ctor so a test can force the cross-volume copy +
+                // delete path (a real second volume cannot be simulated under
+                // one temp root).
+                _provider = new ServiceCollection()
+                    .AddSingleton<IConfigLoader>(_configLoader)
+                    .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
+                    .BuildServiceProvider();
+                var logger = _provider.GetRequiredService<ILogger<ModRepository>>();
+                Repo = new ModRepository(_configLoader, logger, sameVolume);
+            }
         }
 
         public string ManifestPath(Guid containerId) =>
