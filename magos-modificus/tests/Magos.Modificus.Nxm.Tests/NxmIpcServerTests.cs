@@ -7,9 +7,12 @@ namespace Magos.Modificus.Nxm.Tests;
 /// <summary>
 /// <see cref="NxmIpcServer"/>: the accept loop routes a client-delivered URL to
 /// the router; per-connection failures (garbage frame, a throwing router) do
-/// not kill the server (the next connection still works); and the pipe bind is
-/// the single-instance claim (a second Bind on the same pipe name throws
-/// <see cref="NxmSingleInstanceException"/>).
+/// not kill the server (the next connection still works); single-instance
+/// enforcement is process enumeration before any pipe work (another Magos pid ->
+/// <see cref="NxmSingleInstanceException"/> before the pipe ctor runs; alone ->
+/// bind proceeds and a URL round-trips); and a pipe-bind <see cref="IOException"/>
+/// degrades gracefully (no throw, a warning is logged, the accept loop is not
+/// started).
 /// </summary>
 public sealed class NxmIpcServerTests
 {
@@ -21,7 +24,8 @@ public sealed class NxmIpcServerTests
         using var cts = new CancellationTokenSource(TestTimeout);
         var pipeName = UniquePipeName();
         var router = new FakeRouter();
-        using var server = new NxmIpcServer(router, NullLogger<NxmIpcServer>.Instance, pipeName);
+        using var server = new NxmIpcServer(
+            router, NullLogger<NxmIpcServer>.Instance, pipeName, AloneGuard());
 
         server.Bind();
         var loopTask = Task.Run(() => server.RunAsync(cts.Token));
@@ -32,8 +36,7 @@ public sealed class NxmIpcServerTests
         await router.WaitForCountAsync(1, cts.Token);
         Assert.Equal(url, router.Routes[0]);
 
-        cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => loopTask);
+        await CancelAndWaitAsync(loopTask, cts);
     }
 
     [Fact]
@@ -42,7 +45,8 @@ public sealed class NxmIpcServerTests
         using var cts = new CancellationTokenSource(TestTimeout);
         var pipeName = UniquePipeName();
         var router = new FakeRouter();
-        using var server = new NxmIpcServer(router, NullLogger<NxmIpcServer>.Instance, pipeName);
+        using var server = new NxmIpcServer(
+            router, NullLogger<NxmIpcServer>.Instance, pipeName, AloneGuard());
 
         server.Bind();
         var loopTask = Task.Run(() => server.RunAsync(cts.Token));
@@ -61,8 +65,7 @@ public sealed class NxmIpcServerTests
         await router.WaitForCountAsync(1, cts.Token);
         Assert.Equal(url, router.Routes[0]);
 
-        cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => loopTask);
+        await CancelAndWaitAsync(loopTask, cts);
     }
 
     [Fact]
@@ -71,7 +74,8 @@ public sealed class NxmIpcServerTests
         using var cts = new CancellationTokenSource(TestTimeout);
         var pipeName = UniquePipeName();
         var router = new FakeRouter(throwOnFirst: true);
-        using var server = new NxmIpcServer(router, NullLogger<NxmIpcServer>.Instance, pipeName);
+        using var server = new NxmIpcServer(
+            router, NullLogger<NxmIpcServer>.Instance, pipeName, AloneGuard());
 
         server.Bind();
         var loopTask = Task.Run(() => server.RunAsync(cts.Token));
@@ -87,22 +91,83 @@ public sealed class NxmIpcServerTests
         await router.WaitForCountAsync(2, cts.Token);
         Assert.Equal(url, router.Routes[1]);
 
-        cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => loopTask);
+        await CancelAndWaitAsync(loopTask, cts);
     }
 
     [Fact]
-    public async Task Second_bind_on_same_pipe_throws_single_instance()
+    public void Single_instance_check_with_another_process_throws_before_pipe_binding()
     {
         var pipeName = UniquePipeName();
-        using var server1 = new NxmIpcServer(new FakeRouter(), NullLogger<NxmIpcServer>.Instance, pipeName);
-        server1.Bind();
+        // Fake enumerator reports another live Magos pid exists.
+        var guard = new SingleInstanceGuard((_, _) => new[] { 99999 });
 
-        // The first server holds the pipe. A second Bind on the same name must
-        // throw NxmSingleInstanceException.
-        using var server2 = new NxmIpcServer(new FakeRouter(), NullLogger<NxmIpcServer>.Instance, pipeName);
-        var ex = Assert.Throws<NxmSingleInstanceException>(server2.Bind);
+        // A factory that flips a flag if the pipe ctor is ever reached. The
+        // single-instance check must throw BEFORE this runs.
+        var pipeFactoryCalled = false;
+        var factory = new Func<string, NamedPipeServerStream>(_ =>
+        {
+            pipeFactoryCalled = true;
+            throw new InvalidOperationException("pipe factory must not be called");
+        });
+
+        using var server = new NxmIpcServer(
+            new FakeRouter(), NullLogger<NxmIpcServer>.Instance, pipeName, guard, factory);
+
+        var ex = Assert.Throws<NxmSingleInstanceException>(server.Bind);
         Assert.Equal(pipeName, ex.PipeName);
+        Assert.False(server.IsBound);
+        Assert.False(pipeFactoryCalled, "Pipe ctor must not run when the single-instance check fails.");
+    }
+
+    [Fact]
+    public async Task Single_instance_check_alone_proceeds_and_round_trips()
+    {
+        using var cts = new CancellationTokenSource(TestTimeout);
+        var pipeName = UniquePipeName();
+        var router = new FakeRouter();
+        // Fake enumerator reports no other process: bind must proceed.
+        var guard = new SingleInstanceGuard((_, _) => Array.Empty<int>());
+        using var server = new NxmIpcServer(
+            router, NullLogger<NxmIpcServer>.Instance, pipeName, guard);
+
+        Assert.False(server.IsBound);
+        server.Bind();
+        Assert.True(server.IsBound);
+
+        var loopTask = Task.Run(() => server.RunAsync(cts.Token));
+
+        var url = "nxm://warhammer40kdarktide/mods/8/files/5820?key=K";
+        await SendOneAsync(pipeName, url, cts.Token);
+        await router.WaitForCountAsync(1, cts.Token);
+        Assert.Equal(url, router.Routes[0]);
+
+        await CancelAndWaitAsync(loopTask, cts);
+    }
+
+    [Fact]
+    public async Task Pipe_bind_failure_degrades_without_throwing()
+    {
+        var pipeName = UniquePipeName();
+        var guard = new SingleInstanceGuard((_, _) => Array.Empty<int>());
+        var logger = new CapturingLogger<NxmIpcServer>();
+        // Factory simulates a pipe bind failure (leftover socket, permissions, etc.).
+        var failingFactory = new Func<string, NamedPipeServerStream>(
+            _ => throw new IOException("simulated pipe bind failure"));
+        using var server = new NxmIpcServer(
+            new FakeRouter(), logger, pipeName, guard, failingFactory);
+
+        // Single-instance check passes (no other instance); pipe ctor throws
+        // IOException -> degraded (no throw, not bound, warning logged).
+        server.Bind();
+        Assert.False(server.IsBound);
+        Assert.Contains(logger.Entries,
+            e => e.Level == LogLevel.Warning && e.Message.Contains("Failed to bind the nxm IPC pipe"));
+
+        // The accept loop must not be startable on a degraded server. The
+        // composition root checks IsBound first; a caller that forgets gets a
+        // clear InvalidOperationException rather than a silent no-op.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => server.RunAsync(new CancellationTokenSource().Token));
     }
 
     [Fact]
@@ -114,6 +179,33 @@ public sealed class NxmIpcServerTests
     }
 
     // ---- helpers ---------------------------------------------------------
+
+    private static async Task CancelAndWaitAsync(Task loopTask, CancellationTokenSource cts)
+    {
+        // RunAsync exits via OperationCanceledException when cancellation lands
+        // inside WaitForConnectionAsync, or via a normal return when the
+        // while-check observes cancellation first. Either is a valid stop; the
+        // accept-loop tests tolerate both (a real hang still fails via
+        // TestTimeout). The strict Assert.ThrowsAnyAsync<OCE> flakes here because
+        // the delivery-gate (WaitForCountAsync) returns before the server has
+        // parked back in WaitForConnectionAsync, leaving a window where the
+        // while-check sees cancellation first.
+        cts.Cancel();
+        try
+        {
+            await loopTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static SingleInstanceGuard AloneGuard()
+        // The default production enumerator reads the host process table, which
+        // is non-deterministic under the test runner (multiple dotnet/testhost
+        // processes). Positive-path tests inject an alone-reporting guard so
+        // the single-instance check passes unconditionally.
+        => new((_, _) => Array.Empty<int>());
 
     private static async Task SendOneAsync(string pipeName, string url, CancellationToken ct)
     {
@@ -235,6 +327,32 @@ public sealed class NxmIpcServerTests
                 lock (_gate) if (_routes.Count >= count) return;
                 await Task.Delay(15, ct);
             }
+        }
+    }
+
+    /// <summary>
+    /// A minimal capturing logger for asserting which levels/messages were
+    /// emitted (used by the degraded-bind test to verify the warning).
+    /// </summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, formatter(state, exception), exception));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
         }
     }
 }

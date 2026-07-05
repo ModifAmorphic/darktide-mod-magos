@@ -38,15 +38,20 @@ public class App : Application
         }
         catch (NxmSingleInstanceException ex)
         {
-            // Single-instance enforcement: another Magos process owns the nxm
-            // IPC pipe (the bind is the claim). Exit cleanly before any window
-            // shows. Surface the reason on stderr (the provider isn't available
-            // here since Build threw).
-            Console.Error.WriteLine(
-                $"Magos is already running (nxm pipe '{ex.PipeName}' is owned by another instance); exiting.");
-            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktopLifetime)
-                desktopLifetime.Shutdown(1);
-            return;
+            // Single-instance enforcement: another Magos process is already
+            // running. Exit before any window shows. Surface the reason on
+            // stderr (the provider isn't available here since Build threw).
+            //
+            // Environment.Exit (not desktopLifetime.Shutdown): Shutdown called
+            // from inside OnFrameworkInitializationCompleted breaks Avalonia's
+            // MainLoop (StartCore tries to push a frame after the dispatcher
+            // shut down -> unhandled InvalidOperationException -> SIGABRT).
+            // At this point nothing important is initialized (no window, no
+            // background tasks, the check is first in NxmIpcServer.Bind before
+            // the pipe or accept loop), so an abrupt exit is safe.
+            Console.Error.WriteLine($"Magos is already running; exiting. ({ex.Message})");
+            Environment.Exit(1);
+            return; // unreachable (Environment.Exit terminates); satisfies definite-assignment.
         }
 
         // A one-off startup snapshot for the startup log + applying initial

@@ -10,14 +10,24 @@ namespace Magos.Modificus.Nxm;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Single-instance enforcement is the pipe bind.</b> <see cref="Bind"/>
-/// creates the <see cref="NamedPipeServerStream"/> with
-/// <c>maxNumberOfServerInstances = 1</c> and holds it for the app's lifetime;
-/// if another Magos process already owns the same pipe name, the ctor throws
-/// <see cref="IOException"/>, which <see cref="Bind"/> surfaces as
-/// <see cref="NxmSingleInstanceException"/>. The composition root treats that as
-/// "another Magos is primary" and exits cleanly before the main window shows.
-/// One mechanism, two purposes: URL delivery and single-instance.</para>
+/// <b>Startup is two separate checks with two separate outcomes:</b>
+/// <list type="number">
+/// <item><b>Single-instance</b> (<see cref="SingleInstanceGuard"/>): "is another
+/// Magos process already running?" Answered via process enumeration
+/// (<c>Process.GetProcessesByName</c> against the current process's name,
+/// excluding self by PID). If another instance is found, <see cref="Bind"/>
+/// throws <see cref="NxmSingleInstanceException"/> (fatal; the composition root
+/// exits before the window shows).</item>
+/// <item><b>IPC pipe bind</b>: only after single-instance passes, the
+/// <see cref="NamedPipeServerStream"/> is constructed for <see cref="RunAsync"/>
+/// to accept on. On success, the accept loop runs. On <see cref="IOException"/>
+/// (a real pipe problem, NOT another instance, which Check 1 settled), the
+/// server degrades gracefully: logs a warning and the app continues without the
+/// IPC server (nxm click-to-download won't work this session).</item>
+/// </list>
+/// Separating the two concerns means single-instance is fast (no probe timeout)
+/// and the pipe is its own check that degrades on failure rather than being
+/// overloaded as a single-instance proxy.</para>
 /// <para>
 /// <see cref="RunAsync"/> is the accept loop: <c>WaitForConnectionAsync</c>,
 /// read one framed URL, route it, <see cref="NamedPipeServerStream.Disconnect"/>
@@ -40,57 +50,118 @@ public sealed class NxmIpcServer : IDisposable, IAsyncDisposable
     private readonly INxmRouter _router;
     private readonly ILogger<NxmIpcServer> _logger;
     private readonly string _pipeName;
+    private readonly SingleInstanceGuard _singleInstance;
+    private readonly Func<string, NamedPipeServerStream> _createServerStream;
 
-    // The single server stream, created by Bind() and held for the app's
-    // lifetime. The accept loop Disconnect()s between clients to accept the next
-    // one on the SAME stream (no rebind), which keeps the single-instance claim
-    // continuous and avoids any socket-file cleanup race.
+    // The single server stream, created by Bind() after the single-instance
+    // check passes, and held for the app's lifetime. The accept loop
+    // Disconnect()s between clients to accept the next one on the SAME stream
+    // (no rebind). Null when Bind() has not yet been called OR when the pipe
+    // bind failed (degraded mode; see IsBound).
     private NamedPipeServerStream? _server;
+    private bool _bindAttempted;
 
-    public NxmIpcServer(INxmRouter router, ILogger<NxmIpcServer> logger, string? pipeName = null)
+    public NxmIpcServer(
+        INxmRouter router,
+        ILogger<NxmIpcServer> logger,
+        string? pipeName = null,
+        SingleInstanceGuard? singleInstance = null,
+        Func<string, NamedPipeServerStream>? createServerStream = null)
     {
         _router = router ?? throw new ArgumentNullException(nameof(router));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _pipeName = pipeName ?? DefaultPipeName;
+        _singleInstance = singleInstance ?? new SingleInstanceGuard(logger: _logger);
+        _createServerStream = createServerStream ?? DefaultCreateServerStream;
     }
 
     /// <summary>
-    /// Synchronously binds the named pipe. This is the single-instance claim:
-    /// if another Magos process owns the pipe, throws
-    /// <see cref="NxmSingleInstanceException"/>. Must be called once before
-    /// <see cref="RunAsync"/>.
+    /// True if <see cref="Bind"/> successfully bound the IPC pipe. False before
+    /// <see cref="Bind"/> is called, and false after a degraded bind (the pipe
+    /// ctor threw <see cref="IOException"/>). The composition root checks this
+    /// to decide whether to start the accept loop.
     /// </summary>
+    public bool IsBound => _server is not null;
+
+    /// <summary>
+    /// Runs the two startup checks. (1) Single-instance: delegates to
+    /// <see cref="SingleInstanceGuard"/>, which enumerates processes and throws
+    /// <see cref="NxmSingleInstanceException"/> if another Magos is running.
+    /// (2) Pipe bind: constructs the <see cref="NamedPipeServerStream"/>; on
+    /// <see cref="IOException"/> (a real pipe problem, not another instance),
+    /// logs a warning and degrades (<see cref="IsBound"/> stays false, no throw).
+    /// Must be called once before <see cref="RunAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why process enumeration, not the pipe bind, for single-instance.</b>
+    /// The pipe bind is NOT a reliable cross-platform single-instance claim: on
+    /// Linux the transport is a Unix domain socket and two processes can both
+    /// bind the same path. And using the pipe as a single-instance proxy (a
+    /// probe-as-client) adds a startup tax on Linux (the probe pends when no
+    /// server exists). Process enumeration directly answers "is one already
+    /// running?" (fast, unprivileged, decoupled from the IPC transport).</para>
+    /// <para>
+    /// <b>Accepted v1 race.</b> Two instances starting within milliseconds could
+    /// both enumerate, both see no other, both proceed. For a desktop
+    /// double-launch (the realistic case: seconds apart, not microseconds) this
+    /// is negligible; a cross-process mutex / lock-file on top is not worth the
+    /// complexity for v1. Documented and accepted.</para>
+    /// <para>
+    /// <b>Pipe failure is non-fatal.</b> Once single-instance passes, a pipe
+    /// bind failure is a real transport problem (leftover socket, permissions,
+    /// etc.), not another instance. The app continues without the IPC server;
+    /// nxm click-to-download from Nexus won't work this session, but everything
+    /// else (profiles, mods, launch) is unaffected.</para>
+    /// </remarks>
     public void Bind()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_server is not null)
-            throw new InvalidOperationException("NxmIpcServer is already bound.");
+        if (_bindAttempted)
+            throw new InvalidOperationException("NxmIpcServer.Bind() has already been called.");
 
+        _bindAttempted = true;
+
+        // Check 1: single-instance via process enumeration. Throws
+        // NxmSingleInstanceException on collision (fatal; propagates to
+        // App.axaml.cs which exits before the window shows).
+        _singleInstance.EnsureOnlyInstance(_pipeName);
+
+        // Check 2: pipe bind for IPC. Non-fatal on failure (degrade).
         try
         {
-            _server = CreateServerStream();
+            _server = _createServerStream(_pipeName);
         }
         catch (IOException ex)
         {
-            // The pipe name is already owned: another Magos is primary.
-            throw new NxmSingleInstanceException(_pipeName, ex);
+            // Not a single-instance violation (Check 1 settled that). A real
+            // pipe problem: leftover socket, permissions, etc. Degrade: the app
+            // continues without the IPC server (nxm click-to-download from Nexus
+            // won't work this session). IsBound stays false; the composition
+            // root skips the accept loop.
+            _logger.LogWarning(ex,
+                "Failed to bind the nxm IPC pipe '{Pipe}'. nxm click-to-download from Nexus " +
+                "will be unavailable this session; the app continues without the IPC server.",
+                _pipeName);
+            return;
         }
 
-        _logger.LogInformation("Bound nxm IPC pipe '{Pipe}' (single-instance claim).", _pipeName);
+        _logger.LogInformation("Bound nxm IPC pipe '{Pipe}'.", _pipeName);
     }
 
     /// <summary>
-    /// The accept loop. Assumes <see cref="Bind"/> succeeded. Runs until
-    /// <paramref name="ct"/> cancels. Per-connection exceptions are logged and
-    /// swallowed; the loop <see cref="NamedPipeServerStream.Disconnect"/>s between
-    /// clients so the next <c>WaitForConnectionAsync</c> accepts on the same
-    /// server instance.
+    /// The accept loop. Assumes <see cref="Bind"/> succeeded (the pipe is bound;
+    /// <see cref="IsBound"/> is true). Runs until <paramref name="ct"/> cancels.
+    /// Per-connection exceptions are logged and swallowed; the loop
+    /// <see cref="NamedPipeServerStream.Disconnect"/>s between clients so the
+    /// next <c>WaitForConnectionAsync</c> accepts on the same server instance.
     /// </summary>
     public async Task RunAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_server is null)
-            throw new InvalidOperationException("NxmIpcServer.Bind() must be called before RunAsync().");
+            throw new InvalidOperationException(
+                "NxmIpcServer is not bound. Call Bind() first and check IsBound before starting the accept loop.");
 
         var server = _server;
         while (!ct.IsCancellationRequested)
@@ -159,8 +230,8 @@ public sealed class NxmIpcServer : IDisposable, IAsyncDisposable
         await _router.RouteAsync(url, ct).ConfigureAwait(false);
     }
 
-    private NamedPipeServerStream CreateServerStream()
-        => new(_pipeName, PipeDirection.InOut, maxNumberOfServerInstances: 1,
+    private static NamedPipeServerStream DefaultCreateServerStream(string pipeName)
+        => new(pipeName, PipeDirection.InOut, maxNumberOfServerInstances: 1,
                PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
 
     private bool _disposed;
@@ -195,16 +266,18 @@ public sealed class NxmIpcServer : IDisposable, IAsyncDisposable
 }
 
 /// <summary>
-/// Raised by <see cref="NxmIpcServer.Bind"/> when the named pipe is already
-/// owned by another Magos process. The composition root catches this and exits
+/// Raised when another Magos process is already running. Thrown by
+/// <see cref="SingleInstanceGuard.EnsureOnlyInstance"/> (called from
+/// <see cref="NxmIpcServer.Bind"/>) when process enumeration finds a live Magos
+/// with the current process's name. The composition root catches this and exits
 /// cleanly before showing the main window (single-instance enforcement).
 /// </summary>
 public sealed class NxmSingleInstanceException : Exception
 {
-    /// <summary>The pipe name that was contested.</summary>
+    /// <summary>The IPC pipe name carried as context (single-instance is detected via process enumeration in <see cref="SingleInstanceGuard"/>, not via the pipe).</summary>
     public string PipeName { get; }
 
     public NxmSingleInstanceException(string pipeName, Exception inner)
-        : base($"Another Magos instance owns the nxm IPC pipe '{pipeName}'.", inner)
+        : base($"Another Magos instance is already running.", inner)
         => PipeName = pipeName;
 }

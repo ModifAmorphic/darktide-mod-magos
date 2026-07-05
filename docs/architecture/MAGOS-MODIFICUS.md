@@ -59,6 +59,11 @@ magos-modificus/
   enginseer-client/       Enginseer-client library — the launch façade
   launcher/ (optional)    slim profile launcher — launches a profile without
                           the UI (entry point for Steam non-steam shortcuts); Phase 5
+  nxm/                    Nxm library: nxm:// scheme-handler plumbing (URL parser, IPC
+                          server, single-instance guard, router + handler seams, OS
+                          registrar, relay helper); Phase 4 Stage 1
+  nxm-handler/            the OS-registered nxm:// scheme handler (native-AOT console
+                          exe; relays the raw URL to running Magos, or cold-starts it)
   tests/                  xUnit test projects per library
 ```
 
@@ -309,6 +314,125 @@ detection. The Settings window's Storage section is the UI for it.
   [Profiles](#profiles).)
 - Per-mod: auto-update override (overrides the global setting); version pinning.
 - **Import / Export** — profile import / export.
+
+## nxm:// scheme handler
+
+The `nxm://` URL scheme is how the "Mod manager download" button on a Nexus Mods
+file page reaches a mod manager, and how an OAuth callback from a browser-based
+authorize flow reaches it. Magos registers a tiny OS-level handler that captures
+those clicks and relays them to the running app. Stage 1 of Phase 4 ships the
+plumbing (the handler exe, the IPC channel, the URL parser and router, and the OS
+registration service); Stage 2 (OAuth) and Stage 3 (mod download and acquisition)
+drop real handlers into the routed seams.
+
+The two reference implementations in the ecosystem (NexusMods.App and
+ModOrganizer2) both use a small separate handler exe rather than the main app,
+because the OS invokes the handler on every `nxm://` click and the main app's
+startup is too heavy for a relay-then-exit, and spawning a second full app
+instance to do single-instance detection and IPC is fragile given Magos's
+singleton services (`IModRepository` scans and writes manifests; `ConfigLoader`
+does atomic config writes). Magos follows the same pattern.
+
+### Two-process model: dumb handler exe, smart IPC server
+
+Two projects implement the path:
+
+- **`Magos.NxmHandler`** (`magos-modificus/nxm-handler/`): the OS-registered
+  scheme handler. A native-AOT console exe whose `Program.cs` is one line. It
+  does no parsing and carries no DI graph; it forwards the raw URL string over
+  the fixed named pipe (`Magos.Nxm`), or (cold start) launches Magos and retries
+  the pipe until it comes up. AOT keeps it tiny and fast (tens of ms to start),
+  and the relay + framing + parser stay trim-friendly so the trimmer drops
+  everything else from the handler's closure.
+- **`Magos.Modificus.Nxm`** (`magos-modificus/nxm/`): the library. URL types and
+  parser, length-prefixed IPC framing, the Magos-side IPC server, the
+  single-instance guard, the router and handler seams, the OS registrar, and the
+  testable relay helper the handler exe calls.
+
+The handler is deliberately dumb: it forwards the raw URL, and Magos owns URL
+semantics. This keeps the OS-invoked path fast and puts all routing logic where
+it is unit-testable.
+
+The IPC protocol is one framed UTF-8 message per connection: a 4-byte
+little-endian length prefix plus the URL payload, capped at 8 KiB. The handler
+opens, sends one message, and closes; the server reads one message, routes it,
+and disconnects (reusing the same server instance for the next client, so the
+pipe name stays claimed for the app's lifetime).
+
+### Single-instance: process enumeration, not the pipe bind
+
+Magos enforces single-instance before binding the IPC pipe. The check lives in
+`SingleInstanceGuard` and works by **process enumeration**: it asks
+`Process.GetProcessesByName` for live processes sharing the current process's
+name (excluding self by PID), and throws `NxmSingleInstanceException` if any
+other process remains. The composition root catches the exception and exits
+before any window shows.
+
+This is deliberately decoupled from the pipe bind. The pipe bind is not a
+reliable cross-platform single-instance claim: on Linux the transport is a Unix
+domain socket, and two processes can both bind the same path. A probe-as-client
+(the alternative the original spec considered) works but adds a startup tax on
+Linux because the probe pends when no server exists. Process enumeration directly
+answers "is another Magos already running?", is fast, unprivileged (no
+elevation), and is decoupled from the IPC transport.
+
+Accepted v1 race: two instances starting within milliseconds could both
+enumerate, both see no other, both proceed. For a desktop double-launch (seconds
+apart, not microseconds) this is negligible; a cross-process mutex or lock-file
+on top is not worth the complexity for v1.
+
+### Pipe bind: separate, non-fatal
+
+With single-instance handled separately, the pipe bind is its own check with its
+own graceful outcome. `NxmIpcServer.Bind` runs single-instance first (fatal on
+collision), then constructs the `NamedPipeServerStream`. If construction throws
+`IOException` (a real pipe problem: leftover socket, permissions; not another
+instance, which the first check settled), the server logs a warning and
+**continues running degraded**, with `IsBound` false and no accept loop. nxm
+click-to-download is unavailable that session; everything else (profiles, mods,
+launch) is unaffected. The composition root starts the accept loop only when
+`IsBound` is true.
+
+### Cold-start path
+
+When the handler is invoked and Magos is not running, the handler launches the
+sibling Magos exe (no args) and retries the pipe every 250ms up to 30s. Once
+Magos binds the pipe, the handler connects, delivers the URL, and exits. **Magos
+has no `--nxm` arg and no cold-start branch;** its startup is untouched by
+Stage 1, and the handler owns the entire cold-start orchestration. If the
+sibling Magos exe is missing, the handler logs to stderr and exits non-zero
+without retrying (there is nothing to retry against, and a headless handler
+never raises a desktop dialog).
+
+### OS scheme-handler registration
+
+A single `INxmHandlerRegistrar` interface with two platform implementations,
+selected by runtime OS at DI time (mirroring `IPlatformLaunchStrategy`,
+`IProcessLookup`, and `SteamRegistryReader`):
+
+- **Windows** writes `HKCU\Software\Classes\nxm` (per-user, no elevation) so the
+  OS launches the handler exe for `nxm://` clicks.
+- **Linux** writes `~/.local/share/applications/magos-nxm-handler.desktop` plus a
+  best-effort `xdg-mime default` invocation (the `.desktop` file is the source of
+  truth most desktops honor; a missing `xdg-mime` is logged, not thrown).
+
+Stage 1 ships the **service** only. The user-facing registration behavior (auto
+on first run vs. Settings toggle vs. manual) is deferred to a later stage.
+
+### Stage 2 and Stage 3 seams
+
+The router dispatches parsed URLs to two handler interfaces:
+`INxmModDownloadHandler` (mod downloads) and `INxmOAuthCallbackHandler` (OAuth
+callbacks). Stage 1 ships no-op defaults that log the parsed URL at Information.
+Stage 2 registers a real OAuth handler (the OIDC browser flow awaits the routed
+callback, matched by `state`); Stage 3 registers a real mod-download handler (the
+acquisition flow downloads via the Nexus client and imports into the unified
+repository). Both are drop-in: the no-op defaults are registered with plain
+`AddSingleton`, and MS DI resolves the last registration, so a later
+`AddSingleton<INxm…Handler, RealImpl>()` after `AddNxm()` supersedes the default.
+
+Per-library public surfaces, exact signatures, and DI registration are documented
+in [nxm reference](../reference/magos-modificus/nxm.md).
 
 ## Mod list (main view)
 

@@ -11,8 +11,10 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers the nxm router, IPC server, no-op handler defaults, and the
     /// platform <see cref="INxmHandlerRegistrar"/>. The composition root binds +
-    /// starts the IPC server after building the provider (the pipe bind is the
-    /// single-instance claim).
+    /// starts the IPC server after building the provider (single-instance is
+    /// enforced via process enumeration in <see cref="SingleInstanceGuard"/>
+    /// before the pipe bind; the pipe bind itself is non-fatal and degrades
+    /// gracefully on failure).
     /// </summary>
     /// <remarks>
     /// <para>

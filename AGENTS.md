@@ -80,9 +80,11 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           discovery escape-hatch over the shared `Settings/DiscoveryField`
                           descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist +
                           `IModRepository.Relocate/Rescan`;
-                          Phase 4 Stage 1: `AddNxm()` + `StartNxmServer` (binds the `Magos.Nxm`
-                          pipe, the single-instance claim; a second Magos exits before the
-                          window shows via `NxmSingleInstanceException`))
+                          Phase 4 Stage 1: `AddNxm()` + `StartNxmServer` (single-instance via
+                          `SingleInstanceGuard` process enumeration, separate from the `Magos.Nxm`
+                          pipe bind which degrades gracefully on IOException; a second Magos exits
+                          via `NxmSingleInstanceException` -> `Environment.Exit(1)` before the
+                          window shows))
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO)
@@ -130,15 +132,20 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   nxm/                  Magos.Modificus.Nxm — the nxm:// scheme-handler plumbing
                         (Phase 4 Stage 1): NxmUrlParser (mod-download / oauth-callback /
                         collection URL types), NxmIpcFraming (length-prefixed UTF-8 frames),
-                        NxmIpcServer (the named-pipe server whose Bind is the single-instance
-                        claim, accept loop Disconnects between clients), INxmRouter +
-                        no-op INxmModDownloadHandler / INxmOAuthCallbackHandler defaults
-                        (Stage 2/3 register real impls via AddSingleton last-wins), the OS
-                        scheme-handler registrar (INxmHandlerRegistrar: WindowsNxmHandlerRegistrar
-                        writes HKCU\Software\Classes\nxm; LinuxNxmHandlerRegistrar writes a
-                        .desktop file + xdg-mime default), + NxmHandlerRelay (the testable core
-                        the handler exe calls: hot-path IPC delivery + cold-start launch+retry).
-                        AOT-friendly (IsAotCompatible; only raw byte/UTF-8 IO in the handler path).
+                        SingleInstanceGuard (the process-enumeration single-instance check,
+                        with an injectable enumerator seam), NxmIpcServer (the named-pipe
+                        server; Bind runs two SEPARATE checks: SingleInstanceGuard first
+                        (fatal NxmSingleInstanceException on collision), then the pipe bind
+                        which degrades gracefully on IOException; accept loop Disconnects
+                        between clients), INxmRouter + no-op INxmModDownloadHandler /
+                        INxmOAuthCallbackHandler defaults (Stage 2/3 register real impls via
+                        AddSingleton last-wins), the OS scheme-handler registrar
+                        (INxmHandlerRegistrar: WindowsNxmHandlerRegistrar writes
+                        HKCU\Software\Classes\nxm; LinuxNxmHandlerRegistrar writes a .desktop
+                        file + xdg-mime default), + NxmHandlerRelay (the testable core the
+                        handler exe calls: hot-path IPC delivery + cold-start launch+retry,
+                        UseShellExecute=false on both OSes). AOT-friendly (IsAotCompatible;
+                        only raw byte/UTF-8 IO in the handler path).
   nxm-handler/          Magos.Modificus.NxmHandler — the OS-registered nxm:// scheme handler
                         (console exe, native AOT). Program.cs is one line: NxmHandlerRelay.RunAsync.
                         Forwards the raw URL to running Magos over the fixed pipe, or (cold start)
@@ -156,10 +163,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                                             persist, switch-blocked-while-running; dialog via
                                             an injectable IDialogService seam)
     Magos.Modificus.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
-                                            IPC server resilience + single-instance, router,
-                                            relay helper, Linux registrar; serialized via
-                                            DisableTestParallelization since real named pipes
-                                            are an OS-level shared resource)
+                                            IPC server resilience, SingleInstanceGuard, router,
+                                            relay helper, Linux registrar, AddNxm wiring;
+                                            serialized via DisableTestParallelization since
+                                            real named pipes are an OS-level shared resource)
 docs/               architecture/ + reference/ (darktide/, community-tools/, magos-modificus/)
 .github/workflows/  CI: mingw-build + msvc-build (Enginseer) + magos-build (Magos Modificus)
 .gitignore          ignores enginseer/target, enginseer/bin, .NET bin/obj, build artifacts, _local/
