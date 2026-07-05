@@ -41,14 +41,16 @@ public partial class ImportModViewModel : ObservableObject
     /// <summary>
     /// Creates the modal VM from the add-flow request. The mod name is pre-filled
     /// from the request (folder / archive stem) and editable; the source defaults
-    /// to Untracked (the common case for a dropped folder / <c>.zip</c>).
+    /// to <see cref="ImportSource.Nexus"/> (most Darktide mods ship on Nexus, so
+    /// the common case is a Nexus URL + a release tag; the user can switch to
+    /// GitHub or Untracked when needed).
     /// </summary>
     public ImportModViewModel(ImportModRequest request, LocalizationService localization)
     {
         _localization = localization;
         _request = request;
         _modName = request.ModName;
-        _sourceChoice = ImportSource.Untracked;
+        _sourceChoice = ImportSource.Nexus;
     }
 
     /// <summary>
@@ -64,6 +66,22 @@ public partial class ImportModViewModel : ObservableObject
 
         /// <summary>GitHub (collects a repo URL parsed to owner/repo).</summary>
         GitHub,
+    }
+
+    /// <summary>
+    /// The version-policy options offered by the modal's ComboBox. Latest tracks
+    /// the container's newest release (auto-update on re-import); Pinned freezes
+    /// the profile entry to the version being imported (the opaque version id is
+    /// filled in by the add flow after Import returns it, since the modal cannot
+    /// know the id ahead of time).
+    /// </summary>
+    public enum ImportPolicyChoice
+    {
+        /// <summary>Track the container's newest release (the default).</summary>
+        Latest,
+
+        /// <summary>Pin the profile entry to the version being imported.</summary>
+        Pinned,
     }
 
     /// <summary>
@@ -128,6 +146,49 @@ public partial class ImportModViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanConfirm))]
     [NotifyPropertyChangedFor(nameof(UrlValidationMessage))]
     private string _url = string.Empty;
+
+    /// <summary>
+    /// The version-policy choice (Latest or Pinned). Drives which
+    /// <see cref="ModVersionPolicy"/> the profile entry adopts after import.
+    /// Default <see cref="ImportPolicyChoice.Latest"/> (the common case: track
+    /// the newest release). Pinned is meaningful when the user wants to freeze
+    /// the mod at exactly the version they are importing.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Policy))]
+    private ImportPolicyChoice _policyChoice = ImportPolicyChoice.Latest;
+
+    /// <summary>
+    /// Integer adapter for the policy ComboBox's <c>SelectedIndex</c>
+    /// (0 = Latest, 1 = Pinned), so the ComboBox binds two-way without a
+    /// converter or view code-behind. Maps to / from <see cref="PolicyChoice"/>.
+    /// </summary>
+    public int PolicyChoiceIndex
+    {
+        get => (int)PolicyChoice;
+        set
+        {
+            var choice = (ImportPolicyChoice)value;
+            if (choice != PolicyChoice)
+            {
+                PolicyChoice = choice;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The derived <see cref="ModVersionPolicy"/> for the chosen
+    /// <see cref="PolicyChoice"/>. For Latest this is
+    /// <see cref="LatestPolicy"/>; for Pinned this is a placeholder
+    /// <see cref="PinnedPolicy"/> with an empty
+    /// <see cref="PinnedPolicy.VersionId"/> (the add flow substitutes the
+    /// opaque version id returned by <c>IModImportService.Import</c> after the
+    /// container/version is created; the modal cannot know the id ahead of
+    /// time).
+    /// </summary>
+    public ModVersionPolicy Policy => PolicyChoice == ImportPolicyChoice.Pinned
+        ? new PinnedPolicy()
+        : ModVersionPolicy.Latest;
 
     /// <summary>The outcome of a confirmed modal; <c>null</c> until confirm or
     /// when cancelled. The dialog reads this after <see cref="ConfirmCommand"/>
@@ -250,7 +311,7 @@ public partial class ImportModViewModel : ObservableObject
         // the canonical (possibly renamed) name as the mod-store key.
         _request.ModName = name;
 
-        Result = new ImportModResult(source, recordedVersion);
+        Result = new ImportModResult(source, recordedVersion, Policy);
         OnPropertyChanged(nameof(Result));
     }
 

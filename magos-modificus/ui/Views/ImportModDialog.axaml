@@ -66,6 +66,15 @@
                        Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}"
                        FontSize="11" />
           </StackPanel>
+
+          <!-- Version policy: Latest (default) or Pinned to this version. -->
+          <StackPanel Spacing="4">
+            <TextBlock Text="{ReflectionBinding [Import_PolicyLabel], Source={StaticResource Loc}}" />
+            <ComboBox SelectedIndex="{Binding PolicyChoiceIndex, Mode=TwoWay}" MinWidth="160">
+              <ComboBoxItem Content="{ReflectionBinding [Import_PolicyLatest], Source={StaticResource Loc}}" />
+              <ComboBoxItem Content="{ReflectionBinding [Import_PolicyPinned], Source={StaticResource Loc}}" />
+            </ComboBox>
+          </StackPanel>
         </StackPanel>
 
         <!-- Buttons. -->

@@ -41,7 +41,7 @@ public sealed class MagosConfig
 | `ProfilesBaseFolder` | `<app-data>/profiles` | Where profiles, per-profile mods, and profile settings are stored. |
 | `ModsFolder` | `<app-data>/mods` | The global mod store (see [mods](mods.md)). |
 | `EnginseerRuntimeDir` | `<app-data>/enginseer` | Where `magos_launcher.exe`, `magos_shell.dll`, and `mod_loader/` live (consumed by [enginseer-client](enginseer-client.md)). |
-| `Discovery` | see `DiscoveryConfig` | User-supplied discovery overrides (Steam / Darktide / compatdata / Proton paths). Null = auto-discover. Phase 3 Track C. |
+| `Discovery` | see `DiscoveryConfig` | User-supplied discovery overrides (Steam / Darktide / compatdata / Proton paths). Validated on disk + healed from the discoverer + persisted by `SteamService.Discover()`. Phase 3 Track C. |
 | `Integrations` | see `IntegrationsConfig` | External-service (mod-source) integration settings. |
 | `Preferences` | see `PreferencesConfig` | User-facing global preferences (theme, font scale, language). Phase 3 Track D. |
 
@@ -126,36 +126,46 @@ public enum ThemeMode
 User-supplied overrides for Steam/Darktide/Proton discovery. The Settings
 window and the discovery escape-hatch dialog write these;
 `SteamService.Discover()` reads them live (one `Load()` per call, via
-[IConfigLoader](general.md)) and overlays any non-null value onto the
-discoverer's auto result before recomputing `DiscoveryResult.Status`. An absent
-section yields a fully-defaulted (all-null) instance, which leaves discovery
-unchanged (everything auto-discovered).
+[IConfigLoader](general.md)), validates each platform-relevant field's path on
+disk, heals the missing/non-existent ones from the platform discoverer, and
+persists **only the healed fields** back through `Save` (preserving valid
+fields + any concurrent hand-edit). An absent section yields a fully-defaulted
+(all-null) instance, which causes every field to be healed on the first
+`Discover()` call (typically at startup).
 
 ```csharp
 public sealed class DiscoveryConfig
 {
-    public string? UserSteamInstallPath { get; set; }       // Steam client dir; null = auto
-    public string? UserDarktideGameBinaryPath { get; set; } // native Darktide.exe path; null = auto
-    public string? UserCompatdataPath { get; set; }         // Wine prefix (Linux only); null = auto
-    public string? UserProtonBinaryPath { get; set; }       // proton script path (Linux only); null = auto
+    public string? UserSteamInstallPath { get; set; }       // Steam client dir; null/non-existent = heal
+    public string? UserDarktideGameBinaryPath { get; set; } // native Darktide.exe path; null/non-existent = heal
+    public string? UserCompatdataPath { get; set; }         // Wine prefix (Linux only); null/non-existent = heal
+    public string? UserProtonBinaryPath { get; set; }       // proton script path (Linux only); null/non-existent = heal
 }
 ```
 
-- Every field is nullable and defaults to `null`, meaning "auto-discover this
-  field." A null/whitespace value is ignored by the overlay (the auto-discovered
-  value, which may itself be null, is kept).
-- **Trust convention:** a supplied value is used as-is with no re-verify (the
-  user said "use this"). A wrong path surfaces later, at launch, as a
-  `LaunchResult.Status` of `Error`; the user then corrects it in Settings or the
-  escape-hatch. This is why the overlay does not probe supplied paths.
-- Field mapping to `DiscoveryResult` (the overlay replaces the auto-discovered
-  value when non-null/non-whitespace): `UserSteamInstallPath` →
+- Every field is nullable and defaults to `null`, meaning "no override yet."
+  On the first `Discover()` call, missing fields are healed from the platform
+  discoverer and persisted here so the next call is a fast validation (no
+  discoverer run).
+- **Validate + heal + persist:** a supplied value is checked on disk (directory
+  for Steam install + compatdata; file for the Darktide binary + Proton script).
+  A value that exists is kept as-is (preserved across calls). A null/whitespace
+  value, or one whose path no longer exists, is healed from the platform
+  discoverer when possible, and the healed value is persisted back here (only
+  that field; the others are untouched). A field the discoverer also cannot
+  resolve stays null and is flagged via `DiscoveryResult.Status`.
+- **Platform-gating:** the compatdata + Proton fields are Linux-only; on
+  Windows they are neither validated nor healed, so they stay null in the
+  result. A leftover Linux value (e.g. from a prior Linux run) is preserved
+  untouched rather than cleared.
+- Field mapping to `DiscoveryResult` (the final path is the override when it
+  exists on disk, otherwise the discoverer's value): `UserSteamInstallPath` →
   `DiscoveryResult.SteamInstallPath`; `UserDarktideGameBinaryPath` →
   `DarktideGameBinaryPath`; `UserCompatdataPath` → `CompatdataPath`;
   `UserProtonBinaryPath` → `ProtonBinaryPath`. See [steam](steam.md) for the
-  overlay behavior and the shared completeness rule.
+  validate + heal + persist pipeline + the shared completeness rule.
 - `UserCompatdataPath` / `UserProtonBinaryPath` are Linux-only (Windows is
-  native; they are ignored, not probed).
+  native; they are not validated or healed there, and stay null in the result).
 
 ### `AppPaths` (internal)
 

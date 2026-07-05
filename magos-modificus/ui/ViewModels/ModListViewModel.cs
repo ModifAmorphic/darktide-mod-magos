@@ -466,8 +466,8 @@ public partial class ModListViewModel : ObservableObject
     /// already in the profile is NOT a collision: the would-be container is
     /// peeked (<see cref="IModImportService.FindExistingContainer"/>) and excluded
     /// from the collision check, so the idempotent <see cref="IProfileService.AddMod"/>
-    /// stays a no-op. The new profile entry defaults to
-    /// <see cref="ModVersionPolicy.Latest"/>.
+    /// stays a no-op. The new profile entry adopts the modal's chosen policy:
+    /// Latest (the default) or Pinned to the version being imported.
     /// </remarks>
     [RelayCommand]
     private async Task AddMods(IReadOnlyList<string>? paths)
@@ -541,11 +541,20 @@ public partial class ModListViewModel : ObservableObject
             // from the request (the modal wrote the user's edited + trimmed name
             // back), so a rename at import establishes the container's name. A
             // late I/O failure (copy/extract) is caught per mod.
+            //
+            // Policy: the modal's chosen Latest/Pinned drives the profile entry's
+            // initial version policy. Latest tracks the container's newest
+            // release (auto-update on re-import); Pinned freezes the entry to
+            // exactly the version being imported (constructed from the
+            // VersionId the import just minted, not from the modal's empty
+            // placeholder).
             Guid containerId;
+            string versionId;
             try
             {
-                var (importedId, _) = _importService.Import(path, canonicalName, result.Source, result.Version);
+                var (importedId, importedVersionId) = _importService.Import(path, canonicalName, result.Source, result.Version);
                 containerId = importedId;
+                versionId = importedVersionId;
             }
             catch (Exception ex) when (
                 ex is InvalidOperationException or ArgumentException
@@ -556,9 +565,12 @@ public partial class ModListViewModel : ObservableObject
                 break;
             }
 
-            _profiles.AddMod(id, containerId, ModVersionPolicy.Latest);
-            _logger.LogInformation("Imported {Mod} from {Path} (source={Source}, version={Version}) onto container {Container}",
-                canonicalName, path, result.Source, result.Version, containerId);
+            var policy = result.Policy is PinnedPolicy
+                ? new PinnedPolicy(versionId)
+                : ModVersionPolicy.Latest;
+            _profiles.AddMod(id, containerId, policy);
+            _logger.LogInformation("Imported {Mod} from {Path} (source={Source}, version={Version}, policy={Policy}) onto container {Container}",
+                canonicalName, path, result.Source, result.Version, policy, containerId);
         }
 
         Reload();

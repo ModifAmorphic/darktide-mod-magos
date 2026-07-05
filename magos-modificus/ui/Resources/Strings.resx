@@ -376,6 +376,18 @@
     <value>This URL does not look right. Check the format and try again.</value>
     <comment>Validation message when the URL does not parse for the chosen source.</comment>
   </data>
+  <data name="Import_PolicyLabel" xml:space="preserve">
+    <value>Version policy</value>
+    <comment>Label for the Latest / Pinned version-policy chooser in the import modal.</comment>
+  </data>
+  <data name="Import_PolicyLatest" xml:space="preserve">
+    <value>Latest</value>
+    <comment>The Latest policy option in the import modal: track the mod's newest release.</comment>
+  </data>
+  <data name="Import_PolicyPinned" xml:space="preserve">
+    <value>Pinned to this version</value>
+    <comment>The Pinned policy option in the import modal: freeze the mod at the version being imported.</comment>
+  </data>
 
   <!-- ============================================================ -->
   <!-- Remove mod confirmation                                       -->

@@ -102,7 +102,7 @@ UI never touches the filesystem directly.
 ```csharp
 public interface IModImportService
 {
-    (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version);
+    (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version);
 
     // Read-only peeks used by the add flow's base-name collision hard-block:
     string GetBaseName(string sourcePath);                       // validates structure, returns the base folder name (no container/version created)
@@ -116,6 +116,11 @@ public interface IModImportService
 - Version resolution: dedup by `versionString` (`AddVersion` reuses the existing
   folder + refreshes its files); a new `versionString` creates a new version +
   flips `IsLatest`.
+- **Return:** the imported version's opaque folder id (`ModVersion.Folder`,
+  not the display tag), so the caller can construct a `PinnedPolicy(versionId)`
+  pinning the profile entry to exactly the version just imported. The display
+  tag (`VersionString`) is recorded in the container manifest; it is not
+  returned.
 - `.zip` detection is by extension (ordinal ignore-case); anything else is
   treated as a folder path. A `.zip` is extracted via
   `System.IO.Compression.ZipFile.ExtractToDirectory` (in-box for net10.0); a

@@ -22,6 +22,21 @@ public sealed class ImportModViewModelTests
     // ---- source chooser shows / hides fields -------------------------------
 
     [Fact]
+    public void Default_source_is_Nexus_so_the_modal_opens_ready_for_a_URL()
+    {
+        // Most Darktide mods ship on Nexus, so the modal opens with Nexus
+        // selected (the Version + URL fields visible). The user can switch to
+        // GitHub or Untracked when needed.
+        var vm = Build();
+
+        Assert.Equal(ImportModViewModel.ImportSource.Nexus, vm.SourceChoice);
+        Assert.True(vm.IsRemote);
+        Assert.True(vm.IsVersionVisible);
+        // Cannot confirm yet: a Nexus import needs a Version + a URL.
+        Assert.False(vm.CanConfirm);
+    }
+
+    [Fact]
     public void Local_source_hides_the_remote_fields()
     {
         var vm = Build();
@@ -269,7 +284,7 @@ public sealed class ImportModViewModelTests
         Assert.IsType<UntrackedSource>(vm.Result!.Source);
     }
 
-    // ---- cancel ------------------------------------------------------------
+    // ---- cancel -----------------------------------------------------------
 
     [Fact]
     public void A_new_modal_has_no_result_until_confirm()
@@ -278,5 +293,58 @@ public sealed class ImportModViewModelTests
 
         // Cancel = the user dismisses without confirming; Result stays null.
         Assert.Null(vm.Result);
+    }
+
+    // ---- policy selector ---------------------------------------------------
+
+    [Fact]
+    public void Default_policy_is_Latest()
+    {
+        var vm = Build();
+
+        Assert.Equal(ImportModViewModel.ImportPolicyChoice.Latest, vm.PolicyChoice);
+        Assert.Equal(0, vm.PolicyChoiceIndex);
+        Assert.IsType<LatestPolicy>(vm.Policy);
+    }
+
+    [Fact]
+    public void Switching_policy_to_Pinned_yields_a_PinnedPolicy()
+    {
+        var vm = Build();
+        vm.SourceChoice = ImportModViewModel.ImportSource.Untracked;
+        vm.PolicyChoiceIndex = 1; // Pinned
+
+        Assert.Equal(ImportModViewModel.ImportPolicyChoice.Pinned, vm.PolicyChoice);
+        // The derived policy is a placeholder PinnedPolicy (the modal does not
+        // know the version id yet; the add flow substitutes it after Import).
+        var pinned = Assert.IsType<PinnedPolicy>(vm.Policy);
+        Assert.Equal(string.Empty, pinned.VersionId);
+    }
+
+    [Fact]
+    public void Confirm_carries_the_chosen_policy_in_the_result()
+    {
+        var vm = Build();
+        vm.SourceChoice = ImportModViewModel.ImportSource.Untracked;
+        vm.PolicyChoice = ImportModViewModel.ImportPolicyChoice.Pinned;
+
+        vm.ConfirmCommand.Execute(null);
+
+        Assert.NotNull(vm.Result);
+        Assert.IsType<PinnedPolicy>(vm.Result!.Policy);
+    }
+
+    [Fact]
+    public void Confirm_with_Latest_choice_carries_a_LatestPolicy()
+    {
+        var vm = Build();
+        vm.SourceChoice = ImportModViewModel.ImportSource.Untracked;
+        // Latest is the default, but set it explicitly for clarity.
+        vm.PolicyChoice = ImportModViewModel.ImportPolicyChoice.Latest;
+
+        vm.ConfirmCommand.Execute(null);
+
+        Assert.NotNull(vm.Result);
+        Assert.IsType<LatestPolicy>(vm.Result!.Policy);
     }
 }

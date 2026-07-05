@@ -692,7 +692,7 @@ internal sealed class FakeModImportService : IModImportService
     /// </summary>
     public Queue<Exception?>? ImportExceptionQueue { get; set; }
 
-    public (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version)
+    public (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version)
     {
         ((List<(string, string, ModSource, string)>)Imports).Add((sourcePath, modName, source, version));
 
@@ -707,14 +707,15 @@ internal sealed class FakeModImportService : IModImportService
 
         if (_repo is null)
         {
-            // No wired repository: return a synthetic container id so the add flow
-            // has something to feed AddMod. Each call gets a fresh id so distinct
-            // imports land as distinct entries.
-            return (Guid.NewGuid(), version);
+            // No wired repository: return a synthetic container id + version id
+            // so the add flow has something to feed AddMod. Each call gets fresh
+            // ids so distinct imports land as distinct entries.
+            return (Guid.NewGuid(), Guid.NewGuid().ToString("N"));
         }
 
         // Mirror the real import service: resolve-or-create the container, then
-        // add the version. This keeps the VM's reload join working in tests.
+        // add the version. This keeps the VM's reload join working in tests +
+        // yields the version's opaque folder id (the real service's new return).
         ModContainer container;
         if (source is UntrackedSource)
         {
@@ -724,8 +725,9 @@ internal sealed class FakeModImportService : IModImportService
         {
             container = _repo.FindBySource(source) ?? _repo.CreateContainer(source, modName);
         }
-        _repo.AddVersion(container.Id, version, _ => { });
-        return (container.Id, version);
+        var updated = _repo.AddVersion(container.Id, version, _ => { });
+        var versionId = updated.Versions.First(v => v.VersionString == version).Folder;
+        return (container.Id, versionId);
     }
 
     /// <summary>The source paths passed to <see cref="GetBaseName"/>, in order.</summary>

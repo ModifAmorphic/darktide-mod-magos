@@ -4,8 +4,8 @@
 > **discovers** everything needed to launch Darktide modded on the current OS
 > and reports missing pieces via the result's nullable fields; it does NOT set
 > env vars or invoke Proton — that is [enginseer-client](enginseer-client.md)'s
-> job. Status: implemented (Phase 1; user-override overlay added in Phase 3
-> Track C).
+> job. Status: implemented (Phase 1; the Track C review fix reshaped
+> `Discover()` from an overlay into a validate + heal + persist pipeline).
 
 ## Public surface
 
@@ -19,16 +19,20 @@ public interface ISteamService
 }
 ```
 
-- `Discover()`: runs the platform `ISteamDiscoverer` (selected once at DI
-  registration from `SteamDiscoveryOptions.Platform`, which probes the
-  OS-appropriate Steam install locations and resolves the Steam install, Darktide
-  install, compatdata, and Proton version), then **overlays** the live
-  `MagosConfig.Discovery` user overrides (a non-null/whitespace field replaces
-  the auto-discovered value as-is; null keeps auto) and recomputes `Status` via
-  the shared `SteamDiscoveryCore.ComputeStatus`. **Never throws on missing
-  pieces**; those are reported via `DiscoveryResult.Status` and the nullable
-  fields (the escape hatch the UI prompts against). `SteamService` itself
-  contains no platform dispatch.
+- `Discover()`: runs the **validate + heal + persist** pipeline. Reads the
+  live `MagosConfig.Discovery` user overrides (via `IConfigLoader`), checks
+  each platform-relevant field's path on disk (a directory for Steam install +
+  compatdata; a file for the Darktide binary + Proton script), and treats an
+  existing override as **valid** (kept as-is). A null / whitespace / non-
+  existent override **needs healing**: if any field needs healing the platform
+  `ISteamDiscoverer` runs once and each healing field picks up the discoverer's
+  value (which may itself be null, the "still missing" case). Healed fields are
+  then persisted back to `Discovery.User*Path` (a single read-modify-save
+  carrying only the healed writes; valid fields + any concurrent hand-edit are
+  preserved). When every field is valid the discoverer is skipped entirely
+  (fast path). **Never throws on missing pieces**; those are reported via
+  `DiscoveryResult.Status` and the nullable fields (the escape hatch the UI
+  prompts against). `SteamService` itself contains no platform dispatch.
 - `IsGameRunning()` — cross-platform best-effort check against Darktide's process
   name. Delegates to the platform `IProcessLookup`; never throws — enumeration
   failures degrade to "not running."
@@ -88,12 +92,12 @@ every OS-specific input + platform seam is injected:
   failure result) that both discoverers compose, **plus the single completeness
   rule** `ComputeStatus(platform, steam, darktide, compatdata, proton)` used by
   both discoverers (when building their result) and by `SteamService` (when
-  recomputing `Status` after overlaying user overrides). Consolidating the rule
-  here guarantees the overlay's recomputed status is, by construction, the same
-  rule the discoverer used; the discoverers' per-platform `StatusForLinux` /
-  `StatusForWindows` helpers were extracted into it. This is composition, not
-  inheritance — each discoverer injects the core and layers its own platform
-  steps on top.
+  computing `Status` from the final post-validate + post-heal field values).
+  Consolidating the rule here guarantees the recomputed status is, by
+  construction, the same rule the discoverer used; the discoverers' per-platform
+  `StatusForLinux` / `StatusForWindows` helpers were extracted into it. This is
+  composition, not inheritance — each discoverer injects the core and layers its
+  own platform steps on top.
 - `ISteamRegistryReader` — reads the Windows registry for the Steam install path
   (`GetSteamPath()` → `HKCU\Software\Valve\Steam\SteamPath`, or null if
   unreadable). Abstracted so the Windows discoverer's registry resolution is
@@ -105,24 +109,48 @@ every OS-specific input + platform seam is injected:
 
 ## Discovery behavior
 
-`SteamService.Discover()` runs the active `ISteamDiscoverer` (all platform logic
-lives in the discoverer + the shared `SteamDiscoveryCore` it composes), then
-overlays `MagosConfig.Discovery` user overrides and recomputes `Status`:
+`SteamService.Discover()` runs a four-step **validate + heal + persist** pipeline
+per call (all platform logic lives in the discoverer + the shared
+`SteamDiscoveryCore` it composes):
 
-1. **Auto-discover** (platform discoverer): resolves Steam / Darktide /
-   compatdata / Proton as below, producing a `DiscoveryResult` with a status
-   computed via `SteamDiscoveryCore.ComputeStatus`.
-2. **Overlay user overrides:** for each of the four path fields, if the matching
-   `Discovery.User*Path` is non-null/non-whitespace, it replaces the auto value
-   as-is (no re-verify; the user said "use this"); otherwise the auto value is
-   kept. (Read live from `IConfigLoader` once per call, so a Settings or
-   escape-hatch write is visible on the next `Discover()`.) Overriding the Proton
-   binary path nulls the derived `ProtonVersion` label (it no longer describes
-   the path in use).
-3. **Recompute status:** `SteamDiscoveryCore.ComputeStatus` runs again against
-   the final field values, so the reported `Status` reflects the post-overlay
-   fields with the same completeness rule the discoverer used (e.g. a user
-   override that fills the last Linux gap flips `Partial` to `Complete`).
+1. **Validate** — read the live `MagosConfig.Discovery` user overrides (one
+   `IConfigLoader.Load()` per call). For each platform-relevant field, check the
+   override's path on disk: `Directory.Exists` for Steam install + compatdata;
+   `File.Exists` for the Darktide binary + Proton script. An existing override
+   is **valid** (kept as-is); a null / whitespace / non-existent override
+   **needs healing**. On Windows the compatdata + Proton fields are Linux-only
+   and are neither validated nor healed (they stay null in the result; any
+   leftover config values are preserved untouched).
+2. **Heal** — if any field needs healing, run the platform discoverer once and
+   let each healing field pick up the discoverer's value for it. A field the
+   discoverer also cannot resolve stays null ("still missing"). **Fast path:**
+   when every platform-relevant field is valid, the discoverer is skipped
+   entirely (no I/O beyond the existence checks).
+3. **Selectively persist** — if any field was healed to a non-null value,
+   re-read the config fresh and write **only the healed fields'** `User*Path`
+   back through `IConfigLoader.Save`. Valid fields are NOT overwritten
+   (preserving the user's choice), and a hand-edit on disk between the
+   top-of-call read and the save is preserved too (the read-modify-save starts
+   from the current file, not the stale snapshot).
+4. **Return** — build a `DiscoveryResult` with the final paths (valid + healed)
+   and a status computed via `SteamDiscoveryCore.ComputeStatus` (the same rule
+   the discoverer used). `ProtonVersion` is carried only when Proton was healed
+   from the discoverer (the auto label describes the discoverer's path); a
+   valid user override drops the label (it may not describe the user-chosen
+   path).
+
+**Caller contract:**
+
+- The composition root calls `Discover()` at startup (non-blocking). A missing-
+  fields result is logged as a warning so the user can still use the app; they
+  just cannot launch until resolved (the launch-time `Discover()` re-checks and
+  surfaces the escape-hatch when incomplete).
+- [enginseer-client](enginseer-client.md)'s `EnginseerLaunchService.Launch()`
+  calls `Discover()` at launch (blocking). A missing-fields result yields
+  `LaunchResult.Status = DiscoveryIncomplete`, surfacing the escape-hatch modal.
+- The Settings window reads `DiscoveryConfig` directly (now populated by the
+  startup `Discover()`), so the discovery fields show the current paths rather
+  than blanks.
 
 ### Linux (`LinuxSteamDiscoverer`)
 
@@ -246,12 +274,14 @@ selection so the Windows path runs on Linux CI). `ISteamService` is `AddSingleto
 (holds no per-call state).
 
 Note: `AddSteam()` does **not** register `IConfigLoader` itself. `SteamService`
-depends on `IConfigLoader` (it reads `MagosConfig.Discovery` live on each
-`Discover()` call so a Settings / escape-hatch write is visible immediately), so
-an `IConfigLoader` must be registered externally before resolving
-`ISteamService`. In production that is [General](general.md)'s `AddGeneral()`
-(which `TryAdd`s `ConfigLoader`); tests register a fake (e.g. the overlay + DI
-tests register a `FakeConfigLoader`).
+depends on `IConfigLoader` (it reads + writes `MagosConfig.Discovery` live on
+each `Discover()` call so a Settings / escape-hatch / hand-edit write is visible
+immediately), so an `IConfigLoader` must be registered externally before
+resolving `ISteamService`. In production that is [General](general.md)'s
+`AddGeneral()` (which `TryAdd`s `ConfigLoader`); tests register a fake (e.g. the
+validate + heal + persist tests register a `FakeConfigLoader` whose `Save`
+mirrors the real loader's round-trip so a subsequent `Load` sees the saved
+state).
 
 `SteamRegistryReader` is Windows-only: no `Microsoft.Win32.Registry` package is
 required (on `net10.0` the `Registry` type is in the reference assembly, gated
@@ -265,9 +295,10 @@ no-op).
 ## Dependencies
 
 - **Magos libraries:** [config](config.md) (`DiscoveryConfig`, the user-override
-  section of `MagosConfig` overlaid onto the discoverer's result) +
-  [general](general.md) (`IConfigLoader`, the live reader `SteamService` reads
-  `Discovery` from on each `Discover()` call).
+  section of `MagosConfig` validated + healed + persisted by `Discover()`) +
+  [general](general.md) (`IConfigLoader`, the live reader/writer `SteamService`
+  reads `Discovery` from and writes the healed fields back to on each `Discover()`
+  call).
 - **NuGet:** `Microsoft.Extensions.DependencyInjection.Abstractions`,
   `Microsoft.Extensions.Logging.Abstractions`.
 
@@ -280,14 +311,18 @@ selection (`ProtonSelectionTests`), the `libraryfolders.vdf` parser
 `ArgvMatchTests` — the latter pinning the `MatchesArgv0` backslash normalization),
 the `AddSteam` DI wiring (the `TryAdd` overrides, the `ISteamDiscoverer`
 selection by `SteamDiscoveryOptions.Platform`, and the platform `IProcessLookup`
-selection), and the `SteamService.Discover()` user-override overlay
-(`SteamServiceOverlayTests`: a supplied path replaces the auto value as-is, a
-null/whitespace value keeps auto, mixed overlays apply only the set fields, and
-`Status` recomputes via the shared `ComputeStatus` rule, including the live-read
-contract that makes a config write between calls visible on the next
-`Discover()`). `WindowsDiscoveryTests` force `Platform = Windows` + a fake registry
-reader so the Windows discoverer path runs on Linux CI — the load-bearing proof
-that discoverer selection follows `Platform`, not the runtime OS.
+selection), and the `SteamService.Discover()` validate + heal + persist
+pipeline (`SteamServiceOverlayTests`: every field valid skips the discoverer
+entirely; missing fields are healed from the discoverer + persisted; the
+selective save writes only the healed fields while preserving valid fields +
+concurrent hand-edits; unresolvable fields stay null and flag `Status =
+Partial`; on Windows only Steam + Darktide are checked + healed; the
+`ProtonVersion` side-effect when a valid override takes the Proton field; and
+the live-read contract that makes a config write between calls visible on the
+next `Discover()`). `WindowsDiscoveryTests` force `Platform = Windows` + a fake
+registry reader so the Windows discoverer path runs on Linux CI — the
+load-bearing proof that discoverer selection follows `Platform`, not the runtime
+OS.
 
 ```sh
 dotnet test magos-modificus/magos-modificus.sln -c Release

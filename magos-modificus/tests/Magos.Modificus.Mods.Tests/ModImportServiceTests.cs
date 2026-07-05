@@ -30,13 +30,17 @@ public sealed class ModImportServiceTests
         using var fx = new ImportFixture();
         var sourceDir = fx.MakeSourceModFolder("Src");
 
-        var (containerId, version) = fx.Service.Import(sourceDir, "DMF", new UntrackedSource(), "1.0");
+        var (containerId, versionId) = fx.Service.Import(sourceDir, "DMF", new UntrackedSource(), "1.0");
 
         var container = fx.Repo.Get(containerId);
         Assert.NotNull(container);
         Assert.Equal("DMF", container!.Name);
         Assert.IsType<UntrackedSource>(container.Source);
-        Assert.Equal("1.0", version);
+        // The returned id is the imported version's opaque folder id (a
+        // ModVersion.Folder value), not the display tag, so the caller can pin
+        // to exactly this version.
+        Assert.Single(container.Versions);
+        Assert.Equal(versionId, container.Versions[0].Folder);
     }
 
     [Fact]
@@ -323,11 +327,13 @@ public sealed class ModImportServiceTests
         using var fx = new ImportFixture();
         var sourceDir = fx.MakeSourceModFolder("Src");
 
-        var (containerId, versionString) = fx.Service.Import(sourceDir, "Local", new UntrackedSource(), "");
+        var (containerId, versionId) = fx.Service.Import(sourceDir, "Local", new UntrackedSource(), "");
 
-        Assert.Equal(string.Empty, versionString);
         var version = Assert.Single(fx.Repo.Get(containerId)!.Versions);
         Assert.Equal(string.Empty, version.VersionString);
+        // The returned id is the version's opaque folder id (independent of the
+        // display tag, which is empty here for an untracked import).
+        Assert.Equal(versionId, version.Folder);
     }
 
     [Fact]

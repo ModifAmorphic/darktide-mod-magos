@@ -13,18 +13,56 @@ namespace Magos.Modificus.Steam;
 /// polymorphic collaborator wired at the composition root.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Registered as a singleton. <see cref="Discover"/> never throws on missing
 /// pieces; those are reported via <see cref="DiscoveryResult.Status"/> + the
-/// nullable fields.
+/// nullable fields.</para>
 /// <para>
-/// <b>User overrides (Track C):</b> <see cref="Discover"/> reads the live
-/// <see cref="MagosConfig.Discovery"/> section once per call (via
-/// <see cref="IConfigLoader"/>) and overlays any user-supplied paths onto the
-/// discoverer's result, then recomputes <see cref="DiscoveryResult.Status"/>
-/// using the shared <see cref="SteamDiscoveryCore.ComputeStatus"/> rule. A
-/// null/whitespace override leaves the auto-discovered value in place. This
-/// keeps the overlay's completeness rule identical, by construction, to the one
-/// the discoverer used.</para>
+/// <b>Validate + heal + persist (Track C review fix):</b> <see cref="Discover"/>
+/// runs a four-step pipeline per call:
+/// <list type="number">
+/// <item><description><b>Validate</b> the persisted
+/// <see cref="DiscoveryConfig"/> user overrides (read live via
+/// <see cref="IConfigLoader"/>). For each platform-relevant field, an override
+/// that exists on disk (a directory for Steam install + compatdata; a file for
+/// the Darktide binary + Proton script) is <i>valid</i> and kept as-is. A null /
+/// whitespace / non-existent override <i>needs healing</i>.</description></item>
+/// <item><description><b>Heal</b>: if any field needs healing, run the platform
+/// discoverer once. Each healing field picks up the discoverer's value; a field
+/// the discoverer also couldn't find stays null (<i>still missing</i>).
+/// <b>Fast path:</b> when every field is valid the discoverer is skipped
+/// entirely.</description></item>
+/// <item><description><b>Selectively persist</b>: if any field was healed to a
+/// non-null value, re-read the config fresh and write ONLY the healed fields'
+/// <c>User*Path</c> back (valid fields are untouched, preserving user edits; a
+/// hand-edit on disk between calls is visible because the read-modify-save
+/// starts from the current file).</description></item>
+/// <item><description><b>Return</b> a <see cref="DiscoveryResult"/> with the
+/// final paths (valid + healed) and a status computed from them via the shared
+/// <see cref="SteamDiscoveryCore.ComputeStatus"/> rule (the same rule the
+/// discoverer used).</description></item>
+/// </list>
+/// </para>
+/// <para>
+/// <b>Platform-gating:</b> on Windows the compatdata + Proton fields are Linux-
+/// only (Windows is native) and are neither validated nor healed; they stay null
+/// in the result. On Linux all four fields are checked + healed.</para>
+/// <para>
+/// <b>Caller contract:</b>
+/// <list type="bullet">
+/// <item>The composition root calls <see cref="Discover"/> at startup (non-
+/// blocking). A missing-fields result is logged as a warning so the user can
+/// still use the app; they just cannot launch until resolved.</item>
+/// <item><see cref="EnginseerClient.EnginseerLaunchService"/> calls
+/// <see cref="Discover"/> at launch (blocking). A missing-fields result yields
+/// <see cref="EnginseerClient.LaunchResult.Status"/> =
+/// <see cref="EnginseerClient.LaunchStatus.DiscoveryIncomplete"/>, surfacing the
+/// escape-hatch modal.</item>
+/// <item>The Settings window reads <see cref="DiscoveryConfig"/> directly (now
+/// populated by the startup Discover's validate + heal), so the discovery fields
+/// show the current paths rather than blanks.</item>
+/// </list>
+/// </para>
 /// </remarks>
 internal sealed class SteamService : ISteamService
 {
@@ -51,73 +89,147 @@ internal sealed class SteamService : ISteamService
     /// <inheritdoc />
     public DiscoveryResult Discover()
     {
-        // One config snapshot per discovery call (live-read: a Settings/escape-
-        // hatch write between calls is visible on the next Discover()).
+        // One config snapshot at the top (live-read: a Settings / escape-hatch
+        // write between calls is visible on the next Discover()).
         var discovery = _configLoader.Load().Discovery;
+        var platform = _options.Platform;
 
-        // Platform discovery first (unchanged), then overlay user overrides.
-        var auto = _discoverer.Discover();
-        return ApplyUserOverrides(auto, discovery);
+        // Platform-gating: on Windows the compatdata + Proton fields are Linux-
+        // only (native: unused). They are neither validated nor healed.
+        var checkCompatdata = platform == DiscoveryPlatform.Linux;
+        var checkProton = platform == DiscoveryPlatform.Linux;
+
+        // (1) Validate each platform-relevant field. A valid field is one whose
+        // override exists on disk with the right kind (dir vs. file). Anything
+        // else (null/whitespace, or non-existent) needs healing.
+        var steamValid = IsValidPath(discovery.UserSteamInstallPath, isDirectory: true);
+        var darktideValid = IsValidPath(discovery.UserDarktideGameBinaryPath, isDirectory: false);
+        var compatdataValid = !checkCompatdata
+            || IsValidPath(discovery.UserCompatdataPath, isDirectory: true);
+        var protonValid = !checkProton
+            || IsValidPath(discovery.UserProtonBinaryPath, isDirectory: false);
+
+        var anyNeedsHealing = !steamValid || !darktideValid || !compatdataValid || !protonValid;
+
+        // (2) Heal: run the discoverer once if any field needs healing. Fast
+        // path: when every field is valid, the discoverer is skipped entirely.
+        DiscoveryResult? auto = null;
+        if (anyNeedsHealing)
+        {
+            auto = _discoverer.Discover();
+        }
+
+        // Build the final values: valid fields stay as-is; healing fields pick
+        // up the discoverer's value (which may itself be null -> still missing).
+        var steam = steamValid ? discovery.UserSteamInstallPath : auto!.SteamInstallPath;
+        var darktide = darktideValid ? discovery.UserDarktideGameBinaryPath : auto!.DarktideGameBinaryPath;
+        var compatdata = checkCompatdata
+            ? (compatdataValid ? discovery.UserCompatdataPath : auto!.CompatdataPath)
+            : null;
+        var proton = checkProton
+            ? (protonValid ? discovery.UserProtonBinaryPath : auto!.ProtonBinaryPath)
+            : null;
+
+        // ProtonVersion is a derived description of the auto-discovered Proton
+        // dir. It is carried only when the Proton path came from the discoverer
+        // (a healed field). A user override that survived validation drops the
+        // label: it may not describe the user-chosen path. On Windows the field
+        // is Linux-only + never discovered, so the label is always null there.
+        string? protonVersion;
+        if (!checkProton || protonValid)
+        {
+            protonVersion = null;
+        }
+        else
+        {
+            protonVersion = auto!.ProtonVersion;
+        }
+
+        // (3) Selective save: re-read the config fresh and write ONLY the healed
+        // fields that resolved to a non-null value. Valid fields are NOT
+        // overwritten (preserves user edits), and a hand-edit on disk between
+        // the top-of-call read + this save is preserved too (the read-modify-
+        // save starts from the current file, not the stale snapshot).
+        var healedSteam = !steamValid && steam is not null;
+        var healedDarktide = !darktideValid && darktide is not null;
+        var healedCompatdata = checkCompatdata && !compatdataValid && compatdata is not null;
+        var healedProton = checkProton && !protonValid && proton is not null;
+
+        if (healedSteam || healedDarktide || healedCompatdata || healedProton)
+        {
+            var fresh = _configLoader.Load();
+            if (healedSteam)
+            {
+                fresh.Discovery.UserSteamInstallPath = steam;
+            }
+            if (healedDarktide)
+            {
+                fresh.Discovery.UserDarktideGameBinaryPath = darktide;
+            }
+            if (healedCompatdata)
+            {
+                fresh.Discovery.UserCompatdataPath = compatdata;
+            }
+            if (healedProton)
+            {
+                fresh.Discovery.UserProtonBinaryPath = proton;
+            }
+            _configLoader.Save(fresh);
+            _logger.LogInformation(
+                "Discovery healed + persisted: {Fields}.",
+                string.Join(", ", HealedFieldNames(
+                    healedSteam, healedDarktide, healedCompatdata, healedProton)));
+        }
+
+        // (4) Build the result + compute status from the final paths.
+        var status = SteamDiscoveryCore.ComputeStatus(platform, steam, darktide, compatdata, proton);
+        var warnings = auto?.Warnings ?? Array.Empty<string>();
+
+        if (status != DiscoveryStatus.Complete)
+        {
+            _logger.LogWarning(
+                "Discovery is {Status}: steam={Steam}, darktide={Darktide}, compatdata={Compatdata}, proton={Proton}.",
+                status,
+                steam ?? "(missing)",
+                darktide ?? "(missing)",
+                compatdata ?? "(missing)",
+                proton ?? "(missing)");
+        }
+
+        return new DiscoveryResult(
+            SteamInstallPath: steam,
+            DarktideGameBinaryPath: darktide,
+            CompatdataPath: compatdata,
+            ProtonBinaryPath: proton,
+            ProtonVersion: protonVersion,
+            Status: status,
+            Warnings: warnings);
     }
 
     /// <inheritdoc />
     public bool IsGameRunning() => _processes.IsRunning(_options.GameProcessName);
 
     /// <summary>
-    /// Overlays the user-supplied discovery overrides onto a discoverer result
-    /// and recomputes the status. For each of the four path fields, a non-null/
-    /// non-whitespace override replaces the auto-discovered value as-is (no
-    /// re-verify); a null/whitespace override keeps the auto value. After
-    /// overlaying, the status is recomputed via
-    /// <see cref="SteamDiscoveryCore.ComputeStatus"/> so it reflects the final
-    /// field values against the platform's completeness rule.
+    /// Whether a path is a usable override of the given kind: non-null/non-
+    /// whitespace AND exists on disk as a directory (when <paramref name="isDirectory"/>
+    /// is <c>true</c>) or a file (otherwise). The cheap existence check that
+    /// decides whether a field needs healing.
     /// </summary>
-    /// <param name="auto">The discoverer's result (auto-discovered values).</param>
-    /// <param name="overrides">The live user-override section (nullable fields).</param>
-    /// <returns>A new <see cref="DiscoveryResult"/> with overrides applied + the
-    /// status recomputed.</returns>
-    private DiscoveryResult ApplyUserOverrides(DiscoveryResult auto, DiscoveryConfig overrides)
-    {
-        var steam = Override(auto.SteamInstallPath, overrides.UserSteamInstallPath);
-        var darktide = Override(auto.DarktideGameBinaryPath, overrides.UserDarktideGameBinaryPath);
-        var compatdata = Override(auto.CompatdataPath, overrides.UserCompatdataPath);
-        var proton = Override(auto.ProtonBinaryPath, overrides.UserProtonBinaryPath);
-
-        // The Proton version label is a derived description of the auto-
-        // discovered Proton dir. If the user overrode the Proton binary path,
-        // the auto label no longer describes the path in use; null it so the UI
-        // shows nothing rather than a misleading label. (Informational only;
-        // launch uses the binary path, not the label.)
-        var protonVersion = overrides.UserProtonBinaryPath is null || proton == auto.ProtonBinaryPath
-            ? auto.ProtonVersion
-            : null;
-
-        var status = SteamDiscoveryCore.ComputeStatus(_options.Platform, steam, darktide, compatdata, proton);
-
-        if (status != auto.Status)
-        {
-            _logger.LogInformation(
-                "Discovery status changed after user overrides: {Before} -> {After}.",
-                auto.Status, status);
-        }
-
-        return auto with
-        {
-            SteamInstallPath = steam,
-            DarktideGameBinaryPath = darktide,
-            CompatdataPath = compatdata,
-            ProtonBinaryPath = proton,
-            ProtonVersion = protonVersion,
-            Status = status,
-        };
-    }
+    private static bool IsValidPath(string? path, bool isDirectory) =>
+        !string.IsNullOrWhiteSpace(path)
+        && (isDirectory ? Directory.Exists(path) : File.Exists(path));
 
     /// <summary>
-    /// Returns <paramref name="overrideValue"/> when it is a usable path
-    /// (non-null + non-whitespace); otherwise falls back to
-    /// <paramref name="autoValue"/>. The "trust the user" rule: a supplied
-    /// value is used as-is with no re-verify.
+    /// The display names of the healed fields for the log line. Each flag
+    /// already accounts for platform-gating (compatdata + Proton are only
+    /// flagged when checked), so the names map 1:1 to the flags.
     /// </summary>
-    private static string? Override(string? autoValue, string? overrideValue) =>
-        !string.IsNullOrWhiteSpace(overrideValue) ? overrideValue : autoValue;
+    private static IEnumerable<string> HealedFieldNames(
+        bool steam, bool darktide, bool compatdata, bool proton)
+    {
+        if (steam) yield return "SteamInstallPath";
+        if (darktide) yield return "DarktideGameBinaryPath";
+        if (compatdata) yield return "CompatdataPath";
+        if (proton) yield return "ProtonBinaryPath";
+    }
 }

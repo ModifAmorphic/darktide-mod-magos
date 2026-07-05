@@ -31,11 +31,12 @@ public sealed class MagosConfig
     public string EnginseerRuntimeDir { get; set; } = AppPaths.DefaultEnginseerRuntimeDir;
 
     /// <summary>
-    /// User-supplied discovery overrides. When a field here is non-null/non-
-    /// whitespace, <c>SteamService.Discover()</c> uses it as-is in place of the
-    /// auto-discovered value (no re-verify); null/whitespace means auto-discover
-    /// that field. Read live per <c>Discover()</c> call via
-    /// <see cref="General.IConfigLoader"/>.
+    /// User-supplied discovery overrides. <c>SteamService.Discover()</c> reads
+    /// these live per call (via <see cref="General.IConfigLoader"/>), validates
+    /// each field's path on disk, heals the missing/non-existent ones from the
+    /// platform discoverer, and persists ONLY the healed fields back here so
+    /// the next call is a fast validation. See
+    /// <see cref="DiscoveryConfig"/> for the per-field semantics.
     /// </summary>
     public DiscoveryConfig Discovery { get; set; } = new();
 

@@ -493,7 +493,7 @@ public sealed class ModListViewModelTests
         // containers (untracked dedups by name; the names differ here).
         var dialogs = new FakeDialogService
         {
-            ImportResult = new ImportModResult(new UntrackedSource(), ""),
+            ImportResult = new ImportModResult(new UntrackedSource(), "", ModVersionPolicy.Latest),
         };
         var vm = Build(profiles, session, repo, import, dialogs);
 
@@ -512,8 +512,43 @@ public sealed class ModListViewModelTests
         Assert.Equal(2, profiles.AddModCalls.Count);
         Assert.Equal(2, profiles.AddModCalls.Select(c => c.ContainerId).Distinct().Count());
         Assert.All(profiles.AddModCalls, c => Assert.Equal(a.Id, c.Id));
+        // The modal's Latest policy is propagated to AddMod.
+        Assert.All(profiles.AddModCalls, c => Assert.IsType<LatestPolicy>(c.Policy));
         // Both mods now appear, joined from the repo.
         Assert.Equal(2, vm.Mods.Count);
+    }
+
+    [Fact]
+    public async Task AddMods_with_Pinned_choice_pins_to_the_imported_version_id()
+    {
+        // The modal returns a Pinned policy (placeholder VersionId=""); the add
+        // flow substitutes the actual VersionId the Import just minted (the
+        // version's opaque folder id) + feeds a real PinnedPolicy(id) to AddMod.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var import = new FakeModImportService(repo);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var dialogs = new FakeDialogService
+        {
+            ImportResult = new ImportModResult(
+                new UntrackedSource(),
+                "",
+                new PinnedPolicy()), // placeholder VersionId
+        };
+        var vm = Build(profiles, session, repo, import, dialogs);
+
+        await vm.AddModsCommand.ExecuteAsync(new[] { "/mods/DMF" });
+
+        var addCall = Assert.Single(profiles.AddModCalls);
+        // The policy actually persisted is a PinnedPolicy whose VersionId is the
+        // one Import returned (NOT the placeholder empty string from the modal).
+        var pinned = Assert.IsType<PinnedPolicy>(addCall.Policy);
+        var importedContainer = repo.Get(addCall.ContainerId);
+        Assert.NotNull(importedContainer);
+        var importedVersion = Assert.Single(importedContainer!.Versions);
+        Assert.Equal(importedVersion.Folder, pinned.VersionId);
+        Assert.NotEmpty(pinned.VersionId); // not the placeholder
     }
 
     [Fact]
@@ -529,9 +564,9 @@ public sealed class ModListViewModelTests
             // First path confirmed, second cancelled, third never reached.
             ImportResultQueue = new Queue<ImportModResult?>(new ImportModResult?[]
             {
-                new(new UntrackedSource(), ""),
+                new(new UntrackedSource(), "", ModVersionPolicy.Latest),
                 null,
-                new(new UntrackedSource(), ""),
+                new(new UntrackedSource(), "", ModVersionPolicy.Latest),
             }),
         };
         var vm = Build(profiles, session, repo, import, dialogs);
@@ -569,7 +604,7 @@ public sealed class ModListViewModelTests
         var session = new FakeProfileSession { ActiveProfileId = a.Id };
         var dialogs = new FakeDialogService
         {
-            ImportResult = new ImportModResult(new UntrackedSource(), ""),
+            ImportResult = new ImportModResult(new UntrackedSource(), "", ModVersionPolicy.Latest),
         };
         var vm = Build(profiles, session, repo, import, dialogs);
 
@@ -612,7 +647,7 @@ public sealed class ModListViewModelTests
         var session = new FakeProfileSession { ActiveProfileId = a.Id };
         var dialogs = new FakeDialogService
         {
-            ImportResult = new ImportModResult(new UntrackedSource(), ""),
+            ImportResult = new ImportModResult(new UntrackedSource(), "", ModVersionPolicy.Latest),
         };
         var vm = Build(profiles, session, repo, import, dialogs);
 
@@ -652,7 +687,7 @@ public sealed class ModListViewModelTests
         var session = new FakeProfileSession { ActiveProfileId = a.Id };
         var dialogs = new FakeDialogService
         {
-            ImportResult = new ImportModResult(new UntrackedSource(), ""),
+            ImportResult = new ImportModResult(new UntrackedSource(), "", ModVersionPolicy.Latest),
         };
         var vm = Build(profiles, session, repo, import, dialogs);
 
@@ -694,7 +729,7 @@ public sealed class ModListViewModelTests
         var session = new FakeProfileSession { ActiveProfileId = a.Id };
         var dialogs = new FakeDialogService
         {
-            ImportResult = new ImportModResult(new UntrackedSource(), ""),
+            ImportResult = new ImportModResult(new UntrackedSource(), "", ModVersionPolicy.Latest),
         };
         var vm = Build(profiles, session, repo, import, dialogs);
 
@@ -720,7 +755,7 @@ public sealed class ModListViewModelTests
         var profiles = TestDoubles.Profiles();
         var dialogs = new FakeDialogService
         {
-            ImportResult = new ImportModResult(new UntrackedSource(), ""),
+            ImportResult = new ImportModResult(new UntrackedSource(), "", ModVersionPolicy.Latest),
         };
         var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = null }, dialogs: dialogs);
 
@@ -738,7 +773,7 @@ public sealed class ModListViewModelTests
         var session = new FakeProfileSession { ActiveProfileId = a.Id };
         var dialogs = new FakeDialogService
         {
-            ImportResult = new ImportModResult(new UntrackedSource(), ""),
+            ImportResult = new ImportModResult(new UntrackedSource(), "", ModVersionPolicy.Latest),
         };
         var vm = Build(profiles, session, dialogs: dialogs);
 

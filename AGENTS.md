@@ -42,7 +42,8 @@ Requirements, architecture, and technology choices are made fresh.
   `IEnginseerLaunchService.Launch` -> branch on `LaunchResult.Status` with the
   discovery escape-hatch modal for `DiscoveryIncomplete` + a Settings window
   editing `MagosConfig.Discovery` user overrides + `ModsFolder` live-relocate,
-  over the `DiscoveryConfig` + `SteamService.Discover()` overlay +
+  over the `DiscoveryConfig` + `SteamService.Discover()` validate+heal+persist
+  pipeline (runs at startup non-blocking + at launch blocking) +
   `IModRepository.Relocate/Rescan`) are wired; the Launcher is a stub (Phase 5).
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
@@ -84,7 +85,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           Phase 3 Track B: the mod-list UI;
                           Phase 3 Track C: Launch wiring + Settings window +
                           discovery escape-hatch over the shared `Settings/DiscoveryField`
-                          descriptor + `DiscoveryConfig`/`SteamService.Discover()` overlay +
+                          descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist +
                           `IModRepository.Relocate/Rescan`)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
@@ -236,7 +237,8 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   read-modify-save) + `ModsFolder` live-relocate via the atomic
   `IModRepository.Relocate` (move + save + rescan in one call, rolling the move
   back on save failure) over the `DiscoveryConfig` + `SteamService.Discover()`
-  overlay + `IModRepository.Relocate/Rescan`) is wired; the **Launcher** is a stub
+  validate+heal+persist pipeline (runs at startup non-blocking + at launch
+  blocking) + `IModRepository.Relocate/Rescan`) is wired; the **Launcher** is a stub
   (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
 
 ## Key docs

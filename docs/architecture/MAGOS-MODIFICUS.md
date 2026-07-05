@@ -393,9 +393,13 @@ sections, both persisting through `IConfigLoader` (read live, so the next
 `Discover()` / launch picks them up):
 
 - **Discovery:** the four user-override paths (`MagosConfig.Discovery`).
-  `SteamService.Discover()` runs the platform discoverer, then overlays a
-  non-null override onto the auto result (no re-verify) and recomputes `Status`
-  via the shared `SteamDiscoveryCore.ComputeStatus`.
+  `SteamService.Discover()` runs the **validate + heal + persist** pipeline:
+  each platform-relevant override is checked on disk (existing = valid, kept);
+  missing/non-existent fields are healed from the platform discoverer (one run
+  when any field needs healing) + the healed values are persisted back (only
+  the healed fields; valid fields are preserved). On Windows the compatdata +
+  Proton rows are hidden (Linux-only). When every field is valid the discoverer
+  is skipped entirely (fast path).
 - **Storage:** the mod-repository location (`ModsFolder`). Changing it runs the
   **atomic relocate** on `IModRepository.Relocate`, which owns the move + config
   save + rescan as one operation (rolling the move back on save failure so files

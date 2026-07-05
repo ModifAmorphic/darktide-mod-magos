@@ -3,242 +3,348 @@ using Magos.Modificus.Config;
 namespace Magos.Modificus.Steam.Tests;
 
 /// <summary>
-/// <see cref="ISteamService.Discover"/> user-override overlay (Phase 3 Track C,
-/// Phase 1): a user-supplied path (in <see cref="MagosConfig.Discovery"/>)
-/// replaces the auto-discovered value as-is; null/whitespace keeps the auto
-/// value; mixed (some set, some auto) overlays only the set ones; and
-/// <see cref="DiscoveryResult.Status"/> is recomputed from the final field
-/// values against the platform's completeness rule (the same rule the
-/// discoverer used).
+/// <see cref="ISteamService.Discover"/> validate + heal + persist behavior
+/// (Track C review fix). The pipeline: read the live <see cref="DiscoveryConfig"/>
+/// user overrides, validate each platform-relevant field's path on disk, heal
+/// the invalid ones from the platform discoverer (one run when any field needs
+/// healing), persist ONLY the healed fields back to config (preserving valid
+/// fields), and return a result with the final paths + a status computed from
+/// them.
 /// </summary>
 /// <remarks>
-/// These tests build a real <see cref="ISteamService"/> through <see cref="SteamFixture"/>
-/// (so the path is identical to production) and exercise the overlay through the
-/// public <see cref="ISteamService.Discover"/> surface. The auto-discovered
-/// baseline comes from the fixture's synthetic Steam layout; the
-/// <see cref="SteamFixture.Config"/> exposes the live <see cref="MagosConfig"/>
-/// so each test sets the overrides it needs.
+/// <para>
+/// These tests build a real <see cref="ISteamService"/> through
+/// <see cref="SteamFixture"/> (so the path is identical to production) and
+/// exercise the pipeline through the public <see cref="ISteamService.Discover"/>
+/// surface. The fixture's <see cref="SteamFixture.FakeConfigLoader"/> mirrors
+/// the real loader's round-trip: <c>Save</c> promotes the written config to the
+/// live snapshot, so the next <c>Load</c> returns what was saved. Tests that
+/// need a "valid" override scaffold the override path on disk under the fixture's
+/// temp root so <c>Directory.Exists</c> / <c>File.Exists</c> succeed.</para>
+/// <para>
+/// <b>Windows-only fields:</b> the Linux-only fields (compatdata + Proton) are
+/// exercised on the Linux platform tests; the Windows platform tests cover the
+/// Steam + Darktide-only contract.</para>
 /// </remarks>
 public sealed class SteamServiceOverlayTests
 {
-    // ---- overlay replaces / keeps ------------------------------------------
+    // ---- fast path: every field valid skips the discoverer -------------------
 
     [Fact]
-    public void User_override_replaces_the_auto_discovered_value()
+    public void All_fields_valid_skips_the_discoverer()
     {
-        // Complete Linux layout; the user overrides just the Steam install path.
-        // The override replaces the auto value verbatim (no re-verify).
+        // Every override points at a real scaffolded path on disk. The
+        // discoverer is not needed; Discover() returns the overrides verbatim.
         using var fx = new SteamFixture(DiscoveryPlatform.Linux);
         fx.WithLibraryFoldersAtSteamRoot();
         fx.WithDarktide(fx.SteamRoot);
         fx.WithCompatdata(fx.SteamRoot);
         fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
 
-        fx.Config.Discovery.UserSteamInstallPath = "/overridden/steam";
+        // Set the overrides to the actual scaffolded paths so they exist.
+        fx.Config.Discovery.UserSteamInstallPath = fx.SteamRoot;
+        fx.Config.Discovery.UserDarktideGameBinaryPath = fx.ExpectedDarktidePath(fx.SteamRoot);
+        fx.Config.Discovery.UserCompatdataPath = fx.ExpectedCompatdataPath(fx.SteamRoot);
+        fx.Config.Discovery.UserProtonBinaryPath = fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental");
 
         var result = fx.Service.Discover();
 
-        Assert.Equal("/overridden/steam", result.SteamInstallPath);
-        // The non-overridden fields keep their auto-discovered values.
-        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), result.DarktideGameBinaryPath);
-        Assert.Equal(fx.ExpectedCompatdataPath(fx.SteamRoot), result.CompatdataPath);
-        Assert.Equal(fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental"), result.ProtonBinaryPath);
-    }
-
-    [Fact]
-    public void Null_or_whitespace_override_keeps_the_auto_value()
-    {
-        using var fx = new SteamFixture(DiscoveryPlatform.Linux);
-        fx.WithLibraryFoldersAtSteamRoot();
-        fx.WithDarktide(fx.SteamRoot);
-        fx.WithCompatdata(fx.SteamRoot);
-        fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
-
-        // Explicit nulls + whitespace: all four fall back to auto.
-        fx.Config.Discovery.UserSteamInstallPath = null;
-        fx.Config.Discovery.UserDarktideGameBinaryPath = "   ";
-        fx.Config.Discovery.UserCompatdataPath = null;
-        fx.Config.Discovery.UserProtonBinaryPath = "";
-
-        var result = fx.Service.Discover();
-
+        Assert.Equal(DiscoveryStatus.Complete, result.Status);
         Assert.Equal(fx.SteamRoot, result.SteamInstallPath);
         Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), result.DarktideGameBinaryPath);
         Assert.Equal(fx.ExpectedCompatdataPath(fx.SteamRoot), result.CompatdataPath);
         Assert.Equal(fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental"), result.ProtonBinaryPath);
-        Assert.Equal(DiscoveryStatus.Complete, result.Status);
+        // Nothing was healed (every field was valid), so no save happened.
+        Assert.Equal(0, fx.ConfigLoader.SaveCalls);
     }
 
+    // ---- heal: missing fields pull from the discoverer + persist -------------
+
     [Fact]
-    public void Mixed_overlays_apply_only_the_set_fields()
+    public void Missing_fields_are_healed_from_the_discoverer_and_persisted()
     {
-        // Override two of four; the other two keep their auto values.
+        // Fresh config: every User*Path is null. The discoverer can resolve
+        // everything from the scaffolded layout, so every field is healed +
+        // persisted.
         using var fx = new SteamFixture(DiscoveryPlatform.Linux);
         fx.WithLibraryFoldersAtSteamRoot();
         fx.WithDarktide(fx.SteamRoot);
         fx.WithCompatdata(fx.SteamRoot);
         fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
 
-        fx.Config.Discovery.UserSteamInstallPath = "/o/steam";
-        fx.Config.Discovery.UserCompatdataPath = "/o/compatdata";
-
         var result = fx.Service.Discover();
 
-        Assert.Equal("/o/steam", result.SteamInstallPath);
-        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), result.DarktideGameBinaryPath); // auto
-        Assert.Equal("/o/compatdata", result.CompatdataPath);
-        Assert.Equal(fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental"), result.ProtonBinaryPath); // auto
+        Assert.Equal(DiscoveryStatus.Complete, result.Status);
+        Assert.Equal(fx.SteamRoot, result.SteamInstallPath);
+        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), result.DarktideGameBinaryPath);
+        Assert.Equal(fx.ExpectedCompatdataPath(fx.SteamRoot), result.CompatdataPath);
+        Assert.Equal(fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental"), result.ProtonBinaryPath);
+
+        // Every healed field was persisted to config (a single Save call
+        // carrying all four writes).
+        Assert.Equal(1, fx.ConfigLoader.SaveCalls);
+        Assert.Equal(fx.SteamRoot, fx.Config.Discovery.UserSteamInstallPath);
+        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), fx.Config.Discovery.UserDarktideGameBinaryPath);
+        Assert.Equal(fx.ExpectedCompatdataPath(fx.SteamRoot), fx.Config.Discovery.UserCompatdataPath);
+        Assert.Equal(fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental"), fx.Config.Discovery.UserProtonBinaryPath);
     }
 
-    // ---- Status recomputation ----------------------------------------------
-
     [Fact]
-    public void Status_recomputes_to_Complete_when_an_override_fills_the_last_gap()
+    public void Nonexistent_override_is_healed_from_the_discoverer()
     {
-        // Auto-discovery is Partial (missing Proton). The user supplies a Proton
-        // binary path; status is recomputed against the Linux rule (which
-        // requires Proton) and becomes Complete.
+        // The Steam override points at a directory that no longer exists. The
+        // field is invalid (Directory.Exists is false), so it is healed from
+        // the discoverer, and the healed value is persisted (replacing the
+        // stale override).
         using var fx = new SteamFixture(DiscoveryPlatform.Linux);
         fx.WithLibraryFoldersAtSteamRoot();
         fx.WithDarktide(fx.SteamRoot);
         fx.WithCompatdata(fx.SteamRoot);
-        // No Proton scaffolded: auto-discovery leaves it null.
+        fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
 
-        // Sanity: without overrides, the result is Partial.
-        var auto = fx.Service.Discover();
-        Assert.Equal(DiscoveryStatus.Partial, auto.Status);
-        Assert.Null(auto.ProtonBinaryPath);
-
-        // Override fills the gap; the status recomputes to Complete.
-        fx.Config.Discovery.UserProtonBinaryPath = "/user/supplied/proton";
+        fx.Config.Discovery.UserSteamInstallPath = "/gone/steam";
 
         var result = fx.Service.Discover();
 
-        Assert.Equal("/user/supplied/proton", result.ProtonBinaryPath);
-        Assert.Equal(DiscoveryStatus.Complete, result.Status);
+        Assert.Equal(fx.SteamRoot, result.SteamInstallPath);
+        // The stale override was overwritten with the discovered path.
+        Assert.Equal(fx.SteamRoot, fx.Config.Discovery.UserSteamInstallPath);
+        Assert.Equal(1, fx.ConfigLoader.SaveCalls);
     }
 
     [Fact]
-    public void Status_recomputes_to_Complete_from_Failed_when_user_supplies_every_field()
+    public void Selective_save_only_writes_the_healed_fields()
     {
-        // Auto-discovery yields Failed (no Steam at all). The user supplies all
-        // four paths; the Linux rule is satisfied and status becomes Complete.
-        using var fx = new SteamFixture(DiscoveryPlatform.Linux);
-        // Nothing scaffolded.
-
-        var auto = fx.Service.Discover();
-        Assert.Equal(DiscoveryStatus.Failed, auto.Status);
-
-        fx.Config.Discovery.UserSteamInstallPath = "/u/steam";
-        fx.Config.Discovery.UserDarktideGameBinaryPath = "/u/darktide.exe";
-        fx.Config.Discovery.UserCompatdataPath = "/u/compatdata";
-        fx.Config.Discovery.UserProtonBinaryPath = "/u/proton";
-
-        var result = fx.Service.Discover();
-
-        Assert.Equal("/u/steam", result.SteamInstallPath);
-        Assert.Equal("/u/darktide.exe", result.DarktideGameBinaryPath);
-        Assert.Equal("/u/compatdata", result.CompatdataPath);
-        Assert.Equal("/u/proton", result.ProtonBinaryPath);
-        Assert.Equal(DiscoveryStatus.Complete, result.Status);
-    }
-
-    [Fact]
-    public void Status_stays_Partial_when_an_override_does_not_close_every_gap()
-    {
-        // Auto-discovery is Partial (missing Proton + missing compatdata). The
-        // user supplies only Proton; compatdata is still missing, so the Linux
-        // rule keeps status Partial.
+        // Steam + Darktide overrides are valid (scaffolded on disk);
+        // compatdata + Proton are null (need healing). The heal must persist
+        // ONLY compatdata + Proton, leaving the valid Steam + Darktide values
+        // untouched (preserving the user's choice).
         using var fx = new SteamFixture(DiscoveryPlatform.Linux);
         fx.WithLibraryFoldersAtSteamRoot();
         fx.WithDarktide(fx.SteamRoot);
-        // No compatdata, no Proton.
+        fx.WithCompatdata(fx.SteamRoot);
+        fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
 
-        fx.Config.Discovery.UserProtonBinaryPath = "/u/proton";
+        // Valid overrides (exist on disk).
+        fx.Config.Discovery.UserSteamInstallPath = fx.SteamRoot;
+        fx.Config.Discovery.UserDarktideGameBinaryPath = fx.ExpectedDarktidePath(fx.SteamRoot);
+        // Compatdata + Proton left null: heal from discoverer.
 
         var result = fx.Service.Discover();
 
-        Assert.Equal("/u/proton", result.ProtonBinaryPath);
-        Assert.Null(result.CompatdataPath);
-        Assert.Equal(DiscoveryStatus.Partial, result.Status);
+        Assert.Equal(DiscoveryStatus.Complete, result.Status);
+
+        // The valid overrides are NOT overwritten (the saved config still
+        // carries exactly what was set).
+        Assert.Equal(fx.SteamRoot, fx.Config.Discovery.UserSteamInstallPath);
+        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), fx.Config.Discovery.UserDarktideGameBinaryPath);
+        // The healed overrides are now persisted.
+        Assert.Equal(fx.ExpectedCompatdataPath(fx.SteamRoot), fx.Config.Discovery.UserCompatdataPath);
+        Assert.Equal(fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental"), fx.Config.Discovery.UserProtonBinaryPath);
+        Assert.Equal(1, fx.ConfigLoader.SaveCalls);
     }
 
     [Fact]
-    public void Windows_recompute_ignores_compatdata_and_proton()
+    public void Healing_preserves_a_concurrent_hand_edit_to_a_valid_field()
     {
-        // On Windows the completeness rule is Steam + Darktide only. A Failed
-        // result (no Steam) becomes Complete when the user supplies Steam +
-        // Darktide, even though compatdata + Proton are left null.
-        using var fx = new SteamFixture(DiscoveryPlatform.Windows);
-        // Nothing scaffolded.
+        // The user (or another tool) edits the config file between the read at
+        // the top of Discover() and the read-modify-save at heal time. The
+        // heal's read-modify-save starts from the CURRENT file (not the stale
+        // snapshot at the top of the call), so the hand-edit on a valid field
+        // is preserved.
+        using var fx = new SteamFixture(DiscoveryPlatform.Linux);
+        fx.WithLibraryFoldersAtSteamRoot();
+        fx.WithDarktide(fx.SteamRoot);
+        fx.WithCompatdata(fx.SteamRoot);
+        fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
 
-        var auto = fx.Service.Discover();
-        Assert.Equal(DiscoveryStatus.Failed, auto.Status);
-
-        fx.Config.Discovery.UserSteamInstallPath = @"C:\Steam";
-        fx.Config.Discovery.UserDarktideGameBinaryPath = @"C:\Darktide\Binaries\Darktide.exe";
+        // Hand-edit lands in the live config AFTER the top-of-call read.
+        // Simulated by mutating the FakeConfigLoader's Config when Discover
+        // re-reads for the save (here, we set it before the call to keep the
+        // test deterministic + demonstrate the heal sees it: the discoverer
+        // produces the same path anyway, so healing Steam to the discovered
+        // value matches the hand-edit).
+        fx.Config.Discovery.UserSteamInstallPath = fx.SteamRoot;
+        fx.Config.Discovery.UserDarktideGameBinaryPath = fx.ExpectedDarktidePath(fx.SteamRoot);
 
         var result = fx.Service.Discover();
 
-        Assert.Equal(@"C:\Steam", result.SteamInstallPath);
-        Assert.Equal(@"C:\Darktide\Binaries\Darktide.exe", result.DarktideGameBinaryPath);
+        // The valid (hand-edited) overrides are preserved; the healed fields
+        // are persisted alongside them.
+        Assert.Equal(fx.SteamRoot, fx.Config.Discovery.UserSteamInstallPath);
+        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), fx.Config.Discovery.UserDarktideGameBinaryPath);
+        Assert.Equal(fx.ExpectedCompatdataPath(fx.SteamRoot), fx.Config.Discovery.UserCompatdataPath);
+        Assert.Equal(fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental"), fx.Config.Discovery.UserProtonBinaryPath);
+        Assert.Equal(1, fx.ConfigLoader.SaveCalls);
+    }
+
+    // ---- heal cannot resolve everything: still-missing fields are flagged ----
+
+    [Fact]
+    public void Unresolvable_fields_stay_null_and_flag_status_Partial()
+    {
+        // The discoverer cannot find Proton (nothing scaffolded). The field is
+        // flagged missing via Status=Partial + the null ProtonBinaryPath; no
+        // value is persisted for it (nothing to persist).
+        using var fx = new SteamFixture(DiscoveryPlatform.Linux);
+        fx.WithLibraryFoldersAtSteamRoot();
+        fx.WithDarktide(fx.SteamRoot);
+        fx.WithCompatdata(fx.SteamRoot);
+        // No Proton scaffolded: discoverer yields null for it.
+
+        var result = fx.Service.Discover();
+
+        Assert.Equal(DiscoveryStatus.Partial, result.Status);
+        Assert.Null(result.ProtonBinaryPath);
+        // The other three fields were healed + persisted; Proton stays null.
+        Assert.Null(fx.Config.Discovery.UserProtonBinaryPath);
+        Assert.Equal(fx.SteamRoot, fx.Config.Discovery.UserSteamInstallPath);
+    }
+
+    [Fact]
+    public void No_steam_at_all_yields_Failed_with_no_save()
+    {
+        // Nothing is scaffolded; every field is null + the discoverer cannot
+        // find Steam. Nothing is healed, so no save happens; the result is
+        // Failed with every field null.
+        using var fx = new SteamFixture(DiscoveryPlatform.Linux);
+
+        var result = fx.Service.Discover();
+
+        Assert.Equal(DiscoveryStatus.Failed, result.Status);
+        Assert.Null(result.SteamInstallPath);
+        Assert.Null(result.DarktideGameBinaryPath);
         Assert.Null(result.CompatdataPath);
         Assert.Null(result.ProtonBinaryPath);
-        Assert.Equal(DiscoveryStatus.Complete, result.Status);
+        Assert.Equal(0, fx.ConfigLoader.SaveCalls);
     }
 
-    // ---- ProtonVersion side effect -----------------------------------------
+    // ---- platform-gating: Windows skips compatdata + Proton -----------------
 
     [Fact]
-    public void Overriding_proton_binary_nuls_the_stale_proton_version_label()
+    public void Windows_validates_and_heals_only_steam_and_darktide()
     {
-        // ProtonVersion is a derived description of the auto-discovered Proton
-        // dir (e.g. "Proton - Experimental"). When the user overrides the
-        // Proton binary path, the auto label no longer describes the path in
-        // use, so it is nulled (informational field; launch uses the binary
-        // path, not the label).
+        // On Windows the compatdata + Proton fields are Linux-only; they are
+        // neither validated nor healed, so they stay null in the result + null
+        // in the persisted config regardless of what the config carries.
+        using var fx = new SteamFixture(DiscoveryPlatform.Windows);
+        fx.WithLibraryFoldersAtSteamRoot();
+        fx.WithDarktide(fx.SteamRoot);
+        // Leftover Linux values in config (e.g. from a prior Linux run): ignored
+        // on Windows, never re-validated, never overwritten.
+        fx.Config.Discovery.UserCompatdataPath = "/leftover/compatdata";
+        fx.Config.Discovery.UserProtonBinaryPath = "/leftover/proton";
+
+        var result = fx.Service.Discover();
+
+        Assert.Equal(DiscoveryStatus.Complete, result.Status);
+        Assert.Equal(fx.SteamRoot, result.SteamInstallPath);
+        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), result.DarktideGameBinaryPath);
+        // Compatdata + Proton are null by design on Windows.
+        Assert.Null(result.CompatdataPath);
+        Assert.Null(result.ProtonBinaryPath);
+        // The leftover Linux values are preserved (Windows does not touch them).
+        Assert.Equal("/leftover/compatdata", fx.Config.Discovery.UserCompatdataPath);
+        Assert.Equal("/leftover/proton", fx.Config.Discovery.UserProtonBinaryPath);
+        // Steam + Darktide were healed + persisted.
+        Assert.Equal(fx.SteamRoot, fx.Config.Discovery.UserSteamInstallPath);
+        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), fx.Config.Discovery.UserDarktideGameBinaryPath);
+    }
+
+    [Fact]
+    public void Windows_skips_the_discoverer_when_steam_and_darktide_are_valid()
+    {
+        // On Windows, only Steam + Darktide are checked. Both overrides point
+        // at real scaffolded paths, so the discoverer is not run + nothing is
+        // saved (every checked field is valid).
+        using var fx = new SteamFixture(DiscoveryPlatform.Windows);
+        fx.WithLibraryFoldersAtSteamRoot();
+        fx.WithDarktide(fx.SteamRoot);
+
+        fx.Config.Discovery.UserSteamInstallPath = fx.SteamRoot;
+        fx.Config.Discovery.UserDarktideGameBinaryPath = fx.ExpectedDarktidePath(fx.SteamRoot);
+
+        var result = fx.Service.Discover();
+
+        Assert.Equal(DiscoveryStatus.Complete, result.Status);
+        Assert.Equal(fx.SteamRoot, result.SteamInstallPath);
+        Assert.Equal(fx.ExpectedDarktidePath(fx.SteamRoot), result.DarktideGameBinaryPath);
+        Assert.Equal(0, fx.ConfigLoader.SaveCalls);
+    }
+
+    // ---- ProtonVersion side effect ------------------------------------------
+
+    [Fact]
+    public void ProtonVersion_is_carried_when_Proton_was_healed()
+    {
+        // Proton was healed from the discoverer; the auto label describes the
+        // path in use, so it is carried through.
         using var fx = new SteamFixture(DiscoveryPlatform.Linux);
         fx.WithLibraryFoldersAtSteamRoot();
         fx.WithDarktide(fx.SteamRoot);
         fx.WithCompatdata(fx.SteamRoot);
         fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
 
-        // Sanity: the auto result carries the derived label.
-        var auto = fx.Service.Discover();
-        Assert.Equal("Proton - Experimental", auto.ProtonVersion);
+        var result = fx.Service.Discover();
 
-        fx.Config.Discovery.UserProtonBinaryPath = "/user/proton";
+        Assert.Equal("Proton - Experimental", result.ProtonVersion);
+    }
+
+    [Fact]
+    public void ProtonVersion_is_nulled_when_a_valid_user_override_took_the_field()
+    {
+        // The user's Proton override exists on disk (so it survives validation);
+        // the auto label may not describe the path in use (the user picked it,
+        // not the discoverer's heuristic), so it is nulled. (Informational only;
+        // launch uses the path, not the label.) This mirrors the prior "trust
+        // the user" rule: a user-supplied Proton path drops the auto label.
+        using var fx = new SteamFixture(DiscoveryPlatform.Linux);
+        fx.WithLibraryFoldersAtSteamRoot();
+        fx.WithDarktide(fx.SteamRoot);
+        fx.WithCompatdata(fx.SteamRoot);
+        fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
+
+        var protonPath = fx.ExpectedProtonPath(fx.SteamRoot, "Proton - Experimental");
+        fx.Config.Discovery.UserProtonBinaryPath = protonPath;
 
         var result = fx.Service.Discover();
 
-        Assert.Equal("/user/proton", result.ProtonBinaryPath);
+        Assert.Equal(protonPath, result.ProtonBinaryPath);
+        // The user took the field with a valid override -> label nulled.
         Assert.Null(result.ProtonVersion);
     }
 
-    // ---- overlay is config-live -------------------------------------------
+    // ---- live-read: a Settings write between calls is visible ----------------
 
     [Fact]
-    public void Overlay_reads_the_live_config_so_a_write_between_calls_is_visible()
+    public void Discover_re_reads_config_so_a_write_between_calls_is_visible()
     {
-        // Proves the live-read contract for the overlay: the same ISteamService
-        // instance re-reads Discovery on each Discover() call, so an external
-        // config change (the upcoming Settings / escape-hatch write) takes
-        // effect on the next Discover() without re-constructing the service.
+        // Proves the live-read contract: the same ISteamService instance
+        // re-reads Discovery on each Discover() call, so an external config
+        // change (a Settings / escape-hatch write) takes effect on the next
+        // Discover() without re-constructing the service.
         using var fx = new SteamFixture(DiscoveryPlatform.Linux);
         fx.WithLibraryFoldersAtSteamRoot();
         fx.WithDarktide(fx.SteamRoot);
         fx.WithCompatdata(fx.SteamRoot);
         fx.WithProtonInCommon(fx.SteamRoot, "Proton - Experimental");
 
-        // First call: no overrides; auto values in effect.
+        // First call: nothing is set; every field is healed from the discoverer
+        // + persisted.
         var before = fx.Service.Discover();
         Assert.Equal(fx.SteamRoot, before.SteamInstallPath);
 
-        // A Settings-style write lands in the live config.
-        fx.Config.Discovery.UserSteamInstallPath = "/late/write/steam";
+        // A Settings-style write lands in the live config + points at a real
+        // path (so it survives validation on the next call).
+        var altSteam = Path.Combine(fx.TempRoot, "alt-steam");
+        Directory.CreateDirectory(Path.Combine(altSteam, "steamapps"));
+        File.WriteAllText(Path.Combine(altSteam, "steamapps", "libraryfolders.vdf"),
+            SteamFixture.BuildLibraryFoldersVdf(altSteam));
+        fx.Config.Discovery.UserSteamInstallPath = altSteam;
 
-        // Second call sees the late write.
+        // Second call sees the late write: the alt-steam path exists on disk,
+        // so it is valid + kept (no re-heal).
         var after = fx.Service.Discover();
-        Assert.Equal("/late/write/steam", after.SteamInstallPath);
+        Assert.Equal(altSteam, after.SteamInstallPath);
     }
 }

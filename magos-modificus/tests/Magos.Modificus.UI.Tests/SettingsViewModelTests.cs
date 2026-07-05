@@ -80,6 +80,42 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public void Discovery_rows_are_pre_filled_after_startup_Discover_populates_config()
+    {
+        // End-to-end (no real Steam layout, just the persistence contract): the
+        // startup Discover populates the persisted overrides (simulating the
+        // composition root's startup call writing the healed values), and the
+        // Settings VM, which reads the live config, shows them rather than
+        // blanks. This is the "Settings shows non-blank fields" guarantee from
+        // the validate + heal + persist pipeline (Track C review fix).
+        var loader = new FakeConfigLoader { Config = MagosConfig.CreateDefault() };
+
+        // Simulate the startup Discover having healed every field + persisted it
+        // (a single Save carrying the four writes). The persisted values are
+        // what the Settings VM should show.
+        var healed = new DiscoveryConfig
+        {
+            UserSteamInstallPath = "/resolved/steam",
+            UserDarktideGameBinaryPath = "/resolved/darktide.exe",
+            UserCompatdataPath = "/resolved/compatdata",
+            UserProtonBinaryPath = "/resolved/proton",
+        };
+        var persisted = MagosConfig.CreateDefault();
+        persisted.Discovery = healed;
+        loader.Save(persisted);
+
+        var vm = new SettingsViewModel(loader, new FakeModRepository(), Localization, Logger);
+
+        Assert.Equal("/resolved/steam", Row(vm, "SteamInstallPath").Value);
+        Assert.Equal("/resolved/darktide.exe", Row(vm, "DarktideGameBinaryPath").Value);
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.Equal("/resolved/compatdata", Row(vm, "CompatdataPath").Value);
+            Assert.Equal("/resolved/proton", Row(vm, "ProtonBinaryPath").Value);
+        }
+    }
+
+    [Fact]
     public void Discovery_rows_match_the_platforms_expected_fields_in_catalog_order()
     {
         // Platform-gated: Windows renders only the Steam install + Darktide

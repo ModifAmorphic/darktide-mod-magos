@@ -67,8 +67,13 @@ public interface IModImportService
     /// <param name="version">The raw release tag string (e.g. <c>"1.2"</c>,
     /// <c>"v2.0.1"</c>); the version's dedup key within the container. Pass
     /// <see cref="string.Empty"/> for an untracked/local import with no tag.</param>
-    /// <returns>The <c>(containerId, versionString)</c> pair the caller feeds to
-    /// <c>IProfileService.AddMod(profileId, containerId, policy)</c>.</returns>
+    /// <returns>The <c>(containerId, versionId)</c> pair the caller feeds to
+    /// <c>IProfileService.AddMod(profileId, containerId, policy)</c>.
+    /// <c>versionId</c> is the imported version's opaque on-disk folder id (a
+    /// <see cref="ModVersion.Folder"/> value) so the caller can construct a
+    /// <see cref="PinnedPolicy"/> pinning the profile entry to exactly the
+    /// version just imported. The display tag (<see cref="ModVersion.VersionString"/>)
+    /// is recorded in the container manifest; it is not returned here.</returns>
     /// <exception cref="ArgumentException">Thrown if <paramref name="modName"/>
     /// is null/whitespace, or is not a single direct child of the mod root
     /// (it contains path separators, <c>..</c>, or is an absolute path).</exception>
@@ -82,7 +87,7 @@ public interface IModImportService
     /// delete, extract).</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown if a <c>.zip</c>
     /// archive is malformed.</exception>
-    (Guid ContainerId, string VersionString) Import(string sourcePath, string modName, ModSource source, string version);
+    (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version);
 
     /// <summary>
     /// Peeks the mod's base folder name from a source <em>without</em> creating

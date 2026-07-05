@@ -210,12 +210,25 @@ internal sealed class FakeProcessLookup : IProcessLookup
 /// Minimal <see cref="IConfigLoader"/> double for the steam tests: serves a
 /// mutable <see cref="MagosConfig"/> (so overlay tests can set
 /// <see cref="DiscoveryConfig"/> user overrides before calling
-/// <see cref="ISteamService.Discover"/>). <see cref="Save"/> is unused by
-/// discovery but implemented to satisfy the interface.
+/// <see cref="ISteamService.Discover"/>). <see cref="Save"/> mirrors the real
+/// loader's round-trip: it promotes the written config to the live snapshot, so
+/// the next <see cref="Load"/> returns what was saved (and a read-modify-save
+/// in <see cref="SteamService.Discover"/> sees the prior Save's effect).
 /// </summary>
 internal sealed class FakeConfigLoader : IConfigLoader
 {
     public MagosConfig Config { get; set; } = MagosConfig.CreateDefault();
+    public int SaveCalls { get; private set; }
+    public MagosConfig? LastSaved { get; private set; }
+
     public MagosConfig Load() => Config;
-    public void Save(MagosConfig config) => Config = config;
+
+    public void Save(MagosConfig config)
+    {
+        SaveCalls++;
+        LastSaved = config;
+        // Promote to the live Config so a subsequent Load returns the saved
+        // state (mirrors the real loader's round-trip through the disk file).
+        Config = config;
+    }
 }

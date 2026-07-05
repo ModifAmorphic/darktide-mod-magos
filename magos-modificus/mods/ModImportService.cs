@@ -54,7 +54,7 @@ internal sealed class ModImportService : IModImportService
     }
 
     /// <inheritdoc />
-    public (Guid ContainerId, string VersionString) Import(
+    public (Guid ContainerId, string VersionId) Import(
         string sourcePath,
         string modName,
         ModSource source,
@@ -140,12 +140,20 @@ internal sealed class ModImportService : IModImportService
             }
         }
 
-        _repo.AddVersion(container.Id, version, Populate);
+        var updated = _repo.AddVersion(container.Id, version, Populate);
+
+        // Resolve the just-imported version's opaque folder id so the caller can
+        // pin to it. AddVersion is an upsert by VersionString: a new tag creates
+        // a fresh folder + entry; a re-import of the same tag reuses the
+        // existing entry (refreshed files, unchanged Folder). Either way the
+        // entry with this VersionString is the one we just imported.
+        var versionId = updated.Versions.First(v =>
+            string.Equals(v.VersionString, version, StringComparison.Ordinal)).Folder;
 
         _logger.LogInformation(
-            "Imported {Mod} (base '{Base}', source={Source}, version={Version}) onto container {Id}",
-            modName, baseName, source, version, container.Id);
-        return (container.Id, version);
+            "Imported {Mod} (base '{Base}', source={Source}, version={Version}) onto container {Id} (folder {Folder})",
+            modName, baseName, source, version, container.Id, versionId);
+        return (container.Id, versionId);
     }
 
     /// <inheritdoc />
