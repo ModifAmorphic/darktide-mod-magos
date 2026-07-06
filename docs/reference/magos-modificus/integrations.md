@@ -138,8 +138,11 @@ public sealed record NexusRateLimits(
 
 `NexusRateLimits` is parsed from the `x-rl-*` response headers (mirrors NMA's
 `ResponseMetadata.FromHttpHeaders`). Missing/unparseable headers yield `0` /
-`null` for that field (never throws). Stage 4 (update-check) consumes them to
-back off; Stage 2 just parses + logs them.
+`null` for that field (never throws). The update check inspects them after its
+one call to flag the result rate-limited when a window is exhausted; every other
+call just carries and logs them. For the full rate-limiting strategy (what Magos
+observes, how it reacts, what it does not do, and what consumes the budget), see
+[Nexus API rate limiting](../../architecture/nexus-rate-limiting.md).
 
 ### Key Nexus types
 
