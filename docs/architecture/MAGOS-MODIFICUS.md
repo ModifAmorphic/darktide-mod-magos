@@ -391,7 +391,9 @@ regardless of profile size; `PinnedPolicy`, `UntrackedSource`, and
 exhausted daily or hourly quota (and the limit was actually reported, guarding
 against the all-zero header-absent fallback), the result is flagged
 `RateLimited` and Stage 5 surfaces a "check incomplete" indicator rather than
-"all up to date."
+"all up to date." The full rate-limiting strategy (what Magos observes, how it
+reacts, what it does not do, and what consumes the budget) is documented in
+[Nexus API rate limiting](nexus-rate-limiting.md).
 
 The result (`UpdateCheckResult` with per-mod `ModUpdateInfo`) is published via
 `LastResult` + a `CheckCompleted` event for Stage 5's badges to consume without
