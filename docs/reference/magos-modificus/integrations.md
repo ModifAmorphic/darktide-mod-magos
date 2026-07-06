@@ -313,10 +313,13 @@ nxm handler passes `null`).
    **No degraded fallback:** if the metadata fetch fails, the acquisition fails
    with a clear error (a mod stored under its numeric id as a name is worse than
    a clean failure message).
-3. **Download** from the CDN URI to a temp file (`Path.GetTempFileName()`) using
-   a plain `HttpClient` from `IHttpClientFactory` + the 81920-byte buffered
-   copy + `IProgress<long>` pattern from `GitHubClient.DownloadAssetAsync`. The
-   temp file is deleted once Import returns (always, success or failure; no
+3. **Download** from the CDN URI to a `.zip`-named temp file
+   (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip")`)
+   using a plain `HttpClient` from `IHttpClientFactory` + the 81920-byte
+   buffered copy + `IProgress<long>` pattern from
+   `GitHubClient.DownloadAssetAsync`. The `.zip` extension is required so
+   `IModImportService` recognizes the file as an archive (detects by extension).
+   The temp file is deleted once Import returns (always, success or failure; no
    partial state).
 4. **Import** via `IModImportService.Import(tempPath, modName, new NexusSource
    { ModId = modId }, version)`. The import service handles find-or-create-
@@ -347,9 +350,12 @@ The handler's pre-flight checks + flow:
    `ShowAlertAsync("Nexus not configured", ...)`.
 2. **Active-profile check**: `IProfileSession.ActiveProfileId != null`. null ->
    `ShowAlertAsync("No active profile", ...)`.
-3. **Acquire + register**: `AcquireFromNexusAsync(url.Game, url.ModId,
-   url.FileId, url.Key, url.Expires, ct: ct)` then
-   `IProfileService.AddMod(profileId, containerId, ModVersionPolicy.Latest)`.
+3. **Acquire + register + refresh**: `AcquireFromNexusAsync(url.Game,
+   url.ModId, url.FileId, url.Key, url.Expires, ct: ct)` then
+   `IProfileService.AddMod(profileId, containerId, ModVersionPolicy.Latest)`,
+   then `ModListViewModel.Reload()` on the UI thread (via the handler's
+   `refreshModList` callback) so the new mod appears immediately without a
+   profile switch.
 4. **On failure** (not cancellation): `ShowAlertAsync("Download failed",
    ex.Message)`. Cancellation propagates as `OperationCanceledException`.
 

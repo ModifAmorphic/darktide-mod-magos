@@ -321,236 +321,49 @@ detection. The Settings window's Storage section is the UI for it.
 
 ## nxm:// scheme handler
 
-The `nxm://` URL scheme is how the "Mod manager download" button on a Nexus Mods
-file page reaches a mod manager, and how an OAuth callback from a browser-based
-authorize flow reaches it. Magos registers a tiny OS-level handler that captures
-those clicks and relays them to the running app. Stage 1 of Phase 4 ships the
-plumbing (the handler exe, the IPC channel, the URL parser and router, and the OS
-registration service); Stage 2 (OAuth) and Stage 3 (mod download and acquisition)
-drop real handlers into the routed seams.
+The `nxm://` URL scheme is how the "Mod manager download" button on a Nexus
+Mods file page reaches Magos. Magos registers a tiny native-AOT handler exe
+that the OS invokes on each `nxm://` click; it forwards the raw URL over a
+named pipe to the running app (or cold-starts Magos and retries), where the URL
+is parsed, classified, and dispatched to a pluggable handler. Single-instance is
+enforced by process enumeration before the pipe bind, and the pipe bind is a
+separate, non-fatal check that degrades gracefully; the OS registration is
+auto-applied on startup. Full detail (the two-process model, the cold-start
+path, single-instance enforcement, pipe-bind behavior, OS registration, and URL
+routing) is in [nxm:// scheme handler architecture](nxm-scheme-handler.md); the
+public surface is in [nxm reference](../reference/magos-modificus/nxm.md).
 
-The two reference implementations in the ecosystem (NexusMods.App and
-ModOrganizer2) both use a small separate handler exe rather than the main app,
-because the OS invokes the handler on every `nxm://` click and the main app's
-startup is too heavy for a relay-then-exit, and spawning a second full app
-instance to do single-instance detection and IPC is fragile given Magos's
-singleton services (`IModRepository` scans and writes manifests; `ConfigLoader`
-does atomic config writes). Magos follows the same pattern.
+## Nexus authentication
 
-### Two-process model: dumb handler exe, smart IPC server
+Nexus Mods auth has two user-facing paths, both surfaced in a separate
+Integrations dialog: **OAuth** (the primary, a loopback OIDC flow via
+`Duende.IdentityModel.OidcClient`, RFC 8252) and **API key** (the alternative,
+validated against `GET /v1/users/validate.json`). The user's explicit choice is
+stored in `NexusConfig.AuthMethod` (`None` / `OAuth` / `ApiKey`); the v1 client's
+auth factory is selected by that flag with no fallback, and switching methods
+clears the other method's credentials. OAuth tokens are persisted in `MagosConfig`
+with 401-reactive refresh. Full detail (the loopback flow, the Integrations
+dialog, auth-factory selection, token persistence, the OAuth client_id, rate
+limits, and the v1 endpoints) is in
+[Nexus authentication architecture](nexus-authentication.md); the public surface
+is in [integrations reference](../reference/magos-modificus/integrations.md).
 
-Two projects implement the path:
+## Mod acquisition
 
-- **`Magos.NxmHandler`** (`magos-modificus/nxm-handler/`): the OS-registered
-  scheme handler. A native-AOT console exe whose `Program.cs` is one line. It
-  does no parsing and carries no DI graph; it forwards the raw URL string over
-  the fixed named pipe (`Magos.Nxm`), or (cold start) launches Magos and retries
-  the pipe until it comes up. AOT keeps it tiny and fast (tens of ms to start),
-  and the relay + framing + parser stay trim-friendly so the trimmer drops
-  everything else from the handler's closure.
-- **`Magos.Modificus.Nxm`** (`magos-modificus/nxm/`): the library. URL types and
-  parser, length-prefixed IPC framing, the Magos-side IPC server, the
-  single-instance guard, the router and handler seams, the OS registrar, and the
-  testable relay helper the handler exe calls.
-
-The handler is deliberately dumb: it forwards the raw URL, and Magos owns URL
-semantics. This keeps the OS-invoked path fast and puts all routing logic where
-it is unit-testable.
-
-The IPC protocol is one framed UTF-8 message per connection: a 4-byte
-little-endian length prefix plus the URL payload, capped at 8 KiB. The handler
-opens, sends one message, and closes; the server reads one message, routes it,
-and disconnects (reusing the same server instance for the next client, so the
-pipe name stays claimed for the app's lifetime).
-
-### Single-instance: process enumeration, not the pipe bind
-
-Magos enforces single-instance before binding the IPC pipe. The check lives in
-`SingleInstanceGuard` and works by **process enumeration**: it asks
-`Process.GetProcessesByName` for live processes sharing the current process's
-name (excluding self by PID), and throws `NxmSingleInstanceException` if any
-other process remains. The composition root catches the exception and exits
-before any window shows.
-
-This is deliberately decoupled from the pipe bind. The pipe bind is not a
-reliable cross-platform single-instance claim: on Linux the transport is a Unix
-domain socket, and two processes can both bind the same path. A probe-as-client
-(the alternative the original spec considered) works but adds a startup tax on
-Linux because the probe pends when no server exists. Process enumeration directly
-answers "is another Magos already running?", is fast, unprivileged (no
-elevation), and is decoupled from the IPC transport.
-
-Accepted v1 race: two instances starting within milliseconds could both
-enumerate, both see no other, both proceed. For a desktop double-launch (seconds
-apart, not microseconds) this is negligible; a cross-process mutex or lock-file
-on top is not worth the complexity for v1.
-
-### Pipe bind: separate, non-fatal
-
-With single-instance handled separately, the pipe bind is its own check with its
-own graceful outcome. `NxmIpcServer.Bind` runs single-instance first (fatal on
-collision), then constructs the `NamedPipeServerStream`. If construction throws
-`IOException` (a real pipe problem: leftover socket, permissions; not another
-instance, which the first check settled), the server logs a warning and
-**continues running degraded**, with `IsBound` false and no accept loop. nxm
-click-to-download is unavailable that session; everything else (profiles, mods,
-launch) is unaffected. The composition root starts the accept loop only when
-`IsBound` is true.
-
-### Cold-start path
-
-When the handler is invoked and Magos is not running, the handler launches the
-sibling Magos exe (no args) and retries the pipe every 250ms up to 30s. Once
-Magos binds the pipe, the handler connects, delivers the URL, and exits. **Magos
-has no `--nxm` arg and no cold-start branch;** its startup is untouched by
-Stage 1, and the handler owns the entire cold-start orchestration. If the
-sibling Magos exe is missing, the handler logs to stderr and exits non-zero
-without retrying (there is nothing to retry against, and a headless handler
-never raises a desktop dialog).
-
-### OS scheme-handler registration
-
-A single `INxmHandlerRegistrar` interface with two platform implementations,
-selected by runtime OS at DI time (mirroring `IPlatformLaunchStrategy`,
-`IProcessLookup`, and `SteamRegistryReader`):
-
-- **Windows** writes `HKCU\Software\Classes\nxm` (per-user, no elevation) so the
-  OS launches the handler exe for `nxm://` clicks.
-- **Linux** writes `~/.local/share/applications/magos-nxm-handler.desktop` plus a
-  best-effort `xdg-mime default` invocation (the `.desktop` file is the source of
-  truth most desktops honor; a missing `xdg-mime` is logged, not thrown).
-
-Stage 1 ships the **service** only. The user-facing registration behavior (auto
-on first run vs. Settings toggle vs. manual) is deferred to a later stage.
-
-### Stage 2 and Stage 3 seams
-
-The router dispatches parsed mod-download URLs to one handler interface:
-`INxmModDownloadHandler` (mod downloads). Stage 1 ships a no-op default that
-logs the parsed URL at Information; Stage 3 registers a real mod-download
-handler (the acquisition flow downloads via the Nexus client and imports into
-the unified repository). It is drop-in: the no-op default is registered with
-plain `AddSingleton`, and MS DI resolves the last registration, so a later
-`AddSingleton<INxmModDownloadHandler, RealImpl>()` after `AddNxm()` supersedes
-the default.
-
-**Stage 3's handler lives in the UI assembly.** The `NxmModDownloadHandler`
-coordinates UI concerns (the active-profile session, the error dialog, the
-UI-thread marshaling), so it sits in `Magos.Modificus.UI.Nxm` alongside its
-dependencies. The reusable backend core, `IModAcquisitionService` (download +
-extract + place), lives in Integrations and is what the handler calls to do
-the actual work. Placing the handler in Integrations would create a dependency
-cycle (Integrations cannot reference the UI assembly).
-
-**Stage 2 removed the OAuth-callback seam.** Stage 1 originally shipped an
-`INxmOAuthCallbackHandler` for an `nxm://oauth/callback` URL kind, expecting
-the OAuth flow to ride on `nxm://`. Stage 2 corrects that: Nexus OAuth in Magos
-uses a **loopback HTTP redirect** (`http://127.0.0.1:<port>/callback`, the RFC
-8252 standard, MO2's pattern), independent of the `nxm://` handler. The
-`nxm://oauth/callback` URL shape is still recognized by the parser (so it
-parses cleanly rather than classifying as unknown), but the router logs it as
-"handled by the loopback listener, not the nxm handler" and drops it. In normal
-operation no such URL is delivered over IPC because the loopback listener
-receives the callback, not the nxm handler.
-
-### Nexus authentication (Phase 4 Stage 2)
-
-Nexus Mods auth has two user-facing paths, both surfaced in the Integrations
-dialog: **OAuth** (the primary, a loopback OIDC flow via
-`Duende.IdentityModel.OidcClient`) and **API key** (the alternative, validated
-against `GET /v1/users/validate.json`). The user's explicit choice is stored in
-`NexusConfig.AuthMethod` (`None` / `OAuth` / `ApiKey`); there is no fallback.
-Switching methods clears the other method's credentials (clean transition, no
-stale leftovers). Sign-out resets to `None`.
-
-**OAuth (loopback, RFC 8252).** `NexusOAuthTokenStore` owns an `OidcClient`
-configured with `Authority = "https://users.nexusmods.com/oauth"`,
-`ClientId = "magos-modificus"` (a build-time const, not config or env var),
-`Scope = "openid profile email"`, and a `LoopbackBrowser` (an `IBrowser` impl).
-The browser pre-grabs an ephemeral loopback port (exposed as `RedirectUri`),
-the service passes it to `OidcClientOptions.RedirectUri`, OidcClient builds the
-authorize URL with PKCE S256 (PKCE is automatic in OidcClient 7.x; there is no
-`Policy.RequirePKCE` flag), the browser opens it via
-`Process.Start(UseShellExecute=true)` (correct here, opening a URL via the OS
-shell-open), the user consents, the loopback `HttpListener` receives the
-callback, OidcClient exchanges the code for tokens, the store persists them.
-Three-minute flow timeout; on expiry the service surfaces "Login timed out".
-
-**API key.** `NexusAuthService.LoginWithApiKeyAsync` does a speculative write
-(`AuthMethod = ApiKey` + the key) so the v1 client's auth factory picks it up,
-calls `INexusClient.ValidateAsync`, and reverts on failure (the user keeps their
-prior session). On success the display name + premium state come from the
-validate response.
-
-**401-reactive refresh.** The OAuth auth message factory refreshes via the
-token store's `RefreshAsync` (OidcClient's refresh API + persisted new tokens)
-on the first 401, serialized through a semaphore so concurrent 401s coalesce
-into one refresh. The client retries the failed request once with the new
-access token. The API-key factory has no refresh; a 401 surfaces "API key
-invalid/expired" (no OAuth fallback). Refresh is reactive (matches MO2), not
-proactive.
-
-**App-identification headers** on every Nexus request: `Application-Name`,
-`Application-Version`, `Protocol-Version: 1.0.0`, `User-Agent` (the MO2/NMA
-convention).
-
-**Rate limits** are parsed from the `x-rl-*` response headers
-(`x-rl-daily-limit` / `x-rl-daily-remaining` / `x-rl-daily-reset` /
-`x-rl-hourly-limit` / `x-rl-hourly-remaining` / `x-rl-hourly-reset`) into a
-`NexusRateLimits` carried on every `Response<T>`. Stage 4 (update-check)
-consumes them to back off; Stage 2 just parses + logs them. A 429 (or a 403
-with `*-remaining: 0`) throws `NexusRateLimitException`.
-
-**v1 endpoints** (grounded against NMA's `NexusApiClient.cs` + node-nexus-api,
-mirroring that shape; v3 is Experimental for the surfaces we need, so v1 only):
-
-- `GET /v1/users/validate.json` (API-key validate)
-- `GET /oauth/userinfo` on the OAuth base URL (user info)
-- `GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}` (recent updates)
-- `GET /v1/games/{domain}/mods/{modId}/files/{fileId}/download_link.json`
-  (premium download links); same endpoint with `?key={nxmKey}&expires={epoch}`
-  for free users
-- `GET /v1/games/{domain}/mods/{modId}.json` (mod info)
-- `GET /v1/games/{domain}/mods/{modId}/files.json` (mod files; unwrapped from
-  `{"files":[...]}`)
-
-Per-library public surfaces, exact signatures, and DI registration are documented
-in [integrations reference](../reference/magos-modificus/integrations.md) and
-[nxm reference](../reference/magos-modificus/nxm.md).
-
-### Nexus mod acquisition (Phase 4 Stage 3)
-
-When a user clicks "Mod manager download" on a Nexus file page, the Stage 1
-handler exe relays the `nxm://` URL to the running app, the router dispatches
-it, and the Stage 3 `NxmModDownloadHandler` orchestrates the download + import
-into the active profile. The reusable core is `IModAcquisitionService`
-(Integrations), which the handler calls and Stage 5's per-mod update button will
-also call.
-
-**Acquisition flow** (`ModAcquisitionService.AcquireFromNexusAsync`):
-
-1. Resolve download links via `INexusClient.DownloadLinksAsync`. The free-user
-   overload (with `nxmKey` + `nxmExpires` from the URL) is used when both are
-   present; the premium (auth-only) overload otherwise. The **first** CDN link
-   is used (Nexus returns them in priority order).
-2. Resolve metadata: `GetModInfoAsync` for the mod name, `ListModFilesAsync` +
-   match by `fileId` for the version string. **No degraded fallback**: a metadata
-   failure surfaces a clear error and nothing partial lands (a mod stored under
-   its id as a name is worse than a clean failure).
-3. Download to `Path.GetTempFileName()` via a plain `HttpClient` + the 81920-byte
-   buffered copy + `IProgress<long>` pattern. The temp file is always deleted
-   (success or failure).
-4. Import via `IModImportService.Import(tempPath, modName, NexusSource{ModId},
-   version)`, which dedups by `NexusSource.ModId` (find-or-create container) +
-   adds the version + flips `IsLatest`. Returns `(containerId, versionId)`.
-
-**Handler checks** (`NxmModDownloadHandler.HandleAsync`): auth configured
-(`AuthMethod != None`; the nxm key/expires is NOT a substitute for auth) and
-active profile set (`IProfileSession.ActiveProfileId != null`). On success,
-`IProfileService.AddMod(profileId, containerId, ModVersionPolicy.Latest)`. On
-any failure (not cancellation), `IDialogService.ShowAlertAsync` with the error
-message, marshaled to the UI thread via the injectable `invokeOnUi` seam
-(production: `Dispatcher.UIThread.InvokeAsync`).
+When a user clicks "Mod manager download" on Nexus, the
+[nxm handler](nxm-scheme-handler.md) relays the URL and the Stage 3
+`NxmModDownloadHandler` orchestrates the download and import into the active
+profile. The reusable core is `IModAcquisitionService` (Integrations): it
+resolves the CDN download links, fetches mod metadata, downloads to a
+`.zip`-named temp file, and imports via `IModImportService`. The handler (in the
+UI assembly, not Integrations, because it coordinates UI-only services) checks
+auth and an active profile, calls the service, registers the mod with
+`LatestPolicy`, refreshes the mod list, and surfaces errors via
+`ShowAlertAsync`. Stage 5's per-mod update button calls the same service. Full
+detail (the acquisition flow, the handler checks, the UI-assembly placement, and
+startup OS registration) is in [mod acquisition architecture](mod-acquisition.md);
+the public surface is in
+[integrations reference](../reference/magos-modificus/integrations.md).
 
 ## Mod list (main view)
 

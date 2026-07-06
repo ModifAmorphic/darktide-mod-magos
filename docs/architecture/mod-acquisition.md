@@ -1,0 +1,190 @@
+# Mod acquisition: architecture
+
+When a user clicks "Mod manager download" on a Nexus file page, the Stage 1
+[handler exe](nxm-scheme-handler.md) relays the `nxm://` URL to the running
+app, the router dispatches it, and the Stage 3 `NxmModDownloadHandler`
+orchestrates the download and import into the active profile. The reusable
+core is `IModAcquisitionService` (Integrations), which the handler calls and
+which Stage 5's per-mod update button will also call without retooling.
+
+This stage is backend-only except one `IDialogService.ShowAlertAsync` call for
+error feedback. No progress bar, no notification system, no download-history
+panel (those are Stage 5's UI presentation). On success, the mod appears in the
+profile's mod list.
+
+> Public surface, exact signatures, and DI registration are documented in the
+> [integrations reference](../reference/magos-modificus/integrations.md). This
+> doc covers the architecture and the why.
+
+## Architecture
+
+```
+nxm:// URL  (user clicked "Mod manager download" on Nexus)
+    │
+    ▼
+Stage 1 handler exe  →  IPC  →  NxmRouter  →  INxmModDownloadHandler
+                                                    │
+                    ┌───────────────────────────────┘
+                    ▼
+            NxmModDownloadHandler  (in the UI assembly)
+                │
+                ├─ check: auth configured? (NexusAuthMethod != None)
+                │     no → IDialogService.ShowAlertAsync("Configure Nexus first"); return
+                ├─ check: active profile? (IProfileSession.ActiveProfileId)
+                │     no → ShowAlertAsync("No active profile"); return
+                ├─ call IModAcquisitionService.AcquireFromNexusAsync(url)
+                │     │
+                │     ├─ INexusClient.DownloadLinksAsync  (CDN URL; premium or free-user overload)
+                │     ├─ INexusClient.GetModInfoAsync     (mod name)
+                │     ├─ INexusClient.ListModFilesAsync   (file version, matched by fileId)
+                │     ├─ download the .zip to temp  (IProgress<long>)
+                │     └─ IModImportService.Import(temp.zip, name, NexusSource{ModId}, version)
+                │           → (containerId, versionId)
+                │
+                ├─ IProfileService.AddMod(profileId, containerId, LatestPolicy)
+                └─ ModListViewModel.Reload() on the UI thread  (mod appears in the list)
+
+                on any failure (not cancellation) → ShowAlertAsync("Download failed: <error>")
+```
+
+## `IModAcquisitionService`: the reusable core
+
+Lives in the Integrations library (alongside `INexusClient`, which it
+consumes). The interface accommodates both Nexus and GitHub, but only the
+Nexus method is implemented in Stage 3; GitHub acquisition (`AcquireFromGitHubAsync`)
+is deferred to Stage 5 (no trigger in Stage 3, no "browse GitHub releases" UI).
+
+```csharp
+public interface IModAcquisitionService
+{
+    Task<(Guid ContainerId, string VersionId)> AcquireFromNexusAsync(
+        string gameDomain, int modId, int fileId,
+        string? nxmKey = null, long? nxmExpires = null,
+        IProgress<long>? progress = null, CancellationToken ct = default);
+}
+```
+
+The `IProgress<long>` parameter is Stage 5's per-row progress hook (Stage 3's
+nxm handler passes `null`). The caller handles profile registration; the
+service does download plus Import and returns the `(containerId, versionId)`.
+
+The service is a singleton (no per-call state; a thin orchestrator over the
+client and import service). It resolves `INexusClient`, `IModImportService`,
+and `IHttpClientFactory` (for the raw CDN download) from the container.
+
+## Acquisition flow
+
+`ModAcquisitionService.AcquireFromNexusAsync`:
+
+1. **Resolve download links** via `INexusClient.DownloadLinksAsync`. Choose the
+   overload: if `nxmKey` and `nxmExpires` are both present, the **free-user**
+   overload (the per-file token from the `nxm://` URL); otherwise the
+   **premium** (auth-only) overload. The auth header is applied by the client's
+   [auth factory](nexus-authentication.md). Use the **first** CDN link
+   (`result.Data[0].Uri`); Nexus returns them in priority order (this is what
+   every client does).
+2. **Resolve metadata** for the Import: `GetModInfoAsync` for the mod name,
+   `ListModFilesAsync` and match by `fileId` for the version string. These are
+   2 API calls (3 total per acquisition, within rate limits). **No degraded
+   fallback:** if the metadata fetch fails, the acquisition fails with a clear
+   error (a mod stored under its numeric id as a name is worse than a clean
+   failure message) and nothing partial lands.
+3. **Download** from the CDN URI to a `.zip`-named temp file
+   (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip")`)
+   using a plain `HttpClient` from `IHttpClientFactory` plus the 81920-byte
+   buffered copy and `IProgress<long>` pattern from
+   `GitHubClient.DownloadAssetAsync`. The `.zip` extension is required so
+   `IModImportService` recognizes the file as an archive (it detects by
+   extension; a `.tmp` would be treated as a folder path). The temp file is
+   deleted once Import returns, always, success or failure (no partial state).
+4. **Import** via `IModImportService.Import(tempPath, modName, new NexusSource
+   { ModId = modId }, version)`. The import service validates the `.zip`
+   structure (single base folder plus matching `<base>.mod` descriptor),
+   handles find-or-create-container (dedup by `NexusSource.ModId`) plus
+   add-version plus the `IsLatest` flip, and extracts into
+   `<ModsFolder>/<containerUUID>/<versionFolder>/<baseFolder>/`.
+5. **Return** `(containerId, versionId)`.
+
+The CDN download uses a plain `HttpClient` (not the typed `INexusClient`)
+because the CDN URL is an absolute path with the per-file token in the query
+string (free users) or just the session auth (premium); no base address or
+Nexus-specific headers are needed.
+
+## `NxmModDownloadHandler`
+
+The real `INxmModDownloadHandler` that replaces Stage 1's no-op default. The
+handler's pre-flight checks and flow:
+
+1. **Auth check** (live config read): `NexusConfig.AuthMethod != None`
+   (required for every download; the `nxm://` key/expires is the per-file
+   token for the free-user endpoint, **not** a substitute for auth). On `None`,
+   `ShowAlertAsync("Nexus not configured", ...)` and return.
+2. **Active-profile check**: `IProfileSession.ActiveProfileId != null`. On
+   null, `ShowAlertAsync("No active profile", ...)` and return.
+3. **Acquire, register, and refresh**: call
+   `AcquireFromNexusAsync(url.Game, url.ModId, url.FileId, url.Key, url.Expires,
+   ct: ct)`, then `IProfileService.AddMod(profileId, containerId,
+   ModVersionPolicy.Latest)`, then `ModListViewModel.Reload()` on the UI thread
+   (via the handler's `refreshModList` callback) so the new mod appears
+   immediately without a profile switch.
+4. **On failure** (not cancellation): `ShowAlertAsync("Download failed",
+   ex.Message)`. Cancellation propagates as `OperationCanceledException`.
+
+**Policy on `AddMod`:** `LatestPolicy` (new mods auto-track the newest
+downloaded version). The user can switch to `PinnedPolicy` later via the
+mod-list UI (Track B's existing pin dropdown). This matches the behavior for
+locally-imported mods (Track B uses `LatestPolicy` for new mods).
+
+**`ShowAlertAsync` marshaling:** the handler runs on the IPC server's
+background task, so the dialog is marshaled to the UI thread via an injectable
+`invokeOnUi` seam (`Func<Func<Task>, Task>`). Production wires
+`Dispatcher.UIThread.InvokeAsync`; tests inject a pass-through. The
+`ShowAlertAsync` itself is a fire-and-forget dialog (OK button only, no return
+value).
+
+### The handler lives in the UI assembly
+
+`NxmModDownloadHandler` lives in the UI assembly (`Magos.Modificus.UI.Nxm`),
+not Integrations, because it coordinates UI concerns: it reads the active
+profile from `IProfileSession` (UI), shows error dialogs through
+`IDialogService` (UI), and marshals those dialogs to the UI thread via
+`Dispatcher.UIThread` (Avalonia). Placing it in Integrations would create a
+dependency cycle (Integrations cannot reference the UI assembly, which is its
+consumer). The reusable acquisition service is the backend seam in
+Integrations; the handler is the thin UI-coordinating shell.
+
+The handler is registered **after** `AddNxm()` so DI "last registration wins"
+supersedes the no-op default (the no-op default is registered with plain
+`AddSingleton`, and MS DI resolves the last registration).
+
+## Startup OS registration
+
+On startup, `MagosComposition.Build()` calls `RegisterNxmHandler` after the
+IPC server starts, which resolves `INxmHandlerRegistrar` and calls `Register()`
+if `IsRegistered()` is false. This is the expected behavior for a mod manager
+(MO2, NMA, and Vortex all auto-register on startup) so the OS knows to invoke
+the handler exe when an `nxm://` URL arrives (the "Mod manager download"
+button on Nexus).
+
+- **Linux** writes a `.desktop` file to `~/.local/share/applications/`
+  (`magos-nxm-handler.desktop`, under the `applications/` subdirectory of the
+  local data dir) with `Exec="<handler-exe>" %u` and
+  `MimeType=x-scheme-handler/nxm;`, plus a best-effort `xdg-mime default` to
+  set it as the default for `x-scheme-handler/nxm`.
+- **Windows** writes `HKCU\Software\Classes\nxm` (per-user, no elevation) with
+  the handler exe as the `shell\open\command`.
+
+Best-effort: a registration failure is logged and swallowed so a registration
+problem never blocks startup (the app still runs; the user just cannot
+click-download from Nexus until it is resolved).
+
+## See also
+
+- [integrations reference](../reference/magos-modificus/integrations.md):
+  `IModAcquisitionService` public surface, the acquisition flow, the
+  `NxmModDownloadHandler`, DI registration, testing.
+- [nxm:// scheme handler](nxm-scheme-handler.md): the Stage 1 plumbing that
+  delivers the URL to the handler implemented here.
+- [Nexus authentication](nexus-authentication.md): the auth factory the v1
+  client uses for the download-link and metadata calls.
+- [Magos Modificus architecture](MAGOS-MODIFICUS.md): the high-level tie-together.
