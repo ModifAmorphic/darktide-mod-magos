@@ -1,13 +1,15 @@
-using System.IO.Compression;
 using Magos.Modificus.Config;
 using Magos.Modificus.General;
 using Microsoft.Extensions.Logging;
+using SharpCompress.Archives;
+using SharpCompress.Common;
+using SharpCompress.Readers;
 
 namespace Magos.Modificus.Mods;
 
 /// <summary>
 /// Filesystem-backed <see cref="IModImportService"/>. Resolves (or creates)
-/// the container for the source, then extracts a <c>.zip</c> / copies a folder
+/// the container for the source, then extracts an archive / copies a folder
 /// into the repository-provided opaque version folder, via
 /// <see cref="IModRepository.AddVersion"/>.
 /// </summary>
@@ -25,6 +27,12 @@ namespace Magos.Modificus.Mods;
 /// opaque version folder and flips <see cref="ModVersion.IsLatest"/> to it (it
 /// is the newest by <see cref="ModVersion.ImportedAt"/>).</para>
 /// <para>
+/// <b>Archive support:</b> files are detected by content
+/// (<see cref="ArchiveFactory.IsArchive(string, out ArchiveType?)"/>), not by
+/// extension, so Magos handles whatever archive format a mod ships as (zip, 7z,
+/// rar, and the others SharpCompress supports) without per-format wiring. The
+/// folder path (a picked/extracted directory) is unchanged.</para>
+/// <para>
 /// This service does NOT touch profile mod lists: the caller adds the profile
 /// reference via <c>IProfileService.AddMod</c> after the import succeeds
 /// (import the repository copy, then reference it from the profile).</para>
@@ -37,8 +45,6 @@ namespace Magos.Modificus.Mods;
 /// </remarks>
 internal sealed class ModImportService : IModImportService
 {
-    private const string ZipExtension = ".zip";
-
     private readonly IModRepository _repo;
     private readonly IConfigLoader _configLoader;
     private readonly ILogger<ModImportService> _logger;
@@ -71,7 +77,7 @@ internal sealed class ModImportService : IModImportService
         if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
         {
             throw new FileNotFoundException(
-                $"Import source not found: '{sourcePath}'. Provide a folder or a .zip archive.", sourcePath);
+                $"Import source not found: '{sourcePath}'. Provide a folder or an archive.", sourcePath);
         }
 
         // One live snapshot for the whole import. ModsFolder is non-null by
@@ -91,6 +97,25 @@ internal sealed class ModImportService : IModImportService
         // prefix check is a real containment test (it also rejects a bare "..").
         ValidateModName(modName, modsFolder);
 
+        // Content-based detection: a file is an archive iff SharpCompress
+        // recognizes its magic bytes. This fail-fast gate produces an actionable
+        // error for an unsupported file (before any decompression library throws
+        // a technical exception). A folder source skips the gate and takes the
+        // folder-copy path. The detected format is irrelevant beyond "supported
+        // or not": one extraction code path handles every format SharpCompress
+        // reads (zip, 7z, rar, tar, ...).
+        var isArchive = false;
+        if (File.Exists(sourcePath))
+        {
+            if (!ArchiveFactory.IsArchive(sourcePath, out _))
+            {
+                throw new InvalidOperationException(
+                    $"Magos couldn't read '{Path.GetFileName(sourcePath)}' as a supported archive. " +
+                    "You can extract the file yourself, then import the extracted folder here.");
+            }
+            isArchive = true;
+        }
+
         // Validate the source structure BEFORE resolving the container or
         // creating a version: an invalid source throws immediately, placing no
         // files and creating no container/version. The source must contain
@@ -103,19 +128,20 @@ internal sealed class ModImportService : IModImportService
         // one base subdir per version folder) without storing the name anywhere
         // (staging re-derives it from the on-disk structure). Both import kinds
         // fail fast; neither places files on a validation failure.
-        var isZip = IsZip(sourcePath);
-        var baseName = isZip ? ValidateZipStructure(sourcePath) : ValidateFolderStructure(sourcePath);
+        var baseName = isArchive
+            ? ValidateArchiveStructure(sourcePath)
+            : ValidateFolderStructure(sourcePath);
 
         // Resolve or create the container (the dedup unit). Untracked dedups by
         // the modName; Nexus/GitHub dedup by source identity. Runs only after the
         // source validated, so an invalid source creates no container.
         var container = ResolveContainer(source, modName);
 
-        // The populate callback: extract zip or copy folder into the path the
+        // The populate callback: extract archive or copy folder into the path the
         // repo provides. The repo decides whether that path is a fresh folder
         // (new version) or a cleaned-and-reused one (dedup of the same tag).
         // Both kinds preserve the base folder under <versionDir>/<base>/:
-        //   - zip: ExtractToDirectory reproduces the archive's single top-level
+        //   - archive: extraction reproduces the archive's single top-level
         //     directory (validated above), yielding <versionDir>/<base>/<files>.
         //   - folder: the picked folder IS the base, so it is copied itself
         //     (not its contents) into <versionDir>/<base>/.
@@ -123,12 +149,12 @@ internal sealed class ModImportService : IModImportService
         // import kinds, which is what staging's base-folder discovery relies on.
         void Populate(string versionDir)
         {
-            if (isZip)
+            if (isArchive)
             {
                 _logger.LogInformation(
-                    "Importing {Mod} (base '{Base}') from .zip '{Source}' -> '{Target}'",
+                    "Importing {Mod} (base '{Base}') from archive '{Source}' -> '{Target}'",
                     modName, baseName, sourcePath, versionDir);
-                ZipFile.ExtractToDirectory(sourcePath, versionDir);
+                ExtractArchive(sourcePath, versionDir);
             }
             else
             {
@@ -163,13 +189,28 @@ internal sealed class ModImportService : IModImportService
         if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
         {
             throw new FileNotFoundException(
-                $"Import source not found: '{sourcePath}'. Provide a folder or a .zip archive.", sourcePath);
+                $"Import source not found: '{sourcePath}'. Provide a folder or an archive.", sourcePath);
         }
         // Pure peek: reuse the same structure validation as Import (no duplicated
         // logic, no container/version created, no files placed). The add flow
         // calls this before Import to pre-check a base-name collision; Import
         // re-validates (cheap, and must stay self-validating for direct callers).
-        return IsZip(sourcePath) ? ValidateZipStructure(sourcePath) : ValidateFolderStructure(sourcePath);
+        //
+        // Same content-based detection as Import: a file must be a supported
+        // archive (fail fast with the same actionable error), a folder takes the
+        // folder path.
+        var isArchive = false;
+        if (File.Exists(sourcePath))
+        {
+            if (!ArchiveFactory.IsArchive(sourcePath, out _))
+            {
+                throw new InvalidOperationException(
+                    $"Magos couldn't read '{Path.GetFileName(sourcePath)}' as a supported archive. " +
+                    "You can extract the file yourself, then import the extracted folder here.");
+            }
+            isArchive = true;
+        }
+        return isArchive ? ValidateArchiveStructure(sourcePath) : ValidateFolderStructure(sourcePath);
     }
 
     /// <inheritdoc />
@@ -210,8 +251,114 @@ internal sealed class ModImportService : IModImportService
         }
     }
 
-    private static bool IsZip(string path) =>
-        Path.GetExtension(path).Equals(ZipExtension, StringComparison.OrdinalIgnoreCase);
+    // ---- archive extraction ------------------------------------------------
+    //
+    // Traversal-safe per-entry extraction, grounded in the CVE-2026-44788 /
+    // GHSA-6c8g-7p36-r338 advisory. The vulnerable code was the convenience
+    // archive.WriteToDirectory()'s directory-entry branch; the per-entry
+    // WriteEntryToDirectory path (used here) applies the correct containment
+    // guard. Three defense-in-depth measures beyond pinning SharpCompress >=
+    // 0.48.0:
+    //   1. Per-entry extraction (never the convenience extractor).
+    //   2. Directory entries skipped explicitly (the vulnerable branch).
+    //   3. AssertSafePath: our own containment check per entry before writing.
+    // No SymbolicLinkHandler is supplied (the TAR-only symlink escalation
+    // requires a caller-supplied handler; Darktide mods do not use symlinks).
+
+    /// <summary>
+    /// Extracts every file entry from the archive at <paramref name="sourcePath"/>
+    /// into <paramref name="versionDir"/>, iterating <see cref="IArchive.Entries"/>
+    /// (random-access, supported by zip + 7z + rar) and calling the per-entry
+    /// <c>WriteToDirectory</c> on each. Directory entries are skipped; directories
+    /// are created implicitly by the file-entry writer.
+    /// </summary>
+    /// <remarks>
+    /// The per-entry path (not the convenience <c>archive.WriteToDirectory()</c>)
+    /// is the CVE-advisory-blessed route: it applies
+    /// <c>EnsurePathInDestinationDirectory</c> on every file write. Skipping
+    /// directory entries explicitly means the directory-entry code path is never
+    /// reached, and <see cref="AssertSafePath"/> adds our own containment check
+    /// per entry as defense-in-depth.
+    /// </remarks>
+    /// <exception cref="InvalidDataException">Thrown (with the original exception
+    /// as <see cref="Exception.InnerException"/>) when SharpCompress raises a
+    /// corrupt-archive/CRC error mid-extraction. The caller (Import) propagates
+    /// it; the UI surfaces <see cref="Exception.Message"/>.</exception>
+    private static void ExtractArchive(string sourcePath, string versionDir)
+    {
+        using var archive = ArchiveFactory.OpenArchive(sourcePath, ReaderOptions.ForFilePath);
+        // ExtractFullPath (recreate the entry's relative subdirs) + Overwrite
+        // (idempotent re-import) are the load-bearing options. PreserveFileTime
+        // is left at its default (true in SharpCompress: extracted files inherit
+        // the archive's mod times, matching the prior ZipFile behavior).
+        var options = new ExtractionOptions
+        {
+            ExtractFullPath = true,
+            Overwrite = true,
+        };
+        foreach (var entry in archive.Entries)
+        {
+            if (entry.IsDirectory)
+            {
+                continue;
+            }
+            AssertSafePath(versionDir, entry.Key);
+            // AssertSafePath already ran on this entry + would have thrown
+            // InvalidOperationException for any traversal attempt. Anything
+            // reaching this catch is a genuine extraction failure (CRC, corrupt
+            // data, I/O), not a traversal refusal. If the library's own
+            // EnsurePathInDestinationDirectory guard ever fired here it would
+            // indicate an AssertSafePath regression worth investigating; the
+            // safety property holds either way (nothing escapes the root).
+            try
+            {
+                entry.WriteToDirectory(versionDir, options);
+            }
+            catch (Exception ex) when (IsCorruptArchiveException(ex))
+            {
+                throw new InvalidDataException(
+                    $"'{Path.GetFileName(sourcePath)}' could not be extracted. " +
+                    "It may be corrupted or incomplete. Try downloading it again.", ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Containment check (defense-in-depth, mirrors the library's own guard for
+    /// file entries). Normalizes the entry key's separators to '/' before
+    /// combining with the root, then verifies the resolved path stays inside the
+    /// root. Throws <see cref="InvalidOperationException"/> on escape. A null or
+    /// empty key is a no-op (nothing to combine, so nothing to escape).
+    /// </summary>
+    /// <remarks>
+    /// Separator normalization (replace '\' with '/') carries over from the
+    /// zip-only era: zip uses '/' per spec, other formats may use '\'. On Linux,
+    /// an un-normalized backslash is a filename character rather than a
+    /// separator, which would let a '..\escape' entry slip past the prefix check.
+    /// </remarks>
+    private static void AssertSafePath(string root, string? entryKey)
+    {
+        if (string.IsNullOrEmpty(entryKey))
+        {
+            return;
+        }
+        var normalized = entryKey.Replace('\\', '/');
+        var rootFull = Path.GetFullPath(root);
+        var combined = Path.GetFullPath(Path.Combine(rootFull, normalized));
+        if (!combined.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Archive entry '{entryKey}' escapes the extraction directory.");
+        }
+    }
+
+    /// <summary>
+    /// Whether an exception represents a corrupt/truncated/CRC-failed archive
+    /// (rather than a control-flow or argument error). Used to rewrap SharpCompress
+    /// + I/O failures as <see cref="InvalidDataException"/> at the import boundary.
+    /// </summary>
+    private static bool IsCorruptArchiveException(Exception ex) =>
+        ex is SharpCompressException or IOException or EndOfStreamException;
 
     // ---- source-structure validation ---------------------------------------
     //
@@ -222,51 +369,86 @@ internal sealed class ModImportService : IModImportService
     // load-bearing (mods bake their folder name into their code).
 
     /// <summary>
-    /// Validates a <c>.zip</c> archive's structure <em>before</em> extraction:
-    /// exactly one top-level directory, no loose top-level files, and a
+    /// Validates an archive's structure <em>before</em> extraction: exactly one
+    /// top-level directory, no loose top-level files, and a
     /// <c>&lt;base&gt;/&lt;base&gt;.mod</c> descriptor inside the base directory (the
     /// descriptor filename matches the base folder name). Performs no extraction.
+    /// Format-agnostic: enumerates <see cref="IArchive.Entries"/> via
+    /// <see cref="ArchiveFactory.OpenArchive(string, ReaderOptions)"/>, so the
+    /// same invariant applies to every archive format SharpCompress reads.
     /// </summary>
-    /// <param name="zipPath">The archive to inspect.</param>
+    /// <param name="archivePath">The archive to inspect.</param>
     /// <returns>The validated base folder name (the single top-level
     /// directory).</returns>
     /// <exception cref="InvalidOperationException">Thrown when the archive has a
     /// loose top-level file, zero or multiple top-level directories, or no
     /// matching <c>&lt;base&gt;/&lt;base&gt;.mod</c> descriptor.</exception>
+    /// <exception cref="InvalidDataException">Thrown when the archive is corrupt
+    /// or truncated and cannot be opened/enumerated.</exception>
     /// <remarks>
-    /// Nexus mod zips ship the mod folder at the archive root (e.g.
+    /// Nexus mod archives ship the mod folder at the archive root (e.g.
     /// <c>dmf.zip</c> contains <c>dmf/dmf.mod</c>, <c>dmf/scripts/...</c>). The
     /// descriptor filename convention (<c>&lt;base&gt;.mod</c>) is what the mod
     /// loader resolves, so the base name is load-bearing. Inspecting entries
     /// before extracting (rather than catching a post-extraction mismatch) means
     /// an invalid archive leaves nothing on disk.
     /// </remarks>
-    private static string ValidateZipStructure(string zipPath)
+    private static string ValidateArchiveStructure(string archivePath)
     {
-        using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Read);
+        // Phase 1: open + collect entry keys. A corrupt or truncated archive
+        // fails here (SharpCompressException / IOException / EndOfStream) and is
+        // rewrapped as InvalidDataException; the structure checks in phase 2 run
+        // on the successfully-collected keys and throw InvalidOperationException
+        // for shape failures, so the two failure modes are cleanly separated.
+        List<string> entryKeys;
+        try
+        {
+            using var archive = ArchiveFactory.OpenArchive(archivePath, ReaderOptions.ForFilePath);
+            // File-entry keys only: directory entries are skipped because they
+            // are not loose files and the base folder is defined by the file
+            // paths. (RAR directory entries carry keys without trailing slashes,
+            // e.g. 'rarfixture', so including them would falsely trip the
+            // loose-top-level-file check.) Null/empty keys (malformed entries)
+            // are filtered out too.
+            entryKeys = archive.Entries
+                .Where(e => !e.IsDirectory)
+                .Select(e => e.Key)
+                .Where(k => !string.IsNullOrEmpty(k))
+                .Select(k => k!)
+                .ToList();
+        }
+        catch (Exception ex) when (IsCorruptArchiveException(ex))
+        {
+            throw new InvalidDataException(
+                $"'{Path.GetFileName(archivePath)}' could not be read. " +
+                "It may be corrupted or incomplete. Try downloading it again.", ex);
+        }
 
+        // Phase 2: structural checks on the collected keys (no SharpCompress
+        // call can throw here; the entries are already materialized).
         var topLevelDirs = new HashSet<string>(StringComparer.Ordinal);
         string? looseFile = null;
-        foreach (var entry in archive.Entries)
+        foreach (var fullName in entryKeys)
         {
-            // Zip entries use '/' per the spec; normalize '\\' defensively for
-            // archives authored by tools that mangle the separator.
-            var fullName = entry.FullName.Replace('\\', '/');
-            var slash = fullName.IndexOf('/');
+            // Zip entries use '/' per spec; other formats may use '\'. Normalize
+            // defensively so a backslash-separated top-level dir isn't mistaken
+            // for a single-segment loose file.
+            var normalized = fullName.Replace('\\', '/');
+            var slash = normalized.IndexOf('/');
             if (slash < 0)
             {
-                looseFile ??= fullName; // a top-level file with no parent dir
+                looseFile ??= normalized; // a top-level file with no parent dir
                 continue;
             }
-            topLevelDirs.Add(fullName.Substring(0, slash));
+            topLevelDirs.Add(normalized.Substring(0, slash));
         }
 
         if (looseFile is not null)
         {
             throw new InvalidOperationException(
-                $"Invalid mod archive '{zipPath}': found a loose top-level file '{looseFile}'. " +
+                $"Invalid mod archive '{archivePath}': found a loose top-level file '{looseFile}'. " +
                 "The archive must contain a single mod folder with its '<base>.mod' descriptor inside " +
-                "(e.g. 'dmf/dmf.mod'). Repackage the mod so its base folder is at the archive root.");
+                "(for example, 'dmf/dmf.mod'). Repackage the mod so its base folder is at the archive root.");
         }
 
         if (topLevelDirs.Count == 0)
@@ -275,7 +457,7 @@ internal sealed class ModImportService : IModImportService
             // is distinct from the multi-directory case; surfaced with its own
             // message so the cause is clear.
             throw new InvalidOperationException(
-                $"Invalid mod archive '{zipPath}': the archive has no mod folder. " +
+                $"Invalid mod archive '{archivePath}': the archive has no mod folder. " +
                 "It must contain a single mod folder with its '<base>.mod' descriptor inside.");
         }
 
@@ -283,22 +465,20 @@ internal sealed class ModImportService : IModImportService
         {
             var list = string.Join(", ", topLevelDirs.OrderBy(n => n, StringComparer.Ordinal));
             throw new InvalidOperationException(
-                $"Invalid mod archive '{zipPath}': expected exactly one top-level mod folder, found " +
+                $"Invalid mod archive '{archivePath}': expected exactly one top-level mod folder, found " +
                 $"{topLevelDirs.Count} ({list}). The archive must contain a single mod folder with its " +
                 "'<base>.mod' descriptor inside.");
         }
 
         var baseName = topLevelDirs.Single();
         var descriptor = baseName + "/" + baseName + ".mod";
-        // GetEntry is an exact-name lookup (and ignores '\\' mangling), so scan
-        // entries with the same normalization used above.
-        var hasDescriptor = archive.Entries.Any(e =>
-            e.FullName.Replace('\\', '/').Equals(descriptor, StringComparison.Ordinal));
+        var hasDescriptor = entryKeys.Any(k =>
+            k.Replace('\\', '/').Equals(descriptor, StringComparison.Ordinal));
         if (!hasDescriptor)
         {
             throw new InvalidOperationException(
-                $"Invalid mod archive '{zipPath}': no '{descriptor}' descriptor found inside the mod folder. " +
-                "The descriptor filename must match the mod folder name (e.g. 'dmf/dmf.mod').");
+                $"Invalid mod archive '{archivePath}': no '{descriptor}' descriptor found inside the mod folder. " +
+                "The descriptor filename must match the mod folder name (for example, 'dmf/dmf.mod').");
         }
 
         return baseName;

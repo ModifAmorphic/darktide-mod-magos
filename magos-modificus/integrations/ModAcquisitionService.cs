@@ -25,9 +25,9 @@ namespace Magos.Modificus.Integrations;
 /// <para>
 /// <b>3 Nexus API calls per acquisition:</b> <c>download_link.json</c> (the CDN
 /// URL), <c>mods/{id}.json</c> (the name), and <c>mods/{id}/files.json</c> (the
-/// file's version string). Within rate limits (see Stage 2's grounding). If any
-/// metadata call fails, the acquisition fails with a clear error (no degraded
-/// fallback).</para>
+/// file's version string + file name). Within rate limits (see Stage 2's
+/// grounding). If any metadata call fails, the acquisition fails with a clear
+/// error (no degraded fallback).</para>
 /// </remarks>
 internal sealed class ModAcquisitionService : IModAcquisitionService
 {
@@ -68,20 +68,22 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
         var cdnUri = await ResolveDownloadUriAsync(gameDomain, modId, fileId, nxmKey, nxmExpires, ct)
             .ConfigureAwait(false);
 
-        // 2. Resolve metadata (name + version). No degraded fallback: a failure
-        //    here surfaces as a clear error and nothing partial lands.
-        var (modName, version) = await ResolveMetadataAsync(gameDomain, modId, fileId, ct)
+        // 2. Resolve metadata (name + version + file name). No degraded fallback:
+        //    a failure here surfaces as a clear error and nothing partial lands.
+        //    The file name (from the already-fetched files.json entry) is preserved
+        //    on the temp file for log clarity; detection is content-based now so
+        //    the extension is cosmetic, but keeping the real one is good hygiene.
+        var (modName, version, fileName) = await ResolveMetadataAsync(gameDomain, modId, fileId, ct)
             .ConfigureAwait(false);
 
         // 3. Download the archive to a temp file, then hand it to the import
         //    service. The temp file is always cleaned up (the import extracts
         //    the content into the repository, so the source archive is disposable
-        //    once Import returns).
-        //    NOTE: use a .zip extension so IModImportService recognizes the file
-        //    as a zip archive (it detects by extension; .tmp would be treated as
-        //    a folder path). Path.GetRandomFileName doesn't create a file (unlike
-        //    GetTempFileName), so the download creates it fresh.
-        var tempPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip");
+        //    once Import returns). Path.GetRandomFileName doesn't create a file
+        //    (unlike GetTempFileName), so the download creates it fresh; the real
+        //    extension is appended for log/debuggability.
+        var tempPath = Path.Combine(
+            Path.GetTempPath(), Path.GetRandomFileName() + Path.GetExtension(fileName));
         HttpClient? http = null;
         try
         {
@@ -131,7 +133,7 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
 
     // ---- step 2: resolve name + version ------------------------------------
 
-    private async Task<(string Name, string Version)> ResolveMetadataAsync(
+    private async Task<(string Name, string Version, string FileName)> ResolveMetadataAsync(
         string gameDomain, int modId, int fileId, CancellationToken ct)
     {
         var info = await _nexus.GetModInfoAsync(gameDomain, modId, ct).ConfigureAwait(false);
@@ -144,6 +146,7 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
 
         var files = await _nexus.ListModFilesAsync(gameDomain, modId, ct).ConfigureAwait(false);
         string? version = null;
+        string? fileName = null;
         if (files.Data is not null)
         {
             foreach (var f in files.Data)
@@ -151,6 +154,7 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
                 if (f.FileId == fileId)
                 {
                     version = f.Version;
+                    fileName = f.FileName;
                     break;
                 }
             }
@@ -162,7 +166,13 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
                 $"Nexus did not list file {fileId} for mod {modId} (no version resolved).");
         }
 
-        return (modName, version);
+        // FileName is preserved on the temp file (cosmetic now that detection is
+        // content-based, but kept for log clarity + debuggability). Fall back to a
+        // .zip extension if the field is unexpectedly absent so the temp path
+        // still looks like an archive.
+        var resolvedFileName = !string.IsNullOrWhiteSpace(fileName) ? fileName! : modId + ".zip";
+
+        return (modName, version, resolvedFileName);
     }
 
     // ---- step 3: stream the archive to disk --------------------------------

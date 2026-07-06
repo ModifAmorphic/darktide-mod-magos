@@ -184,6 +184,49 @@ public sealed class ModAcquisitionServiceTests
         Assert.Equal(CdnUrl, cdnGet);
     }
 
+    [Fact]
+    public async Task AcquireFromNexusAsync_preserves_real_file_extension_on_temp_file()
+    {
+        // The temp file carries the real file_name extension from files.json,
+        // not a forced .zip. Content-based detection (ArchiveFactory.IsArchive)
+        // makes the extension cosmetic, but preserving it is good hygiene (log
+        // clarity, debuggability) and proves the rename-to-.zip workaround is
+        // gone: a .7z mod like Scoreboard II arrives at Import named .7z.
+        var nexus = new FakeNexusClient
+        {
+            DownloadLinks = ParseLinks(DownloadLinksJson),
+            ModInfoResponse = () => Ok(ParseInfo(ModInfoJson)),
+            ModFilesResponse = ParseFiles(@"
+            {
+              ""files"": [
+                {
+                  ""file_id"": 5820,
+                  ""file_name"": ""scoreboard_ii.7z"",
+                  ""name"": ""Scoreboard II"",
+                  ""version"": ""2.0"",
+                  ""size"": 2048
+                }
+              ]
+            }"),
+        };
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 0xAA }),
+        });
+        var http = new HttpClient(handler);
+        var import = new RecordingImportService();
+        var service = new ModAcquisitionService(
+            nexus, import, new SingleClientFactory(http),
+            NullLogger<ModAcquisitionService>.Instance);
+
+        await service.AcquireFromNexusAsync(GameDomain, ModId, FileId);
+
+        var single = Assert.Single(import.Calls);
+        Assert.EndsWith(".7z", single.SourcePath);
+        // The temp file is cleaned up after Import returns.
+        Assert.False(File.Exists(single.SourcePath));
+    }
+
     // ---- no degraded fallback ---------------------------------------------
 
     [Fact]

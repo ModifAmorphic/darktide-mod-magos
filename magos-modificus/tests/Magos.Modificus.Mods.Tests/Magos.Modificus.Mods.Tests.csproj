@@ -27,4 +27,16 @@
     <ProjectReference Include="..\..\mods\Magos.Modificus.Mods.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The rar test fixture is a real RAR5 archive built from the committed
+      Fixtures/rarfixture/ source (SharpCompress can write zip + 7z but not rar;
+      the operator builds the .rar with rar/7-Zip/WinRAR). Copied to the output
+      directory so the test resolves it via AppContext.BaseDirectory.
+    -->
+    <None Update="Fixtures\rarfixture.rar">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

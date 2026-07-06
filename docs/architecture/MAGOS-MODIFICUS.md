@@ -258,17 +258,24 @@ mod id; GitHub owner/repo) via a pure parser. Local / untracked mods use the
 `IModImportService` (the UI never touches the filesystem). The import service
 validates the source structure (the source must contain exactly one base
 directory with a matching `<base>.mod` descriptor inside it), then resolves (or
-creates) the container for the source + extracts a `.zip` / copies a folder into
-the repository-managed opaque version folder via
-`IModRepository.AddVersion`. The validated base folder is **preserved** under
+creates) the container for the source + extracts the archive / copies a folder
+into the repository-managed opaque version folder via
+`IModRepository.AddVersion`. Archive detection is content-based (via
+SharpCompress's `ArchiveFactory`, reading magic bytes, not the extension), so
+zip, 7z, rar, and the other SharpCompress formats all flow through one path;
+extraction is traversal-safe (per-entry `WriteToDirectory`, directory entries
+skipped, a defense-in-depth `AssertSafePath` containment check per file entry,
+no `SymbolicLinkHandler`). The validated base folder is **preserved** under
 `<versionFolder>/<base>/` (the folder import copies the folder itself, not its
-contents; the zip is validated to have a single top-level folder before
+contents; the archive is validated to have a single top-level folder before
 extraction). Container dedup: Untracked by name, Nexus by mod id, GitHub by
 owner/repo. Version dedup: re-importing the same tag reuses its folder
 (refreshed); a new tag creates a new version + flips `isLatest`. The service
 returns `(containerId, versionString)`; the caller then adds the profile
 reference via `IProfileService.AddMod`. Remote acquisition (Nexus / GitHub API
-clients, auto-fetch) stays in Phase 4.
+clients, auto-fetch) is Phase 4 Stage 3; the acquisition service downloads the
+archive to a temp path preserving the real Nexus `file_name` extension, then
+hands it to the import service.
 
 **Base-name collision hard-block:** two mods with the same base folder name
 can't coexist in one profile (the mod loader can't tell them apart). Before
