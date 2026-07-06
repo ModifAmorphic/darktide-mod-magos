@@ -358,3 +358,14 @@ affects repo structure, build, architecture, or ops, update:
 Then ensure the Magos Modificus build + tests pass
 (`dotnet build`/`dotnet test magos-modificus/magos-modificus.sln`). **Outdated
 docs in a PR are a review blocker**, including this file.
+
+**No project phase/stage labels in committed docs.** Reference + architecture
+docs (`docs/reference/`, `docs/architecture/`) describe the current system as it
+is, not how or when it got built. Do not write things like "(Phase 4 Stage 4)",
+"new in Phase 3", or "Stage 5 adds...". Those are project-management milestones,
+meaningless to the docs' audience (developers reading current state) and quickly
+stale to us too once the phase ships. Describe the feature/architecture directly.
+If a phasing concept is genuinely architectural (e.g. a phase *of a process* the
+code performs, like "the discovery phase of launch"), that's fine; what's not
+fine is referencing the build's project phases/stages. Planning history lives in
+`_local/` + the git log, not in the docs.
