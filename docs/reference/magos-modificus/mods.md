@@ -3,8 +3,11 @@
 > The unified mod repository: one UUID container per `(source, identity)`,
 > holding opaque-ID version subfolders indexed by per-container manifests.
 > Plus the version-policy model, the mod-source provenance model, and the
-> local-import service. Status: implemented (the unified mod repository
-> replaced the earlier shared-store + per-profile allocation model in #30).
+> local-import service. Archive import is format-agnostic (zip, 7z, rar, and
+> the other formats SharpCompress supports, detected by content not extension).
+> Status: implemented (the unified mod repository replaced the earlier
+> shared-store + per-profile allocation model in #30; multi-format archive
+> import + traversal-safe extraction landed in the archive-import fix).
 
 A mod is stored exactly once, in the repository, keyed by a UUID container per
 `(source-type, identity)`. Profiles reference a mod by `(containerId, policy)`
@@ -50,9 +53,14 @@ public interface IModRepository
 - `AddVersion(containerId, versionString, populateFolder)`: upsert by
   `versionString`. Re-adding the same tag reuses + refreshes its opaque folder
   (no re-order, `IsLatest` unchanged); a new tag creates a new opaque folder + a
-  new entry that becomes `IsLatest` (the newest by `ImportedAt`). The repository
-  invokes `populateFolder(absolutePath)` after creating the folder so the caller
-  extracts a `.zip` / copies a folder into it.
+  new entry that becomes `IsLatest` (the newest by `ImportedAt`).
+  **Transactional:** the repo stages `populateFolder`'s output into a sibling
+  temp dir, then atomically swaps it into the version folder on success
+  (same-volume `Directory.Move`); on any failure the temp is cleaned + the
+  existing version folder + manifest are left untouched, so a failed re-import
+  is non-destructive (the old version survives a mid-extraction CRC/I/O
+  failure). Orphan temps from a process crash are swept at each `AddVersion` +
+  at index build (`RebuildIndex`).
 - `RemoveVersion(containerId, versionFolder)`: idempotent. Promotes the newest
   remaining version to `IsLatest` if the removed one carried it.
 - `PruneUnreferenced(referenced)`: GC. Drops every `(containerId, versionFolder)`
@@ -94,7 +102,7 @@ manifest is skipped with a warning; one bad container never breaks the rest.
 
 ### `IModImportService`
 
-Imports a local mod source (a folder OR a `.zip` archive) into the repository.
+Imports a local mod source (a folder OR an archive) into the repository.
 The mod-list UI's add flow (picker + drag-and-drop) goes through this seam: the
 UI never touches the filesystem directly.
 
@@ -120,10 +128,18 @@ public interface IModImportService
   pinning the profile entry to exactly the version just imported. The display
   tag (`VersionString`) is recorded in the container manifest; it is not
   returned.
-- `.zip` detection is by extension (ordinal ignore-case); anything else is
-  treated as a folder path. A `.zip` is extracted via
-  `System.IO.Compression.ZipFile.ExtractToDirectory` (in-box for net10.0); a
-  folder is recursively copied.
+- Archive detection is **content-based** (`ArchiveFactory.IsArchive`, reading
+  magic bytes, not the extension): a file is an archive iff SharpCompress
+  recognizes it, so zip, 7z, rar, and SharpCompress's other formats all flow
+  through one path. A non-archive file fails fast with an actionable
+  `InvalidOperationException` (the user is told to extract it themselves +
+  import the folder); a folder source is recursively copied (`DirectoryCopy`).
+  Archives are extracted via traversal-safe **per-entry** `WriteToDirectory`
+  (directory entries skipped, a defense-in-depth `AssertSafePath` containment
+  check per file entry, no `SymbolicLinkHandler`); see
+  [Path-traversal safety](#path-traversal-safety) below. A corrupt/CRC failure
+  mid-extraction is caught and rethrown as `InvalidDataException` with a plain
+  "try downloading again" message.
 - Returns `(containerId, versionString)` so the caller does
   `IProfileService.AddMod(profileId, containerId, policy)`.
 - Does NOT touch profile mod lists: the caller adds the profile reference after
@@ -133,14 +149,26 @@ public interface IModImportService
   absolute paths) is retained from Track B as defense-in-depth, even though the
   import target is now an opaque UUID folder (not `modName`-derived).
 
-**Source structure (both kinds):** a mod source (zip or folder) must contain
-exactly one base directory with a `<basefoldername>.mod` descriptor inside it
-(the descriptor filename matches the base folder name). A `.zip` is inspected
-**before** extraction (single top-level folder, no loose top-level files,
-matching `<base>.mod`); a folder is checked directly (non-empty + matching
-descriptor) and is copied **as the folder itself** (not its contents). Both
-produce `<versionId>/<base>/<files>`. An invalid structure throws immediately,
-placing no files and creating no container/version.
+**Source structure (both kinds):** a mod source (archive or folder) must
+contain exactly one base directory with a `<basefoldername>.mod` descriptor
+inside it (the descriptor filename matches the base folder name). An archive is
+inspected **before** extraction (single top-level folder, no loose top-level
+files, matching `<base>.mod`); a folder is checked directly (non-empty +
+matching descriptor) and is copied **as the folder itself** (not its contents).
+Both produce `<versionId>/<base>/<files>`. An invalid structure throws
+immediately, placing no files and creating no container/version.
+
+**Path-traversal safety:** archive extraction is untrusted input (mods are
+downloaded from the internet). SharpCompress had a directory-traversal CVE
+(CVE-2026-44788, fixed in 0.48.0; we pin 0.49.1). Three mitigations, none
+dependent on the library version alone: (1) per-entry `WriteToDirectory` (the
+CVE-advisory-blessed file-entry path), never the convenience
+`archive.WriteToDirectory()`; (2) directory entries skipped explicitly (the
+vulnerable branch); (3) our own `AssertSafePath` containment check per file
+entry (normalizes `\` → `/`, then `Path.GetFullPath` + prefix check, so a
+`..\escape` or absolute-path entry cannot bypass it on Linux). No
+`SymbolicLinkHandler` is supplied (the TAR-only symlink escalation requires one;
+Darktide mods don't use symlinks).
 
 **Base-name collision hard-block:** two mods with the same base folder name can't
 coexist in one profile (the mod loader can't tell them apart). The add flow
@@ -298,11 +326,11 @@ change via the Settings window takes effect immediately.
 
 The version folder always contains exactly one subdirectory: the mod's **base
 folder**, whose name matches its `<base>.mod` descriptor. Both import kinds
-produce this shape (a `.zip` is validated to have a single top-level folder with
-a matching descriptor before extraction; a folder is copied as itself). The base
-folder name is load-bearing at staging time: mods bake their folder name into
-their code, so the staged symlink must carry the base name (not the container's
-display name).
+produce this shape (an archive is validated to have a single top-level folder
+with a matching descriptor before extraction; a folder is copied as itself).
+The base folder name is load-bearing at staging time: mods bake their folder
+name into their code, so the staged symlink must carry the base name (not the
+container's display name).
 
 `container.json` is UTF-8 without BOM. Paths are derived (`ModsFolder` +
 UUIDs), never stored absolute.
@@ -311,9 +339,11 @@ UUIDs), never stored absolute.
 
 - **Magos libraries:** `config` (`MagosConfig.ModsFolder`).
 - **NuGet:** `Microsoft.Extensions.DependencyInjection.Abstractions`,
-  `Microsoft.Extensions.Logging.Abstractions`.
-- **BCL:** `System.IO.Compression` (the import service uses
-  `ZipFile.ExtractToDirectory`; in-box for net10.0, no package reference).
+  `Microsoft.Extensions.Logging.Abstractions`, `SharpCompress` 0.49.1 (MIT;
+  archive detection + extraction for zip / 7z / rar / tar / gzip / .... Pinned
+  `>= 0.48.0` for the CVE-2026-44788 traversal fix; mitigations in
+  [Path-traversal safety](#path-traversal-safety) make us safe regardless of
+  the library version alone. No dependencies on net10.0.).
 
 ## Testing
 
@@ -337,14 +367,18 @@ UUIDs), never stored absolute.
   `.git`, plain id; malformed rejections: wrong host, wrong game slug, too few
   segments, non-numeric/zero/negative id).
 - `ModImportService`: container find/create + version dedup + `isLatest` flip +
-  folder/`.zip` import + the source-structure validation (both kinds require
-  exactly one base directory with a matching `<base>.mod` descriptor; the base
-  folder is preserved under `<versionFolder>/<base>/`) + error paths (missing
-  source, malformed zip, multiple top-level folders, loose files, missing /
-  mismatched descriptor, bad mod name) + the retained `modName` path-traversal
-  confinement + the two import-time peeks (`GetBaseName` validates + returns the
-  base name without creating anything; `FindExistingContainer` resolves the
-  would-be dedup container without creating it).
+  folder/archive import (zip, 7z via on-the-fly SharpCompress writers, rar via
+  a committed RAR5 fixture under `Fixtures/`) + the source-structure validation
+  (both kinds require exactly one base directory with a matching `<base>.mod`
+  descriptor; the base folder is preserved under `<versionFolder>/<base>/`) +
+  error paths (missing source, unsupported-format plain error, corrupt/CRC
+  archive, multiple top-level folders, loose files, missing / mismatched
+  descriptor, bad mod name) + the retained `modName` path-traversal confinement
+  + the **per-entry extraction traversal guard** (a crafted zip with `../` +
+  absolute-path entries is refused; nothing is written outside the extraction
+  root) + the two import-time peeks (`GetBaseName` validates + returns the base
+  name without creating anything; `FindExistingContainer` resolves the would-be
+  dedup container without creating it).
 
 The internal `ModRepository` + `ModImportService` are visible to tests via
 `InternalsVisibleTo` (tests resolve them through the interface via DI).

@@ -1,0 +1,8 @@
+-- Test fixture mod descriptor for the rar import test.
+--
+-- The import service validates that a mod archive contains exactly one base
+-- folder with a <base>.mod descriptor inside it whose filename matches the
+-- folder name. This file is that descriptor: its content is not parsed by the
+-- import path, only its presence + name match. Kept minimal intentionally; if
+-- a future test wants to exercise the actual mod loader, expand this with a
+-- real descriptor at that point.

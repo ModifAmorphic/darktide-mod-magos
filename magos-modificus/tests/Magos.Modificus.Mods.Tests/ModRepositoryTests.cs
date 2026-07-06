@@ -201,6 +201,211 @@ public sealed class ModRepositoryTests
     }
 
     [Fact]
+    public void AddVersion_dedup_failure_preserves_the_old_version_and_manifest()
+    {
+        // Core transactional invariant: a failed re-import (populateFolder
+        // throws partway through extraction) must leave the OLD version's files
+        // intact on disk and the manifest unchanged. The pre-transactional
+        // implementation deleted the old version folder (CleanTarget) BEFORE
+        // invoking populateFolder, so an extraction failure stranded a
+        // manifest-referenced folder with no recovery (the startup prune only
+        // reclaims containers no profile references). PopulateAtomically stages
+        // into a temp + swaps on success, so the old version is never touched
+        // until the new content is fully extracted.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "DMF");
+
+        // First import of "1.0": the original content on disk.
+        var first = fx.Repo.AddVersion(container.Id, "1.0", dir =>
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "a.txt"), "original");
+        });
+        var originalFolder = first.Versions.Single(v => v.VersionString == "1.0").Folder;
+        var versionPath = fx.Repo.GetVersionFolderPath(container.Id, originalFolder);
+        Assert.True(File.Exists(Path.Combine(versionPath, "a.txt")));
+
+        // Re-import "1.0": populateFolder writes one file then simulates a
+        // real extraction failure (CRC error, disk full, I/O, etc.). The
+        // partial write goes into the TEMP, never reaching the version folder.
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            fx.Repo.AddVersion(container.Id, "1.0", dir =>
+            {
+                File.WriteAllText(Path.Combine(dir, "partial.txt"), "partial");
+                throw new InvalidOperationException("simulated extraction failure");
+            }));
+        Assert.Equal("simulated extraction failure", ex.Message);
+
+        // The OLD version's files survived on disk: a.txt still there, the
+        // partial.txt written into the temp never reached the version folder.
+        Assert.True(File.Exists(Path.Combine(versionPath, "a.txt")),
+            "A failed re-import must leave the old version's files intact.");
+        Assert.False(File.Exists(Path.Combine(versionPath, "partial.txt")),
+            "The failed temp write must not leak into the version folder.");
+
+        // No .tmp.* orphan left under the container dir (the failure path
+        // cleaned up its temp).
+        var containerDir = Path.Combine(fx.Folder, container.Id.ToString());
+        var leftoverTemps = Directory.EnumerateDirectories(containerDir)
+            .Where(n => Path.GetFileName(n).Contains(".tmp."))
+            .ToArray();
+        Assert.Empty(leftoverTemps);
+
+        // Manifest unchanged on disk: reload a fresh repo (reads container.json
+        // from disk, not the in-memory index) + verify exactly one version "1.0"
+        // with the original folder. Guards against any future failure-path code
+        // that mutates the persisted manifest despite the populate throw.
+        var reloaded = fx.Reload().Get(container.Id);
+        Assert.NotNull(reloaded);
+        var version = Assert.Single(reloaded!.Versions);
+        Assert.Equal("1.0", version.VersionString);
+        Assert.Equal(originalFolder, version.Folder);
+    }
+
+    [Fact]
+    public void AddVersion_new_version_failure_leaves_no_folder_and_no_manifest_entry()
+    {
+        // Transactional invariant for the new-version branch: a populateFolder
+        // failure must create nothing on disk and add no manifest entry. The
+        // pre-transactional implementation pre-created versionDir and called
+        // populateFolder on it, so a failure left an empty/partial folder on
+        // disk (and the manifest write was reached only after populate, which
+        // is why no entry was added, but the disk footprint was leaked).
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "DMF");
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            fx.Repo.AddVersion(container.Id, "1.0", dir =>
+            {
+                File.WriteAllText(Path.Combine(dir, "partial.txt"), "partial");
+                throw new InvalidOperationException("simulated extraction failure");
+            }));
+        Assert.Equal("simulated extraction failure", ex.Message);
+
+        // The container dir contains only container.json: no version folder
+        // created, no .tmp.* orphan left.
+        var containerDir = Path.Combine(fx.Folder, container.Id.ToString());
+        var subdirs = Directory.EnumerateDirectories(containerDir).ToArray();
+        Assert.Empty(subdirs);
+
+        // Manifest has zero versions.
+        var reloaded = fx.Repo.Get(container.Id);
+        Assert.NotNull(reloaded);
+        Assert.Empty(reloaded!.Versions);
+    }
+
+    [Fact]
+    public void AddVersion_populateFolder_receives_an_existing_empty_dir_on_both_branches()
+    {
+        // New contract: populateFolder receives an EXISTING, EMPTY directory (a
+        // temp staged by the repo). Replaces the prior band-aid regression test
+        // (AddVersion_dedup_ensures_folder_exists_before_populate), which only
+        // asserted existence. The contract is now stronger (empty too) because
+        // the dir is a fresh temp, not the cleaned-but-reused version folder.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "DMF");
+
+        // New-version branch: callback sees an existing, empty dir.
+        fx.Repo.AddVersion(container.Id, "1.0", dir =>
+        {
+            Assert.True(Directory.Exists(dir),
+                "populateFolder must receive an existing directory (new-version branch).");
+            Assert.Empty(Directory.EnumerateFileSystemEntries(dir));
+            File.WriteAllText(Path.Combine(dir, "a.txt"), "x");
+        });
+
+        // Dedup branch: callback again sees an existing, empty dir (the temp,
+        // not the old version folder with its prior a.txt).
+        fx.Repo.AddVersion(container.Id, "1.0", dir =>
+        {
+            Assert.True(Directory.Exists(dir),
+                "populateFolder must receive an existing directory (dedup branch).");
+            Assert.Empty(Directory.EnumerateFileSystemEntries(dir));
+            File.WriteAllText(Path.Combine(dir, "b.txt"), "y");
+        });
+    }
+
+    [Fact]
+    public void AddVersion_propagates_the_original_exception_from_populateFolder()
+    {
+        // The repo must rethrow populateFolder's exception AS-IS (no swallowing,
+        // no wrapping), so callers see the actual failure type + message. This
+        // is what lets the UI surface the real cause (e.g. InvalidDataException
+        // for a corrupt archive from ModImportService.ExtractArchive).
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "DMF");
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            fx.Repo.AddVersion(container.Id, "1.0", _ =>
+                throw new InvalidOperationException("simulated extraction failure")));
+
+        Assert.Equal("simulated extraction failure", ex.Message);
+        // No wrapping: the propagated exception is exactly the one thrown.
+        Assert.Null(ex.InnerException);
+    }
+
+    [Fact]
+    public void AddVersion_sweeps_orphan_temp_dirs_left_by_a_prior_crashed_import()
+    {
+        // Crash-recovery: if the process dies between CreateDirectory(temp) and
+        // the atomic Move, the temp is left as a <versionFolder>.tmp.<guid>
+        // orphan under the container dir. The repo's index is built from
+        // container.json (not by scanning version subfolders), so the orphan is
+        // invisible to the index but occupies disk. SweepOrphanTemps deletes
+        // any *.tmp.* directories at the start of each AddVersion call.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "DMF");
+
+        // Simulate a crashed prior import: leave a recognizable orphan temp dir
+        // under the container dir, plus a decoy non-tmp dir that must be left
+        // alone.
+        var containerDir = Path.Combine(fx.Folder, container.Id.ToString());
+        var orphanPath = Path.Combine(containerDir, "deadbeef.tmp." + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(orphanPath);
+        File.WriteAllText(Path.Combine(orphanPath, "partial.txt"), "partial");
+        var decoyPath = Path.Combine(containerDir, "regular-folder");
+        Directory.CreateDirectory(decoyPath);
+
+        fx.Repo.AddVersion(container.Id, "1.0", dir =>
+            File.WriteAllText(Path.Combine(dir, "a.txt"), "x"));
+
+        // The orphan was swept; the decoy is untouched.
+        Assert.False(Directory.Exists(orphanPath), "Orphan .tmp.* dir must be swept by AddVersion.");
+        Assert.True(Directory.Exists(decoyPath), "Non-tmp dirs must be left alone.");
+    }
+
+    [Fact]
+    public void RebuildIndex_sweeps_orphan_temp_dirs_at_startup()
+    {
+        // Crash-recovery across containers: SweepOrphanTemps also runs during
+        // RebuildIndex (construction/rescan), once per container dir. An orphan
+        // left by a crashed import into container A is reclaimed at the next
+        // index build even if container A is never re-imported (the per-AddVersion
+        // sweep would otherwise never touch it). Without this, an orphan in a
+        // never-re-imported container would linger on disk indefinitely.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "DMF");
+        fx.Repo.AddVersion(container.Id, "1.0", dir =>
+            File.WriteAllText(Path.Combine(dir, "a.txt"), "x"));
+
+        // Simulate a crashed prior import: leave an orphan temp + a decoy dir.
+        var containerDir = Path.Combine(fx.Folder, container.Id.ToString());
+        var orphanPath = Path.Combine(containerDir, "deadbeef.tmp." + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(orphanPath);
+        File.WriteAllText(Path.Combine(orphanPath, "partial.txt"), "partial");
+        var decoyPath = Path.Combine(containerDir, "regular-folder");
+        Directory.CreateDirectory(decoyPath);
+
+        // A fresh repo (construction = RebuildIndex) sweeps the orphan. NO
+        // AddVersion call here, deliberately: this is the case the per-AddVersion
+        // sweep cannot cover (the container is never re-imported).
+        fx.Reload();
+
+        Assert.False(Directory.Exists(orphanPath), "Startup RebuildIndex must sweep orphan .tmp.* dirs.");
+        Assert.True(Directory.Exists(decoyPath), "Non-tmp dirs must be left alone.");
+    }
+
+    [Fact]
     public void AddVersion_throws_KeyNotFoundException_for_unknown_container()
     {
         using var fx = new RepoFixture();

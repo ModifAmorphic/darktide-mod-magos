@@ -11,10 +11,10 @@ namespace Magos.Modificus.Mods;
 /// delete.</description></item>
 /// <item><description><see cref="ModImportService"/>'s folder-import path, which
 /// copies the picked folder itself (not its contents) into the version
-/// directory.</description></item>
+/// directory. The archive-import path uses SharpCompress's per-entry
+/// <c>WriteEntryToDirectory</c> instead, but the folder path (a picked or
+/// pre-extracted directory) still needs this faithful recursive copy.</description></item>
 /// </list>
-/// Mirrors <see cref="System.IO.Compression.ZipFile.ExtractToDirectory"/>'s
-/// "faithful copy of the source tree" semantics.
 /// </summary>
 internal static class DirectoryCopy
 {

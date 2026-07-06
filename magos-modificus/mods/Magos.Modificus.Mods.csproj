@@ -23,6 +23,19 @@
     -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+    <!--
+      SharpCompress 0.49.1 (MIT). Pure-C# archive library: reads zip, 7z, rar,
+      tar, gzip, and others; writes zip, 7z, tar. Used by ModImportService to
+      support the archive formats Nexus mods actually ship as (zip + 7z + rar),
+      replacing the prior zip-only System.IO.Compression path. Pinned at 0.49.1
+      (current stable); >= 0.48.0 is required for CVE-2026-44788 (a
+      path-traversal hole in the convenience WriteToDirectory directory-entry
+      branch). ModImportService mitigates further: per-entry extraction via
+      WriteEntryToDirectory (never the convenience extractor), directory entries
+      skipped, defense-in-depth AssertSafePath containment check, no
+      SymbolicLinkHandler. No dependencies on net10.0.
+    -->
+    <PackageReference Include="SharpCompress" Version="0.49.1" />
   </ItemGroup>
 
   <ItemGroup>

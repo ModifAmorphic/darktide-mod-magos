@@ -4,6 +4,9 @@ using Magos.Modificus.Config;
 using Magos.Modificus.General;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using SharpCompress.Common;
+using SharpCompress.Writers;
+using SharpCompress.Writers.SevenZip;
 
 namespace Magos.Modificus.Mods.Tests;
 
@@ -165,13 +168,69 @@ public sealed class ModImportServiceTests
     [Theory]
     [InlineData("MOD.ZIP")]
     [InlineData("mod.Zip")]
-    public void Import_detects_zip_by_extension_ordinal_ignore_case(string zipName)
+    public void Import_imports_archive_regardless_of_extension_case(string zipName)
     {
+        // Detection is content-based (magic bytes), so the extension casing is
+        // irrelevant. Kept from the zip-only era to confirm no regression.
         using var fx = new ImportFixture();
         var zipPath = Path.Combine(fx.TempRoot, zipName);
         fx.MakeModZip(zipPath, "dmf", ("file.txt", "x"));
 
         var (containerId, _) = fx.Service.Import(zipPath, "DMF", new UntrackedSource(), "1.0");
+
+        var versionPath = fx.Repo.GetVersionFolderPath(containerId,
+            fx.Repo.Get(containerId)!.Versions[0].Folder);
+        Assert.True(File.Exists(Path.Combine(versionPath, "dmf", "file.txt")));
+    }
+
+    [Fact]
+    public void Import_7z_extracts_preserving_the_single_top_level_base_folder()
+    {
+        using var fx = new ImportFixture();
+        var sevenZPath = Path.Combine(fx.TempRoot, "mod.7z");
+        fx.MakeModSevenZip(sevenZPath, "dmf", ("readme.txt", "hi"), ("sub/nested.txt", "nested"));
+
+        var (containerId, _) = fx.Service.Import(sevenZPath, "DMF", new UntrackedSource(), "1.0");
+
+        var versionPath = fx.Repo.GetVersionFolderPath(containerId,
+            fx.Repo.Get(containerId)!.Versions[0].Folder);
+        Assert.Equal("hi", File.ReadAllText(Path.Combine(versionPath, "dmf", "readme.txt")));
+        Assert.Equal("nested", File.ReadAllText(Path.Combine(versionPath, "dmf", "sub", "nested.txt")));
+        Assert.True(File.Exists(Path.Combine(versionPath, "dmf", "dmf.mod")));
+    }
+
+    [Fact]
+    public void Import_rar_extracts_preserving_the_single_top_level_base_folder()
+    {
+        // Uses the committed real-RAR5 fixture (SharpCompress can read rar but
+        // not write it; the operator builds the .rar from Fixtures/rarfixture/).
+        var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "rarfixture.rar");
+        Assert.True(File.Exists(fixturePath),
+            $"RAR fixture not found at {fixturePath}. Ensure Fixtures/rarfixture.rar is copied to the output directory.");
+
+        using var fx = new ImportFixture();
+        var (containerId, _) = fx.Service.Import(fixturePath, "RarMod", new UntrackedSource(), "1.0");
+
+        var versionPath = fx.Repo.GetVersionFolderPath(containerId,
+            fx.Repo.Get(containerId)!.Versions[0].Folder);
+        // The fixture ships rarfixture/rarfixture.mod + rarfixture/scripts/hello.lua.
+        Assert.True(File.Exists(Path.Combine(versionPath, "rarfixture", "rarfixture.mod")));
+        Assert.True(File.Exists(Path.Combine(versionPath, "rarfixture", "scripts", "hello.lua")));
+    }
+
+    [Fact]
+    public void Import_detects_archive_by_content_not_extension()
+    {
+        // A .7z archive renamed to .zip: content detection ignores the extension
+        // and reads the 7z magic bytes. This is the inversion of the old
+        // rename-to-.zip workaround: the code now accommodates the real input.
+        using var fx = new ImportFixture();
+        var sevenZBytes = Path.Combine(fx.TempRoot, "real.7z");
+        fx.MakeModSevenZip(sevenZBytes, "dmf", ("file.txt", "x"));
+        var mislabeled = Path.Combine(fx.TempRoot, "mislabeled.zip");
+        File.Move(sevenZBytes, mislabeled);
+
+        var (containerId, _) = fx.Service.Import(mislabeled, "DMF", new UntrackedSource(), "1.0");
 
         var versionPath = fx.Repo.GetVersionFolderPath(containerId,
             fx.Repo.Get(containerId)!.Versions[0].Folder);
@@ -254,6 +313,74 @@ public sealed class ModImportServiceTests
         Assert.Throws<InvalidOperationException>(() =>
             fx.Service.Import(zipPath, "DMF", new UntrackedSource(), "1.0"));
         Assert.Empty(fx.Repo.List());
+    }
+
+    [Fact]
+    public void Import_7z_with_multiple_top_level_folders_is_rejected()
+    {
+        // Structure validation is format-agnostic: the same single-base +
+        // descriptor invariant enforced for zip applies to 7z too.
+        using var fx = new ImportFixture();
+        var sevenZPath = Path.Combine(fx.TempRoot, "two-mods.7z");
+        MakeSevenZip(sevenZPath, ("modA/modA.mod", "a"), ("modB/modB.mod", "b"));
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            fx.Service.Import(sevenZPath, "TwoMods", new UntrackedSource(), "1.0"));
+        Assert.Contains("exactly one top-level mod folder", ex.Message);
+        Assert.Empty(fx.Repo.List());
+    }
+
+    [Fact]
+    public void Import_archive_with_explicit_directory_entries_extracts_correctly()
+    {
+        // An archive that ships explicit directory entries (not just file entries
+        // whose paths imply directories). Directory entries are skipped
+        // (IsDirectory check); directories are created implicitly by the
+        // file-entry writer. The CVE-vulnerable directory-entry branch is never
+        // reached.
+        using var fx = new ImportFixture();
+        var zipPath = Path.Combine(fx.TempRoot, "with-dirs.zip");
+        MakeZip(zipPath,
+            ("mymod/", ""),                          // explicit directory entry
+            ("mymod/scripts/", ""),                  // explicit directory entry
+            ("mymod/mymod.mod", "mymod"),
+            ("mymod/scripts/hello.lua", "-- hello"));
+
+        var (containerId, _) = fx.Service.Import(zipPath, "WithDirs", new UntrackedSource(), "1.0");
+
+        var versionPath = fx.Repo.GetVersionFolderPath(containerId,
+            fx.Repo.Get(containerId)!.Versions[0].Folder);
+        Assert.True(File.Exists(Path.Combine(versionPath, "mymod", "mymod.mod")));
+        Assert.True(File.Exists(Path.Combine(versionPath, "mymod", "scripts", "hello.lua")));
+    }
+
+    [Fact]
+    public void Import_rejects_archive_entries_that_escape_the_extraction_directory()
+    {
+        // Path-traversal guard: a crafted zip carries a valid base folder +
+        // descriptor (so it passes structure validation) alongside a nested
+        // traversal entry (../..) that tries to escape above the version dir.
+        // AssertSafePath catches the escape before any file is written, and
+        // nothing lands outside the version dir.
+        //
+        // The malicious zip is built with System.IO.Compression.ZipArchive in
+        // Create mode (the BCL allows arbitrary entry keys like "../"; test
+        // helper MakeZip uses it).
+        using var fx = new ImportFixture();
+        var zipPath = Path.Combine(fx.TempRoot, "malicious.zip");
+        const string marker = "traversal_escape_marker.txt";
+        MakeZip(zipPath,
+            ("mymod/mymod.mod", "valid"),                          // passes validation
+            ($"mymod/../../../../{marker}", "escaped payload"));   // nested traversal
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            fx.Service.Import(zipPath, "Malicious", new UntrackedSource(), "1.0"));
+        Assert.Contains("escapes the extraction directory", ex.Message);
+
+        // The marker must not exist anywhere under the test temp root: the
+        // guard threw before WriteToDirectory, so no file escaped.
+        var written = Directory.GetFiles(fx.TempRoot, marker, SearchOption.AllDirectories);
+        Assert.Empty(written);
     }
 
     [Fact]
@@ -372,14 +499,46 @@ public sealed class ModImportServiceTests
     }
 
     [Fact]
-    public void Import_throws_on_malformed_zip()
+    public void Import_throws_unsupported_format_for_non_archive_file()
     {
+        // A plain text file is not an archive: content detection
+        // (ArchiveFactory.IsArchive, magic bytes) returns false, and the service
+        // throws InvalidOperationException with the actionable message before
+        // any decompression library is invoked. The old zip-only path threw
+        // InvalidDataException from inside ZipFile.Open; content-based detection
+        // produces a clearer, earlier error.
         using var fx = new ImportFixture();
-        var fakeZip = Path.Combine(fx.TempRoot, "broken.zip");
-        File.WriteAllBytes(fakeZip, Encoding.UTF8.GetBytes("this is not a zip archive"));
+        var notArchive = Path.Combine(fx.TempRoot, "broken.zip");
+        File.WriteAllBytes(notArchive, Encoding.UTF8.GetBytes("this is not a zip archive"));
 
-        Assert.ThrowsAny<InvalidDataException>(() =>
-            fx.Service.Import(fakeZip, "DMF", new UntrackedSource(), "1.0"));
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            fx.Service.Import(notArchive, "DMF", new UntrackedSource(), "1.0"));
+        Assert.Contains("couldn't read", ex.Message);
+        Assert.Contains("extract the file yourself", ex.Message);
+        // No container created for an unsupported file.
+        Assert.Empty(fx.Repo.List());
+    }
+
+    [Fact]
+    public void Import_throws_InvalidDataException_for_a_truncated_archive()
+    {
+        // A truncated zip (valid magic bytes, incomplete body): content detection
+        // passes (it is a real archive start), but SharpCompress cannot open it.
+        // The service catches the SharpCompress failure and rethrows it as
+        // InvalidDataException with the "try downloading again" message.
+        using var fx = new ImportFixture();
+        var validZip = Path.Combine(fx.TempRoot, "valid.zip");
+        fx.MakeModZip(validZip, "dmf", ("scripts/init.lua", "-- dmf"));
+        var bytes = File.ReadAllBytes(validZip);
+        // Keep the zip magic bytes (PK\x03\x04 = 4 bytes) but truncate the rest.
+        Array.Resize(ref bytes, Math.Max(4, bytes.Length / 4));
+        var truncatedZip = Path.Combine(fx.TempRoot, "truncated.zip");
+        File.WriteAllBytes(truncatedZip, bytes);
+
+        var ex = Assert.ThrowsAny<InvalidDataException>(() =>
+            fx.Service.Import(truncatedZip, "DMF", new UntrackedSource(), "1.0"));
+        Assert.Contains("corrupted or incomplete", ex.Message);
+        Assert.Empty(fx.Repo.List());
     }
 
     [Fact]
@@ -682,6 +841,21 @@ public sealed class ModImportServiceTests
             return path;
         }
 
+        /// <summary>Builds a valid mod <c>.7z</c> at <paramref name="path"/> whose
+        /// single top-level folder is <paramref name="baseName"/>, containing
+        /// <c>&lt;baseName&gt;/&lt;baseName&gt;.mod</c> plus the given files (each placed
+        /// under <c>&lt;baseName&gt;/</c>). Returns <paramref name="path"/>.</summary>
+        public string MakeModSevenZip(string path, string baseName, params (string Path, string Content)[] files)
+        {
+            var entries = new List<(string Entry, string Content)>
+            {
+                ($"{baseName}/{baseName}.mod", baseName),
+            };
+            entries.AddRange(files.Select(f => ($"{baseName}/{f.Path}", f.Content)));
+            MakeSevenZip(path, entries.ToArray());
+            return path;
+        }
+
         public void Dispose()
         {
             _provider.Dispose();
@@ -693,9 +867,10 @@ public sealed class ModImportServiceTests
     }
 
     /// <summary>Builds a raw <c>.zip</c> at <paramref name="path"/> from the given
-    /// (entryPath, content) pairs, with no validation. Used to construct
-    /// structurally-invalid archives (multiple top-level folders, loose files,
-    /// missing/mismatched descriptor) + by <c>MakeModZip</c> for valid ones.
+    /// (entryPath, content) pairs, with no validation. Uses the BCL
+    /// <see cref="ZipFile"/> (Create mode) which permits arbitrary entry keys
+    /// (including <c>../</c> traversal), so it is used both for valid fixtures
+    /// (via <c>MakeModZip</c>) and for structurally-invalid + malicious archives.
     /// </summary>
     private static void MakeZip(string path, params (string Entry, string Content)[] entries)
     {
@@ -706,6 +881,25 @@ public sealed class ModImportServiceTests
             var ze = archive.CreateEntry(entry);
             using var writer = new StreamWriter(ze.Open(), new UTF8Encoding(false));
             writer.Write(content);
+        }
+    }
+
+    /// <summary>Builds a raw <c>.7z</c> at <paramref name="path"/> from the given
+    /// (entryPath, content) pairs, with no validation. Uses SharpCompress's
+    /// <see cref="WriterFactory"/> (LZMA2). Rar cannot be written programmatically
+    /// (proprietary format); the committed <c>Fixtures/rarfixture.rar</c> covers it.
+    /// </summary>
+    private static void MakeSevenZip(string path, params (string Entry, string Content)[] entries)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var stream = File.Create(path);
+        using var writer = WriterFactory.OpenWriter(
+            stream, ArchiveType.SevenZip, new SevenZipWriterOptions(CompressionType.LZMA2));
+        foreach (var (entry, content) in entries)
+        {
+            var bytes = Encoding.UTF8.GetBytes(content);
+            using var ms = new MemoryStream(bytes);
+            writer.Write(entry, ms, DateTime.UtcNow);
         }
     }
 }
