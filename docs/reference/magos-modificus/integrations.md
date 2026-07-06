@@ -3,7 +3,9 @@
 > External mod-source clients. Phase 1 shipped the read-only GitHub Releases
 > client. Phase 4 Stage 2 adds the Nexus Mods v1 client + the OAuth/API-key
 > auth machinery. Phase 4 Stage 3 adds the mod acquisition service (download +
-> extract + place). Status: implemented (Phase 4 Stage 3).
+> extract + place). Phase 4 Stage 4 adds the update-check service (Nexus-only,
+> flags mods whose imported version predates a newer Nexus file release).
+> Status: implemented (Phase 4 Stage 4).
 
 ## GitHub client (Phase 1)
 
@@ -372,6 +374,97 @@ config and NOT an env var). `Scope` = `"openid profile email"`. Application
 headers: `Application-Name: Magos-Modificus`, `Application-Version: <asm>`,
 `Protocol-Version: 1.0.0`, `User-Agent: Magos-Modificus/<ver>`.
 
+## Update check service (Phase 4 Stage 4)
+
+A Nexus-only service that, on profile load, checks the active profile's Nexus
+mods for available updates and produces a result Stage 5's mod-list badges
+consume. One API call per check (`ModUpdatesAsync`); per-mod work is pure
+intersection + timestamp comparison against that single response. GitHub is
+descoped from Phase 4 (no GitHub code paths anywhere); `PinnedPolicy`,
+`UntrackedSource`, and `GitHubSource` mods are skipped (only `LatestPolicy` +
+`NexusSource` are checked).
+
+```csharp
+public interface IUpdateCheckService
+{
+    Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);
+    UpdateCheckResult? LastResult { get; }
+    event EventHandler<UpdateCheckResult?>? CheckCompleted;
+}
+
+public sealed record UpdateCheckResult(
+    IReadOnlyList<ModUpdateInfo> Updates,
+    DateTimeOffset CheckedAt,
+    bool RateLimited);
+
+public sealed record ModUpdateInfo(
+    Guid ContainerId,
+    int ModId,
+    string ModName,
+    string CurrentVersion,
+    DateTimeOffset? LatestUpdateAt);
+```
+
+- `CheckAsync(profileId)` — the one-call check (see flow below). Best-effort,
+  never throws for non-cancellation failures: a transient API failure, missing
+  auth, or exhausted rate limit all surface as an empty result. Cancellation
+  (`OperationCanceledException`) propagates, and a `KeyNotFoundException` from
+  `IProfileService.GetModList` (an unknown profile id) propagates; the caller
+  owns passing a valid id.
+- `LastResult` — the last check result, or null before the first check. Stage 5
+  reads this to render badges without awaiting. Written under a lock alongside
+  the `CheckCompleted` invocation so an event subscriber observes the result
+  that was just published; reads are lock-free (reference assignment is atomic).
+- `CheckCompleted` — raised (on the completing thread) exactly once per
+  `CheckAsync` call (including the no-auth / rate-limited / failure short
+  circuits) with the same result that was just set on `LastResult`.
+
+### Check flow (`UpdateCheckService`)
+
+1. **Auth gate.** Read `IConfigLoader.Load().Integrations.Nexus.AuthMethod`. If
+   `None` → return an empty result (no API call; the user hasn't configured
+   Nexus).
+2. **Profile mods.** `IProfileService.GetModList(profileId)` → the entries.
+3. **Filter to checkable mods.** For each entry, resolve the container via
+   `IModRepository.Get`. Keep only `LatestPolicy` + `NexusSource` entries. Skip
+   `PinnedPolicy`, `UntrackedSource`, `GitHubSource`. If none qualify → empty
+   result (API not called).
+4. **Query Nexus (1 call).** `INexusClient.ModUpdatesAsync("warhammer40kdarktide",
+   NexusPeriod.Month, ct)`. A non-cancellation failure is caught + surfaces as
+   an empty result (the check is best-effort; a transient failure should not
+   crash the fire-and-forget caller). Cancellation propagates.
+5. **Rate-limit gate (post-call).** From `response.RateLimits`: treat as
+   rate-limited only when a limit was reported AND remaining is zero:
+   `(DailyLimit > 0 && DailyRemaining <= 0) || (HourlyLimit > 0 && HourlyRemaining <= 0)`.
+   The `> 0` guard avoids a false positive on `NexusRateLimits.Unknown` (the
+   all-zero fallback when headers are absent, e.g. test stubs or non-rate-limited
+   gateways). If rate-limited → return an empty result with `RateLimited = true`
+   (no per-mod comparison; Stage 5 surfaces a "check incomplete" indicator).
+6. **Intersect + compare.** Index the response by `ModId`, then for each
+   checkable mod find the matching `ModUpdate` (`NexusSource.ModId` is `int`,
+   widened against `ModUpdate.ModId` `long`). Resolve the imported version via
+   `container.ResolveVersion(new LatestPolicy())`; if null (no versions / no
+   `IsLatest`), skip. Compare **`ModUpdate.LatestFileUpdateUtc`** (the
+   file-upload time) against `version.ImportedAt`. Use `LatestFileUpdate`, NOT
+   `LatestModActivity` (the latter includes page comments / endorsements / edits
+   and would flag mods that haven't gained a new file). If
+   `LatestFileUpdateUtc > version.ImportedAt` → flag it.
+7. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
+   lock), return the result.
+
+### UI wiring (`UpdateCheckRunner`)
+
+The two trigger points that fire `CheckAsync` (startup with the restored active
+id + active-profile switch) live in `UpdateCheckRunner` in `ui/Session/`, NOT in
+the Integrations library (the service itself has no knowledge of profile
+switches; it just takes a `profileId` + checks). The runner is a UI-layer
+singleton that subscribes to `IProfileSession.PropertyChanged` filtered to
+`ActiveProfileId` only (it ignores `IsRunning`, which the polling timer drives
+every few seconds) and fires `CheckAsync` fire-and-forget via `Task.Run`.
+Registered + started from `MagosComposition` after the provider is built
+(best-effort: a wiring failure is logged + swallowed, never blocks startup).
+Stage 5's mod-list badges subscribe to `CheckCompleted` + read `LastResult`.
+
 ## DI registration
 
 ```csharp
@@ -394,6 +487,10 @@ Registers (alongside the existing GitHub typed HTTP client):
 - `IModAcquisitionService` -> `ModAcquisitionService` (singleton; the download +
   extract + place orchestrator over `INexusClient` + `IModImportService` + a
   plain `HttpClient` from the factory for the CDN download).
+- `IUpdateCheckService` -> `UpdateCheckService` (singleton; the Nexus-only
+  update check. Depends on `INexusClient` + `IProfileService` + `IModRepository`
+  + `IConfigLoader`; the Integrations -> Profiles project reference exists for
+  this service).
 
 The OAuth factory's token store + the service's token store are the SAME
 `NexusOAuthTokenStore` instance (matches production wiring). The store depends
@@ -407,8 +504,10 @@ view. No construction-time cycle.
 ## Dependencies
 
 - **Magos libraries:** `config` (`MagosConfig.Integrations.Nexus` + `.GitHub`),
-  `general` (`IConfigLoader`), `mods` (`IModImportService`, `NexusSource` for
-  the acquisition service).
+  `general` (`IConfigLoader`), `mods` (`IModImportService`, `NexusSource`,
+  `IModRepository` / `ModContainer` / `ModVersion` for the acquisition +
+  update-check services), `profiles` (`IProfileService` for the update-check
+  service).
 - **NuGet:** `Microsoft.Extensions.Http` (`AddHttpClient<TClient,TImpl>` +
   `IHttpClientFactory`), `Microsoft.Extensions.DependencyInjection.Abstractions`,
   `Microsoft.Extensions.Logging.Abstractions`, `Duende.IdentityModel.OidcClient`
@@ -442,19 +541,29 @@ view. No construction-time cycle.
   redirect; the listener returns the callback query string; the friendly HTML
   response is served.
 - **`AddIntegrations`** DI wiring (the existing GitHub suite + the new Nexus
-  client + auth factory resolution + the acquisition service).
+  client + auth factory resolution + the acquisition service + the update-check
+  service).
 - **`ModAcquisitionService`** against a fake `INexusClient` + a fake
   `IModImportService` + a stub HTTP handler for the CDN download: premium vs
   free-user overload selection, first-CDN-link use, metadata resolution (name +
   version), the no-degraded-fallback error policy (metadata failure + missing
   file throw, no partial import), download failure, import-failure temp cleanup,
   progress reporting, cancellation.
+- **`UpdateCheckService`** against a fake `INexusClient` + a fake
+  `IProfileService` + a fake `IModRepository` + the `FakeConfigLoader`: correct
+  flagging (file-update vs imported-at), `PinnedPolicy` / `UntrackedSource` /
+  `GitHubSource` skipping, no-auth short-circuit (no API call), rate-limit guard
+  (the `> 0` guard prevents a false positive on `NexusRateLimits.Unknown`), the
+  symmetric daily + hourly rate-limit paths, no-checkable-mods short-circuit,
+  API-failure best-effort, and the `LastResult` + `CheckCompleted` contract.
 
 The internal `NexusClient`, `NexusAuthService`, `NexusOAuthTokenStore`,
-`LoopbackBrowser`, `HttpListenerLoopbackListener`, `ModAcquisitionService`, and
-the auth factories are visible to tests via `InternalsVisibleTo`. The
-`NxmModDownloadHandler` (UI) is tested in `Magos.Modificus.UI.Tests` (visible via
-the UI project's `InternalsVisibleTo`).
+`LoopbackBrowser`, `HttpListenerLoopbackListener`, `ModAcquisitionService`,
+`UpdateCheckService`, and the auth factories are visible to tests via
+`InternalsVisibleTo`. The `NxmModDownloadHandler` (UI) is tested in
+`Magos.Modificus.UI.Tests` (visible via the UI project's `InternalsVisibleTo`),
+alongside the `UpdateCheckRunner` (the UI-layer wiring that fires the check on
+profile load).
 
 ```sh
 dotnet test magos-modificus/magos-modificus.sln -c Release

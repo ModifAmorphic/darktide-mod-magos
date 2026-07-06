@@ -117,6 +117,25 @@ public sealed class IntegrationsServiceCollectionExtensionsTests
         Assert.Same(services, returned);
     }
 
+    [Fact]
+    public void AddIntegrations_registers_IUpdateCheckService_as_singleton()
+    {
+        // The update-check service orchestrates across Nexus + Mods + Profiles.
+        // Verified by descriptor (rather than resolving) so the test does not
+        // need IProfileService + IModRepository stubs (registered by AddProfiles
+        // + AddMods in the composition root, not by AddIntegrations). The
+        // service's own tests construct it directly and cover its behavior
+        // end-to-end.
+        var services = new ServiceCollection();
+        services.AddIntegrations();
+
+        var descriptor = services.FirstOrDefault(s => s.ServiceType == typeof(IUpdateCheckService));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(typeof(UpdateCheckService), descriptor.ImplementationType);
+        Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+    }
+
     /// <summary>
     /// Wires a stub HTTP handler into the typed-client registration
     /// <c>AddIntegrations()</c> builds (by re-entering the same

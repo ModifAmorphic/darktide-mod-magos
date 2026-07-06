@@ -42,10 +42,17 @@
       downloaded archives via IModImportService + keys Nexus containers by
       NexusSource. The dependency direction is clean (Mods knows nothing of
       Integrations).
+      Profiles is the profile + per-profile mod-list model: the update-check
+      service (IUpdateCheckService) orchestrates across Mods (per-container
+      source + version resolution), Profiles (the active profile's mod list),
+      and Nexus (the one-call recently-updated list). The dependency direction
+      is clean: Profiles depends only on Config + Mods, not on Integrations, so
+      this reference introduces no cycle.
     -->
     <ProjectReference Include="..\config\Magos.Modificus.Config.csproj" />
     <ProjectReference Include="..\general\Magos.Modificus.General.csproj" />
     <ProjectReference Include="..\mods\Magos.Modificus.Mods.csproj" />
+    <ProjectReference Include="..\profiles\Magos.Modificus.Profiles.csproj" />
   </ItemGroup>
 
 </Project>

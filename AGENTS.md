@@ -28,13 +28,15 @@ game-binary constraints now live with the runtime, in
 - **`main`** — production. Magos Modificus is built through Phase 3 (all four
   tracks merged: Track A the app shell + profile management, Track D global
   Preferences + i18n, Track B the mod-list UI + local import, Track C the Launch
-  flow + Settings window + discovery escape-hatch). The app is user-usable:
-  create profiles, import mods (folder/`.zip`, Nexus/GitHub/Untracked), manage
-  the mod list (enable/disable/reorder/policy/remove), configure Settings
-  (discovery paths + mod-repo location), and launch modded Darktide. The
-  Launcher is a stub (Phase 5). Backend libraries: Profiles, Mods (the unified
-  mod repository), Steam, Integrations, Enginseer-client, General. The Enginseer
-  runtime is a separate repo
+  flow + Settings window + discovery escape-hatch) + Phase 4 Stages 1-4 (the
+  nxm:// scheme handler, Nexus auth + Integrations dialog, mod acquisition, and
+  the update-check service). The app is user-usable: create profiles, import
+  mods (folder/`.zip`, Nexus/GitHub/Untracked), manage the mod list
+  (enable/disable/reorder/policy/remove), configure Settings (discovery paths +
+  mod-repo location), and launch modded Darktide. The Launcher is a stub
+  (Phase 5). Backend libraries: Profiles, Mods (the unified mod repository),
+  Steam, Integrations, Enginseer-client, General. The Enginseer runtime is a
+  separate repo
   ([darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer));
   this repo holds Magos Modificus only.
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
@@ -72,7 +74,13 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           orchestrator in Integrations) + the real `NxmModDownloadHandler` (in UI,
                           coordinating IDialogService + IProfileSession + Dispatcher.UIThread) that
                           replaces the Stage 1 no-op via DI last-registration-wins, registered after
-                          AddNxm() in MagosComposition)
+                          AddNxm() in MagosComposition;
+                          Phase 4 Stage 4: `UpdateCheckRunner` (ui/Session/) the
+                          UI-layer glue that fires `IUpdateCheckService.CheckAsync`
+                          fire-and-forget on profile load (startup-with-restored-id
+                          + active-profile switch via IProfileSession.PropertyChanged
+                          filtered to ActiveProfileId), registered + started
+                          best-effort from MagosComposition)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO),
@@ -125,7 +133,15 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         IModImportService + a plain HttpClient for the CDN
                         download; AcquireFromNexusAsync resolves the download
                         links, fetches name + version metadata, downloads to
-                        temp, then imports via IModImportService.Import)
+                        temp, then imports via IModImportService.Import;
+                        Phase 4 Stage 4: IUpdateCheckService the Nexus-only
+                        update-check service (1 ModUpdatesAsync call per check,
+                        intersected with the profile's LatestPolicy+NexusSource
+                        mods; compares LatestFileUpdateUtc against the imported
+                        version's ImportedAt; rate-limit-aware with the all-zero
+                        Unknown guard; LastResult + CheckCompleted event for
+                        Stage 5 badges; Integrations now references Profiles,
+                        acyclic, for IProfileService.GetModList)
   steam/                Magos.Modificus.Steam — Steam + Darktide + Proton discovery
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup
                         via process comm on Windows; LinuxProcessLookup via /proc
@@ -171,6 +187,9 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                                           ephemeral port, the NexusConfig JSON round-trip, and the
                                           ModAcquisitionService (download + extract + place against
                                           a fake INexusClient + fake IModImportService + stub CDN)
+                                          + the UpdateCheckService (Nexus-only
+                                          update check against a fake INexusClient +
+                                          fake IProfileService + fake IModRepository)
     Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
                                             `dotnet test` = xUnit; `dotnet run` = composition smoke harness)
@@ -217,7 +236,8 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   collision hard-block (`GetBaseNameCollision`; two same-folder mods can't
   coexist in a profile), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
   **Integrations** (GitHub Releases client + the Nexus v1 client/auth +
-  `IModAcquisitionService` the download + extract + place orchestrator),
+  `IModAcquisitionService` the download + extract + place orchestrator +
+  `IUpdateCheckService` the Nexus-only update-check service),
   **Enginseer-client** (the launch
   façade), **Mods** (the unified `IModRepository`: UUID containers per
   (source, identity), opaque-ID version subfolders, per-container
