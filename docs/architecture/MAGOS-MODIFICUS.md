@@ -8,15 +8,18 @@ Mods, Steam), and the "Launch Darktide" button that invokes the Enginseer
 launcher. Enginseer does the injection + mod loading; Magos Modificus owns the
 management experience around it.
 
-> **Status: Phases 0–3 complete.** The foundation (.NET 10 + Avalonia 12 layout,
-> DI composition, structured logging, global config schema/loader) plus the
-> backend libraries are built: Profiles, Steam, Integrations, Enginseer-client
-> (Phase 1) + Mods (Phase 2). The Phase 3 UI is in place across all four tracks:
-> Track A (app shell + profile management), Track D (global Preferences + i18n),
-> Track B (the mod-list UI + local import), and Track C (Launch wiring + Settings
-> window + discovery escape-hatch). The app is user-usable: create profiles,
-> import mods, manage the mod list, configure Settings, and launch modded
-> Darktide. The **Launcher** is a stub (Phase 5). It builds on the
+> **Status: Phases 0–3 complete; Phase 4 in progress (Stages 1–4 done).** The
+> foundation (.NET 10 + Avalonia 12 layout, DI composition, structured logging,
+> global config schema/loader) plus the backend libraries are built: Profiles,
+> Steam, Integrations, Enginseer-client (Phase 1) + Mods (Phase 2). The Phase 3
+> UI is in place across all four tracks: Track A (app shell + profile
+> management), Track D (global Preferences + i18n), Track B (the mod-list UI +
+> local import), and Track C (Launch wiring + Settings window + discovery
+> escape-hatch). Phase 4 adds the Nexus integration: the nxm:// scheme handler
+> (Stage 1), Nexus auth + Integrations dialog (Stage 2), mod acquisition
+> (Stage 3), and the update-check service (Stage 4). The app is user-usable:
+> create profiles, import mods, manage the mod list, configure Settings, and
+> launch modded Darktide. The **Launcher** is a stub (Phase 5). It builds on the
 > [Enginseer runtime](https://github.com/ModifAmorphic/darktide-enginseer)
 > (separate repo).
 
@@ -364,6 +367,30 @@ detail (the acquisition flow, the handler checks, the UI-assembly placement, and
 startup OS registration) is in [mod acquisition architecture](mod-acquisition.md);
 the public surface is in
 [integrations reference](../reference/magos-modificus/integrations.md).
+
+## Update check
+
+Stage 4's `IUpdateCheckService` (Integrations) is the Nexus-only update check.
+On profile load it calls `ModUpdatesAsync("warhammer40kdarktide", Month)` once,
+intersects the response with the active profile's `LatestPolicy` +
+`NexusSource` mods, and flags any whose imported version's `ImportedAt`
+predates the Nexus-reported `LatestFileUpdateUtc` (the file-upload time, not
+mod-page activity, which would false-positive on comments). One API call
+regardless of profile size; `PinnedPolicy`, `UntrackedSource`, and
+`GitHubSource` mods are skipped. Rate-limit-aware: if the response reports an
+exhausted daily or hourly quota (and the limit was actually reported, guarding
+against the all-zero header-absent fallback), the result is flagged
+`RateLimited` and Stage 5 surfaces a "check incomplete" indicator rather than
+"all up to date."
+
+The result (`UpdateCheckResult` with per-mod `ModUpdateInfo`) is published via
+`LastResult` + a `CheckCompleted` event for Stage 5's badges to consume without
+re-awaiting. The check is fired fire-and-forget by `UpdateCheckRunner` (UI),
+which subscribes to `IProfileSession.PropertyChanged` filtered to
+`ActiveProfileId` (startup-with-restored-id + active-profile switch). No UI in
+Stage 4; Stage 5 adds the per-row "update available" badges + the per-mod
+update button (which calls Stage 3's `IModAcquisitionService`). The public
+surface is in [integrations reference](../reference/magos-modificus/integrations.md).
 
 ## Mod list (main view)
 

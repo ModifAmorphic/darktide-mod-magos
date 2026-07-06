@@ -21,7 +21,11 @@ public static class ServiceCollectionExtensions
     /// The acquisition service (download + extract + place orchestration over
     /// <see cref="INexusClient"/> + <see cref="IModImportService"/>) is a
     /// singleton; Stage 3's nxm download handler and Stage 5's per-mod update
-    /// button both resolve it.
+    /// button both resolve it. The update-check service (one-call Nexus
+    /// recently-updated query intersected with the active profile's
+    /// LatestPolicy + NexusSource mods) is a singleton; Stage 5 binds badges to
+    /// its <see cref="IUpdateCheckService.LastResult"/> + subscribes to
+    /// <see cref="IUpdateCheckService.CheckCompleted"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -47,6 +51,7 @@ public static class ServiceCollectionExtensions
         AddGitHub(services);
         AddNexus(services);
         AddAcquisition(services);
+        AddUpdateCheck(services);
 
         return services;
     }
@@ -135,6 +140,20 @@ public static class ServiceCollectionExtensions
     private static void AddAcquisition(IServiceCollection services)
     {
         services.AddSingleton<IModAcquisitionService, ModAcquisitionService>();
+    }
+
+    /// <summary>
+    /// Registers the Nexus update-check service. Orchestrates the one-call
+    /// recently-updated query against the active profile's LatestPolicy +
+    /// NexusSource mods via <see cref="INexusClient"/> +
+    /// <see cref="IModRepository"/> + <see cref="Profiles.IProfileService"/>.
+    /// Singleton: holds the last result (<see cref="IUpdateCheckService.LastResult"/>)
+    /// so Stage 5 can bind badges to it without re-running the check, and
+    /// publishes updates through <see cref="IUpdateCheckService.CheckCompleted"/>.
+    /// </summary>
+    private static void AddUpdateCheck(IServiceCollection services)
+    {
+        services.AddSingleton<IUpdateCheckService, UpdateCheckService>();
     }
 
     private static class GitHubConfigDefaults

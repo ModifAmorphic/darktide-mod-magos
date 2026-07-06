@@ -121,6 +121,15 @@ public static class MagosComposition
                 sp.GetRequiredService<INexusAuthService>(),
                 sp.GetRequiredService<ILoggerFactory>()));
 
+        // Phase 4 Stage 4: the UI-layer glue that fires an update check
+        // (IUpdateCheckService, registered above via AddIntegrations) whenever a
+        // profile becomes active. Subscribes to IProfileSession.PropertyChanged
+        // for switches + fires the opening check for the restored active id.
+        // Started after the provider is built (see StartUpdateCheck); best-effort,
+        // never blocks startup. Singleton: owns the session subscription for the
+        // app lifetime.
+        services.AddSingleton<UpdateCheckRunner>();
+
         var provider = services.BuildServiceProvider();
 
         // Startup prune: drop repository versions no profile references + empty
@@ -154,6 +163,12 @@ public static class MagosComposition
         // the app; they just can't click "Mod manager download" on Nexus until
         // it's resolved). This is what MO2, NMA, and Vortex all do on startup.
         RegisterNxmHandler(provider, loggerFactory);
+
+        // Phase 4 Stage 4: start the update-check runner so a check fires on
+        // profile load (startup with the restored id + active-profile switches).
+        // Best-effort: a failure is logged + swallowed so a wiring problem never
+        // blocks startup (Stage 5 badges just stay blank until restart).
+        StartUpdateCheck(provider, loggerFactory);
 
         return provider;
     }
@@ -259,6 +274,29 @@ public static class MagosComposition
             // download" on Nexus until it's resolved).
             loggerFactory.CreateLogger(nameof(MagosComposition))
                 .LogWarning(ex, "Failed to register the nxm:// scheme handler (best-effort).");
+        }
+    }
+
+    /// <summary>
+    /// Resolves the <see cref="UpdateCheckRunner"/> + calls
+    /// <see cref="UpdateCheckRunner.Start"/> so an update check fires on profile
+    /// load (startup with the restored active id, then every active-profile
+    /// switch). Best-effort: any failure is logged + swallowed so a wiring
+    /// problem never blocks app startup (the user can still use the app; Stage 5
+    /// badges just stay blank until restart).
+    /// </summary>
+    private static void StartUpdateCheck(IServiceProvider provider, ILoggerFactory loggerFactory)
+    {
+        try
+        {
+            provider.GetRequiredService<UpdateCheckRunner>().Start();
+        }
+        catch (Exception ex)
+        {
+            // Swallow: update-check wiring is best-effort. Log + continue; the
+            // app works without it (Stage 5 badges just stay blank).
+            loggerFactory.CreateLogger(nameof(MagosComposition))
+                .LogWarning(ex, "Failed to start the update-check runner (best-effort).");
         }
     }
 
