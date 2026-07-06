@@ -16,8 +16,9 @@ management experience around it.
 > Track B (the mod-list UI + local import), and Track C (Launch wiring + Settings
 > window + discovery escape-hatch). The app is user-usable: create profiles,
 > import mods, manage the mod list, configure Settings, and launch modded
-> Darktide. The **Launcher** is a stub (Phase 5). Enginseer (the runtime it
-> builds on) is built; see `docs/architecture/ENGINSEER.md`.
+> Darktide. The **Launcher** is a stub (Phase 5). It builds on the
+> [Enginseer runtime](https://github.com/ModifAmorphic/darktide-enginseer)
+> (separate repo).
 
 ## In scope for this document
 
@@ -29,11 +30,11 @@ management experience around it.
 
 ## Out of scope (handled elsewhere)
 
-- The Enginseer runtime internals — `docs/architecture/ENGINSEER.md`.
-- The mod loader ↔ DMF integration — `docs/architecture/MOD_LOADER-DMF.md`.
-- The load-order file contract (`mods.lst`) — specified in `MOD_LOADER-DMF.md`
-  and `enginseer/mod_loader/mod_manager.lua`; Magos authors it, Enginseer
-  consumes it.
+- The Enginseer runtime internals: see the
+  [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer) repo.
+- The mod loader ↔ DMF integration: darktide-enginseer.
+- The load-order file contract (`mods.lst`): Magos authors `mods.lst` and
+  Enginseer consumes it; the contract is specified in darktide-enginseer.
 
 ## Technology
 
@@ -175,8 +176,9 @@ Stable surface (Enginseer is built; this is the boundary Magos builds against):
   after resume. Status / hot-reload / live enable-disable are a tracked future
   Enginseer contract expansion (GitHub issue), not v1.
 
-See `docs/architecture/ENGINSEER.md` for the full contract (env-var table,
-logging, the hook-ready handshake).
+See the
+[Enginseer runtime docs](https://github.com/ModifAmorphic/darktide-enginseer)
+for the full contract (env-var table, logging, the hook-ready handshake).
 
 ## Profiles
 
@@ -736,10 +738,9 @@ Per-profile settings live with the profile, not in the global config.
 
 ## References
 
-- `docs/architecture/ENGINSEER.md` — the runtime Magos builds on; the full
-  launcher/shell contract.
-- `docs/architecture/MOD_LOADER-DMF.md` — the `mods.lst` contract (which Magos
-  authors) + the two-roots model.
-- `docs/architecture/README.md` — the project-wide architecture + component
+- [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer): the
+  runtime Magos builds on (launcher/shell contract, mod loader, `mods.lst`
+  contract, two-roots model).
+- `docs/architecture/README.md`: the Magos Modificus architecture + component
   model.
-- `AGENTS.md` — agent orientation + conventions.
+- `AGENTS.md`: agent orientation + conventions.

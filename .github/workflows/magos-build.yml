@@ -1,6 +1,6 @@
-# Magos Modificus — builds the .NET 10 + Avalonia 12 mod-manager app.
-# Scoped to magos-modificus/** so it never rebuilds the Enginseer (Rust/C)
-# stack — that has its own mingw-build.yml / msvc-build.yml.
+# Magos Modificus: builds the .NET 10 + Avalonia 12 mod-manager app.
+# Scoped to magos-modificus/** (the Enginseer runtime lives in a separate
+# repo: https://github.com/ModifAmorphic/darktide-enginseer).
 name: magos-build
 
 on:
