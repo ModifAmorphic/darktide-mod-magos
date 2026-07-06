@@ -432,6 +432,14 @@ plain `AddSingleton`, and MS DI resolves the last registration, so a later
 `AddSingleton<INxmModDownloadHandler, RealImpl>()` after `AddNxm()` supersedes
 the default.
 
+**Stage 3's handler lives in the UI assembly.** The `NxmModDownloadHandler`
+coordinates UI concerns (the active-profile session, the error dialog, the
+UI-thread marshaling), so it sits in `Magos.Modificus.UI.Nxm` alongside its
+dependencies. The reusable backend core, `IModAcquisitionService` (download +
+extract + place), lives in Integrations and is what the handler calls to do
+the actual work. Placing the handler in Integrations would create a dependency
+cycle (Integrations cannot reference the UI assembly).
+
 **Stage 2 removed the OAuth-callback seam.** Stage 1 originally shipped an
 `INxmOAuthCallbackHandler` for an `nxm://oauth/callback` URL kind, expecting
 the OAuth flow to ride on `nxm://`. Stage 2 corrects that: Nexus OAuth in Magos
@@ -507,6 +515,40 @@ mirroring that shape; v3 is Experimental for the surfaces we need, so v1 only):
 Per-library public surfaces, exact signatures, and DI registration are documented
 in [integrations reference](../reference/magos-modificus/integrations.md) and
 [nxm reference](../reference/magos-modificus/nxm.md).
+
+### Nexus mod acquisition (Phase 4 Stage 3)
+
+When a user clicks "Mod manager download" on a Nexus file page, the Stage 1
+handler exe relays the `nxm://` URL to the running app, the router dispatches
+it, and the Stage 3 `NxmModDownloadHandler` orchestrates the download + import
+into the active profile. The reusable core is `IModAcquisitionService`
+(Integrations), which the handler calls and Stage 5's per-mod update button will
+also call.
+
+**Acquisition flow** (`ModAcquisitionService.AcquireFromNexusAsync`):
+
+1. Resolve download links via `INexusClient.DownloadLinksAsync`. The free-user
+   overload (with `nxmKey` + `nxmExpires` from the URL) is used when both are
+   present; the premium (auth-only) overload otherwise. The **first** CDN link
+   is used (Nexus returns them in priority order).
+2. Resolve metadata: `GetModInfoAsync` for the mod name, `ListModFilesAsync` +
+   match by `fileId` for the version string. **No degraded fallback**: a metadata
+   failure surfaces a clear error and nothing partial lands (a mod stored under
+   its id as a name is worse than a clean failure).
+3. Download to `Path.GetTempFileName()` via a plain `HttpClient` + the 81920-byte
+   buffered copy + `IProgress<long>` pattern. The temp file is always deleted
+   (success or failure).
+4. Import via `IModImportService.Import(tempPath, modName, NexusSource{ModId},
+   version)`, which dedups by `NexusSource.ModId` (find-or-create container) +
+   adds the version + flips `IsLatest`. Returns `(containerId, versionId)`.
+
+**Handler checks** (`NxmModDownloadHandler.HandleAsync`): auth configured
+(`AuthMethod != None`; the nxm key/expires is NOT a substitute for auth) and
+active profile set (`IProfileSession.ActiveProfileId != null`). On success,
+`IProfileService.AddMod(profileId, containerId, ModVersionPolicy.Latest)`. On
+any failure (not cancellation), `IDialogService.ShowAlertAsync` with the error
+message, marshaled to the UI thread via the injectable `invokeOnUi` seam
+(production: `Dispatcher.UIThread.InvokeAsync`).
 
 ## Mod list (main view)
 

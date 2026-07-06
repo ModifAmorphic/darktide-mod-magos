@@ -15,6 +15,7 @@ using Magos.Modificus.UI.ViewModels;
 using Magos.Modificus.UI.Views;
 using Magos.Modificus.EnginseerClient;
 using Magos.Modificus.Launcher;
+using Magos.Modificus.UI.Nxm;
 
 namespace Magos.Modificus.UI;
 
@@ -66,6 +67,27 @@ public static class MagosComposition
         // server is bound + started after the provider is built (see
         // StartNxmServer).
         services.AddNxm();
+
+        // Phase 4 Stage 3: replace the no-op INxmModDownloadHandler (registered
+        // inside AddNxm) with the real acquisition handler. MS DI resolves the
+        // LAST registration for an interface, so this AddSingleton supersedes
+        // the no-op. Registered with a factory that resolves its dependencies
+        // lazily at first use (the factory delegate is deferred until the handler
+        // is first resolved by the IPC router, by which point all dependencies
+        // including IProfileSession, IDialogService, and MainWindow are
+        // registered). It coordinates the acquisition service (Integrations)
+        // with the active-profile session, profile service, and the UI-thread
+        // alert dialog. Registered with a factory so the UI-thread marshaling
+        // seam (Dispatcher.UIThread.InvokeAsync) is wired explicitly.
+        services.AddSingleton<INxmModDownloadHandler>(sp => new NxmModDownloadHandler(
+            invokeOnUi: action => Dispatcher.UIThread.InvokeAsync(action),
+            sp.GetRequiredService<IModAcquisitionService>(),
+            sp.GetRequiredService<IProfileSession>(),
+            sp.GetRequiredService<IProfileService>(),
+            sp.GetRequiredService<IConfigLoader>(),
+            sp.GetRequiredService<IDialogService>(),
+            sp.GetRequiredService<ILogger<NxmModDownloadHandler>>(),
+            refreshModList: () => sp.GetRequiredService<ModListViewModel>().Reload()));
 
         // UI surface. MainWindow is a singleton: the desktop lifetime installs
         // the resolved instance as desktop.MainWindow, and DialogService resolves
@@ -125,6 +147,13 @@ public static class MagosComposition
         // + discovery above): a single-instance violation is fatal-by-design for
         // this process. The pipe-bind degradation is handled inside Bind itself.
         StartNxmServer(provider, loggerFactory.CreateLogger(nameof(MagosComposition)));
+
+        // Register Magos as the OS nxm:// scheme handler if not already
+        // registered. Best-effort: a failure is logged + swallowed so a
+        // registration problem never blocks startup (the user can still use
+        // the app; they just can't click "Mod manager download" on Nexus until
+        // it's resolved). This is what MO2, NMA, and Vortex all do on startup.
+        RegisterNxmHandler(provider, loggerFactory);
 
         return provider;
     }
@@ -196,6 +225,40 @@ public static class MagosComposition
             // launch-time Discover re-runs and surfaces real failures.
             loggerFactory.CreateLogger(nameof(MagosComposition))
                 .LogWarning(ex, "Startup discovery failed (best-effort; launch will re-try).");
+        }
+    }
+
+    /// <summary>
+    /// Registers Magos as the OS nxm:// scheme handler if not already
+    /// registered, so clicking "Mod manager download" on Nexus invokes the
+    /// handler exe. Best-effort: a failure is logged + swallowed so a
+    /// registration problem never blocks startup.
+    /// </summary>
+    private static void RegisterNxmHandler(IServiceProvider provider, ILoggerFactory loggerFactory)
+    {
+        try
+        {
+            var logger = loggerFactory.CreateLogger(nameof(MagosComposition));
+            var registrar = provider.GetService<INxmHandlerRegistrar>();
+            if (registrar is null)
+            {
+                // No registrar for this platform (not Windows or Linux).
+                logger.LogWarning("No nxm handler registrar available for this platform; skipping registration.");
+                return;
+            }
+            if (!registrar.IsRegistered())
+            {
+                registrar.Register();
+                logger.LogInformation("Registered Magos as the nxm:// scheme handler.");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Swallow: registration is best-effort. Log + continue; the user
+            // can still use the app (they just can't click "Mod manager
+            // download" on Nexus until it's resolved).
+            loggerFactory.CreateLogger(nameof(MagosComposition))
+                .LogWarning(ex, "Failed to register the nxm:// scheme handler (best-effort).");
         }
     }
 

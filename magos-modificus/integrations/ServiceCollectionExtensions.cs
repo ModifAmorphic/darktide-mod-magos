@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using Duende.IdentityModel.OidcClient.Browser;
 using Magos.Modificus.Config;
 using Magos.Modificus.General;
+using Magos.Modificus.Mods;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -17,6 +18,10 @@ public static class ServiceCollectionExtensions
     /// auth applied by the auth message factory selector (which reads
     /// <see cref="NexusConfig.AuthMethod"/> live). The Nexus auth service +
     /// the loopback <see cref="IBrowser"/> + the token store are singletons.
+    /// The acquisition service (download + extract + place orchestration over
+    /// <see cref="INexusClient"/> + <see cref="IModImportService"/>) is a
+    /// singleton; Stage 3's nxm download handler and Stage 5's per-mod update
+    /// button both resolve it.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -41,6 +46,7 @@ public static class ServiceCollectionExtensions
 
         AddGitHub(services);
         AddNexus(services);
+        AddAcquisition(services);
 
         return services;
     }
@@ -118,6 +124,17 @@ public static class ServiceCollectionExtensions
         // current-state read). Depends on the token store + the v1 client.
         services.AddSingleton<NexusAuthService>();
         services.AddSingleton<INexusAuthService>(sp => sp.GetRequiredService<NexusAuthService>());
+    }
+
+    /// <summary>
+    /// Registers the mod acquisition service. A thin orchestrator over
+    /// <see cref="INexusClient"/> + <see cref="IModImportService"/> + a plain
+    /// <c>HttpClient</c> (from the factory, for the raw CDN archive download).
+    /// Singleton: holds no per-call state.
+    /// </summary>
+    private static void AddAcquisition(IServiceCollection services)
+    {
+        services.AddSingleton<IModAcquisitionService, ModAcquisitionService>();
     }
 
     private static class GitHubConfigDefaults
