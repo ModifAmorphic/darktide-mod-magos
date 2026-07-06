@@ -2,7 +2,8 @@
 
 > External mod-source clients. Phase 1 shipped the read-only GitHub Releases
 > client. Phase 4 Stage 2 adds the Nexus Mods v1 client + the OAuth/API-key
-> auth machinery. Status: implemented (Phase 4 Stage 2).
+> auth machinery. Phase 4 Stage 3 adds the mod acquisition service (download +
+> extract + place). Status: implemented (Phase 4 Stage 3).
 
 ## GitHub client (Phase 1)
 
@@ -272,6 +273,92 @@ authorization response. Three-minute flow timeout; on expiry it surfaces
 `BrowserResultType.Timeout`. Independent of the Stage 1 `nxm://` scheme handler
 (loopback redirect, not `nxm://`).
 
+## Mod acquisition service (Phase 4 Stage 3)
+
+The reusable download + extract + place orchestrator. Consumed by the nxm
+download handler (Stage 3) and by Stage 5's per-mod update button without
+retooling: both resolve `IModAcquisitionService` and feed the returned
+`(containerId, versionId)` to `IProfileService.AddMod`.
+
+```csharp
+public interface IModAcquisitionService
+{
+    Task<(Guid ContainerId, string VersionId)> AcquireFromNexusAsync(
+        string gameDomain, int modId, int fileId,
+        string? nxmKey = null, long? nxmExpires = null,
+        IProgress<long>? progress = null, CancellationToken ct = default);
+}
+```
+
+- `AcquireFromNexusAsync`: downloads a Nexus mod file, extracts it into the
+  repository via `IModImportService.Import`, and returns the
+  `(containerId, versionId)`. The caller handles profile registration. The
+  interface accommodates GitHub later; only the Nexus method is implemented in
+  Stage 3.
+
+The `IProgress<long>` parameter is Stage 5's per-row progress hook (Stage 3's
+nxm handler passes `null`).
+
+### Acquisition flow (`ModAcquisitionService`)
+
+1. **Resolve download links** via `INexusClient.DownloadLinksAsync`. If both
+   `nxmKey` and `nxmExpires` are present, the **free-user** overload is used
+   (the per-file token from the `nxm://` URL); otherwise the **premium**
+   (auth-only) overload. The auth header is applied by the client's auth
+   factory. The **first** CDN link (`result.Data[0].Uri`) is used; Nexus
+   returns them in priority order.
+2. **Resolve metadata** for the Import: `GetModInfoAsync` for the mod name +
+   `ListModFilesAsync` + find the file with matching `fileId` for the version
+   string. These are 2 API calls (3 total per acquisition, within rate limits).
+   **No degraded fallback:** if the metadata fetch fails, the acquisition fails
+   with a clear error (a mod stored under its numeric id as a name is worse than
+   a clean failure message).
+3. **Download** from the CDN URI to a temp file (`Path.GetTempFileName()`) using
+   a plain `HttpClient` from `IHttpClientFactory` + the 81920-byte buffered
+   copy + `IProgress<long>` pattern from `GitHubClient.DownloadAssetAsync`. The
+   temp file is deleted once Import returns (always, success or failure; no
+   partial state).
+4. **Import** via `IModImportService.Import(tempPath, modName, new NexusSource
+   { ModId = modId }, version)`. The import service handles find-or-create-
+   container (dedup by `NexusSource.ModId`) + add-version + `IsLatest` flip.
+5. **Return** `(containerId, versionId)`.
+
+The CDN download uses a plain `HttpClient` (not the typed `INexusClient`)
+because the CDN URL is an absolute path with the per-file token in the query
+string (free users) or just the session auth (premium); no base address or
+Nexus-specific headers are needed.
+
+### nxm download handler (Phase 4 Stage 3)
+
+The real `INxmModDownloadHandler` that replaces Stage 1's no-op default. Lives
+in the UI assembly (`Magos.Modificus.UI.Nxm`), not Integrations, because it
+coordinates UI concerns: it reads the active profile from `IProfileSession`
+(UI), shows error dialogs through `IDialogService` (UI), and marshals those
+dialogs to the UI thread via `Dispatcher.UIThread` (Avalonia). Placing it in
+Integrations would create a dependency cycle (Integrations cannot reference the
+UI assembly, which is its consumer). The reusable acquisition service is the
+backend seam in Integrations; the handler is the thin UI-coordinating shell.
+
+The handler's pre-flight checks + flow:
+
+1. **Auth check** (live config read): `NexusConfig.AuthMethod != None`
+   (required for every download; the `nxm://` key/expires is the per-file
+   token for the free-user endpoint, NOT a substitute for auth). None ->
+   `ShowAlertAsync("Nexus not configured", ...)`.
+2. **Active-profile check**: `IProfileSession.ActiveProfileId != null`. null ->
+   `ShowAlertAsync("No active profile", ...)`.
+3. **Acquire + register**: `AcquireFromNexusAsync(url.Game, url.ModId,
+   url.FileId, url.Key, url.Expires, ct: ct)` then
+   `IProfileService.AddMod(profileId, containerId, ModVersionPolicy.Latest)`.
+4. **On failure** (not cancellation): `ShowAlertAsync("Download failed",
+   ex.Message)`. Cancellation propagates as `OperationCanceledException`.
+
+`ShowAlertAsync` marshals to the UI thread via an injectable `invokeOnUi` seam
+(`Func<Func<Task>, Task>`); production wires `Dispatcher.UIThread.InvokeAsync`,
+tests inject a pass-through. The handler is registered AFTER `AddNxm()` so DI
+"last registration wins" supersedes the no-op default (see
+[DI wiring](#di-registration)).
+
 ### OAuth constants (build-time)
 
 `NexusOAuthConstants.ClientId` = `"magos-modificus"` (a build-time const, NOT
@@ -298,6 +385,9 @@ Registers (alongside the existing GitHub typed HTTP client):
   exposed both directly and as `INexusTokenStore`.
 - `NexusAuthService` (singleton; the Integrations-dialog auth orchestrator),
   exposed both directly and as `INexusAuthService`.
+- `IModAcquisitionService` -> `ModAcquisitionService` (singleton; the download +
+  extract + place orchestrator over `INexusClient` + `IModImportService` + a
+  plain `HttpClient` from the factory for the CDN download).
 
 The OAuth factory's token store + the service's token store are the SAME
 `NexusOAuthTokenStore` instance (matches production wiring). The store depends
@@ -310,7 +400,9 @@ view. No construction-time cycle.
 
 ## Dependencies
 
-- **Magos libraries:** `config` (`MagosConfig.Integrations.Nexus` + `.GitHub`).
+- **Magos libraries:** `config` (`MagosConfig.Integrations.Nexus` + `.GitHub`),
+  `general` (`IConfigLoader`), `mods` (`IModImportService`, `NexusSource` for
+  the acquisition service).
 - **NuGet:** `Microsoft.Extensions.Http` (`AddHttpClient<TClient,TImpl>` +
   `IHttpClientFactory`), `Microsoft.Extensions.DependencyInjection.Abstractions`,
   `Microsoft.Extensions.Logging.Abstractions`, `Duende.IdentityModel.OidcClient`
@@ -344,11 +436,19 @@ view. No construction-time cycle.
   redirect; the listener returns the callback query string; the friendly HTML
   response is served.
 - **`AddIntegrations`** DI wiring (the existing GitHub suite + the new Nexus
-  client + auth factory resolution).
+  client + auth factory resolution + the acquisition service).
+- **`ModAcquisitionService`** against a fake `INexusClient` + a fake
+  `IModImportService` + a stub HTTP handler for the CDN download: premium vs
+  free-user overload selection, first-CDN-link use, metadata resolution (name +
+  version), the no-degraded-fallback error policy (metadata failure + missing
+  file throw, no partial import), download failure, import-failure temp cleanup,
+  progress reporting, cancellation.
 
 The internal `NexusClient`, `NexusAuthService`, `NexusOAuthTokenStore`,
-`LoopbackBrowser`, `HttpListenerLoopbackListener`, and the auth factories are
-visible to tests via `InternalsVisibleTo`.
+`LoopbackBrowser`, `HttpListenerLoopbackListener`, `ModAcquisitionService`, and
+the auth factories are visible to tests via `InternalsVisibleTo`. The
+`NxmModDownloadHandler` (UI) is tested in `Magos.Modificus.UI.Tests` (visible via
+the UI project's `InternalsVisibleTo`).
 
 ```sh
 dotnet test magos-modificus/magos-modificus.sln -c Release
@@ -363,4 +463,5 @@ dotnet test magos-modificus/magos-modificus.sln -c Release
   subsection.
 - [config](config.md) — the `GitHubConfig` + `NexusConfig` schemas.
 - [nxm](nxm.md) — the `nxm://` scheme handler (Stage 1), including the Stage 2
-  seam cleanup.
+  seam cleanup. Stage 3's `NxmModDownloadHandler` replaces the no-op
+  `INxmModDownloadHandler` via DI last-registration-wins.

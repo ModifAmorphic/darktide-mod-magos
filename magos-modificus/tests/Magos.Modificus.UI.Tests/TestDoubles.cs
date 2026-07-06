@@ -85,8 +85,15 @@ internal sealed class FakeProfileService : IProfileService
     public IReadOnlyList<IReadOnlyList<Guid>> SetModOrderCalls { get; } = new List<IReadOnlyList<Guid>>();
     public IReadOnlyList<(Guid Id, Guid ContainerId, ModVersionPolicy Policy)> SetModPolicyCalls { get; } = new List<(Guid, Guid, ModVersionPolicy)>();
     public IReadOnlyList<(Guid Id, Guid ContainerId, ModVersionPolicy Policy)> AddModCalls { get; } = new List<(Guid, Guid, ModVersionPolicy)>();
-    public IReadOnlyList<(Guid Id, Guid ContainerId)> RemoveModCalls { get; } = new List<(Guid, Guid)>();
 
+    /// <summary>
+    /// Optional exception thrown by the next <see cref="AddMod"/> call (after the
+    /// call is recorded). Default <c>null</c> = no throw. Used by the nxm-handler
+    /// test to simulate AddMod failing after a successful acquisition.
+    /// </summary>
+    public Exception? AddModThrows { get; set; }
+
+    public IReadOnlyList<(Guid Id, Guid ContainerId)> RemoveModCalls { get; } = new List<(Guid, Guid)>();
     /// <summary>Seeds a profile's mod list (replaces any prior). Test helper.</summary>
     public FakeProfileService WithMods(Guid id, params ModListEntry[] mods)
     {
@@ -202,6 +209,11 @@ internal sealed class FakeProfileService : IProfileService
     public void AddMod(Guid id, Guid containerId, ModVersionPolicy policy)
     {
         ((List<(Guid, Guid, ModVersionPolicy)>)AddModCalls).Add((id, containerId, policy));
+
+        if (AddModThrows is not null)
+        {
+            throw AddModThrows;
+        }
 
         var list = EnsureList(id);
         if (list.Any(m => m.ContainerId == containerId))

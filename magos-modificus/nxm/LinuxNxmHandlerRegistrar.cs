@@ -39,7 +39,9 @@ internal sealed class LinuxNxmHandlerRegistrar : INxmHandlerRegistrar
         _handlerExePath = handlerExePath;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _applicationsDir = applicationsDir
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            ?? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "applications");
         if (string.IsNullOrEmpty(_applicationsDir))
             throw new InvalidOperationException("Could not resolve the local applications directory.");
         _runXdg = runXdg ?? RunXdgDefault;

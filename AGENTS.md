@@ -89,7 +89,12 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           `OpenIntegrationsCommand` on the shell (left of the profiles button),
                           wired through `IDialogService.ShowIntegrationsAsync` -> `IntegrationsViewModel`
                           -> `INexusAuthService` (OAuth loopback + API-key validate + sign-out) +
-                          the running-state gate (auth controls disable while Darktide runs))
+                          the running-state gate (auth controls disable while Darktide runs);
+                          Phase 4 Stage 3: `IModAcquisitionService` (download + extract + place
+                          orchestrator in Integrations) + the real `NxmModDownloadHandler` (in UI,
+                          coordinating IDialogService + IProfileSession + Dispatcher.UIThread) that
+                          replaces the Stage 1 no-op via DI last-registration-wins, registered after
+                          AddNxm() in MagosComposition)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO),
@@ -136,7 +141,13 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         the IBrowser impl with an HttpListener on an ephemeral
                         port; Duende.IdentityModel.OidcClient 7.1.0 for the
                         OAuth machinery; client_id is the build-time const
-                        "magos-modificus")
+                        "magos-modificus";
+                        Phase 4 Stage 3: IModAcquisitionService the download +
+                        extract + place orchestrator over INexusClient +
+                        IModImportService + a plain HttpClient for the CDN
+                        download; AcquireFromNexusAsync resolves the download
+                        links, fetches name + version metadata, downloads to
+                        temp, then imports via IModImportService.Import)
   steam/                Magos.Modificus.Steam — Steam + Darktide + Proton discovery
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup
                         via process comm on Windows; LinuxProcessLookup via /proc
@@ -155,9 +166,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         server; Bind runs two SEPARATE checks: SingleInstanceGuard first
                         (fatal NxmSingleInstanceException on collision), then the pipe bind
                         which degrades gracefully on IOException; accept loop Disconnects
-                        between clients), INxmRouter + no-op INxmModDownloadHandler /
-                        INxmOAuthCallbackHandler defaults (Stage 2/3 register real impls via
-                        AddSingleton last-wins), the OS scheme-handler registrar
+                        between clients), INxmRouter + no-op INxmModDownloadHandler
+                        default (Stage 3 registers the real handler via AddSingleton
+                        last-wins, in MagosComposition after AddNxm()), the OS
+                        scheme-handler registrar
                         (INxmHandlerRegistrar: WindowsNxmHandlerRegistrar writes
                         HKCU\Software\Classes\nxm; LinuxNxmHandlerRegistrar writes a .desktop
                         file + xdg-mime default), + NxmHandlerRelay (the testable core the
@@ -178,14 +190,18 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                                           the OAuth flow scripted with a fake IBrowser + stub
                                           discovery+token endpoint (via the OidcClient backchannel
                                           seam), the LoopbackBrowser/HttpListener against an
-                                          ephemeral port, and the NexusConfig JSON round-trip
+                                          ephemeral port, the NexusConfig JSON round-trip, and the
+                                          ModAcquisitionService (download + extract + place against
+                                          a fake INexusClient + fake IModImportService + stub CDN)
     Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
                                             `dotnet test` = xUnit; `dotnet run` = composition smoke harness)
     Magos.Modificus.UI.Tests/              xUnit tests for the shell + manage-profiles
                                             view models (profile CRUD/switch, active-profile
                                             persist, switch-blocked-while-running; dialog via
-                                            an injectable IDialogService seam)
+                                            an injectable IDialogService seam; + the
+                                            NxmModDownloadHandler auth/profile gates + error
+                                            wiring against in-memory fakes)
     Magos.Modificus.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
                                             IPC server resilience, SingleInstanceGuard, router,
                                             relay helper, Linux registrar, AddNxm wiring;
@@ -262,7 +278,9 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   link + mods.lst name; no per-profile mod files) + the import-time base-name
   collision hard-block (`GetBaseNameCollision`; two same-folder mods can't
   coexist in a profile), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
-  **Integrations** (GitHub Releases client), **Enginseer-client** (the launch
+  **Integrations** (GitHub Releases client + the Nexus v1 client/auth +
+  `IModAcquisitionService` the download + extract + place orchestrator),
+  **Enginseer-client** (the launch
   façade), **Mods** (the unified `IModRepository`: UUID containers per
   (source, identity), opaque-ID version subfolders, per-container
   `container.json` manifests, in-memory index rebuilt from a scan,

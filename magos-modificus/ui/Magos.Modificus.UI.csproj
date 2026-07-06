@@ -7,6 +7,16 @@
     <ApplicationIcon>app-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!--
+    Exposes the internal NxmModDownloadHandler implementation to the test
+    assembly so it can be unit-tested directly (the handler is constructed by
+    the composition root via a factory; tests construct it directly with a
+    pass-through UI-thread seam). The implementation stays internal.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Magos.Modificus.UI.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <AvaloniaResource Include="Assets/app-icon.png" />
   </ItemGroup>
