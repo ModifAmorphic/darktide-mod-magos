@@ -309,6 +309,11 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
 - **No em-dashes in prose** (code comments, docs, commits, chat). Em-dashes read
   as an AI-generated tell; use a comma, colon, parentheses, semicolon, or period
   instead.
+- **PR descriptions describe ONLY what was done.** Never include an "Out of
+  scope" section or any list of things the PR did not do. A PR description is a
+  record of the change that landed, not a contrast against everything that could
+  have; listing non-actions is noise that does not help a reviewer evaluate the
+  diff. State what changed + why; stop there.
 
 ## Naming convention
 
