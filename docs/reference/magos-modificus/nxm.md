@@ -334,8 +334,12 @@ handler assembly name via `NxmHandlerPaths.GetHandlerExePath()` (the handler shi
 as a sibling of the main Magos exe). `NxmHandlerPaths.LinuxDesktopFileId`
 (`magos-nxm-handler.desktop`) is the shared desktop-file id.
 
-Stage 1 ships the **service** only. The user-facing registration behavior (auto
-on first run vs. Settings toggle vs. manual) is deferred to a later stage.
+Stage 3 added **startup auto-registration**: `MagosComposition.Build()`
+calls `RegisterNxmHandler` after the IPC server starts, which checks
+`IsRegistered()` and calls `Register()` if not. This is the expected behavior
+for a mod manager (MO2, NMA, and Vortex all auto-register on startup).
+Best-effort: a failure is logged + swallowed so a registration problem never
+blocks startup.
 
 ## DI registration
 
@@ -385,6 +389,11 @@ The composition root binds and starts the IPC server after building the provider
 
 On a degraded pipe bind, `StartNxmServer` logs that the IPC server is not running
 and skips the accept loop; the app continues without nxm IPC.
+
+After the IPC server starts, `MagosComposition.Build()` calls
+`RegisterNxmHandler(provider, loggerFactory)`, which resolves
+`INxmHandlerRegistrar` and calls `Register()` if `IsRegistered()` is false.
+Best-effort: logged + swallowed on failure.
 
 ## On-disk / process layout
 

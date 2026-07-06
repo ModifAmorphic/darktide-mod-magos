@@ -1,0 +1,228 @@
+# Nexus authentication: architecture
+
+Nexus Mods auth has two user-facing paths, both surfaced in the Integrations
+dialog: **OAuth** (the primary, a loopback OIDC flow via
+`Duende.IdentityModel.OidcClient`) and **API key** (the alternative, validated
+against `GET /v1/users/validate.json`). The user's explicit choice is the
+single source of truth for which method is active; there is no fallback. This
+stage (Phase 4 Stage 2) also ships the v1 Nexus API client that the later
+stages (acquisition, update-checks) call through.
+
+> Public surface, exact signatures, and DI registration are documented in the
+> [integrations reference](../reference/magos-modificus/integrations.md). This
+> doc covers the architecture and the why.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Integrations dialog (separate window; Nexus-only for now)       │
+│  [Log in with Nexus] (OAuth)   [API key: ____] [Validate]        │
+│  Status: Not signed in / Signed in as <name> (<Premium|Regular>) │
+│  AuthMethod tracks the user's EXPLICIT choice (no fallback)       │
+└──────────────┬──────────────────────────────────────────────────┘
+               │ user initiates OAuth OR pastes API key (their explicit choice)
+               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  NexusAuthService (the auth orchestrator)                        │
+│  - LoginWithOAuthAsync(): OidcClient PKCE → loopback → tokens    │
+│  - LoginWithApiKeyAsync(key): speculative write + validate;       │
+│    revert on failure                                             │
+│  - sets AuthMethod + persists tokens/key; clears the OTHER        │
+│    method's credentials on switch; exposes current user           │
+└──────────────┬──────────────────────────────────────────────────┘
+               │ AuthMethod selects the auth message factory (no probing/fallback)
+               ▼
+┌──────────────────────────────┐   ┌──────────────────────────────────┐
+│  OAuth2MessageFactory        │   │  ApiKeyMessageFactory             │
+│  Authorization: Bearer <tok> │   │  apikey: <key>                    │
+│  401-reactive refresh;       │   │  no refresh (static)              │
+│  selected when               │   │  selected when                    │
+│  AuthMethod == OAuth         │   │  AuthMethod == ApiKey             │
+└──────────────┬───────────────┘   └──────────────┬───────────────────┘
+               └──────────────┬───────────────────┘
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  NexusClient (typed HttpClient)                                  │
+│  applies app-identification headers (Application-Name,           │
+│  User-Agent, Protocol-Version) + the selected auth factory,      │
+│  calls v1 endpoints, parses rate limits, retries once on 401     │
+│  after a successful refresh.                                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## OAuth loopback flow (RFC 8252)
+
+`NexusOAuthTokenStore` owns an `OidcClient` configured with:
+
+- **`Authority = "https://users.nexusmods.com"`**, the OIDC **issuer root**
+  (not the `/oauth` path). OidcClient resolves discovery at
+  `<Authority>/.well-known/openid-configuration` and reads the authorize,
+  token, userinfo, and jwks endpoints out of the doc; the issuer root is the
+  path Nexus serves discovery at. Pointing Authority at `/oauth` 404s the
+  discovery fetch. `NormalizeOAuthBaseUrl` strips a user-supplied trailing
+  `/oauth` so a misconfigured `OAuthBaseUrl` still resolves to the issuer root.
+- **`ClientId = NexusOAuthConstants.ClientId`** (the `"magos-modificus"` const;
+  see [OAuth client_id](#oauth-client_id) below).
+- **`RedirectUri = "http://127.0.0.1:<port>/callback"`** (the ephemeral port
+  is assigned by the loopback listener, exposed as `LoopbackBrowser.RedirectUri`).
+- **`Scope = "openid profile email"`**.
+- **PKCE with S256 is automatic in OidcClient 7.x** (there is no
+  `Policy.RequirePKCE` flag; the older API the original spec once cited does
+  not exist).
+
+`LoopbackBrowser` (the production `IBrowser` impl) pre-grabs an ephemeral
+loopback port, binds an `HttpListener` on that port, opens the authorize URL
+(built by OidcClient from the PKCE challenge and state) in the user's default
+browser via `Process.Start(UseShellExecute=true)` (correct here: opening a URL
+via the OS shell-open, not launching an executable), awaits the callback, and
+returns the authorization response. OidcClient exchanges the code for tokens;
+the store persists them. Three-minute flow timeout; on expiry the service
+surfaces "Login timed out".
+
+Loopback redirect (not `nxm://`) is the RFC 8252 standard and needs no
+scheme-handler involvement. This is independent of the Stage 1
+[nxm:// scheme handler](nxm-scheme-handler.md).
+
+## API key: the user-facing alternative
+
+`NexusAuthService.LoginWithApiKeyAsync` does a **speculative write**
+(`AuthMethod = ApiKey` plus the key) so the v1 client's auth factory picks it
+up, calls `INexusClient.ValidateAsync` (`GET /v1/users/validate.json`), and
+**reverts on failure** so the user keeps their prior session. On success the
+display name and premium state come from the validate response.
+
+API key is an explicit alternative, not a fallback. The user chooses one
+method in the Integrations dialog; switching methods clears the other
+method's credentials (clean transition, no stale leftovers). Sign-out resets
+to `None`.
+
+## Auth method selection (no probing, no fallback)
+
+`NexusConfig.AuthMethod` (`None` / `OAuth` / `ApiKey`) is the user's explicit
+choice. The `NexusAuthMessageFactorySelector` reads `AuthMethod` live per
+request and picks the matching inner factory:
+
+- **`OAuth2MessageFactory`** adds `Authorization: Bearer <access_token>` and
+  does 401-reactive refresh. Selected when `AuthMethod == OAuth`.
+- **`ApiKeyMessageFactory`** adds `apikey: <key>`. No refresh (static). A 401
+  here surfaces a clear "API key invalid/expired" error. Selected when
+  `AuthMethod == ApiKey`.
+- **`NoneMessageFactory`** adds no auth and reports `IsAuthenticated = false`.
+  The v1 client throws `NexusNotAuthenticatedException` before sending the
+  request. Selected when `AuthMethod == None`.
+
+**No fallback.** If the selected method's credentials are missing or expired,
+the factory surfaces an auth error for **that** method (it does not silently
+use the other). The user's explicit choice in the Integrations dialog is the
+single source of truth for which method is active.
+
+## Token persistence and 401-reactive refresh
+
+Tokens persist in `MagosConfig.Integrations.Nexus.OAuth` (a
+`NexusOAuthTokens` record: access, refresh, scope, expiry), written via
+`IConfigLoader.Save`. Config is read live, so a credential change takes effect
+on the next request.
+
+**401-reactive refresh** (matches MO2; not proactive). When a request returns
+401, the client asks the auth factory to refresh:
+
+- **OAuth factory** calls `INexusTokenStore.RefreshAsync` (OidcClient's refresh
+  API using the persisted refresh token, plus the new tokens persisted). Refresh
+  is serialized through a semaphore so concurrent 401s coalesce into one
+  refresh. On a successful refresh the client retries the failed request once
+  with the new access token. A second 401 surfaces as `NexusApiException` (no
+  infinite retry loop). If the refresh token is revoked or expired, the factory
+  surfaces a re-login prompt (no fallback to API key).
+- **API-key factory** has no refresh; a 401 surfaces "API key invalid/expired"
+  (no OAuth fallback).
+
+## Integrations dialog
+
+A **separate Integrations dialog** (its own window, launched from an
+Integrations button on the shell, left of the profiles button), not a section
+crammed into the existing Settings window.
+
+**Nexus-only for now; no navigation structure.** The dialog houses just the
+Nexus section. GitHub integration stays config-file-only (the `GitHubConfig`
+PAT and base URL are power-user/dev settings; almost no user needs to
+configure them since the GitHub client works anonymously for public releases,
+so a UI section is not justified). If a future integration ever warrants a UI,
+add tab or sidebar navigation then; do not pre-build it.
+
+The Nexus-section layout (operator-approved):
+
+- A status line: "Not signed in" or "Signed in as `<name>`
+  (`<Premium|Regular>`)" (the active-method indicator).
+- Primary action: a **"Log in with Nexus"** button (OAuth). Clicking it starts
+  the OAuth flow (browser opens, consent, loopback callback, tokens persisted,
+  `AuthMethod = OAuth`). On success, the status line updates. On failure or
+  timeout, an inline error.
+- Secondary action: an **"API key"** field (masked) plus "Validate" button
+  (the user-facing alternative). Help link to
+  `https://www.nexusmods.com/settings/api-keys` (where the user gets their
+  key). Validate calls `/v1/users/validate.json`; on success sets
+  `AuthMethod = ApiKey` and updates the status line.
+- A "Sign out" button when authenticated (clears the persisted credentials and
+  sets `AuthMethod = None`).
+- Disabled (with a tooltip) when the game is running, mirroring the
+  profile-switch gate (avoid credential changes mid-session).
+- **Switching methods clears the other method's credentials.** One active
+  method at a time, no leftovers.
+
+Conventions: drawn `<Path>` icons (no Unicode glyphs), no em-dashes in strings,
+localization through the existing `LocalizationService`.
+
+## OAuth client_id
+
+`NexusOAuthConstants.ClientId` is the build-time const `"magos-modificus"` (a
+plain descriptive string; MO2 ships `"modorganizer2"`, NMA ships `"nma"`). It
+is **not config and not an env var**. Magos has no env-var pattern (config is
+file-based via `IConfigLoader`); introducing one just for the client_id is
+unjustified. RFC 8252 loopback redirects require no client registration.
+
+**Registration with Nexus is pending for live OAuth.** The client_id string is
+chosen and shipped; end-to-end live OAuth depends on Nexus-side recognition of
+the client (the loopback flow itself works regardless, since RFC 8252 loopback
+redirects require no client registration, but the live authorize endpoint's
+behavior for an unregistered client is the open question). Until then, API key
+is the validated path; OAuth is implemented and tested against stubbed
+endpoints.
+
+## App-identification headers and rate limits
+
+Every Nexus request carries the app-identification headers (the MO2 and NMA
+convention): `Application-Name: Magos-Modificus`, `Application-Version:
+<asm>`, `Protocol-Version: 1.0.0`, `User-Agent: Magos-Modificus/<ver>`.
+
+**Rate limits** are parsed from the `x-rl-*` response headers
+(`x-rl-daily-limit` / `x-rl-daily-remaining` / `x-rl-daily-reset` and the
+hourly equivalents) into a `NexusRateLimits` carried on every `Response<T>`.
+Missing or unparseable headers yield `0` or `null` (never throws). Stage 4
+(update-check) consumes them to back off; Stage 2 just parses and logs them. A
+429 (or a 403 with `*-remaining: 0`) throws `NexusRateLimitException`.
+
+## v1 endpoints
+
+Grounded against NMA's `NexusApiClient.cs` and node-nexus-api, mirroring that
+shape. v3 is Experimental for the surfaces we need, so v1 only:
+
+- `GET /v1/users/validate.json` (API-key validate)
+- `GET /oauth/userinfo` on the OAuth base URL (user info)
+- `GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}` (recent updates)
+- `GET /v1/games/{domain}/mods/{modId}/files/{fileId}/download_link.json`
+  (premium download links); same endpoint with
+  `?key={nxmKey}&expires={epoch}` for free users
+- `GET /v1/games/{domain}/mods/{modId}.json` (mod info)
+- `GET /v1/games/{domain}/mods/{modId}/files.json` (mod files; unwrapped from
+  `{"files":[...]}`)
+
+## See also
+
+- [integrations reference](../reference/magos-modificus/integrations.md):
+  public surface, exact signatures, DI registration, testing.
+- [mod acquisition](mod-acquisition.md): the Stage 3 flow that calls the v1
+  client through the selected auth factory.
+- [nxm:// scheme handler](nxm-scheme-handler.md): OAuth uses loopback, not the
+  `nxm://` handler; the OAuth-callback URL kind is parsed and dropped.
+- [Magos Modificus architecture](MAGOS-MODIFICUS.md): the high-level tie-together.
