@@ -314,6 +314,18 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   record of the change that landed, not a contrast against everything that could
   have; listing non-actions is noise that does not help a reviewer evaluate the
   diff. State what changed + why; stop there.
+- **Don't surface implementation-detail questions to the operator without
+  context.** When asking the operator to weigh in, lead with the actual problem
+  in plain terms (what user-visible or operational behavior is at stake), not a
+  narrow implementation detail. Decide internal plumbing yourself (anything
+  where the options give identical UX) and flag it in your report; do not ask.
+  Reserve surfaced questions for genuine forks: irreversible choices, UI design
+  shape, external dependencies, or trade-offs with real user-facing
+  consequences. Test: if you cannot write a one-sentence, non-plumbing "why I am
+  asking the operator this specific question," do not ask it.
+- **AGENTS.md (this file) tweaks ride in the current PR.** Convention
+  fine-tuning does not need its own docs PR; update AGENTS.md as part of
+  whatever work is in flight.
 
 ## Naming convention
 
