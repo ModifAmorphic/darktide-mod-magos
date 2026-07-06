@@ -78,20 +78,11 @@ Testing/
 # Local files
 _local/
 
-# Rust / cargo build artifacts
-/**/target/
-**/*.rs.bk
-
-# Mixed-DLL build outputs (all build outputs land in enginseer/bin/), launch
-# batch file. The global *.dll/*.exe/*.lib/*.o ignores already cover the
-# contents; the explicit /enginseer/bin/ documents intent.
-/enginseer/bin/
+# Local launch batch file.
 /launch.bat
-*.obj
 
-# Ignore local mods directory (repo-root only: the mod root used for local
-# testing + validation, pointed at by --mod-path). Anchored so it does NOT also
-# ignore magos-modificus/mods/ (the Mods library source).
+# Local mods directory (repo-root only). Anchored so it does NOT also ignore
+# magos-modificus/mods/ (the Mods library source).
 /mods/
 
 ## .NET / Magos Modificus
