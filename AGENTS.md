@@ -112,7 +112,9 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         local-import service (IModImportService: folder/archive ->
                         container/version; content-based archive detection via
                         SharpCompress (zip/7z/rar/...) not extension, traversal-safe
-                        per-entry extraction with AssertSafePath guard; validates the
+                        per-entry extraction with AssertSafePath guard; AddVersion
+                        stages extraction into a temp dir + atomically swaps on
+                        success so failed re-imports are non-destructive; validates the
                         source has exactly one base dir with a matching <base>.mod +
                         preserves the base folder under <versionFolder>/<base>/;
                         exposes GetBaseName + FindExistingContainer peeks for the

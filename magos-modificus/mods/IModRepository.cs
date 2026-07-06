@@ -66,17 +66,29 @@ public interface IModRepository
     /// <summary>
     /// Adds (or dedup-reuses) a version on the container. The repository creates
     /// the opaque version-folder ID and invokes <paramref name="populateFolder"/>
-    /// with its absolute path so the caller extracts/copies the mod files into
-    /// it; the repo then records the version entry on the manifest and flips
-    /// <see cref="ModVersion.IsLatest"/> to the newest (by
-    /// <see cref="ModVersion.ImportedAt"/>).
+    /// with the absolute path of an EMPTY TEMP DIRECTORY (a sibling of the
+    /// final version folder) so the caller extracts/copies the mod files into
+    /// it; on success the repo atomically swaps the temp into the version folder
+    /// (a same-volume <c>Directory.Move</c> rename), records the version entry
+    /// on the manifest, and flips <see cref="ModVersion.IsLatest"/> to the
+    /// newest (by <see cref="ModVersion.ImportedAt"/>).
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>Transactional overwrite (atomicity contract):</b> the temp directory
+    /// is populated first; only on a successful return from
+    /// <paramref name="populateFolder"/> does the repo delete the prior version
+    /// folder (if any) and rename the temp into its place. On any exception from
+    /// <paramref name="populateFolder"/> the temp is deleted (best-effort), the
+    /// existing version folder is left UNTOUCHED (for a dedup re-import: the old
+    /// version's files survive intact), and the manifest is unchanged. A failed
+    /// re-import is therefore non-destructive: the caller sees the original
+    /// exception and the mod on disk is exactly as it was before the call.</para>
+    /// <para>
     /// <b>Upsert by <see cref="ModVersion.VersionString"/></b>: re-adding a
     /// version whose <paramref name="versionString"/> already exists on the
-    /// container reuses its folder (cleaned + repopulated via
-    /// <paramref name="populateFolder"/>); the existing version entry's
+    /// container reuses its folder (the temp is swapped into the existing
+    /// folder name); the existing version entry's
     /// <see cref="ModVersion.IsLatest"/> + <see cref="ModVersion.ImportedAt"/>
     /// are left unchanged (a re-import refreshes the files, not the manifest
     /// ordering). A new <paramref name="versionString"/> creates a new opaque
@@ -87,9 +99,11 @@ public interface IModRepository
     /// <param name="versionString">The raw release tag (e.g. <c>"1.2"</c>,
     /// <c>"v2.0.1"</c>). Dedup key within the container.</param>
     /// <param name="populateFolder">A callback that receives the absolute path
-    /// of the version folder (created by the repo) and populates it: extract a
-    /// <c>.zip</c>, copy a folder, etc. The repo ensures the folder exists +
-    /// is empty before invoking.</param>
+    /// of an empty temp directory (created by the repo, a sibling of the final
+    /// version folder) and populates it: extract a <c>.zip</c>/<c>.7z</c>,
+    /// copy a folder, etc. On success the repo atomically swaps the temp into
+    /// the version folder; on a thrown exception the temp is deleted and the
+    /// existing version folder is left untouched.</param>
     /// <returns>The updated container (with the new/reused version entry
     /// recorded).</returns>
     /// <exception cref="KeyNotFoundException"><paramref name="containerId"/> is

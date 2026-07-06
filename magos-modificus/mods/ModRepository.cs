@@ -197,13 +197,14 @@ internal sealed class ModRepository : IModRepository
         List<ModVersion> versions;
         if (existing is not null)
         {
-            // Dedup: reuse the existing folder. Clean + repopulate so a re-import
-            // refreshes the files; leave the version entry (Folder, VersionString,
-            // IsLatest, ImportedAt) unchanged so the manifest ordering stays
-            // stable. (Re-importing a version is a file refresh, not a re-order.)
+            // Dedup: reuse the existing folder + entry. PopulateAtomically swaps
+            // the new content into the existing version folder atomically (the
+            // old contents survive any populateFolder failure); the version
+            // entry (Folder, VersionString, IsLatest, ImportedAt) is left
+            // unchanged so the manifest ordering stays stable. (Re-importing a
+            // version is a file refresh, not a re-order.)
             var versionDir = VersionDir(baseFolder, containerId, existing.Folder);
-            CleanTarget(versionDir);
-            populateFolder(versionDir);
+            PopulateAtomically(versionDir, populateFolder);
             versions = container.Versions.ToList();
             _logger.LogInformation(
                 "Re-imported version '{Version}' on container {Id} (folder reused: {Folder})",
@@ -213,11 +214,13 @@ internal sealed class ModRepository : IModRepository
         {
             // New version: new opaque folder + new entry stamped now; the new
             // entry is the newest by ImportedAt, so it becomes IsLatest and the
-            // flag is cleared on every other version.
+            // flag is cleared on every other version. PopulateAtomically stages
+            // into a temp + swaps into the new version folder; on a
+            // populateFolder failure nothing is created on disk and the manifest
+            // is left untouched (no entry added below).
             var folder = Guid.NewGuid().ToString("N");
             var versionDir = VersionDir(baseFolder, containerId, folder);
-            Directory.CreateDirectory(versionDir);
-            populateFolder(versionDir);
+            PopulateAtomically(versionDir, populateFolder);
 
             var entry = new ModVersion
             {
@@ -239,6 +242,129 @@ internal sealed class ModRepository : IModRepository
         _byId[containerId] = updated;
         WriteContainer(updated, baseFolder);
         return updated;
+    }
+
+    /// <summary>
+    /// Stages <paramref name="populateFolder"/>'s output into a temp directory
+    /// that is a SIBLING of <paramref name="versionDir"/> (so the final swap is
+    /// a same-volume atomic <see cref="Directory.Move"/>), then swaps it into
+    /// <paramref name="versionDir"/>. On any exception from
+    /// <paramref name="populateFolder"/> the temp is deleted (best-effort) and
+    /// the existing <paramref name="versionDir"/> is left untouched (for dedup:
+    /// the old version survives on disk; for new-version: nothing was created),
+    /// and the original exception is rethrown as-is (no swallowing, no wrapping).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the transactional core of <see cref="AddVersion"/>. The previous
+    /// implementation cleaned <paramref name="versionDir"/> first and then
+    /// invoked <paramref name="populateFolder"/> directly on it, so an
+    /// extraction failure (CRC error, disk full, I/O error, anything) left the
+    /// old version already deleted and the new one partial, while the manifest
+    /// still referenced that folder: a manifest/disk inconsistency on a mod
+    /// potentially referenced by a profile, with no recovery (the startup prune
+    /// only reclaims containers no profile references).</para>
+    /// <para>
+    /// <b>tempDir location:</b> a sibling of <paramref name="versionDir"/> under
+    /// the same container dir, named <c>&lt;versionFolder&gt;.tmp.&lt;guid&gt;</c>.
+    /// It MUST be a sibling (not under the system temp): a cross-volume
+    /// <see cref="Directory.Move"/> throws <see cref="IOException"/> rather than
+    /// falling back to a copy, and the system temp is commonly on a different
+    /// volume from the mods root.</para>
+    /// <para>
+    /// <b>Swap order:</b> populate succeeds first (into the temp), THEN
+    /// <see cref="CleanTarget"/>(<paramref name="versionDir"/>) runs (a no-op
+    /// on the new-version branch since it does not exist yet; deletes the old
+    /// version on dedup), THEN <see cref="Directory.Move"/>(tempDir,
+    /// versionDir). A failure of populate therefore never destroys the old
+    /// version; the only window in which both old and new are absent is between
+    /// CleanTarget and Move, both of which are near-instant BCL calls on a
+    /// same-volume path.</para>
+    /// <para>
+    /// <b>Crash recovery:</b> if the process dies between CreateDirectory(temp)
+    /// and Move, the temp is left as an orphan under the container dir. The
+    /// repo's index is built from <c>container.json</c>, not by scanning version
+    /// subfolders, so the orphan is invisible to the index but occupies disk.
+    /// <see cref="SweepOrphanTemps"/> deletes any <c>*.tmp.*</c> directories
+    /// under the container dir at the start of each call as best-effort
+    /// cleanup.</para>
+    /// </remarks>
+    private void PopulateAtomically(string versionDir, Action<string> populateFolder)
+    {
+        var containerDir = Path.GetDirectoryName(versionDir)!;
+        SweepOrphanTemps(containerDir);
+
+        var tempDir = versionDir + ".tmp." + Guid.NewGuid().ToString("N");
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            populateFolder(tempDir);
+        }
+        catch
+        {
+            // The existing versionDir is untouched (CleanTarget has not run yet
+            // for dedup; the new-version branch never created it). Best-effort
+            // delete of the partial temp; an orphan left here is reclaimed by
+            // SweepOrphanTemps on the next call. Rethrow as-is: no swallowing,
+            // no wrapping, callers see the actual failure.
+            try
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Could not delete orphan temp dir {Path} after populateFolder failed.",
+                    tempDir);
+            }
+            throw;
+        }
+
+        // Swap: remove the old version (no-op when versionDir does not exist
+        // yet, i.e. the new-version branch), then atomic same-volume rename.
+        CleanTarget(versionDir);
+        Directory.Move(tempDir, versionDir);
+    }
+
+    /// <summary>
+    /// Best-effort sweep of orphan temp directories left under
+    /// <paramref name="containerDir"/> by a <see cref="PopulateAtomically"/>
+    /// call whose process crashed before the swap. Recognizes the
+    /// <c>&lt;versionFolder&gt;.tmp.&lt;guid&gt;</c> naming convention; any
+    /// delete failure is logged + skipped so one locked dir does not abort the
+    /// rest of the sweep or the caller. Version folders are 32-char hex GUIDs
+    /// and container UUIDs are also GUIDs, so the <c>.tmp.</c> substring never
+    /// matches a real tracked folder.
+    /// </summary>
+    private void SweepOrphanTemps(string containerDir)
+    {
+        if (!Directory.Exists(containerDir))
+        {
+            return;
+        }
+
+        foreach (var dir in Directory.EnumerateDirectories(containerDir))
+        {
+            var name = Path.GetFileName(dir);
+            // Match the <versionFolder>.tmp.<guid> naming only when ".tmp." is
+            // preceded by the version-folder name. Real orphans carry the
+            // 32-char hex GUID prefix, so ".tmp." sits at position 32, never 0;
+            // <= 0 skips both not-found and a hypothetical prefix-less ".tmp.*".
+            if (name.IndexOf(".tmp.", StringComparison.Ordinal) <= 0)
+            {
+                continue;
+            }
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+                _logger.LogInformation("Swept orphan temp dir {Path} left by a prior crashed import.", dir);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(ex, "Could not delete orphan temp dir {Path}.", dir);
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -621,6 +747,13 @@ internal sealed class ModRepository : IModRepository
                 _logger.LogDebug("Skipping non-container directory under mods root: {Dir}", dir);
                 continue;
             }
+
+            // Sweep orphan temp dirs (<versionFolder>.tmp.<guid>) left by a
+            // prior crashed import into this container. Completes the per-
+            // AddVersion reactive sweep into a full cleanup: an orphan in a
+            // container that is never re-imported is reclaimed at the next
+            // index build (construction/rescan) instead of lingering on disk.
+            SweepOrphanTemps(dir);
 
             var manifest = ContainerManifestPath(baseFolder, id);
             if (!File.Exists(manifest))

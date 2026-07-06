@@ -137,10 +137,13 @@ internal sealed class ModImportService : IModImportService
         // source validated, so an invalid source creates no container.
         var container = ResolveContainer(source, modName);
 
-        // The populate callback: extract archive or copy folder into the path the
-        // repo provides. The repo decides whether that path is a fresh folder
-        // (new version) or a cleaned-and-reused one (dedup of the same tag).
-        // Both kinds preserve the base folder under <versionDir>/<base>/:
+        // The populate callback: extract archive or copy folder into the empty
+        // temp path the repo provides. AddVersion stages into a sibling temp of
+        // the version folder and atomically swaps it into place on success
+        // (replacing the prior contents on a dedup); on a thrown exception the
+        // temp is deleted and the existing version folder (if any) is left
+        // untouched, so a failed re-import is non-destructive. Both import kinds
+        // preserve the base folder under <versionDir>/<base>/:
         //   - archive: extraction reproduces the archive's single top-level
         //     directory (validated above), yielding <versionDir>/<base>/<files>.
         //   - folder: the picked folder IS the base, so it is copied itself
@@ -287,6 +290,11 @@ internal sealed class ModImportService : IModImportService
     private static void ExtractArchive(string sourcePath, string versionDir)
     {
         using var archive = ArchiveFactory.OpenArchive(sourcePath, ReaderOptions.ForFilePath);
+        // Ensure the destination exists. AddVersion's contract guarantees this,
+        // but extractors conventionally ensure their dest (ZipFile.ExtractToDirectory
+        // did it implicitly; SharpCompress's WriteEntryToDirectory requires it),
+        // so this is defense-in-depth against any caller-side regression.
+        Directory.CreateDirectory(versionDir);
         // ExtractFullPath (recreate the entry's relative subdirs) + Overwrite
         // (idempotent re-import) are the load-bearing options. PreserveFileTime
         // is left at its default (true in SharpCompress: extracted files inherit

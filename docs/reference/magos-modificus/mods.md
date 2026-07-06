@@ -53,9 +53,14 @@ public interface IModRepository
 - `AddVersion(containerId, versionString, populateFolder)`: upsert by
   `versionString`. Re-adding the same tag reuses + refreshes its opaque folder
   (no re-order, `IsLatest` unchanged); a new tag creates a new opaque folder + a
-  new entry that becomes `IsLatest` (the newest by `ImportedAt`). The repository
-  invokes `populateFolder(absolutePath)` after creating the folder so the caller
-  extracts a `.zip` / copies a folder into it.
+  new entry that becomes `IsLatest` (the newest by `ImportedAt`).
+  **Transactional:** the repo stages `populateFolder`'s output into a sibling
+  temp dir, then atomically swaps it into the version folder on success
+  (same-volume `Directory.Move`); on any failure the temp is cleaned + the
+  existing version folder + manifest are left untouched, so a failed re-import
+  is non-destructive (the old version survives a mid-extraction CRC/I/O
+  failure). Orphan temps from a process crash are swept at each `AddVersion` +
+  at index build (`RebuildIndex`).
 - `RemoveVersion(containerId, versionFolder)`: idempotent. Promotes the newest
   remaining version to `IsLatest` if the removed one carried it.
 - `PruneUnreferenced(referenced)`: GC. Drops every `(containerId, versionFolder)`

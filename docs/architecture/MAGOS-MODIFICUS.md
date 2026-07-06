@@ -265,7 +265,10 @@ SharpCompress's `ArchiveFactory`, reading magic bytes, not the extension), so
 zip, 7z, rar, and the other SharpCompress formats all flow through one path;
 extraction is traversal-safe (per-entry `WriteToDirectory`, directory entries
 skipped, a defense-in-depth `AssertSafePath` containment check per file entry,
-no `SymbolicLinkHandler`). The validated base folder is **preserved** under
+no `SymbolicLinkHandler`), and `AddVersion` stages the extraction into a sibling
+temp dir + atomically swaps it into the version folder on success, so a failed
+re-import (a CRC or I/O error mid-extraction) leaves the existing version
+untouched. The validated base folder is **preserved** under
 `<versionFolder>/<base>/` (the folder import copies the folder itself, not its
 contents; the archive is validated to have a single top-level folder before
 extraction). Container dedup: Untracked by name, Nexus by mod id, GitHub by
