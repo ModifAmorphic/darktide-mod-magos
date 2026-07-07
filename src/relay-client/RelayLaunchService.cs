@@ -4,10 +4,10 @@ using Modificus.Curator.Profiles;
 using Modificus.Curator.Steam;
 using Microsoft.Extensions.Logging;
 
-namespace Modificus.Curator.EnginseerClient;
+namespace Modificus.Curator.RelayClient;
 
 /// <summary>
-/// Default <see cref="IEnginseerLaunchService"/>. A thin orchestrator: it runs
+/// Default <see cref="IRelayLaunchService"/>. A thin orchestrator: it runs
 /// the platform-agnostic launch flow (discover → check completeness → prepare
 /// mod root → launcher-exists → spawn → result mapping) and delegates the
 /// platform-varying pieces to an <see cref="IPlatformLaunchStrategy"/> selected
@@ -26,11 +26,11 @@ namespace Modificus.Curator.EnginseerClient;
 /// the concrete Windows/Linux strategy (with a fake
 /// <see cref="IProcessLauncher"/>) to exercise either path on any CI OS.</para>
 /// </remarks>
-internal sealed class EnginseerLaunchService : IEnginseerLaunchService
+internal sealed class RelayLaunchService : IRelayLaunchService
 {
     /// <summary>The launcher executable filename (a Windows binary, run under
-    /// Proton on Linux). Lives in <see cref="CuratorConfig.EnginseerRuntimeDir"/>.</summary>
-    internal const string LauncherExecutableName = "curator_launcher.exe";
+    /// Proton on Linux). Lives in <see cref="CuratorConfig.RelayDir"/>.</summary>
+    internal const string LauncherExecutableName = "modificus_relay.exe";
 
     /// <summary>
     /// The Steam app id for Darktide. The launcher defaults to this value when
@@ -44,14 +44,14 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
     private readonly ISteamService _steam;
     private readonly IConfigLoader _configLoader;
     private readonly IPlatformLaunchStrategy _strategy;
-    private readonly ILogger<EnginseerLaunchService> _logger;
+    private readonly ILogger<RelayLaunchService> _logger;
 
-    public EnginseerLaunchService(
+    public RelayLaunchService(
         IProfileService profiles,
         ISteamService steam,
         IConfigLoader configLoader,
         IPlatformLaunchStrategy strategy,
-        ILogger<EnginseerLaunchService> logger)
+        ILogger<RelayLaunchService> logger)
     {
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _steam = steam ?? throw new ArgumentNullException(nameof(steam));
@@ -65,7 +65,7 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
     {
         try
         {
-            // One live config snapshot for the whole launch. EnginseerRuntimeDir
+            // One live config snapshot for the whole launch. RelayDir
             // + Logging.LogFile are read once here; a runtime config change via
             // the upcoming Settings window takes effect on the next launch.
             var config = _configLoader.Load();
@@ -90,11 +90,11 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
             // caught below and mapped to LaunchStatus.Error.
             var modPath = _profiles.PrepareModRoot(profileId);
 
-            var launcherPath = Path.Combine(config.EnginseerRuntimeDir, LauncherExecutableName);
+            var launcherPath = Path.Combine(config.RelayDir, LauncherExecutableName);
             if (!File.Exists(launcherPath))
             {
-                _logger.LogError("Enginseer runtime launcher not found at {Path}.", launcherPath);
-                return ErrorResult($"Enginseer runtime launcher not found at '{launcherPath}'.");
+                _logger.LogError("Relay launcher not found at {Path}.", launcherPath);
+                return ErrorResult($"Relay launcher not found at '{launcherPath}'.");
             }
 
             var gameBinary = discovery.DarktideGameBinaryPath!;
@@ -104,7 +104,7 @@ internal sealed class EnginseerLaunchService : IEnginseerLaunchService
 
             if (!started)
             {
-                return ErrorResult($"Failed to start the Enginseer launcher at '{launcherPath}'.");
+                return ErrorResult($"Failed to start the Relay launcher at '{launcherPath}'.");
             }
 
             _logger.LogInformation("Launched profile {Id} via the {Platform} path.", profileId, _strategy.Name);

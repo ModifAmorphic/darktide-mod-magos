@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Modificus.Curator.Config;
-using Modificus.Curator.EnginseerClient;
+using Modificus.Curator.RelayClient;
 using Modificus.Curator.General;
 using Modificus.Curator.Integrations;
 using Modificus.Curator.Profiles;
@@ -615,12 +615,12 @@ internal sealed class FakeProfileSession : ObservableObject, IProfileSession
 }
 
 /// <summary>
-/// Configurable <see cref="IEnginseerLaunchService"/> for shell-VM launch tests.
+/// Configurable <see cref="IRelayLaunchService"/> for shell-VM launch tests.
 /// <see cref="NextResult"/> is returned for every Launch call (default:
 /// Launched). <see cref="LaunchCalls"/> records the ids the shell asked to
 /// launch.
 /// </summary>
-internal sealed class FakeLaunchService : IEnginseerLaunchService
+internal sealed class FakeLaunchService : IRelayLaunchService
 {
     public LaunchResult NextResult { get; set; } =
         new(LaunchStatus.Launched, null, Array.Empty<string>());

@@ -5,7 +5,7 @@ namespace Modificus.Curator.Launcher;
 /// <summary>
 /// The slim profile launcher -- a thin native binary that accepts a profile
 /// argument and launches it (the target for Steam non-steam shortcuts). It
-/// reuses the Steam and Enginseer-client libraries. Stub -- implemented in a
+/// reuses the Steam and Relay-client libraries. Stub -- implemented in a
 /// later phase. See <c>docs/architecture/MODIFICUS-CURATOR.md</c>.
 /// </summary>
 public interface IProfileLauncher

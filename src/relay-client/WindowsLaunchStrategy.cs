@@ -1,11 +1,11 @@
 using Modificus.Curator.Steam;
 using Microsoft.Extensions.Logging;
 
-namespace Modificus.Curator.EnginseerClient;
+namespace Modificus.Curator.RelayClient;
 
 /// <summary>
 /// Windows <see cref="IPlatformLaunchStrategy"/>. Invokes
-/// <c>curator_launcher.exe</c> directly -- no Proton, no path translation (native
+/// <c>modificus_relay.exe</c> directly -- no Proton, no path translation (native
 /// Windows paths). Selected at DI registration when the host is Windows.
 /// </summary>
 internal sealed class WindowsLaunchStrategy : IPlatformLaunchStrategy
@@ -47,12 +47,12 @@ internal sealed class WindowsLaunchStrategy : IPlatformLaunchStrategy
 
     /// <summary>
     /// Builds the launcher's own argument list (the flags AFTER
-    /// <c>curator_launcher.exe</c>). Paths pass through verbatim -- Windows needs no
+    /// <c>modificus_relay.exe</c>). Paths pass through verbatim -- Windows needs no
     /// <c>Z:\</c> translation.
     /// </summary>
     /// <remarks>
     /// <c>--log-level</c> is intentionally NOT emitted: <c>CuratorConfig.Logging.Level</c>
-    /// is a Serilog level name for Curator's own log, but the Enginseer shell's level
+    /// is a Serilog level name for Curator's own log, but the Relay shell's level
     /// vocabulary differs -- forwarding the Serilog name silently mis-resolved levels.
     /// The two logs are decoupled; the launcher's <c>info</c> default is used.
     /// </remarks>

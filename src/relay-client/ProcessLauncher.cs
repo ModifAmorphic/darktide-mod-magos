@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
-namespace Modificus.Curator.EnginseerClient;
+namespace Modificus.Curator.RelayClient;
 
 /// <summary>
 /// Default <see cref="IProcessLauncher"/>. Spawns the child via
@@ -17,7 +17,7 @@ namespace Modificus.Curator.EnginseerClient;
 /// waiting -- the launcher + injected shell own their own lifecycle and the game
 /// process is intentionally not tracked in v1.</para>
 /// <para>
-/// Registered as a singleton via <c>AddEnginseerClient()</c> with <c>TryAdd</c>
+/// Registered as a singleton via <c>AddRelayClient()</c> with <c>TryAdd</c>
 /// so tests (and hosts with a custom launch hook) can pre-register an override --
 /// the same pattern the Steam library uses for <c>IProcessLookup</c>.</para>
 /// </remarks>

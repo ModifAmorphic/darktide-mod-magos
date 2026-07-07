@@ -13,8 +13,8 @@
     -->
     <OutputType>Exe</OutputType>
     <GenerateProgramFile>false</GenerateProgramFile>
-    <RootNamespace>Modificus.Curator.EnginseerClient.Tests</RootNamespace>
-    <AssemblyName>Modificus.Curator.EnginseerClient.Tests</AssemblyName>
+    <RootNamespace>Modificus.Curator.RelayClient.Tests</RootNamespace>
+    <AssemblyName>Modificus.Curator.RelayClient.Tests</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,7 +35,7 @@
 
   <ItemGroup>
     <!-- Library under test. -->
-    <ProjectReference Include="..\..\enginseer-client\Modificus.Curator.EnginseerClient.csproj" />
+    <ProjectReference Include="..\..\relay-client\Modificus.Curator.RelayClient.csproj" />
     <!--
       The harness composes the REAL services (config + profiles + steam +
       general) to validate an actual launch against the user's setup. The unit

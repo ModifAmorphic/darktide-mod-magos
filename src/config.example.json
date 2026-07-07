@@ -7,7 +7,7 @@
   },
   "ProfilesBaseFolder": "<app-data>/Modificus Curator/profiles",
   "ModsFolder": "<app-data>/Modificus Curator/mods",
-  "EnginseerRuntimeDir": "<app-data>/Modificus Curator/enginseer",
+  "RelayDir": "<app-data>/Modificus Curator/relay",
   "Preferences": {
     "Theme": "System",
     "FontScale": 1.0,

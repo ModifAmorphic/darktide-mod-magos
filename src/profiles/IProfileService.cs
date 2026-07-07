@@ -6,7 +6,7 @@ namespace Modificus.Curator.Profiles;
 /// Profile + per-profile mod-list management. Owns the profile data model,
 /// its on-disk persistence, and the projection of the mod list into a staged
 /// mod root (symlinks to the repository's resolved version folders) +
-/// <c>mods.lst</c> for the Enginseer runtime.
+/// <c>mods.lst</c> for Modificus Relay.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -155,7 +155,7 @@ public interface IProfileService
     /// current per-mod version resolution, and writes <c>mods.lst</c> from the
     /// successfully-staged enabled mods in <see cref="ModListEntry.Order"/>.
     /// Idempotent (each call clears + rebuilds <c>staged/</c>). Returns the
-    /// <c>--mod-path</c> to pass to the Enginseer launcher.
+    /// <c>--mod-path</c> to pass to the Relay launcher.
     /// </summary>
     /// <remarks>
     /// Symlinks, not copies (the repository holds the files). A symlink-creation

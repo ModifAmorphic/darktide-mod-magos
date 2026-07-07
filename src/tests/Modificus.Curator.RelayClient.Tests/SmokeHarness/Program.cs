@@ -1,23 +1,23 @@
 using Modificus.Curator.Config;
-using Modificus.Curator.EnginseerClient;
+using Modificus.Curator.RelayClient;
 using Modificus.Curator.General;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.Steam;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Modificus.Curator.EnginseerClient.Tests.Harness;
+namespace Modificus.Curator.RelayClient.Tests.Harness;
 
 // =============================================================================
 // Launch smoke-test harness -- USER-machine validation.
 //
 // The agent env has no Darktide/Windows/Proton, so the launch smoke test is
 // run by the user on their box. This harness builds the REAL Curator composition
-// (no fakes) and exposes IEnginseerLaunchService.Launch(profileId) at the CLI:
+// (no fakes) and exposes IRelayLaunchService.Launch(profileId) at the CLI:
 //
-//   dotnet run --project src/tests/Modificus.Curator.EnginseerClient.Tests -- discover
-//   dotnet run --project src/tests/Modificus.Curator.EnginseerClient.Tests -- list
-//   dotnet run --project src/tests/Modificus.Curator.EnginseerClient.Tests -- launch <profileId>
+//   dotnet run --project src/tests/Modificus.Curator.RelayClient.Tests -- discover
+//   dotnet run --project src/tests/Modificus.Curator.RelayClient.Tests -- list
+//   dotnet run --project src/tests/Modificus.Curator.RelayClient.Tests -- launch <profileId>
 //
 // See README at the bottom of this file for the full smoke-test workflow.
 // =============================================================================
@@ -56,7 +56,7 @@ internal static class Program
         var config = provider.GetRequiredService<IConfigLoader>().Load();
 
         Console.WriteLine($"Platform:    {CurrentPlatformLabel()}");
-        Console.WriteLine($"Runtime dir: {config.EnginseerRuntimeDir}");
+        Console.WriteLine($"Relay dir: {config.RelayDir}");
         Console.WriteLine("Discovering Steam + Darktide + Proton...");
         var d = steam.Discover();
 
@@ -119,7 +119,7 @@ internal static class Program
         }
 
         using var provider = BuildComposition();
-        var launch = provider.GetRequiredService<IEnginseerLaunchService>();
+        var launch = provider.GetRequiredService<IRelayLaunchService>();
 
         Console.WriteLine($"Launching profile {profileId} on {CurrentPlatformLabel()}...");
         var result = launch.Launch(profileId);
@@ -147,7 +147,7 @@ internal static class Program
 
     private static int Ok(LaunchResult result)
     {
-        Console.WriteLine("Launcher started -- watch the game window (and the Enginseer shell log: curator_enginseer.log).");
+        Console.WriteLine("Launcher started -- watch the game window (and the Relay shell log).");
         return 0;
     }
 
@@ -172,7 +172,7 @@ internal static class Program
         services.AddGeneral(loggerFactory);
         services.AddProfiles();
         services.AddSteam();
-        services.AddEnginseerClient();
+        services.AddRelayClient();
         return services.BuildServiceProvider();
     }
 
@@ -199,16 +199,16 @@ internal static class Program
 
     private static void PrintUsage()
     {
-        Console.WriteLine("Curator Enginseer launch smoke-test harness");
+        Console.WriteLine("Curator Relay launch smoke-test harness");
         Console.WriteLine();
         Console.WriteLine("Usage:");
-        Console.WriteLine("  dotnet run --project .../Modificus.Curator.EnginseerClient.Tests -- discover");
+        Console.WriteLine("  dotnet run --project .../Modificus.Curator.RelayClient.Tests -- discover");
         Console.WriteLine("      Resolves Steam + Darktide + Proton + compatdata and prints the result.");
         Console.WriteLine();
-        Console.WriteLine("  dotnet run --project .../Modificus.Curator.EnginseerClient.Tests -- list");
+        Console.WriteLine("  dotnet run --project .../Modificus.Curator.RelayClient.Tests -- list");
         Console.WriteLine("      Lists profile ids + names (use one with `launch`).");
         Console.WriteLine();
-        Console.WriteLine("  dotnet run --project .../Modificus.Curator.EnginseerClient.Tests -- launch <profileId>");
+        Console.WriteLine("  dotnet run --project .../Modificus.Curator.RelayClient.Tests -- launch <profileId>");
         Console.WriteLine("      Prepares the mod root (writes mods.lst) and launches Darktide modded.");
         Console.WriteLine();
         Console.WriteLine("Exit codes: 0 = launched/discovery OK, 1 = launch error, 2 = discovery incomplete, 64 = bad usage.");
@@ -221,22 +221,22 @@ internal static class Program
 //
 // Prereqs:
 //   - Darktide installed via Steam (Steam closed for a clean launch).
-//   - The Enginseer runtime deployed: <EnginseerRuntimeDir>/curator_launcher.exe
-//     + curator_shell.dll + mod_loader/. (EnginseerRuntimeDir defaults to
-//     <local-app-data>/Modificus Curator/enginseer; override in config.json.)
+//   - Modificus Relay deployed: <RelayDir>/modificus_relay.exe
+//     + relay_shell.dll + mod_loader/. (RelayDir defaults to
+//     <local-app-data>/Modificus Curator/relay; override in config.json.)
 //   - At least one Curator profile (create it via the Curator UI, or drop a profile
 //     dir under <local-app-data>/Modificus Curator/profiles/<guid>/profile.json).
 //
 // Steps:
 //   1. cd <repo>/src
-//   2. dotnet run --project tests/Modificus.Curator.EnginseerClient.Tests -- discover
+//   2. dotnet run --project tests/Modificus.Curator.RelayClient.Tests -- discover
 //        -> confirm Status: Complete (fix any "(missing)" field before launching).
-//   3. dotnet run --project tests/Modificus.Curator.EnginseerClient.Tests -- list
+//   3. dotnet run --project tests/Modificus.Curator.RelayClient.Tests -- list
 //        -> copy the profile id you want to launch.
-//   4. dotnet run --project tests/Modificus.Curator.EnginseerClient.Tests -- launch <profileId>
+//   4. dotnet run --project tests/Modificus.Curator.RelayClient.Tests -- launch <profileId>
 //        -> expect: Status: Launched. Darktide should start modded.
-//   5. Confirm the Enginseer shell log (curator_enginseer.log next to the
-//        launcher) shows the shell attaching + the mod loader running.
+//   5. Confirm the Relay shell log (next to the launcher) shows the shell
+//        attaching + the mod loader running.
 //
 // Notes:
 //   - Linux: discovery must also resolve CompatdataPath + ProtonBinaryPath; the
@@ -244,4 +244,4 @@ internal static class Program
 //     STEAM_COMPAT_DATA_PATH + STEAM_COMPAT_CLIENT_INSTALL_PATH set.
 //   - The harness launches fire-and-forget (it returns once the launcher starts).
 //   - This harness is a test-only convenience; the production surface is the
-//     Curator UI calling the same IEnginseerLaunchService.Launch.
+//     Curator UI calling the same IRelayLaunchService.Launch.

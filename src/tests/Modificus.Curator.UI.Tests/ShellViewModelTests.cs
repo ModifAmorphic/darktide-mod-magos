@@ -1,4 +1,4 @@
-using Modificus.Curator.EnginseerClient;
+using Modificus.Curator.RelayClient;
 using Modificus.Curator.Mods;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.UI.Localization;
@@ -13,7 +13,7 @@ namespace Modificus.Curator.UI.Tests;
 /// Shell-VM profile controls: mirroring the session's active id + running-state,
 /// dropdown switch (routed through the session gate), switch-blocked-while-running,
 /// and dialog-driven list refresh. Track C adds the launch wiring tests: the
-/// Launch command calls <see cref="IEnginseerLaunchService.Launch"/> + branches
+/// Launch command calls <see cref="IRelayLaunchService.Launch"/> + branches
 /// on the result. All against in-memory fakes; the session is behind the
 /// <see cref="UI.Session.IProfileSession"/> seam (a <see cref="FakeProfileSession"/>).
 /// </summary>

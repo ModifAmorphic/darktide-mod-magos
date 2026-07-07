@@ -1,8 +1,8 @@
-namespace Modificus.Curator.EnginseerClient;
+namespace Modificus.Curator.RelayClient;
 
 /// <summary>
-/// Process-launch abstraction used by <see cref="IEnginseerLaunchService"/> to
-/// spawn <c>curator_launcher.exe</c> -- directly on Windows, under <c>proton run</c>
+/// Process-launch abstraction used by <see cref="IRelayLaunchService"/> to
+/// spawn <c>modificus_relay.exe</c> -- directly on Windows, under <c>proton run</c>
 /// on Linux. Abstracted so the launch path is deterministic and mockable in
 /// tests: the real <see cref="ProcessLauncher"/> (<c>Process.Start</c>) would
 /// spawn a real process and fail against a CI runner with no game install.

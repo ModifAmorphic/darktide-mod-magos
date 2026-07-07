@@ -1,12 +1,12 @@
 using Modificus.Curator.Steam;
 
-namespace Modificus.Curator.EnginseerClient;
+namespace Modificus.Curator.RelayClient;
 
 /// <summary>
 /// One platform's launch strategy: the spawn (via <see cref="IProcessLauncher"/>),
 /// the discovery fields that platform requires, and a label for logging. The
 /// active implementation is selected once, at DI registration, from the runtime
-/// OS -- so <see cref="EnginseerLaunchService"/> orchestrates the platform-agnostic
+/// OS -- so <see cref="RelayLaunchService"/> orchestrates the platform-agnostic
 /// launch flow and contains no per-launch OS branch.
 /// </summary>
 /// <remarks>
@@ -32,14 +32,14 @@ internal interface IPlatformLaunchStrategy
     IReadOnlyList<string> RequiredDiscoveryFields(DiscoveryResult discovery);
 
     /// <summary>
-    /// Spawns <c>curator_launcher.exe</c> for this platform. Windows: a direct
+    /// Spawns <c>modificus_relay.exe</c> for this platform. Windows: a direct
     /// invocation of <paramref name="launcherPath"/> with native (untranslated)
     /// args. Linux: <c>&lt;proton&gt; run &lt;launcherPath&gt; &lt;args&gt;</c>
     /// with both <c>STEAM_COMPAT_*</c> env vars and the path-valued flags
     /// <c>Z:\</c>-translated (the launcher runs under Wine). Fire-and-forget --
     /// returns <c>true</c> if the process started.
     /// </summary>
-    /// <param name="launcherPath">Native path to <c>curator_launcher.exe</c>.</param>
+    /// <param name="launcherPath">Native path to <c>modificus_relay.exe</c>.</param>
     /// <param name="discovery">The resolved discovery (Linux reads the Proton +
     /// compat paths + Steam install from it; Windows ignores it -- it already has
     /// <paramref name="gameBinary"/>).</param>

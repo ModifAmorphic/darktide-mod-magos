@@ -1,9 +1,9 @@
-namespace Modificus.Curator.EnginseerClient;
+namespace Modificus.Curator.RelayClient;
 
 /// <summary>
-/// The v1 launch façade over the Enginseer runtime. Resolves the profile +
+/// The v1 launch façade over Modificus Relay. Resolves the profile +
 /// Steam discovery, assembles the launcher args, and invokes
-/// <c>curator_launcher.exe</c> -- directly on Windows, under <c>proton run</c> on
+/// <c>modificus_relay.exe</c> -- directly on Windows, under <c>proton run</c> on
 /// Linux. Fire-and-forget in v1: <see cref="Launch"/> starts the launcher and
 /// returns; it does not track the game process.
 /// </summary>
@@ -14,7 +14,7 @@ namespace Modificus.Curator.EnginseerClient;
 /// <c>--mod-path</c>) and Steam discovery (via <c>ISteamService.Discover</c>)
 /// internally, so the caller just says "launch this profile."</para>
 /// <para>
-/// Enginseer-client does NOT prompt -- on incomplete discovery it returns
+/// Relay-client does NOT prompt -- on incomplete discovery it returns
 /// <see cref="LaunchStatus.DiscoveryIncomplete"/> carrying the missing field
 /// names so the UI (a later phase) can drive an escape-hatch prompt.</para>
 /// <para>
@@ -23,7 +23,7 @@ namespace Modificus.Curator.EnginseerClient;
 /// <see cref="Launch"/> is designed so a <c>Launch(Guid, DiscoveryResult)</c>
 /// sibling slots in without breaking existing callers.</para>
 /// </remarks>
-public interface IEnginseerLaunchService
+public interface IRelayLaunchService
 {
     /// <summary>
     /// Launches the given profile modded. Always returns a
@@ -38,7 +38,7 @@ public interface IEnginseerLaunchService
 }
 
 /// <summary>
-/// The outcome of <see cref="IEnginseerLaunchService.Launch"/>.
+/// The outcome of <see cref="IRelayLaunchService.Launch"/>.
 /// </summary>
 /// <param name="Status">One of <see cref="LaunchStatus.Launched"/>,
 /// <see cref="LaunchStatus.DiscoveryIncomplete"/>, <see cref="LaunchStatus.Error"/>.</param>

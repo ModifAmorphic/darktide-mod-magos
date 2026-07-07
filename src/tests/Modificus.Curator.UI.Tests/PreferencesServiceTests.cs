@@ -90,17 +90,17 @@ public sealed class PreferencesServiceTests
     public void ApplyAndPersist_does_not_clobber_sibling_sections_on_save()
     {
         // Read-modify-save defense: a sibling section set on the live snapshot
-        // (e.g. EnginseerRuntimeDir, written by the upcoming Settings window)
+        // (e.g. RelayDir, written by the upcoming Settings window)
         // must survive the Preferences save, because ApplyAndPersist loads the
         // current snapshot rather than mutating a stale cached singleton.
         var config = CuratorConfig.CreateDefault();
-        config.EnginseerRuntimeDir = "/custom/runtime";
+        config.RelayDir = "/custom/runtime";
         var loader = new FakeConfigLoader { Config = config };
         var svc = new PreferencesService(loader, Localization, NullLogger<PreferencesService>.Instance);
 
         svc.ApplyAndPersist(ThemeMode.Dark, 1.0, "en");
 
-        Assert.Equal("/custom/runtime", loader.LastSaved!.EnginseerRuntimeDir);
+        Assert.Equal("/custom/runtime", loader.LastSaved!.RelayDir);
     }
 
     [Fact]

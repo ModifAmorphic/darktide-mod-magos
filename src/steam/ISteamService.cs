@@ -5,7 +5,7 @@ namespace Modificus.Curator.Steam;
 /// needed to launch Darktide modded on the current OS (Steam install, Darktide
 /// install, compatdata, Proton version) and reports missing pieces via
 /// <see cref="DiscoveryResult.Status"/>; it does NOT set env vars or invoke
-/// Proton -- that is Enginseer-client's job (consuming the <see cref="DiscoveryResult"/>).
+/// Proton -- that is Relay-client's job (consuming the <see cref="DiscoveryResult"/>).
 /// </summary>
 /// <remarks>
 /// <para><b>Discovery result shape:</b> the discovery result is a flat
@@ -57,7 +57,7 @@ public interface ISteamService
 /// </summary>
 /// <param name="SteamInstallPath">Steam client dir → <c>STEAM_COMPAT_CLIENT_INSTALL_PATH</c>.</param>
 /// <param name="DarktideGameBinaryPath">Native path to <c>Darktide.exe</c>
-/// (Enginseer-client Z:\-translates on Linux for <c>--game-binary</c>).</param>
+/// (Relay-client Z:\-translates on Linux for <c>--game-binary</c>).</param>
 /// <param name="CompatdataPath">Wine prefix → <c>STEAM_COMPAT_DATA_PATH</c> (Linux only).</param>
 /// <param name="ProtonBinaryPath">The <c>proton</c> script for <c>proton run</c> (Linux only).</param>
 /// <param name="ProtonVersion">Informational label (e.g. "Proton - Experimental").</param>

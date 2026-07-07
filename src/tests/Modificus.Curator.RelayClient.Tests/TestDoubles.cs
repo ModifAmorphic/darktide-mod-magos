@@ -4,7 +4,7 @@ using Modificus.Curator.Profiles;
 using Modificus.Curator.Mods;
 using Modificus.Curator.Steam;
 
-namespace Modificus.Curator.EnginseerClient.Tests;
+namespace Modificus.Curator.RelayClient.Tests;
 
 /// <summary>
 /// Recording <see cref="IConfigLoader"/> for tests. <see cref="Load"/> returns

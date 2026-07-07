@@ -25,10 +25,10 @@ public sealed class CuratorConfig
     public string ModsFolder { get; set; } = AppPaths.DefaultModsFolder;
 
     /// <summary>
-    /// The Enginseer runtime directory: where <c>curator_launcher.exe</c>,
-    /// <c>curator_shell.dll</c>, and <c>mod_loader/</c> live.
+    /// The Modificus Relay directory: where <c>modificus_relay.exe</c>,
+    /// <c>relay_shell.dll</c>, and <c>mod_loader/</c> live.
     /// </summary>
-    public string EnginseerRuntimeDir { get; set; } = AppPaths.DefaultEnginseerRuntimeDir;
+    public string RelayDir { get; set; } = AppPaths.DefaultRelayDir;
 
     /// <summary>
     /// User-supplied discovery overrides. <c>SteamService.Discover()</c> reads

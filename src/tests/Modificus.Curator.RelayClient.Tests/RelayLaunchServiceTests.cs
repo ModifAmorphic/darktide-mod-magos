@@ -1,22 +1,22 @@
 using Modificus.Curator.Steam;
 
-namespace Modificus.Curator.EnginseerClient.Tests;
+namespace Modificus.Curator.RelayClient.Tests;
 
 /// <summary>
-/// Launch-path tests for <see cref="EnginseerLaunchService"/>. All via the fakes
-/// in <see cref="EnginseerFixture"/>: no real process is spawned and no game is
+/// Launch-path tests for <see cref="RelayLaunchService"/>. All via the fakes
+/// in <see cref="RelayFixture"/>: no real process is spawned and no game is
 /// required. The concrete Windows/Linux <see cref="IPlatformLaunchStrategy"/>
 /// (driven by the fixture's fake <see cref="IProcessLauncher"/>) is injected so
 /// both code paths are exercised on any CI OS.
 /// </summary>
-public sealed class EnginseerLaunchServiceTests
+public sealed class RelayLaunchServiceTests
 {
     // ---- Windows ------------------------------------------------------------
 
     [Fact]
     public void Windows_assembles_correct_args_and_invokes_launcher_directly()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteWindows;
         fx.Profiles.PrepareModRootResult = @"C:\curator\profiles\abc\mods";
         var profileId = Guid.NewGuid();
@@ -48,7 +48,7 @@ public sealed class EnginseerLaunchServiceTests
     {
         // Guard: every path-valued flag must pass through unchanged on Windows
         // (no Z:\ prefix) -- translation is a Linux-only concern.
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteWindows;
         const string LogFile = @"C:\curator\logs\curator.log";
         fx.Config.Logging.LogFile = LogFile;
@@ -68,7 +68,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Windows_launch_returns_launched_when_process_starts()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteWindows;
         fx.Launcher.Returns = true;
         var svc = fx.BuildWindowsService();
@@ -84,7 +84,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Linux_translates_mod_path_and_game_binary_to_wine_paths()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.Profiles.PrepareModRootResult = "/home/u/.local/share/Modificus Curator/profiles/abc/mods";
         var svc = fx.BuildLinuxService();
@@ -108,9 +108,9 @@ public sealed class EnginseerLaunchServiceTests
     public void Linux_translates_log_file_to_wine_path()
     {
         // The launcher runs under Wine and opens --log-file itself, so it must
-        // be Z:\-translated on Linux (else curator_enginseer.log can't be written
+        // be Z:\-translated on Linux (else the Relay shell log can't be written
         // where Curator expects).
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         const string LogFile = "/home/u/.local/share/Modificus Curator/logs/curator.log";
         fx.Config.Logging.LogFile = LogFile;
@@ -126,7 +126,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Linux_sets_both_steam_compat_env_vars_from_discovery()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         var svc = fx.BuildLinuxService();
 
@@ -141,7 +141,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Linux_invokes_proton_run_with_launcher_not_launcher_alone()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         var svc = fx.BuildLinuxService();
 
@@ -160,7 +160,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Linux_launch_returns_launched_when_process_starts()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.Launcher.Returns = true;
         var svc = fx.BuildLinuxService();
@@ -176,7 +176,7 @@ public sealed class EnginseerLaunchServiceTests
     public void DiscoveryIncomplete_linux_partial_returns_missing_field_names()
     {
         // Steam + Darktide found, but compatdata + Proton missing on Linux.
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux with
         {
             CompatdataPath = null,
@@ -201,7 +201,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void DiscoveryIncomplete_windows_partial_returns_missing_game_binary()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteWindows with
         {
             DarktideGameBinaryPath = null,
@@ -221,7 +221,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void DiscoveryIncomplete_failed_returns_all_os_required_fields()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = new DiscoveryResult(
             SteamInstallPath: null,
             DarktideGameBinaryPath: null,
@@ -251,7 +251,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Launch_calls_PrepareModRoot_with_profile_id_before_invoking()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         const string PreparedRoot = "/tmp/prepared-mod-root";
         fx.Profiles.PrepareModRootResult = PreparedRoot;
@@ -275,7 +275,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Error_unknown_profile_returns_error_not_thrown()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux; // discovery OK, but profile unknown
         fx.Profiles.UnknownProfile = true;
         var profileId = Guid.NewGuid();
@@ -291,15 +291,15 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Error_missing_runtime_launcher_returns_error()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
-        fx.DeleteLauncher(); // Enginseer runtime not deployed
+        fx.DeleteLauncher(); // Relay not deployed
         var svc = fx.BuildLinuxService();
 
         var result = svc.Launch(Guid.NewGuid());
 
         Assert.Equal(LaunchStatus.Error, result.Status);
-        Assert.Contains("curator_launcher.exe", result.Message);
+        Assert.Contains("modificus_relay.exe", result.Message);
         Assert.Contains("not found", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, fx.Launcher.Calls);
     }
@@ -307,7 +307,7 @@ public sealed class EnginseerLaunchServiceTests
     [Fact]
     public void Error_process_start_failure_returns_error()
     {
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.Launcher.Returns = false; // process.Start failed (file missing, perms, etc.)
         var svc = fx.BuildLinuxService();
@@ -323,7 +323,7 @@ public sealed class EnginseerLaunchServiceTests
     public void Error_result_carries_empty_missing_fields()
     {
         // Error (not DiscoveryIncomplete) must always carry an empty missing-fields list.
-        using var fx = new EnginseerFixture();
+        using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
         fx.DeleteLauncher();
         var svc = fx.BuildLinuxService();

@@ -39,7 +39,7 @@ public static class LoggingBootstrap
         }
 
         // Truncate on each startup: no rolling, retention, or backup -- matches
-        // curator_launcher's curator_enginseer.log pattern. The sink then creates a
+        // the Relay launcher's shell log pattern. The sink then creates a
         // fresh file for this run. File.Delete is a no-op when the file is absent.
         File.Delete(logFile);
 

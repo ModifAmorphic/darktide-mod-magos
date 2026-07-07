@@ -3,7 +3,7 @@
 > Steam / Darktide / Proton discovery and game-running detection. Steam
 > **discovers** everything needed to launch Darktide modded on the current OS
 > and reports missing pieces via the result's nullable fields; it does NOT set
-> env vars or invoke Proton -- that is [enginseer-client](enginseer-client.md)'s
+> env vars or invoke Proton -- that is [relay-client](relay-client.md)'s
 > job.
 
 ## Public surface
@@ -52,7 +52,7 @@ public sealed record DiscoveryResult(
     IReadOnlyList<string> Warnings);   // non-fatal notes (Flatpak, Proton-selection reason, …)
 ```
 
-- `DarktideGameBinaryPath` is the native OS path; enginseer-client Z:\-translates
+- `DarktideGameBinaryPath` is the native OS path; relay-client Z:\-translates
   it on Linux for `--game-binary`.
 - `CompatdataPath` / `ProtonBinaryPath` / `ProtonVersion` are null **by design**
   on Windows (native -- not used).
@@ -144,7 +144,7 @@ per call (all platform logic lives in the discoverer + the shared
   fields result is logged as a warning so the user can still use the app; they
   just cannot launch until resolved (the launch-time `Discover()` re-checks and
   surfaces the escape-hatch when incomplete).
-- [enginseer-client](enginseer-client.md)'s `EnginseerLaunchService.Launch()`
+- [relay-client](relay-client.md)'s `RelayLaunchService.Launch()`
   calls `Discover()` at launch (blocking). A missing-fields result yields
   `LaunchResult.Status = DiscoveryIncomplete`, surfacing the escape-hatch modal.
 - The Settings window reads `DiscoveryConfig` directly (now populated by the
@@ -331,5 +331,5 @@ dotnet test src/modificus-curator.sln -c Release
 - [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md) -- the
   [Launch](../../architecture/MODIFICUS-CURATOR.md#launch) section (the Linux
   discovery + escape-hatch + fail-fast design).
-- [enginseer-client](enginseer-client.md) -- consumes `DiscoveryResult` to invoke
+- [relay-client](relay-client.md) -- consumes `DiscoveryResult` to invoke
   the launcher.
