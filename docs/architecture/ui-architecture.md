@@ -1,6 +1,6 @@
 # UI layer: architecture
 
-The UI layer is the Avalonia 12 front end of Magos Modificus. It is the only
+The UI layer is the Avalonia 12 front end of Modificus Curator. It is the only
 part of the codebase that talks to the user: the shell window, profile
 management, the mod list, every dialog (Settings, Preferences, Integrations,
 Manage profiles, import, discovery escape-hatch, progress), global
@@ -15,7 +15,7 @@ the DMF install prompt fires, and how dialogs, preferences, and i18n fit
 together.
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [UI reference](../reference/magos-modificus/ui.md). This doc covers the
+> [UI reference](../reference/src/ui.md). This doc covers the
 > architecture and the why.
 
 ## Architecture
@@ -90,7 +90,7 @@ running; otherwise it is a no-op (the active stays put). Delete-of-active is
 gated separately by `CanDeleteProfile(id)` (false when the id is the active
 one and the game is running); when delete-of-active does happen, the game is
 already stopped, so `ReconcileActive` clears the active id to null. The user
-then explicitly picks the next profile; Magos never auto-selects a remaining
+then explicitly picks the next profile; Curator never auto-selects a remaining
 one on the user's behalf.
 
 The running-state is live. The production `ProfileSession` snapshots
@@ -335,7 +335,7 @@ profile. There are two triggers:
 
 1. **The first time Nexus auth transitions from `None` to configured**
    (OAuth or API key), gated by the persisted
-   `MagosConfig.Nexus.DmfAuthPromptShown` flag so it fires once ever.
+   `CuratorConfig.Nexus.DmfAuthPromptShown` flag so it fires once ever.
    Subsequent auth changes (re-login, sign-out plus re-sign-in) do not
    re-prompt.
 2. **Each time a new profile is created and becomes active** (a fresh ask
@@ -413,7 +413,7 @@ work's exception (if any) propagates to the caller.
 ### `IPreferencesService`
 
 The single authority for applying user-facing preferences (theme, font scale,
-language) to the running app and persisting them to `MagosConfig`. The
+language) to the running app and persisting them to `CuratorConfig`. The
 composition root applies the loaded config at startup (before the main window
 shows, so the first paint already reflects the user's choices); the
 Preferences dialog calls `ApplyAndPersist` on each change. All three concerns
@@ -473,9 +473,9 @@ dismiss an in-flight operation.
 
 ## See also
 
-- [UI reference](../reference/magos-modificus/ui.md): public surface, exact
+- [UI reference](../reference/src/ui.md): public surface, exact
   signatures, and DI registration for the UI layer.
-- [Magos Modificus architecture](MAGOS-MODIFICUS.md): the high-level
+- [Modificus Curator architecture](MODIFICUS-CURATOR.md): the high-level
   tie-together (component model, the Enginseer contract, profiles, launch).
 - [mod acquisition](mod-acquisition.md): the `NxmModDownloadHandler` (in the
   UI assembly) that coordinates the nxm download flow, and the

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Modificus.Curator.Profiles</RootNamespace>
+    <AssemblyName>Modificus.Curator.Profiles</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\config\Modificus.Curator.Config.csproj" />
+    <!--
+      Mods owns the version-policy model (ModVersionPolicy), the mod-source
+      provenance model (ModSource + ModSourceParser), the unified mod repository
+      (IModRepository / ModRepository + the container/version model), and the
+      local-import service (IModImportService). Profiles consumes IModRepository
+      for staging (resolving each profile mod's policy to a version folder) and
+      ModContainer / ModVersion for the resolution types. The dependency
+      direction is clean: Profiles depends on Mods (the repository knows
+      nothing of profiles).
+    -->
+    <ProjectReference Include="..\mods\Modificus.Curator.Mods.csproj" />
+  </ItemGroup>
+
+</Project>

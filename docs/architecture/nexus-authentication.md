@@ -9,7 +9,7 @@ is also where the v1 Nexus API client is wired up; acquisition and
 update-checks both call through it.
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [integrations reference](../reference/magos-modificus/integrations.md). This
+> [integrations reference](../reference/src/integrations.md). This
 > doc covers the architecture and the why.
 
 ## Architecture
@@ -62,7 +62,7 @@ update-checks both call through it.
   path Nexus serves discovery at. Pointing Authority at `/oauth` 404s the
   discovery fetch. `NormalizeOAuthBaseUrl` strips a user-supplied trailing
   `/oauth` so a misconfigured `OAuthBaseUrl` still resolves to the issuer root.
-- **`ClientId = NexusOAuthConstants.ClientId`** (the `"magos-modificus"` const;
+- **`ClientId = NexusOAuthConstants.ClientId`** (the `"modificus-curator"` const;
   see [OAuth client_id](#oauth-client_id) below).
 - **`RedirectUri = "http://127.0.0.1:<port>/callback"`** (the ephemeral port
   is assigned by the loopback listener, exposed as `LoopbackBrowser.RedirectUri`).
@@ -119,7 +119,7 @@ single source of truth for which method is active.
 
 ## Token persistence and 401-reactive refresh
 
-Tokens persist in `MagosConfig.Integrations.Nexus.OAuth` (a
+Tokens persist in `CuratorConfig.Integrations.Nexus.OAuth` (a
 `NexusOAuthTokens` record: access, refresh, scope, expiry), written via
 `IConfigLoader.Save`. Config is read live, so a credential change takes effect
 on the next request.
@@ -175,9 +175,9 @@ localization through the existing `LocalizationService`.
 
 ## OAuth client_id
 
-`NexusOAuthConstants.ClientId` is the build-time const `"magos-modificus"` (a
+`NexusOAuthConstants.ClientId` is the build-time const `"modificus-curator"` (a
 plain descriptive string; MO2 ships `"modorganizer2"`, NMA ships `"nma"`). It
-is **not config and not an env var**. Magos has no env-var pattern (config is
+is **not config and not an env var**. Curator has no env-var pattern (config is
 file-based via `IConfigLoader`); introducing one just for the client_id is
 unjustified. RFC 8252 loopback redirects require no client registration.
 
@@ -191,8 +191,8 @@ implemented and tested against stubbed endpoints.
 ## App-identification headers and rate limits
 
 Every Nexus request carries the app-identification headers (the MO2 and NMA
-convention): `Application-Name: Magos-Modificus`, `Application-Version:
-<asm>`, `Protocol-Version: 1.0.0`, `User-Agent: Magos-Modificus/<ver>`.
+convention): `Application-Name: Modificus-Curator`, `Application-Version:
+<asm>`, `Protocol-Version: 1.0.0`, `User-Agent: Modificus-Curator/<ver>`.
 
 **Rate limits** are parsed from the `x-rl-*` response headers
 (`x-rl-daily-limit` / `x-rl-daily-remaining` / `x-rl-daily-reset` and the
@@ -219,10 +219,10 @@ shape. v3 is Experimental for the surfaces we need, so v1 only:
 
 ## See also
 
-- [integrations reference](../reference/magos-modificus/integrations.md):
+- [integrations reference](../reference/src/integrations.md):
   public surface, exact signatures, DI registration, testing.
 - [mod acquisition](mod-acquisition.md): the acquisition flow that calls the
   v1 client through the selected auth factory.
 - [nxm:// scheme handler](nxm-scheme-handler.md): OAuth uses loopback, not the
   `nxm://` handler; the OAuth-callback URL kind is parsed and dropped.
-- [Magos Modificus architecture](MAGOS-MODIFICUS.md): the high-level tie-together.
+- [Modificus Curator architecture](MODIFICUS-CURATOR.md): the high-level tie-together.

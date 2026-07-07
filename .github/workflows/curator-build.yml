@@ -1,0 +1,56 @@
+# Modificus Curator: builds the .NET 10 + Avalonia 12 mod-manager app.
+# Scoped to src/** (the Enginseer runtime lives in a separate
+# repo: https://github.com/ModifAmorphic/darktide-enginseer).
+name: curator-build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '.github/workflows/curator-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '.github/workflows/curator-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    defaults:
+      run:
+        working-directory: src
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore modificus-curator.sln
+
+      - name: Build (Release)
+        run: dotnet build modificus-curator.sln --configuration Release --no-restore
+
+      - name: Test (Release)
+        run: dotnet test modificus-curator.sln --configuration Release --no-build --logger trx
+
+      - name: Publish (framework-dependent)
+        run: dotnet publish ui --configuration Release --output app-publish
+
+      - name: Upload app
+        uses: actions/upload-artifact@v7
+        with:
+          name: curator-app-${{ matrix.os }}
+          path: src/app-publish/

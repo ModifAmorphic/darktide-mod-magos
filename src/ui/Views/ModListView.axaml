@@ -1,0 +1,420 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Modificus.Curator.UI.ViewModels"
+             xmlns:conv="using:Modificus.Curator.UI.Converters"
+             x:Class="Modificus.Curator.UI.Views.ModListView"
+             x:DataType="vm:ModListViewModel">
+
+  <!--
+    The active profile's mod list: header (title + recent-only / rate-limit
+    notices + check-now refresh + auto-sort + Add split button) over a
+    scrollable row list, with owned empty states (no profile / no mods). The
+    whole content area is a drag-and-drop target (folders + .zip), so mods can
+    be added by dropping as well as via the Add split button's zip + folder
+    pickers. Drag-and-drop is a Windows-only feature in Avalonia 12.0.x (XDND
+    lands in 12.1), surfaced via a hint in the no-mods empty state + the
+    content-area tooltip; the folder picker covers folder import on all
+    platforms. Row interactions route through code-behind handlers to the
+    parent VM's commands (the established ManageProfilesWindow pattern),
+    passing the row as CommandParameter.
+
+    Icons + markers are drawn <Path> geometry (Material 24x24 source) and
+    Ellipse, never Unicode glyphs, per AGENTS.md. The SplitButton's arrow is
+    built-in theme chrome, not an authored glyph.
+  -->
+
+  <UserControl.Styles>
+    <!-- Source badge: a subtle pill so it reads as metadata, not body text.
+         Applies to the HyperlinkButton variant too (the badge is a link). -->
+    <Style Selector="Border.badge">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="6,1" />
+      <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- The source badge as a clickable link: pill styling carries over from
+         Border.badge, plus a transparent background + a pointer-cursor so the
+         badge reads as a link when its SourceUrl is set. The HyperlinkButton's
+         default theme is a hyperlink (underline, accent color); this override
+         restores the pill look. -->
+    <Style Selector="HyperlinkButton.badge">
+      <Setter Property="Padding" Value="6,1" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <!-- Compact icon buttons (up / down / trash / update): flat, inherit foreground. -->
+    <Style Selector="Button.icon">
+      <Setter Property="Padding" Value="6" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*" Margin="20,12,20,12">
+
+    <!-- Header: title + recent-only / rate-limit notices + check-now refresh
+         + auto-sort toggle + Add split button (hidden until a profile is
+         active). The title reads the plain "Mods" label (no count; the row list
+         itself is the count). -->
+    <Grid Grid.Row="0"
+          ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto"
+          IsVisible="{Binding HasActiveProfile}"
+          Margin="0,0,0,8">
+      <TextBlock Grid.Column="0"
+                 Text="{Binding HeaderCountText}"
+                 FontSize="16" FontWeight="SemiBold"
+                 VerticalAlignment="Center" />
+      <!--
+        Recent-only notice: shown when the last check was Month-only (NOT
+        thorough) AND not rate-limited. A subtle, neutral-informational pill
+        (NOT the caution styling the rate-limit notice uses) hinting the badges
+        reflect only the past month, so the user clicks refresh for a complete
+        check. The IsVisible binds to the VM's ShowRecentOnlyNotice, which
+        encodes the precedence (rate-limit takes precedence; the two notices
+        never co-show).
+      -->
+      <Border Grid.Column="1"
+              Classes="recentOnlyNotice"
+              IsVisible="{Binding ShowRecentOnlyNotice}"
+              Background="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}"
+              CornerRadius="8"
+              Padding="6,1"
+              Margin="8,0,0,0"
+              VerticalAlignment="Center"
+              ToolTip.Tip="{ReflectionBinding [ModList_RecentOnlyTooltip], Source={StaticResource Loc}}">
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <Ellipse Width="6" Height="6"
+                   Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                   VerticalAlignment="Center" />
+          <TextBlock Text="{Binding RecentOnlyNoticeText}"
+                     FontSize="11" VerticalAlignment="Center" />
+        </StackPanel>
+      </Border>
+      <!--
+        Rate-limit notice: shown when the last update check was rate-limited
+        (the badges may not reflect every available update). A drawn warning
+        dot + the localized text; the tooltip carries the detail. Takes
+        precedence over the recent-only notice (the VM's ShowRecentOnlyNotice
+        suppresses it while IsRateLimited is set).
+      -->
+      <Border Grid.Column="2"
+              Classes="rateLimitedNotice"
+              IsVisible="{Binding IsRateLimited}"
+              Background="{DynamicResource SystemControlBackgroundCautionBrush}"
+              CornerRadius="8"
+              Padding="6,1"
+              Margin="8,0,0,0"
+              VerticalAlignment="Center"
+              ToolTip.Tip="{ReflectionBinding [ModList_RateLimitedTooltip], Source={StaticResource Loc}}">
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <Ellipse Width="6" Height="6"
+                   Fill="{DynamicResource SystemControlForegroundCautionBrush}"
+                   VerticalAlignment="Center" />
+          <TextBlock Text="{Binding RateLimitedNoticeText}"
+                     FontSize="11" VerticalAlignment="Center" />
+        </StackPanel>
+      </Border>
+      <!--
+        Manual "check for updates now": a refresh-affordance button (drawn
+        refresh-arrow Path, no glyph), always visible (independent of the
+        periodic-check toggle). Click routes through code-behind to the VM's
+        CheckForUpdatesNow command, which fires an immediate THOROUGH check
+        (the per-mod pass that also catches mods outside the Month window) +
+        drives the IsCheckingNow affordance while it runs. The result lands via
+        the existing CheckCompleted subscription. Disabled while a thorough
+        check is in flight (IsCheckingNow) + an indeterminate progress spinner
+        replaces the refresh icon for the duration.
+      -->
+      <Panel Grid.Column="3" Margin="8,0,0,0" VerticalAlignment="Center">
+        <Button Classes="icon"
+                Click="RefreshUpdates_Click"
+                IsEnabled="{Binding !IsCheckingNow}"
+                VerticalAlignment="Center"
+                IsVisible="{Binding !IsCheckingNow}"
+                ToolTip.Tip="{ReflectionBinding [ModList_CheckNowTooltip], Source={StaticResource Loc}}">
+          <!-- Material "refresh" (24x24 source): drawn geometry, themed via the
+               button foreground. -->
+          <Path Width="16" Height="16" Stretch="Uniform"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
+                Fill="{Binding $parent[Button].Foreground}"
+                Data="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+        </Button>
+        <!-- Indeterminate progress while the thorough check runs (multiple API
+             calls, a few seconds). Replaces the refresh button via the
+             IsCheckingNow-toggled IsVisible on both. -->
+        <ProgressBar Width="18" Height="18"
+                     IsIndeterminate="True"
+                     IsVisible="{Binding IsCheckingNow}"
+                     VerticalAlignment="Center" />
+      </Panel>
+      <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="16,0,0,0">
+        <CheckBox IsChecked="{Binding AutoSortEnabled, Mode=TwoWay}"
+                  Click="AutoSort_Click"
+                  ToolTip.Tip="{ReflectionBinding [ModList_AutoSortTooltip], Source={StaticResource Loc}}" />
+        <TextBlock Text="{ReflectionBinding [ModList_AutoSort], Source={StaticResource Loc}}"
+                   VerticalAlignment="Center" />
+      </StackPanel>
+      <!--
+        Add split button: primary click opens the current mode's picker (zip file
+        picker by default, folder picker after the folder flyout item is chosen);
+        the arrow opens the flyout to switch modes. The TextBlock binds to the
+        VM's AddModeLabel so it reads "Add Mod (zip)" / "Add Mod (folder)". The
+        arrow is built-in theme chrome (no authored glyph). Folders need a picker
+        path because drag-and-drop is a Windows-only feature in Avalonia 12.0.x.
+      -->
+      <SplitButton Grid.Column="6"
+                   Click="Add_Click"
+                   ToolTip.Tip="{ReflectionBinding [ModList_AddButtonTooltip], Source={StaticResource Loc}}"
+                   Margin="16,0,0,0"
+                   VerticalAlignment="Center">
+        <SplitButton.Content>
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <!-- Material "add" plus (24x24 source): drawn geometry. -->
+            <Path Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"
+                  Fill="{Binding $parent[SplitButton].Foreground}"
+                  Data="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+            <TextBlock Text="{Binding AddModeLabel}" VerticalAlignment="Center" />
+          </StackPanel>
+        </SplitButton.Content>
+        <SplitButton.Flyout>
+          <MenuFlyout>
+            <MenuItem Header="{ReflectionBinding [ModList_AddZip], Source={StaticResource Loc}}"
+                      Click="AddZip_Click" />
+            <MenuItem Header="{ReflectionBinding [ModList_AddFolder], Source={StaticResource Loc}}"
+                      Click="AddFolder_Click" />
+          </MenuFlyout>
+        </SplitButton.Flyout>
+      </SplitButton>
+    </Grid>
+
+    <!--
+      Content area: also the drag-and-drop target. The tooltip surfaces the
+      Windows-only note (XDND lands in Avalonia 12.1; Linux drops do not fire).
+      Empty states + the row list overlap; visibility selects which shows.
+    -->
+    <Grid Grid.Row="1"
+          DragDrop.AllowDrop="True"
+          DragDrop.Drop="OnDrop"
+          DragDrop.DragOver="OnDragOver"
+          ToolTip.Tip="{ReflectionBinding [ModList_DragDropHint], Source={StaticResource Loc}}">
+
+      <!-- Empty: no active profile. -->
+      <TextBlock Text="{Binding EmptyNoProfileText}"
+                 IsVisible="{Binding !HasActiveProfile}"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                 Opacity="0.6" />
+
+      <!--
+        Empty: active profile but no mods yet. The drag-and-drop hint sits below
+        the message; small font + lowered opacity so it reads as a secondary cue.
+        (Drag-and-drop is a Windows-only feature; the folder picker covers Linux.)
+      -->
+      <StackPanel IsVisible="{Binding IsEmptyNoMods}"
+                  HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+        <TextBlock Text="{Binding EmptyNoModsText}"
+                   HorizontalAlignment="Center"
+                   Opacity="0.6" />
+        <TextBlock Text="{ReflectionBinding [ModList_DragDropHint], Source={StaticResource Loc}}"
+                   FontSize="11"
+                   Opacity="0.6"
+                   HorizontalAlignment="Center" />
+      </StackPanel>
+
+      <!-- The mod rows (visible only when there is at least one mod). -->
+      <Border IsVisible="{Binding HasMods}"
+              BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+              BorderThickness="1"
+              CornerRadius="4">
+        <ScrollViewer Padding="2">
+          <ItemsControl ItemsSource="{Binding Mods}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ModItemViewModel">
+                <!--
+                  Row layout (8 columns): Name | source badge + update marker |
+                  enabled | policy editor | update button / progress | up | down |
+                  remove. The Update button + the indeterminate ProgressBar share
+                  column 4 (toggled by IsUpdating); they sit between the policy
+                  editor and the list-management cluster so they group with
+                  per-mod actions rather than list reordering.
+                -->
+                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                      Margin="6,3" MinHeight="32">
+
+                  <!-- Name -->
+                  <TextBlock Grid.Column="0"
+                             Text="{Binding Name}"
+                             VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
+
+                  <!--
+                    Source badge (a clickable link) + the update-available
+                    marker (a drawn accent dot PLUS a HyperlinkButton to the
+                    mod's Nexus files tab, so the user's instinct to click the
+                    marker lands on the files page where the new release lives).
+                    The badge is a HyperlinkButton styled as the pill; its
+                    NavigateUri is the row's SourceUrl (null for Untracked,
+                    which the HyperlinkButton treats as a no-op click). The
+                    marker's IsVisible is still UpdateAvailable; the dot stays
+                    as a visual cue alongside the link.
+                  -->
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
+                              Margin="8,0,0,0" VerticalAlignment="Center">
+                    <HyperlinkButton Classes="badge"
+                                     NavigateUri="{Binding SourceUrl}"
+                                     ToolTip.Tip="{ReflectionBinding [ModRow_SourceBadgeLinkTooltip], Source={StaticResource Loc}}">
+                      <TextBlock Text="{Binding SourceBadgeText}" FontSize="11" />
+                    </HyperlinkButton>
+                    <!-- Update-available marker: drawn accent dot + a
+                         HyperlinkButton to the mod's Nexus files tab. Both
+                         shown when the update check flagged this container.
+                         The dot is the visual cue; the link lands the user on
+                         the files page (a no-op for non-Nexus sources, which
+                         the update check never flags anyway). -->
+                    <StackPanel Orientation="Horizontal" Spacing="3"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding UpdateAvailable}">
+                      <Ellipse Width="7" Height="7"
+                               Fill="{DynamicResource SystemControlForegroundAccentBrush}"
+                               VerticalAlignment="Center" />
+                      <HyperlinkButton NavigateUri="{Binding UpdatePageUrl}"
+                                       Padding="0" Margin="0"
+                                       ToolTip.Tip="{ReflectionBinding [ModRow_UpdateAvailableTooltip], Source={StaticResource Loc}}">
+                        <TextBlock Text="{ReflectionBinding [ModRow_UpdateAvailable], Source={StaticResource Loc}}"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource SystemControlForegroundAccentBrush}"
+                                   VerticalAlignment="Center" />
+                      </HyperlinkButton>
+                    </StackPanel>
+                  </StackPanel>
+
+                  <!-- Enabled toggle (two-way; Click applies via the parent). -->
+                  <CheckBox Grid.Column="2"
+                            IsChecked="{Binding Enabled, Mode=TwoWay}"
+                            Click="Enabled_Click"
+                            ToolTip.Tip="{ReflectionBinding [ModRow_EnabledTooltip], Source={StaticResource Loc}}"
+                            Margin="12,0,0,0"
+                            VerticalAlignment="Center" />
+
+                  <!-- Policy editor: ComboBox (Latest/Pinned) + inline version dropdown. -->
+                  <!--
+                    The pin is a constrained dropdown of the container's versions
+                    (bound to the row's AvailableVersions): the user can only pin to
+                    a version that exists in the container. The dropdown shows the
+                    readable version tag and stores the opaque folder id, which the
+                    parent's SetPolicyPinned command wraps as PinnedPolicy(versionId).
+                    (The import-modal version field stays free-text: it declares the
+                    version of files being imported, which is how a new version row
+                    enters the container in the first place.)
+                  -->
+                  <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6"
+                              Margin="12,0,0,0" VerticalAlignment="Center">
+                    <ComboBox SelectedIndex="{Binding PolicyChoice, Mode=TwoWay}"
+                              SelectionChanged="Policy_Changed"
+                              MinWidth="100">
+                      <ComboBoxItem Content="{ReflectionBinding [ModRow_PolicyLatest], Source={StaticResource Loc}}" />
+                      <ComboBoxItem Content="{ReflectionBinding [ModRow_PolicyPinned], Source={StaticResource Loc}}" />
+                    </ComboBox>
+                    <ComboBox ItemsSource="{Binding AvailableVersions}"
+                              SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                              SelectionChanged="PinnedVersion_Changed"
+                              IsVisible="{Binding IsPinned}"
+                              PlaceholderText="{ReflectionBinding [ModRow_PinnedVersionPlaceholder], Source={StaticResource Loc}}"
+                              MinWidth="120">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:VersionOption">
+                          <TextBlock Text="{Binding VersionString}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                  </StackPanel>
+
+                  <!--
+                    Per-mod Update button (premium-only, drawn download arrow) OR
+                    the indeterminate progress affordance while updating. The two
+                    share column 4: IsUpdating toggles which shows. The button's
+                    IsVisible is the conjunction of the row's CanShowUpdateButton
+                    (Nexus + Latest + UpdateAvailable + !IsUpdating) AND the
+                    parent ModListViewModel.IsPremiumUser (the premium gate). The
+                    parent walk uses ReflectionBinding because the ItemsControl's
+                    DataContext is statically object inside the row DataTemplate
+                    (compiled bindings cannot resolve IsPremiumUser through it);
+                    the row-local binding stays compiled. IsEnabled binds to the
+                    parent's IsUpdateEnabled (premium + no row updating = one at
+                    a time).
+                  -->
+                  <Panel Grid.Column="4" Margin="8,0,0,0" VerticalAlignment="Center">
+                    <Button Classes="icon"
+                            Click="Update_Click"
+                            CommandParameter="{Binding}"
+                            IsEnabled="{ReflectionBinding DataContext.IsUpdateEnabled, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                            ToolTip.Tip="{ReflectionBinding [ModRow_UpdateTooltip], Source={StaticResource Loc}}">
+                      <Button.IsVisible>
+                        <MultiBinding Converter="{x:Static conv:BoolAllConverter.Instance}">
+                          <Binding Path="CanShowUpdateButton" />
+                          <ReflectionBinding Path="DataContext.IsPremiumUser"
+                                             RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                        </MultiBinding>
+                      </Button.IsVisible>
+                      <!-- Material "download" (24x24 source): drawn geometry. -->
+                      <Path Width="16" Height="16" Stretch="Uniform"
+                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Fill="{Binding $parent[Button].Foreground}"
+                            Data="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                    </Button>
+                    <!-- Indeterminate progress while the update runs. -->
+                    <ProgressBar Width="18" Height="18"
+                                 IsIndeterminate="True"
+                                 IsVisible="{Binding IsUpdating}"
+                                 VerticalAlignment="Center" />
+                  </Panel>
+
+                  <!-- Move up (drawn up-chevron). -->
+                  <Button Grid.Column="5" Classes="icon"
+                          ToolTip.Tip="{ReflectionBinding [ModRow_MoveUpTooltip], Source={StaticResource Loc}}"
+                          Click="MoveUp_Click"
+                          CommandParameter="{Binding}"
+                          Margin="8,0,0,0">
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+                  </Button>
+
+                  <!-- Move down (drawn down-chevron). -->
+                  <Button Grid.Column="6" Classes="icon"
+                          ToolTip.Tip="{ReflectionBinding [ModRow_MoveDownTooltip], Source={StaticResource Loc}}"
+                          Click="MoveDown_Click"
+                          CommandParameter="{Binding}"
+                          Margin="4,0,0,0">
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
+                  </Button>
+
+                  <!-- Remove (drawn trash). -->
+                  <Button Grid.Column="7" Classes="icon"
+                          ToolTip.Tip="{ReflectionBinding [ModRow_RemoveTooltip], Source={StaticResource Loc}}"
+                          Click="Remove_Click"
+                          CommandParameter="{Binding}"
+                          Margin="4,0,0,0">
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Fill="{Binding $parent[Button].Foreground}"
+                          Data="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                  </Button>
+
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>
