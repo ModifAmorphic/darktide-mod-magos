@@ -2,6 +2,7 @@ using Magos.Modificus.EnginseerClient;
 using Magos.Modificus.Mods;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.UI.Localization;
+using Magos.Modificus.UI.Session;
 using Magos.Modificus.UI.ViewModels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -25,15 +26,21 @@ public sealed class ShellViewModelTests
         FakeProfileService? profiles = null,
         FakeProfileSession? session = null,
         FakeDialogService? dialogs = null,
-        FakeLaunchService? launch = null)
+        FakeLaunchService? launch = null,
+        DmfPromptService? dmfPrompts = null)
     {
         profiles ??= TestDoubles.Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
+        // The DMF coordinator wires its event subscriptions to the supplied
+        // fakes; constructed lazily so a test can pass its own (with seeded
+        // state) for the DMF-prompt assertions.
+        dmfPrompts ??= TestDoubles.BuildDmfPromptService(profiles, session);
         return new ShellViewModel(
             profiles,
             session,
             launch ?? new FakeLaunchService(),
             dialogs ?? new FakeDialogService(),
+            dmfPrompts,
             Localization,
             TestDoubles.BuildModList(profiles, session),
             Logger);
@@ -464,6 +471,7 @@ public sealed class ShellViewModelTests
             session,
             new FakeLaunchService(),
             dialogs,
+            TestDoubles.BuildDmfPromptService(profiles, session),
             Localization,
             modList,
             Logger);

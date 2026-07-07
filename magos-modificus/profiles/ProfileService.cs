@@ -60,6 +60,9 @@ internal sealed class ProfileService : IProfileService
     private readonly SymlinkCreator _symlink;
     private readonly ILogger<ProfileService> _logger;
 
+    /// <inheritdoc />
+    public event EventHandler<ProfileSummary>? ProfileCreated;
+
     public ProfileService(
         IConfigLoader configLoader,
         IModRepository repo,
@@ -151,6 +154,14 @@ internal sealed class ProfileService : IProfileService
         WriteProfileFile(profile, baseFolder);
 
         _logger.LogInformation("Created profile {Id} ('{Name}')", profile.Id, profile.Name);
+
+        // Notify subscribers (the DMF new-profile prompt coordinator). Raised
+        // AFTER the persist committed so a subscriber that reads the profile
+        // back sees it. Raised synchronously; subscribers are expected to defer
+        // any UI work (the coordinator records the signal + processes it once
+        // the owning dialog closes, to avoid a dialog-on-dialog).
+        ProfileCreated?.Invoke(this, new ProfileSummary(profile.Id, profile.Name));
+
         return profile;
     }
 

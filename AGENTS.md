@@ -28,15 +28,19 @@ game-binary constraints now live with the runtime, in
 - **`main`** — production. Magos Modificus is built through Phase 3 (all four
   tracks merged: Track A the app shell + profile management, Track D global
   Preferences + i18n, Track B the mod-list UI + local import, Track C the Launch
-  flow + Settings window + discovery escape-hatch) + Phase 4 Stages 1-5 (the
+  flow + Settings window + discovery escape-hatch) + Phase 4 Stages 1-6 (the
   nxm:// scheme handler, Nexus auth + Integrations dialog, mod acquisition, the
-  update-check service, and the mod-list update UI). The app is user-usable:
+  update-check service, the mod-list update UI, and the DMF new-profile/auth
+  install prompt). The app is user-usable:
   create profiles, import mods (folder/`.zip`, Nexus/GitHub/Untracked), manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
   (discovery paths + mod-repo location), and launch modded Darktide. Premium
   users additionally get per-mod one-click update on the mod list; non-premium
   users see the source-badge link + the update marker + the existing nxm
-  download flow. The Launcher is a stub (Phase 5). Backend libraries: Profiles,
+  download flow. The first time Nexus auth is configured, or whenever a new
+  profile is created + set active without DMF in it, a modal prompt offers to
+  add/download DMF (Darktide Mod Framework, Nexus mod 8). The Launcher is a
+  stub (Phase 5). Backend libraries: Profiles,
   Mods (the unified mod repository), Steam, Integrations, Enginseer-client,
   General. The Enginseer runtime is a separate repo
   ([darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer));
@@ -119,7 +123,57 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           response missed, catching mods whose latest release
                           predates the Month window) fires on the manual "check
                           now" button; both share `LastResult`/`CheckCompleted`,
-                          distinguished by the result's `Thorough` flag)
+                          distinguished by the result's `Thorough` flag);
+                          Phase 4 Stage 6: the DMF (Darktide Mod Framework)
+                          install-prompt coordinator `DmfPromptService`
+                          (ui/Session/) + the modal `ProgressDialog`
+                          (ui/Views/) used for its in-flight download. The
+                          coordinator subscribes to
+                          `IProfileService.ProfileCreated` (fires from inside
+                          the ManageProfiles dialog's create) +
+                          `INexusAuthService.AuthStateChanged` (fires from
+                          inside the Integrations dialog's auth command),
+                          records each as a pending trigger, and the shell
+                          calls `ProcessPendingAsync` after those dialogs close
+                          so the DMF prompt is the topmost modal at that point
+                          (no dialog-on-dialog). The prompt fires for two
+                          triggers when DMF is not in the active profile: (1)
+                          the first time Nexus auth transitions from None to
+                          configured (gated by the persisted
+                          `MagosConfig.Nexus.DmfAuthPromptShown` flag so
+                          subsequent auth changes do not re-prompt), and (2)
+                          every new profile that becomes active (no flag: a
+                          fresh ask per profile). Three cases: DMF in the repo
+                          but not the profile -> instant add (case 1); DMF not
+                          in the repo + auth configured -> on confirm, premium
+                          users get the in-app API download under a spinner +
+                          add, non-premium users (or unknown premium state) get
+                          their browser opened at DMF's Nexus files page (the
+                          user clicks Download there + the existing nxm handler
+                          picks up the URL + adds DMF to the active profile via
+                          the standard nxm flow; the API download_link endpoint
+                          is premium-only, so non-premium users must visit the
+                          site to mint the per-file token) (case 2); DMF not in
+                          the repo + auth not configured -> informational alert
+                          (case 3, only reachable from the new-profile trigger).
+                          Decline is respected; DMF can be added later via the
+                          normal add flow. `IDialogService.ShowProgressAsync<T>`
+                          runs the supplied work under a non-closeable spinner +
+                          closes it on completion; `DialogTitleBar.ShowClose`
+                          (a new styled property) hides the spinner's close
+                          button so the user cannot dismiss an in-flight
+                          download). The shell's `ManageProfiles` command
+                          brackets its `Profiles = ...` swap + `SelectedProfile
+                          = ResolveActive()` re-sync under `_syncing = true`:
+                          replacing the dropdown's `ItemsSource` causes the
+                          ComboBox to fire spurious `SelectedItem` events (null
+                          then a value match against the new collection for the
+                          previously-selected name) that would otherwise land in
+                          `OnSelectedProfileChanged` with the stale value +
+                          revert the session via `RequestActive` (undoing the
+                          active change `CommitCreate` just made inside the
+                          dialog). Bracketing the swap under `_syncing` makes
+                          those events no-ops)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO),
@@ -166,7 +220,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         auth via INexusAuthMessageFactory selector — ApiKey /
                         OAuth / None factories, the latter doing 401-reactive
                         refresh; NexusAuthService the OAuth loopback + API-key
-                        validate + sign-out orchestrator; NexusOAuthTokenStore
+                        validate + sign-out orchestrator (raises
+                        AuthStateChanged on every persisted method change so
+                        the UI's DmfPromptService can react to the
+                        None -> configured transition); NexusOAuthTokenStore
                         owns the OidcClient + token persistence; LoopbackBrowser
                         the IBrowser impl with an HttpListener on an ephemeral
                         port; Duende.IdentityModel.OidcClient 7.1.0 for the
@@ -252,8 +309,11 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                                             NxmModDownloadHandler auth/profile gates + error
                                             wiring + the mod-list update flow: CheckCompleted
                                             per-row state, UpdateCommand success/failure +
-                                            one-at-a-time + premium gating + SourceUrl resolution,
-                                            against in-memory fakes)
+                                            one-at-a-time + premium gating + SourceUrl resolution;
+                                            + the DmfPromptService (the three DMF cases, the
+                                            new-profile + auth-configured triggers, the
+                                            ask-once auth flag, the decline path, and the
+                                            dialog-on-dialog avoidance), against in-memory fakes)
     Magos.Modificus.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
                                             IPC server resilience, SingleInstanceGuard, router,
                                             relay helper, Linux registrar, AddNxm wiring;
@@ -317,8 +377,15 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   Settings window editing `MagosConfig.Discovery` user overrides (per-field
   read-modify-save) + `ModsFolder` live-relocate via the atomic
   `IModRepository.Relocate` over the `DiscoveryConfig` +
-  `SteamService.Discover()` validate+heal+persist pipeline). The **Launcher**
-  is a stub (Phase 5). See `docs/architecture/MAGOS-MODIFICUS.md`.
+  `SteamService.Discover()` validate+heal+persist pipeline). The DMF (Darktide
+  Mod Framework) install-prompt coordinator `DmfPromptService` (ui/Session/)
+  offers to add/download DMF on (1) the first Nexus auth None -> configured
+  transition (gated by the persisted `MagosConfig.Nexus.DmfAuthPromptShown`
+  flag) + (2) every new profile that becomes active without DMF in it; the
+  prompt is a modal on the main window, fired by the shell after the
+  triggering ManageProfiles / Integrations dialog closes so it never nests on
+  top of one. The **Launcher** is a stub (Phase 5). See
+  `docs/architecture/MAGOS-MODIFICUS.md`.
 
 ## Key docs
 
@@ -359,6 +426,15 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
 - **No em-dashes in prose** (code comments, docs, commits, chat). Em-dashes read
   as an AI-generated tell; use a comma, colon, parentheses, semicolon, or period
   instead.
+- **No `ConfigureAwait(false)` in UI-layer code.** It hops async continuations
+  to the threadpool, breaking UI-thread affinity for `Window.ShowDialog`,
+  `ObservableCollection` mutations, and `INotifyPropertyChanged` setters. The UI
+  layer's convention is to stay on the captured UI context (no
+  `ConfigureAwait(false)`). Only explicit background-task code uses it (e.g.
+  `UpdateCheckRunner` inside a `Task.Run`), and only inside that block. This has
+  bitten the project repeatedly (the Update command, LoadPremiumStateAsync, the
+  CheckCompleted handler, and the DmfPromptService all shipped with it + had to
+  be caught at review).
 - **PR descriptions describe ONLY what was done.** Never include an "Out of
   scope" section or any list of things the PR did not do. A PR description is a
   record of the change that landed, not a contrast against everything that could

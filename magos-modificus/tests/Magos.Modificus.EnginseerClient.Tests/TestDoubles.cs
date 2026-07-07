@@ -39,6 +39,15 @@ internal sealed class FakeConfigLoader : IConfigLoader
 /// </summary>
 internal sealed class FakeProfileService : IProfileService
 {
+    /// <summary>Unused stub. Only <see cref="PrepareModRoot"/> is exercised by
+    /// the launch path; the event is required by the interface but never raised
+    /// here.</summary>
+    public event EventHandler<ProfileSummary>? ProfileCreated
+    {
+        add { }
+        remove { }
+    }
+
     /// <summary>The path returned by <see cref="PrepareModRoot"/> (the --mod-path).</summary>
     public string PrepareModRootResult { get; set; } = "/home/u/.local/share/Magos Modificus/profiles/<id>/mods";
 

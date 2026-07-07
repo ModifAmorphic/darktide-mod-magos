@@ -250,6 +250,24 @@ public sealed class NexusOAuthTokenStore : INexusTokenStore
 /// </remarks>
 public interface INexusAuthService
 {
+    /// <summary>
+    /// Raised whenever an auth action changes the persisted
+    /// <see cref="NexusAuthMethod"/> (OAuth login, API-key validate, or
+    /// sign-out). Carries no payload; subscribers re-read what they need from
+    /// <see cref="GetCurrentStateAsync"/> or the live config. The DMF prompt
+    /// coordinator subscribes to surface the auth-triggered DMF install prompt
+    /// the first time auth transitions from <see cref="NexusAuthMethod.None"/>
+    /// to configured (the dialog-on-dialog avoidance is documented on the
+    /// coordinator).
+    /// </summary>
+    /// <remarks>
+    /// Fires from inside the auth call, so a subscriber still in the call
+    /// chain (the Integrations dialog) sees it synchronously. The DMF prompt
+    /// coordinator treats it as a pending signal + processes it once the
+    /// Integrations dialog has closed.
+    /// </remarks>
+    event EventHandler? AuthStateChanged;
+
     /// <summary>Runs the OAuth loopback login flow (browser + token exchange +
     /// persist + user-info fetch). Returns the user-facing summary.</summary>
     Task<NexusAuthResult> LoginWithOAuthAsync(CancellationToken ct = default);
@@ -279,6 +297,9 @@ public sealed class NexusAuthService : INexusAuthService
     private readonly INexusClient _client;
     private readonly NexusOAuthTokenStore _tokens;
     private readonly ILogger<NexusAuthService> _logger;
+
+    /// <inheritdoc />
+    public event EventHandler? AuthStateChanged;
 
     public NexusAuthService(
         IConfigLoader configLoader,
@@ -313,6 +334,11 @@ public sealed class NexusAuthService : INexusAuthService
         config.Integrations.Nexus.OAuth = tokens;
         config.Integrations.Nexus.ApiKey = null;
         _configLoader.Save(config);
+
+        // Notify subscribers (the DMF prompt coordinator) that the persisted
+        // auth state changed. Raised synchronously; the coordinator records the
+        // signal + processes it once the Integrations dialog closes.
+        AuthStateChanged?.Invoke(this, EventArgs.Empty);
 
         // Fetch the user info via the v1 client (now configured with the new
         // tokens). Failures here are non-fatal: the user IS signed in; we just
@@ -384,6 +410,8 @@ public sealed class NexusAuthService : INexusAuthService
                 "Nexus API-key login succeeded for user {Name} (premium={Premium}).",
                 validate.Data.Name,
                 validate.Data.IsPremium);
+            // Notify subscribers the persisted auth state changed.
+            AuthStateChanged?.Invoke(this, EventArgs.Empty);
             return NexusAuthResult.Success(validate.Data.Name, validate.Data.IsPremium);
         }
         catch (Exception ex)
@@ -396,6 +424,11 @@ public sealed class NexusAuthService : INexusAuthService
             reverted.Integrations.Nexus.OAuth = priorOAuth;
             _configLoader.Save(reverted);
             _logger.LogWarning(ex, "Nexus API-key login failed; reverted to the prior auth state.");
+            // Still notify: the speculative write + revert are both visible
+            // state changes. The coordinator re-reads the live state + sees
+            // priorMethod, so a None -> None (a failed first-time setup) does
+            // not cross the configured threshold and does not prompt.
+            AuthStateChanged?.Invoke(this, EventArgs.Empty);
             return NexusAuthResult.Failed(ex.Message);
         }
     }
@@ -413,6 +446,11 @@ public sealed class NexusAuthService : INexusAuthService
         config.Integrations.Nexus.OAuth = null;
         _configLoader.Save(config);
         _logger.LogInformation("Nexus auth cleared (signed out).");
+        // Notify subscribers the persisted auth state changed. The DMF
+        // coordinator sees AuthMethod=None + skips (sign-out is not the
+        // "first-time-configured" trigger); the existing DmfAuthPromptShown
+        // flag stays put so a later sign-in does not re-prompt.
+        AuthStateChanged?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }
 

@@ -514,6 +514,13 @@ public sealed class IntegrationsViewModelTests
     /// </summary>
     private sealed class FakeNexusAuthService : INexusAuthService
     {
+        // Required by the interface; unused by the Integrations VM tests.
+        public event EventHandler? AuthStateChanged
+        {
+            add { }
+            remove { }
+        }
+
         public NexusAuthState? CurrentState { get; set; }
 
         public NexusAuthResult NextOAuthResult { get; set; } =

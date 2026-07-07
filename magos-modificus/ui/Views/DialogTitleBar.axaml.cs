@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
@@ -12,6 +13,21 @@ namespace Magos.Modificus.UI.Views;
 /// </summary>
 public partial class DialogTitleBar : UserControl
 {
+    /// <summary>
+    /// Whether the drawn close button is visible. Default <c>true</c> (every
+    /// existing dialog shows it). The progress-spinner dialog sets this to
+    /// <c>false</c> so the user cannot dismiss an in-flight operation whose
+    /// partial result would be useless (e.g. the DMF download).
+    /// </summary>
+    public static readonly StyledProperty<bool> ShowCloseProperty =
+        AvaloniaProperty.Register<DialogTitleBar, bool>(nameof(ShowClose), defaultValue: true);
+
+    public bool ShowClose
+    {
+        get => GetValue(ShowCloseProperty);
+        set => SetValue(ShowCloseProperty, value);
+    }
+
     public DialogTitleBar()
     {
         InitializeComponent();

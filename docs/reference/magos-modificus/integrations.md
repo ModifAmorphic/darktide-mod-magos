@@ -238,6 +238,8 @@ refresh orchestrator, separate from `NexusAuthService` to break the DI cycle).
 ```csharp
 public interface INexusAuthService
 {
+    event EventHandler? AuthStateChanged;
+
     Task<NexusAuthResult> LoginWithOAuthAsync(CancellationToken ct = default);
     Task<NexusAuthResult> LoginWithApiKeyAsync(string apiKey, CancellationToken ct = default);
     Task SignOutAsync(CancellationToken ct = default);
@@ -257,6 +259,12 @@ public sealed record NexusAuthState(NexusAuthMethod Method, string? Name, bool? 
 public sealed class NexusOAuthTokenStore : INexusTokenStore;   // OidcClient + token persistence + loopback login
 ```
 
+- `AuthStateChanged` — raised whenever an auth action changes the persisted
+  `NexusAuthMethod` (OAuth login, API-key validate, or sign-out). Carries no
+  payload; subscribers re-read what they need from the live config or
+  `GetCurrentStateAsync`. The UI's `DmfPromptService` subscribes so it can
+  surface the DMF install prompt the first time auth transitions from `None`
+  to configured.
 - `LoginWithOAuthAsync` — runs the OAuth loopback flow (browser + token exchange
   + persist), flips `AuthMethod = OAuth` (clearing any API key), fetches the
   user info via the v1 client.

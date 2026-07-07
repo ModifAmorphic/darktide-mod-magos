@@ -22,6 +22,20 @@ namespace Magos.Modificus.Profiles;
 /// </remarks>
 public interface IProfileService
 {
+    /// <summary>
+    /// Raised whenever <see cref="CreateProfile"/> successfully persists a new
+    /// profile. Carries the new profile's summary (id + name). Subscribers use
+    /// this to react to "a profile was just created" (the DMF new-profile
+    /// prompt coordinator is the consumer).
+    /// </summary>
+    /// <remarks>
+    /// Fires from inside the create call, so a subscriber still in the call
+    /// chain (e.g. a modal dialog) sees it synchronously. The DMF prompt
+    /// coordinator treats it as a pending signal + processes it once the
+    /// owning dialog has closed, to avoid a dialog-on-dialog.
+    /// </remarks>
+    event EventHandler<ProfileSummary>? ProfileCreated;
+
     /// <summary>All known profiles, as lightweight summaries.</summary>
     IReadOnlyList<ProfileSummary> ListProfiles();
 

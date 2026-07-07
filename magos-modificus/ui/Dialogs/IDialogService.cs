@@ -86,4 +86,21 @@ public interface IDialogService
     /// acknowledge. The caller does not branch on the return.
     /// </summary>
     Task ShowAlertAsync(string title, string message);
+
+    /// <summary>
+    /// Shows a buttonless modal spinner over the supplied async work, awaits
+    /// the work, and closes the spinner when it completes. The user cannot
+    /// dismiss the spinner (no buttons, no close affordance): the work runs to
+    /// completion + the caller surfaces its result. The work's exception (if
+    /// any) propagates to the caller; the spinner is closed in either case.
+    /// </summary>
+    /// <param name="title">The window title (also shown in the title bar).</param>
+    /// <param name="message">The explanatory message shown above the spinner.</param>
+    /// <param name="work">The async operation to run while the spinner is up.
+    /// Started after the spinner is shown; its result (or exception) is
+    /// returned to the caller.</param>
+    /// <typeparam name="T">The work's result type.</typeparam>
+    /// <returns>The work's result. The work's exception (if any) propagates to
+    /// the caller after the spinner is closed.</returns>
+    Task<T> ShowProgressAsync<T>(string title, string message, Func<Task<T>> work);
 }

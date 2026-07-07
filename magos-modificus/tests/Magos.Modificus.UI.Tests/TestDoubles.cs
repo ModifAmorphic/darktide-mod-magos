@@ -27,6 +27,42 @@ internal static class TestDoubles
     public static FakeProfileService Profiles(params ProfileSummary[] seed) => new(seed);
 
     /// <summary>
+    /// Builds a <see cref="DmfPromptService"/> wired to the supplied (or default)
+    /// fakes. Defaults share the test's profiles/session so the create trigger
+    /// fires through the same fake the test asserts on. The dialog fake defaults
+    /// to confirm=true (the Yes/No case 1 + 2 confirm) + a successful acquisition.
+    /// </summary>
+    public static DmfPromptService BuildDmfPromptService(
+        FakeProfileService? profiles = null,
+        FakeProfileSession? session = null,
+        FakeModRepository? repo = null,
+        FakeModAcquisitionService? acquisition = null,
+        FakeNexusAuthService? auth = null,
+        FakeConfigLoader? configLoader = null,
+        FakeDialogService? dialogs = null,
+        LocalizationService? localization = null)
+    {
+        profiles ??= Profiles();
+        session ??= new FakeProfileSession(() => profiles.ListProfiles());
+        repo ??= new FakeModRepository();
+        acquisition ??= new FakeModAcquisitionService();
+        auth ??= new FakeNexusAuthService();
+        configLoader ??= new FakeConfigLoader();
+        dialogs ??= new FakeDialogService();
+        localization ??= new LocalizationService();
+        return new DmfPromptService(
+            profiles,
+            session,
+            repo,
+            acquisition,
+            auth,
+            configLoader,
+            dialogs,
+            localization,
+            NullLogger<DmfPromptService>.Instance);
+    }
+
+    /// <summary>
     /// Builds a <see cref="ModListViewModel"/> wired to the supplied (or default)
     /// fakes. The defaults share one repository between the store + import fake
     /// so the add flow's reload joins the freshly imported source + version
@@ -97,6 +133,13 @@ internal sealed class FakeProfileService : IProfileService
     public FakeProfileService(IEnumerable<ProfileSummary> seed) =>
         _profiles = new List<ProfileSummary>(seed);
 
+    /// <inheritdoc />
+    /// <remarks>Raised from <see cref="CreateProfile"/>. The DMF prompt
+    /// coordinator subscribes; tests that drive the new-profile trigger
+    /// simulate a create through <see cref="CreateProfile"/> (the event fires)
+    /// + a call to <c>DmfPromptService.ProcessPendingAsync</c>.</remarks>
+    public event EventHandler<ProfileSummary>? ProfileCreated;
+
     public IReadOnlyList<string> CreatedNames { get; } = new List<string>();
     public IReadOnlyList<(Guid Id, string Name)> Renames { get; } = new List<(Guid, string)>();
     public IReadOnlyList<Guid> DeletedIds { get; } = new List<Guid>();
@@ -156,6 +199,9 @@ internal sealed class FakeProfileService : IProfileService
         var created = new ProfileSummary(Guid.NewGuid(), name);
         _profiles.Add(created);
         ((List<string>)CreatedNames).Add(name);
+        // Mirror the production service: raise ProfileCreated AFTER the profile
+        // is added to the list so a subscriber that re-lists sees it.
+        ProfileCreated?.Invoke(this, created);
         return new Profile { Id = created.Id, Name = created.Name };
     }
 
@@ -430,6 +476,23 @@ internal sealed class FakeDialogService : IDialogService
     {
         ((List<(string, string)>)AlertCalls).Add((title, message));
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The work passed to <see cref="ShowProgressAsync{T}"/>, in call order.
+    /// Tests assert on this to verify the DMF download path was driven through
+    /// the spinner. Each entry is invoked (awaited) so the work's result /
+    /// exception surfaces to the caller as in production.
+    /// </summary>
+    public IReadOnlyList<(string Title, string Message, Delegate Work)> ProgressCalls { get; }
+        = new List<(string, string, Delegate)>();
+
+    public async Task<T> ShowProgressAsync<T>(string title, string message, Func<Task<T>> work)
+    {
+        ((List<(string, string, Delegate)>)ProgressCalls).Add((title, message, work));
+        // Drive the work so the caller sees its result / exception as in
+        // production. No real spinner in tests; just await the work.
+        return await work();
     }
 
     public Task<ImportModResult?> ShowImportModAsync(ImportModRequest request)
@@ -1024,7 +1087,8 @@ internal sealed class FakeModAcquisitionService : IModAcquisitionService
 /// for the premium flag; this fake returns the configured
 /// <see cref="State"/> (default a premium user; set null / non-premium to test
 /// the gating). The login / sign-out methods are not exercised by the mod-list
-/// VM + throw NotImplemented.
+/// VM + throw NotImplemented. <see cref="AuthStateChanged"/> is wired for the
+/// DMF prompt coordinator tests.
 /// </summary>
 internal sealed class FakeNexusAuthService : INexusAuthService
 {
@@ -1033,6 +1097,16 @@ internal sealed class FakeNexusAuthService : INexusAuthService
     /// tests that exercise non-premium gating set this to a non-premium
     /// state.</summary>
     public NexusAuthState? State { get; set; } = new(NexusAuthMethod.OAuth, "tester", IsPremium: true);
+
+    /// <inheritdoc />
+    public event EventHandler? AuthStateChanged;
+
+    /// <summary>
+    /// Raises <see cref="AuthStateChanged"/> with this sender. Used by the DMF
+    /// prompt coordinator tests to simulate the auth-configured signal that the
+    /// production service raises from its login / sign-out methods.
+    /// </summary>
+    public void RaiseAuthStateChanged() => AuthStateChanged?.Invoke(this, EventArgs.Empty);
 
     public Task<NexusAuthState?> GetCurrentStateAsync(CancellationToken ct = default) =>
         Task.FromResult(State);

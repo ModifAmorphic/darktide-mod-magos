@@ -1116,6 +1116,13 @@ public sealed class UpdateCheckServiceTests
     {
         public IReadOnlyList<ModListEntry> Mods { get; set; } = Array.Empty<ModListEntry>();
 
+        // Unused stub; only GetModList is exercised. Required by the interface.
+        public event EventHandler<ProfileSummary>? ProfileCreated
+        {
+            add { }
+            remove { }
+        }
+
         public IReadOnlyList<ModListEntry> GetModList(Guid id) => Mods;
 
         public IReadOnlyList<ProfileSummary> ListProfiles()
