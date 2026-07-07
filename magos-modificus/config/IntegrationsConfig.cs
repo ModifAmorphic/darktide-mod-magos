@@ -12,9 +12,9 @@ public sealed class IntegrationsConfig
     public GitHubConfig GitHub { get; set; } = new();
 
     /// <summary>
-    /// Nexus Mods auth + API client settings. Phase 4 Stage 2. The auth method is
-    /// the user's explicit choice (set by the Integrations dialog); the auth
-    /// message factory selection reads it live, no fallback.
+    /// Nexus Mods auth + API client settings. The auth method is the user's
+    /// explicit choice (set by the Integrations dialog); the auth message factory
+    /// selection reads it live, no fallback.
     /// </summary>
     public NexusConfig Nexus { get; set; } = new();
 }
@@ -22,7 +22,7 @@ public sealed class IntegrationsConfig
 /// <summary>
 /// GitHub Releases client settings. The base URL defaults to the public GitHub
 /// REST API; an optional personal access token raises the rate limit / unlocks
-/// private repos (Phase 1: no token-management UI; supply via config only).
+/// private repos (no token-management UI in v1; supply via config only).
 /// </summary>
 public sealed class GitHubConfig
 {

@@ -9,12 +9,11 @@ unmodified).
 
 ## Component model
 
-- **Magos Modificus (`magos-modificus/`)** (Phases 0–3 built): the user-facing
-  app: staging-directory management, load order, profiles, dependency
-  resolution, mod-source integrations, the Launch flow. The backend libraries
-  and the UI are implemented (the app is user-usable); the Launcher is a stub
-  (Phase 5). See [`MAGOS-MODIFICUS.md`](MAGOS-MODIFICUS.md) for the
-  architecture.
+- **Magos Modificus (`magos-modificus/`)**: the user-facing app:
+  staging-directory management, load order, profiles, dependency resolution,
+  mod-source integrations, the Launch flow. The backend libraries and the UI
+  are implemented (the app is user-usable); the Launcher is a stub. See
+  [`MAGOS-MODIFICUS.md`](MAGOS-MODIFICUS.md) for the architecture.
 - **Enginseer runtime** (external): the injected modding runtime + its launcher.
   Lives in a separate repo,
   [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer).
@@ -26,6 +25,9 @@ unmodified).
 - [`MAGOS-MODIFICUS.md`](MAGOS-MODIFICUS.md): the Magos Modificus architecture
   (project layout, domain libraries, the Enginseer contract Magos consumes,
   profiles, the Windows/Linux launch paths, v1 scope).
+- [`ui-architecture.md`](ui-architecture.md): the UI layer (the shell, the
+  profile session, the mod list, the update UI, the DMF install prompt,
+  dialogs, preferences, and i18n).
 - [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer): the
   runtime architecture (the Rust↔C Hybrid, the seam, the launcher flow,
   discovery, the mod loader).

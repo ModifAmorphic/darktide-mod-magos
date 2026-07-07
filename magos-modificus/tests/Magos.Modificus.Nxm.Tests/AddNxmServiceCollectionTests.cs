@@ -8,7 +8,7 @@ namespace Magos.Modificus.Nxm.Tests;
 /// <see cref="ServiceCollectionExtensions.AddNxm"/>: the router, IPC server,
 /// and no-op mod-download default are registered; the platform registrar is
 /// registered on the host OS (Windows or Linux); the OAuth handler seam is
-/// GONE (Stage 2 removed it); and the "last registration wins" handler override
+/// GONE (removed in favor of loopback redirect); and the "last registration wins" handler override
 /// convention works (a later AddSingleton supersedes the no-op default).
 /// </summary>
 public sealed class AddNxmServiceCollectionTests
@@ -45,9 +45,9 @@ public sealed class AddNxmServiceCollectionTests
     [Fact]
     public async Task Later_handler_registration_overrides_the_no_op_default()
     {
-        // Documents the "last registration wins" convention Stage 3 relies on:
-        // register AddNxm() first, then AddSingleton a real handler. MS DI
-        // resolves the LAST one.
+        // Documents the "last registration wins" convention the real handler
+        // relies on: register AddNxm() first, then AddSingleton a real handler.
+        // MS DI resolves the LAST one.
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddNxm();

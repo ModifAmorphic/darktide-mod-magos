@@ -1,13 +1,11 @@
 # Integrations (`Magos.Modificus.Integrations`) — reference
 
-> External mod-source clients. Phase 1 shipped the read-only GitHub Releases
-> client. Phase 4 Stage 2 adds the Nexus Mods v1 client + the OAuth/API-key
-> auth machinery. Phase 4 Stage 3 adds the mod acquisition service (download +
-> extract + place). Phase 4 Stage 4 adds the update-check service (Nexus-only,
-> flags mods whose imported version predates a newer Nexus file release).
-> Status: implemented (Phase 4 Stage 4).
+> External mod-source clients: a read-only GitHub Releases client, the Nexus
+> Mods v1 client + OAuth/API-key auth machinery, a download + extract + place
+> mod acquisition service, and a Nexus-only update-check service that flags
+> mods whose imported version predates a newer Nexus file release.
 
-## GitHub client (Phase 1)
+## GitHub client
 
 ### `IGitHubClient`
 
@@ -28,8 +26,8 @@ public interface IGitHubClient
 
 - `ListReleases(repo, ct)` — a repository's published releases, newest first (per
   the GitHub API). A `404` (unknown repo) yields an **empty list**, not an
-  exception. Returns up to GitHub's default page size (~30); pagination is a
-  later phase. Throws `GitHubApiException` on any other non-2xx;
+  exception. Returns up to GitHub's default page size (~30); pagination is out
+  of v1. Throws `GitHubApiException` on any other non-2xx;
   `GitHubRateLimitException` when the rate limit is exhausted.
 - `GetLatestRelease(repo, ct)` — the latest published release, or `null` if the
   repo has no releases or is unknown (both surface as `404`). Same exception
@@ -41,7 +39,7 @@ public interface IGitHubClient
   `GitHubRateLimitException` when rate-limited.
 
 `ListReleases` / `GetLatestRelease` are synchronous (fully-materialized results —
-the simple surface Phase 1 callers want); `DownloadAssetAsync` is async (it's a
+the simple surface callers want); `DownloadAssetAsync` is async (it's a
 file download).
 
 ### Key GitHub types
@@ -85,7 +83,7 @@ public sealed class GitHubRateLimitException : GitHubApiException
   (`X-RateLimit-Reset`) when GitHub reports it, so callers can advise when to
   retry. `StatusCode` reflects the actual response status (403 or 429).
 
-## Nexus client + auth (Phase 4 Stage 2)
+## Nexus client + auth
 
 ### `INexusClient`
 
@@ -283,13 +281,13 @@ public sealed class NexusOAuthTokenStore : INexusTokenStore;   // OidcClient + t
 that port, opens the user's default browser at OidcClient's authorize URL via
 `Process.Start(UseShellExecute=true)`, awaits the callback, and returns the
 authorization response. Three-minute flow timeout; on expiry it surfaces
-`BrowserResultType.Timeout`. Independent of the Stage 1 `nxm://` scheme handler
+`BrowserResultType.Timeout`. Independent of the `nxm://` scheme handler
 (loopback redirect, not `nxm://`).
 
-## Mod acquisition service (Phase 4 Stage 3)
+## Mod acquisition service
 
 The reusable download + extract + place orchestrator. Consumed by the nxm
-download handler (Stage 3) and by Stage 5's per-mod update button without
+download handler and by the per-mod update button without
 retooling: both resolve `IModAcquisitionService` and feed the returned
 `(containerId, versionId)` to `IProfileService.AddMod`.
 
@@ -310,8 +308,7 @@ public interface IModAcquisitionService
 - `AcquireFromNexusAsync`: downloads a Nexus mod file, extracts it into the
   repository via `IModImportService.Import`, and returns the
   `(containerId, versionId)`. The caller handles profile registration. The
-  interface accommodates GitHub later; only the Nexus method is implemented in
-  Stage 3.
+  interface accommodates GitHub later; only the Nexus method is implemented.
 - `AcquireLatestNexusAsync`: resolves the mod's newest non-archived MAIN file
   (category_id 1) via `ListModFilesAsync`, then delegates to
   `AcquireFromNexusAsync` with the resolved `fileId` + null nxm key/expires (the
@@ -366,9 +363,9 @@ because the CDN URL is an absolute path with the per-file token in the query
 string (free users) or just the session auth (premium); no base address or
 Nexus-specific headers are needed.
 
-### nxm download handler (Phase 4 Stage 3)
+### nxm download handler
 
-The real `INxmModDownloadHandler` that replaces Stage 1's no-op default. Lives
+The real `INxmModDownloadHandler` that replaces the no-op default. Lives
 in the UI assembly (`Magos.Modificus.UI.Nxm`), not Integrations, because it
 coordinates UI concerns: it reads the active profile from `IProfileSession`
 (UI), shows error dialogs through `IDialogService` (UI), and marshals those
@@ -407,7 +404,7 @@ config and NOT an env var). `Scope` = `"openid profile email"`. Application
 headers: `Application-Name: Magos-Modificus`, `Application-Version: <asm>`,
 `Protocol-Version: 1.0.0`, `User-Agent: Magos-Modificus/<ver>`.
 
-## Update check service (Phase 4 Stage 4)
+## Update check service
 
 A Nexus-only service that checks the active profile's Nexus mods for available
 updates and produces a result the mod-list badges consume. Two check shapes
@@ -417,7 +414,7 @@ thorough check (the per-mod pass the manual "check now" affordance fires, which
 also catches mods whose latest release predates the Month window). Per-mod work
 in the Month path is pure intersection + timestamp comparison against the single
 response; the thorough path adds one `ListModFilesAsync` call per profile mod
-the Month response missed. GitHub is descoped (no GitHub code paths anywhere);
+the Month response missed. GitHub is out of v1 (no GitHub code paths anywhere);
 `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods are skipped (only
 `LatestPolicy` + `NexusSource` are checked).
 
@@ -666,9 +663,9 @@ dotnet test magos-modificus/magos-modificus.sln -c Release
 - [Magos Modificus architecture](../../architecture/MAGOS-MODIFICUS.md) — the
   [Mod sources / integrations](../../architecture/MAGOS-MODIFICUS.md#mod-sources--integrations)
   section + the
-  [Nexus authentication](../../architecture/MAGOS-MODIFICUS.md#nexus-authentication-phase-4-stage-2)
+  [Nexus authentication](../../architecture/MAGOS-MODIFICUS.md#nexus-authentication)
   subsection.
 - [config](config.md) — the `GitHubConfig` + `NexusConfig` schemas.
-- [nxm](nxm.md) — the `nxm://` scheme handler (Stage 1), including the Stage 2
-  seam cleanup. Stage 3's `NxmModDownloadHandler` replaces the no-op
-  `INxmModDownloadHandler` via DI last-registration-wins.
+- [nxm](nxm.md) — the `nxm://` scheme handler, including the no-op default
+  handler seam that the real `NxmModDownloadHandler` supersedes via DI
+  last-registration-wins.

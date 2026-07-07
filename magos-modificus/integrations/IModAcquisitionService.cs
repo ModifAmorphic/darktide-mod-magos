@@ -6,16 +6,16 @@ namespace Magos.Modificus.Integrations;
 /// Acquires a mod from a remote source: resolves the download link, fetches the
 /// mod's metadata, downloads the archive to a temp file, and imports it into the
 /// unified mod repository via <see cref="IModImportService.Import"/>. The caller
-/// (the nxm download handler, or Stage 5's per-mod update button) owns profile
+/// (the nxm download handler, or the per-mod update button on the mod list) owns profile
 /// registration: this service returns the <c>(containerId, versionId)</c> pair
 /// and the caller feeds it to <c>IProfileService.AddMod</c>.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The interface accommodates both Nexus and GitHub, but only the Nexus method is
-/// implemented in Stage 3 (there is no GitHub-acquisition trigger yet; Stage 5's
-/// update button for GitHub-sourced mods is where <c>AcquireFromGitHubAsync</c>
-/// would land). The signature carries an <see cref="IProgress{T}"/> so Stage 5
+/// implemented (there is no GitHub-acquisition trigger yet; the per-mod update
+/// button for GitHub-sourced mods is where <c>AcquireFromGitHubAsync</c>
+/// would land). The signature carries an <see cref="IProgress{T}"/> so a caller
 /// can wire a per-row progress indicator without retooling the seam.</para>
 /// <para>
 /// <b>No degraded metadata fallback.</b> If the metadata fetch (mod name or file
@@ -51,8 +51,8 @@ public interface IModAcquisitionService
     /// <c>NexusConfig.AuthMethod != None</c> first.</param>
     /// <param name="nxmExpires">The per-file download expiry (epoch seconds) from
     /// the <c>nxm://</c> URL, or <c>null</c> when absent.</param>
-    /// <param name="progress">Optional cumulative-bytes progress receiver (Stage 5
-    /// wires this to a per-row indicator). <c>null</c> in Stage 3 (the nxm handler
+    /// <param name="progress">Optional cumulative-bytes progress receiver (the per-mod
+    /// update button wires this to a per-row indicator). <c>null</c> for the nxm handler (it
     /// has no progress UI).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The <c>(containerId, versionId)</c> of the imported mod. The

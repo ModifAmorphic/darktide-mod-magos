@@ -21,8 +21,8 @@ namespace Magos.Modificus.UI.ViewModels;
 /// (the import service upserts).</para>
 /// <para><b>Source chooser:</b> a ComboBox over <see cref="ImportSource"/>
 /// (Untracked / Nexus / GitHub). Switching it shows / hides the conditional fields:
-/// Nexus + GitHub require a Version tag + a URL that parses (the actual release
-/// tag is fetched in Phase 4); Untracked needs nothing extra (the mod imports as
+/// Nexus + GitHub require a Version tag + a URL that parses (the user supplies the
+/// release tag; the modal does not fetch it from the remote); Untracked needs nothing extra (the mod imports as
 /// <see cref="UntrackedSource"/> with an empty version).</para>
 /// <para><b>Single URL field:</b> Nexus + GitHub share one <see cref="Url"/>
 /// entry (they are mutually exclusive; only one shows at a time). The label +
@@ -128,7 +128,7 @@ public partial class ImportModViewModel : ObservableObject
 
     /// <summary>
     /// The raw release tag string (e.g. <c>"1.2"</c>). Required for Nexus + GitHub
-    /// (the user enters the release tag; Phase 4 fetches the actual tag); ignored
+    /// (the user enters the release tag; the modal does not fetch it from the remote); ignored
     /// for Local, which records an empty version. An empty version is recorded as
     /// <c>""</c>. Never parsed or normalized at this layer.
     /// </summary>
@@ -288,7 +288,7 @@ public partial class ImportModViewModel : ObservableObject
 
         var name = ModName.Trim();
         // Version is required for remote sources and always "" for Untracked.
-        // Phase 4 fetches the actual release tag.
+        // The user supplies the release tag; the modal does not fetch it.
         var recordedVersion = (Version ?? string.Empty).Trim();
 
         ModSource source;

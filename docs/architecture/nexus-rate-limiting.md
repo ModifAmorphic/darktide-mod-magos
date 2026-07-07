@@ -3,8 +3,7 @@
 Magos Modificus talks to the Nexus Mods v1 REST API under a per-user rate
 budget. This doc explains how Nexus's quota works, what Magos does to observe
 and react to it today, what it deliberately does not do, and the call patterns
-that consume the budget. It is a description of the current system, not a target
-design; strategy refinements are called out at the end as open questions.
+that consume the budget.
 
 ## The quota model
 
@@ -125,31 +124,6 @@ Only authenticated calls to `api.nexusmods.com/v1/*` count. Per operation:
 So a typical session is a handful of check calls plus a few calls per download,
 essentially all user-initiated. The update check is the only automatic
 (non-user-initiated) call, and it fires once per profile load, not periodically.
-
-## Open strategy questions
-
-The current behavior is reactive by design: observe, react to the wall, do not
-try to avoid it. Whether that is the right posture for a first release is an
-open call, not a settled one. The questions that shape it:
-
-- **Pre-call budget check?** Should anything look at the last-known remaining
-  before firing (for example, skip the update check below some floor, and
-  surface "skipped, low API budget") rather than always firing and hitting the
-  wall?
-- **Cross-call budget tracking?** Should Magos keep a running "last-known
-  remaining" (updated from every response) so a strategy or the UI can reason
-  about the budget between calls?
-- **Surface the shared-quota reality to the user?** When a check or download
-  fails rate-limited, should the message frame it as a shared-budget issue (so
-  the user blames another tool, not Magos)?
-- **Retry on the hard wall?** Wait for the reset window and retry, or fail fast
-  (today's behavior)?
-- **Update-check frequency?** Today it is once per profile load. A longer
-  interval (for example, at most once per N hours, persisted) would reduce
-  automatic consumption, at the cost of stale update signals.
-
-These are deliberately left open here. This doc describes what is, not what
-should be.
 
 ## See also
 

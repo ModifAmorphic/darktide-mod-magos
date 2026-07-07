@@ -68,17 +68,17 @@ public static class MagosComposition
         // StartNxmServer).
         services.AddNxm();
 
-        // Phase 4 Stage 3: replace the no-op INxmModDownloadHandler (registered
-        // inside AddNxm) with the real acquisition handler. MS DI resolves the
-        // LAST registration for an interface, so this AddSingleton supersedes
-        // the no-op. Registered with a factory that resolves its dependencies
-        // lazily at first use (the factory delegate is deferred until the handler
-        // is first resolved by the IPC router, by which point all dependencies
-        // including IProfileSession, IDialogService, and MainWindow are
-        // registered). It coordinates the acquisition service (Integrations)
-        // with the active-profile session, profile service, and the UI-thread
-        // alert dialog. Registered with a factory so the UI-thread marshaling
-        // seam (Dispatcher.UIThread.InvokeAsync) is wired explicitly.
+        // Replace the no-op INxmModDownloadHandler (registered inside AddNxm)
+        // with the real acquisition handler. MS DI resolves the LAST registration
+        // for an interface, so this AddSingleton supersedes the no-op. Registered
+        // with a factory that resolves its dependencies lazily at first use (the
+        // factory delegate is deferred until the handler is first resolved by the
+        // IPC router, by which point all dependencies including IProfileSession,
+        // IDialogService, and MainWindow are registered). It coordinates the
+        // acquisition service (Integrations) with the active-profile session,
+        // profile service, and the UI-thread alert dialog. Registered with a
+        // factory so the UI-thread marshaling seam
+        // (Dispatcher.UIThread.InvokeAsync) is wired explicitly.
         services.AddSingleton<INxmModDownloadHandler>(sp => new NxmModDownloadHandler(
             invokeOnUi: action => Dispatcher.UIThread.InvokeAsync(action),
             sp.GetRequiredService<IModAcquisitionService>(),
@@ -125,7 +125,7 @@ public static class MagosComposition
                 sp.GetRequiredService<INexusAuthService>(),
                 sp.GetRequiredService<ILoggerFactory>()));
 
-        // Phase 4 Stage 4: the UI-layer glue that fires an update check
+        // The UI-layer glue that fires an update check
         // (IUpdateCheckService, registered above via AddIntegrations) whenever a
         // profile becomes active (startup + active-profile switch), and a
         // periodic check while a profile stays active (the toggle + interval
@@ -186,10 +186,10 @@ public static class MagosComposition
         // it's resolved). This is what MO2, NMA, and Vortex all do on startup.
         RegisterNxmHandler(provider, loggerFactory);
 
-        // Phase 4 Stage 4: start the update-check runner so a check fires on
-        // profile load (startup with the restored id + active-profile switches).
+        // Start the update-check runner so a check fires on profile load
+        // (startup with the restored id + active-profile switches).
         // Best-effort: a failure is logged + swallowed so a wiring problem never
-        // blocks startup (Stage 5 badges just stay blank until restart).
+        // blocks startup (the mod-list update badges just stay blank until restart).
         StartUpdateCheck(provider, loggerFactory);
 
         return provider;
@@ -304,8 +304,8 @@ public static class MagosComposition
     /// <see cref="UpdateCheckRunner.Start"/> so an update check fires on profile
     /// load (startup with the restored active id, then every active-profile
     /// switch). Best-effort: any failure is logged + swallowed so a wiring
-    /// problem never blocks app startup (the user can still use the app; Stage 5
-    /// badges just stay blank until restart).
+    /// problem never blocks app startup (the user can still use the app; the
+    /// mod-list update badges just stay blank until restart).
     /// </summary>
     private static void StartUpdateCheck(IServiceProvider provider, ILoggerFactory loggerFactory)
     {
@@ -316,7 +316,7 @@ public static class MagosComposition
         catch (Exception ex)
         {
             // Swallow: update-check wiring is best-effort. Log + continue; the
-            // app works without it (Stage 5 badges just stay blank).
+            // app works without it (the mod-list update badges just stay blank).
             loggerFactory.CreateLogger(nameof(MagosComposition))
                 .LogWarning(ex, "Failed to start the update-check runner (best-effort).");
         }

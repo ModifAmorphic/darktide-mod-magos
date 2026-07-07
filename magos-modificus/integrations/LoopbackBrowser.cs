@@ -18,7 +18,7 @@ namespace Magos.Modificus.Integrations;
 /// <para>
 /// This is the RFC 8252 native-app pattern (MO2's). Loopback redirect requires
 /// no client registration with the OAuth provider; the user's browser is the
-/// only consent surface. The flow is INDEPENDENT of the Stage 1
+/// only consent surface. The flow is INDEPENDENT of the
 /// <c>nxm://</c> scheme handler, which is not involved in OAuth.</para>
 /// <para>
 /// <b>Two-phase construction (matches the OidcClient sample pattern).</b>

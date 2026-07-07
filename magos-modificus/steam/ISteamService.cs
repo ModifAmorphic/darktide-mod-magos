@@ -8,10 +8,10 @@ namespace Magos.Modificus.Steam;
 /// Proton — that is Enginseer-client's job (consuming the <see cref="DiscoveryResult"/>).
 /// </summary>
 /// <remarks>
-/// <para><b>Phase 1 → Phase 3 stability:</b> the discovery result is a flat
-/// record of nullables — Phase 3 (UI) reads it and the null fields drive the
-/// escape-hatch prompt form. A future Phase (non-steam shortcuts, Phase 5) adds
-/// methods here; the interface is designed to grow cleanly.</para>
+/// <para><b>Discovery result shape:</b> the discovery result is a flat
+/// record of nullables — the UI reads it and the null fields drive the
+/// escape-hatch prompt form. The interface exposes discovery + game-running
+/// detection only.</para>
 /// </remarks>
 public interface ISteamService
 {
@@ -43,8 +43,8 @@ public interface ISteamService
 
     /// <summary>
     /// Whether Darktide is currently running. Cross-platform best-effort check
-    /// against the game's process name; Phase 1 uses the simple name match
-    /// (Linux-under-Proton naming may differ — refine if it proves wrong).
+    /// against the game's process name; this uses the simple name match
+    /// (Linux-under-Proton naming may differ, refine if it proves wrong).
     /// </summary>
     bool IsGameRunning();
 }

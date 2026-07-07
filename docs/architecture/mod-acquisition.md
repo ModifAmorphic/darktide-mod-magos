@@ -1,16 +1,16 @@
 # Mod acquisition: architecture
 
-When a user clicks "Mod manager download" on a Nexus file page, the Stage 1
+When a user clicks "Mod manager download" on a Nexus file page, the
 [handler exe](nxm-scheme-handler.md) relays the `nxm://` URL to the running
-app, the router dispatches it, and the Stage 3 `NxmModDownloadHandler`
-orchestrates the download and import into the active profile. The reusable
-core is `IModAcquisitionService` (Integrations), which the handler calls and
-which Stage 5's per-mod update button will also call without retooling.
+app, the router dispatches it, and the `NxmModDownloadHandler` orchestrates the
+download and import into the active profile. The reusable core is
+`IModAcquisitionService` (Integrations), which both the nxm handler and the
+per-mod update button call.
 
-This stage is backend-only except one `IDialogService.ShowAlertAsync` call for
-error feedback. No progress bar, no notification system, no download-history
-panel (those are Stage 5's UI presentation). On success, the mod appears in the
-profile's mod list.
+The acquisition path is backend-only except one
+`IDialogService.ShowAlertAsync` call for error feedback. There is no progress
+bar, no notification system, no download-history panel. On success, the mod
+appears in the profile's mod list.
 
 > Public surface, exact signatures, and DI registration are documented in the
 > [integrations reference](../reference/magos-modificus/integrations.md). This
@@ -22,8 +22,8 @@ profile's mod list.
 nxm:// URL  (user clicked "Mod manager download" on Nexus)
     │
     ▼
-Stage 1 handler exe  →  IPC  →  NxmRouter  →  INxmModDownloadHandler
-                                                    │
+handler exe  →  IPC  →  NxmRouter  →  INxmModDownloadHandler
+                                                │
                     ┌───────────────────────────────┘
                     ▼
             NxmModDownloadHandler  (in the UI assembly)
@@ -37,8 +37,8 @@ Stage 1 handler exe  →  IPC  →  NxmRouter  →  INxmModDownloadHandler
                 │     ├─ INexusClient.DownloadLinksAsync  (CDN URL; premium or free-user overload)
                 │     ├─ INexusClient.GetModInfoAsync     (mod name)
                 │     ├─ INexusClient.ListModFilesAsync   (file version, matched by fileId)
-                │     ├─ download the .zip to temp  (IProgress<long>)
-                │     └─ IModImportService.Import(temp.zip, name, NexusSource{ModId}, version)
+                │     ├─ download to temp  (IProgress<long>)
+                │     └─ IModImportService.Import(temp.<ext>, name, NexusSource{ModId}, version)
                 │           → (containerId, versionId)
                 │
                 ├─ IProfileService.AddMod(profileId, containerId, LatestPolicy)
@@ -51,8 +51,8 @@ Stage 1 handler exe  →  IPC  →  NxmRouter  →  INxmModDownloadHandler
 
 Lives in the Integrations library (alongside `INexusClient`, which it
 consumes). The interface accommodates both Nexus and GitHub, but only the
-Nexus method is implemented in Stage 3; GitHub acquisition (`AcquireFromGitHubAsync`)
-is deferred to Stage 5 (no trigger in Stage 3, no "browse GitHub releases" UI).
+Nexus method is implemented; GitHub acquisition (`AcquireFromGitHubAsync`) is
+out of v1 (no trigger today, no "browse GitHub releases" UI).
 
 ```csharp
 public interface IModAcquisitionService
@@ -107,20 +107,23 @@ and `IHttpClientFactory` (for the raw CDN download) from the container.
    `DateTimeOffset?` (null when the wire value is `0` / absent) and forwarded
    as the imported version's `RemoteUploadedAt`, the basis for the update-check
    publish-date comparison.
-3. **Download** from the CDN URI to a `.zip`-named temp file
-   (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip")`)
-   using a plain `HttpClient` from `IHttpClientFactory` plus the 81920-byte
-   buffered copy and `IProgress<long>` pattern from
-   `GitHubClient.DownloadAssetAsync`. The `.zip` extension is required so
-   `IModImportService` recognizes the file as an archive (it detects by
-   extension; a `.tmp` would be treated as a folder path). The temp file is
-   deleted once Import returns, always, success or failure (no partial state).
+3. **Download** from the CDN URI to a temp file
+   (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() +
+   Path.GetExtension(fileName))`, where `fileName` is the matched
+   `ModFile.FileName`) using a plain `HttpClient` from `IHttpClientFactory`
+   plus the 81920-byte buffered copy and `IProgress<long>` pattern from
+   `GitHubClient.DownloadAssetAsync`. The real file extension is preserved on
+   the temp file for log clarity; archive detection is content-based
+   (SharpCompress magic bytes), so the extension is cosmetic. The temp file
+   is deleted once Import returns, always, success or failure (no partial
+   state).
 4. **Import** via `IModImportService.Import(tempPath, modName, new NexusSource
    { ModId = modId }, version, remoteUploadedAt)`. The import service validates
-   the `.zip` structure (single base folder plus matching `<base>.mod`
-   descriptor), handles find-or-create-container (dedup by `NexusSource.ModId`)
-   plus add-version plus the `IsLatest` flip, records the publish date on the
-   new entry as `RemoteUploadedAt`, and extracts into
+   the archive structure (single base folder plus matching `<base>.mod`
+   descriptor; archive detection is content-based via SharpCompress), handles
+   find-or-create-container (dedup by `NexusSource.ModId`) plus add-version
+   plus the `IsLatest` flip, records the publish date on the new entry as
+   `RemoteUploadedAt`, and extracts into
    `<ModsFolder>/<containerUUID>/<versionFolder>/<baseFolder>/`.
 5. **Return** `(containerId, versionId)`.
 
@@ -131,8 +134,8 @@ Nexus-specific headers are needed.
 
 ## `NxmModDownloadHandler`
 
-The real `INxmModDownloadHandler` that replaces Stage 1's no-op default. The
-handler's pre-flight checks and flow:
+The real `INxmModDownloadHandler` that supersedes the library's no-op default.
+The handler's pre-flight checks and flow:
 
 1. **Auth check** (live config read): `NexusConfig.AuthMethod != None`
    (required for every download; the `nxm://` key/expires is the per-file
@@ -151,8 +154,8 @@ handler's pre-flight checks and flow:
 
 **Policy on `AddMod`:** `LatestPolicy` (new mods auto-track the newest
 downloaded version). The user can switch to `PinnedPolicy` later via the
-mod-list UI (Track B's existing pin dropdown). This matches the behavior for
-locally-imported mods (Track B uses `LatestPolicy` for new mods).
+mod-list UI's pin dropdown. This matches the behavior for locally-imported
+mods (the local import path also uses `LatestPolicy` for new mods).
 
 **`ShowAlertAsync` marshaling:** the handler runs on the IPC server's
 background task, so the dialog is marshaled to the UI thread via an injectable
@@ -202,7 +205,7 @@ click-download from Nexus until it is resolved).
 - [integrations reference](../reference/magos-modificus/integrations.md):
   `IModAcquisitionService` public surface, the acquisition flow, the
   `NxmModDownloadHandler`, DI registration, testing.
-- [nxm:// scheme handler](nxm-scheme-handler.md): the Stage 1 plumbing that
+- [nxm:// scheme handler](nxm-scheme-handler.md): the plumbing that
   delivers the URL to the handler implemented here.
 - [Nexus authentication](nexus-authentication.md): the auth factory the v1
   client uses for the download-link and metadata calls.

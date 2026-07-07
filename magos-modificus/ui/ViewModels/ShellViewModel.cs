@@ -11,16 +11,16 @@ using Microsoft.Extensions.Logging;
 namespace Magos.Modificus.UI.ViewModels;
 
 /// <summary>
-/// The view model behind the Magos Modificus main window, the Phase 3 Track A
-/// app shell. Milestone 2 makes the profile controls work: the dropdown switches
+/// The view model behind the Magos Modificus main window, the app shell.
+/// The profile controls work: the dropdown switches
 /// the active profile (the request flows through <see cref="IProfileSession"/>,
 /// which owns the active id + persistence), switching is blocked while Darktide
 /// runs (the session gates it), and "Manage profiles…" opens a CRUD dialog. The
 /// shell owns only the profile-list snapshot + the dropdown selection binding;
 /// the <b>session</b> is the single source of truth for the active id, the
-/// can-change gate, and the LIVE running-state. Track D adds the Preferences
+/// can-change gate, and the LIVE running-state. The Preferences
 /// affordance (top-bar gear) + dynamic-language refresh of the status text /
-/// tooltips via <see cref="LocalizationService"/>.
+/// tooltips runs via <see cref="LocalizationService"/>.
 /// </summary>
 /// <remarks>
 /// <para><b>Running-state is live:</b> the shell mirrors <see cref="IsGameRunning"/>

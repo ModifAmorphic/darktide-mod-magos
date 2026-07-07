@@ -416,7 +416,7 @@ shapes changed incompatibly:
   (logged); the profile is otherwise intact.
 
 No migration shim is provided (the spec is fresh-start; the operator's real
-profiles are dev-only at this stage).
+profiles are dev-only at this point).
 
 ## See also
 

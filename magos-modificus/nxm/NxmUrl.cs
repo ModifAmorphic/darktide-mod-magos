@@ -48,8 +48,8 @@ public sealed record NxmModDownloadUrl(
 /// the shape (rather than classifying it as unknown). The router logs + drops
 /// these: Nexus OAuth in Magos uses a loopback HTTP redirect (RFC 8252),
 /// independent of the <c>nxm://</c> handler, so this URL kind is never actually
-/// delivered over the IPC pipe in normal operation. Stage 2 removed the
-/// <c>INxmOAuthCallbackHandler</c> seam this type used to feed.
+/// delivered over the IPC pipe in normal operation. The
+/// <c>INxmOAuthCallbackHandler</c> seam this type used to feed has been removed.
 /// </summary>
 /// <param name="Raw">The verbatim URL string.</param>
 /// <param name="Code">The authorization code (required, non-empty).</param>

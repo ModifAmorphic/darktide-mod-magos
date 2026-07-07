@@ -4,18 +4,8 @@ The mod-manager application for darktide-mod-magos — the user-facing layer on
 top of the Enginseer runtime. It owns profiles, mod staging, load order,
 dependency resolution, mod-source integrations (Nexus Mods, GitHub Releases,
 Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
-
-> **Status: Phases 0–3 complete.** The foundation + all backend libraries are
-> implemented (Profiles, Steam, Integrations, Enginseer-client from Phase 1;
-> Mods from Phase 2) and the Phase 3 UI is in place across all four tracks:
-> Track A (app shell + profile management: dropdown switch, persisted active
-> profile, create/rename/delete dialog, switch-blocked-while-running), Track D
-> (global Preferences: theme + font scale + language, with dynamic culture
-> switching), Track B (the mod-list UI: view, enable/disable, reorder, per-mod
-> version policy, local folder/`.zip` import), and Track C (Launch flow +
-> Settings window + discovery escape-hatch). The Launcher is a stub (Phase 5).
-> Target architecture:
-> [`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md).
+Target architecture:
+[`../docs/architecture/MAGOS-MODIFICUS.md`](../docs/architecture/MAGOS-MODIFICUS.md).
 
 ## Tech stack
 
@@ -36,17 +26,17 @@ magos-modificus/
   Directory.Build.props           shared MSBuild properties (net10.0, nullable)
   config.example.json             sample global config (schema reference)
   ui/                             Magos.Modificus.UI       Avalonia executable + DI composition root
-                                                            (Phase 3 Tracks A–D: shell + profiles, Preferences,
-                                                             mod-list UI, Launch + Settings)
+                                                            (shell + profiles, Preferences, mod-list UI,
+                                                            Launch + Settings)
   general/                        Magos.Modificus.General  cross-cutting infra: logging, config loader,
                                                             app-state store, DI
   config/                         Magos.Modificus.Config   the MagosConfig schema + defaults (POCO)
-  profiles/                       Magos.Modificus.Profiles          implemented (Phase 1 + Phase 2 staging)
-  mods/                           Magos.Modificus.Mods              implemented (Phase 2)
-  integrations/                   Magos.Modificus.Integrations      implemented (Phase 1 — GitHub Releases client)
-  steam/                          Magos.Modificus.Steam             implemented (Phase 1 — discovery + IsGameRunning)
-  enginseer-client/               Magos.Modificus.EnginseerClient   implemented (Phase 1 — launch façade)
-  launcher/                       Magos.Modificus.Launcher          stub (slim Steam-shortcut launcher; Phase 5)
+  profiles/                       Magos.Modificus.Profiles          profile data + lifecycle + container-based staging
+  mods/                           Magos.Modificus.Mods              unified mod repository + version-policy + source models + import
+  integrations/                   Magos.Modificus.Integrations      GitHub Releases client + Nexus v1 client/auth + mod acquisition + update check
+  steam/                          Magos.Modificus.Steam             Steam/Darktide/Proton discovery + IsGameRunning
+  enginseer-client/               Magos.Modificus.EnginseerClient   the launch façade
+  launcher/                       Magos.Modificus.Launcher          stub (Steam non-steam-shortcut target placeholder)
   tests/
     Magos.Modificus.General.Tests/         xUnit tests for the general library
     Magos.Modificus.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)

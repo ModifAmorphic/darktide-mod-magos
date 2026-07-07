@@ -8,8 +8,9 @@ namespace Magos.Modificus.Nxm;
 /// runtime OS at DI registration time.
 /// </summary>
 /// <remarks>
-/// Stage 1 ships the SERVICE only. The user-facing registration behavior (auto
-/// on first run vs. Settings toggle vs. manual) is deferred to Stage 6.
+/// The service is shipped. The user-facing registration behavior (auto
+/// on first run vs. Settings toggle vs. manual) is out of v1 (the app
+/// registers on first run; no toggle yet).
 /// </remarks>
 public interface INxmHandlerRegistrar
 {

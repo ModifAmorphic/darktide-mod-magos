@@ -244,4 +244,4 @@ internal static class Program
 //     STEAM_COMPAT_DATA_PATH + STEAM_COMPAT_CLIENT_INSTALL_PATH set.
 //   - The harness launches fire-and-forget (it returns once the launcher starts).
 //   - This harness is a test-only convenience; the production surface is the
-//     Magos UI (Phase 3) calling the same IEnginseerLaunchService.Launch.
+//     Magos UI calling the same IEnginseerLaunchService.Launch.

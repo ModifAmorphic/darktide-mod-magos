@@ -12,11 +12,11 @@ using Microsoft.Extensions.Logging;
 namespace Magos.Modificus.UI.Nxm;
 
 /// <summary>
-/// The real <see cref="INxmModDownloadHandler"/> (Phase 4 Stage 3). Replaces the
-/// Stage 1 no-op default via DI "last registration wins" (registered AFTER
+/// The real <see cref="INxmModDownloadHandler"/>. Replaces the
+/// no-op default via DI "last registration wins" (registered AFTER
 /// <c>AddNxm()</c> in <see cref="MagosComposition"/>). Receives a parsed
 /// <see cref="NxmModDownloadUrl"/> (the result of clicking "Mod manager
-/// download" on a Nexus file page, relayed by the Stage 1 handler exe + IPC
+/// download" on a Nexus file page, relayed by the handler exe + IPC
 /// router), checks auth + active profile, calls the acquisition service to
 /// download + import the mod, and registers it in the active profile. On any
 /// failure, surfaces an error dialog via <see cref="IDialogService.ShowAlertAsync"/>.

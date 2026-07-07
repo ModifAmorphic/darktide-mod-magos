@@ -5,8 +5,8 @@ namespace Magos.Modificus.Nxm.Tests;
 
 /// <summary>
 /// <see cref="NxmRouter"/>: a mod-download URL routes to the mod-download
-/// handler with parsed fields; an OAuth callback URL is logged + dropped (Stage 2
-/// removed the OAuth handler seam in favor of loopback redirect); a collection
+/// handler with parsed fields; an OAuth callback URL is logged + dropped (the
+/// OAuth handler seam was removed in favor of loopback redirect); a collection
 /// URL routes to neither (logged only); an unparseable URL routes to neither
 /// (logged only); a throwing handler does not propagate.
 /// </summary>
@@ -35,9 +35,9 @@ public sealed class NxmRouterTests
     [Fact]
     public async Task Oauth_callback_is_logged_and_dropped()
     {
-        // Stage 2: OAuth uses loopback redirect (RFC 8252), independent of the
+        // OAuth uses loopback redirect (RFC 8252), independent of the
         // nxm handler. The parser keeps recognizing the shape; the router just
-        // drops it. No OAuth handler exists anymore.
+        // drops it. No OAuth handler exists.
         var mod = new FakeModDownloadHandler();
         var router = CreateRouter(mod);
 

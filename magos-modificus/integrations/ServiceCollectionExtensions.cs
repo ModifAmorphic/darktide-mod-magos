@@ -20,10 +20,10 @@ public static class ServiceCollectionExtensions
     /// the loopback <see cref="IBrowser"/> + the token store are singletons.
     /// The acquisition service (download + extract + place orchestration over
     /// <see cref="INexusClient"/> + <see cref="IModImportService"/>) is a
-    /// singleton; Stage 3's nxm download handler and Stage 5's per-mod update
-    /// button both resolve it. The update-check service (one-call Nexus
+    /// singleton; both the nxm download handler and the per-mod update
+    /// button resolve it. The update-check service (one-call Nexus
     /// recently-updated query intersected with the active profile's
-    /// LatestPolicy + NexusSource mods) is a singleton; Stage 5 binds badges to
+    /// LatestPolicy + NexusSource mods) is a singleton; the mod-list view binds badges to
     /// its <see cref="IUpdateCheckService.LastResult"/> + subscribes to
     /// <see cref="IUpdateCheckService.CheckCompleted"/>.
     /// </summary>
@@ -148,7 +148,7 @@ public static class ServiceCollectionExtensions
     /// NexusSource mods via <see cref="INexusClient"/> +
     /// <see cref="IModRepository"/> + <see cref="Profiles.IProfileService"/>.
     /// Singleton: holds the last result (<see cref="IUpdateCheckService.LastResult"/>)
-    /// so Stage 5 can bind badges to it without re-running the check, and
+    /// so the mod-list view can bind badges to it without re-running the check, and
     /// publishes updates through <see cref="IUpdateCheckService.CheckCompleted"/>.
     /// </summary>
     private static void AddUpdateCheck(IServiceCollection services)

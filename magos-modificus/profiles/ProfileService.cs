@@ -610,10 +610,10 @@ internal sealed class ProfileService : IProfileService
         profile.Mods ??= Array.Empty<ModListEntry>();
 
         // Fresh-start tolerance + null-Policy coercion. Two passes:
-        //   - drop entries whose ContainerId is Guid.Empty (a legacy Phase 2
-        //     entry deserialized without its container id; the spec is fresh-
+        //   - drop entries whose ContainerId is Guid.Empty (a legacy entry
+        //     deserialized without its container id; the spec is fresh-
         //     start, so these are dropped + logged, not migrated);
-        //   - coerce a null Policy to Latest (a hand-edit, or a Phase 1 entry).
+        //   - coerce a null Policy to Latest (a hand-edit, or a legacy entry).
         if (profile.Mods.Any(m => m.Policy is null))
         {
             profile.Mods = profile.Mods
@@ -625,7 +625,7 @@ internal sealed class ProfileService : IProfileService
         if (dropped.Count > 0)
         {
             _logger.LogWarning(
-                "Dropped {Count} legacy mod entries from profile at {Dir} (no ContainerId; Phase 2 shape). " +
+                "Dropped {Count} legacy mod entries from profile at {Dir} (no ContainerId; legacy shape). " +
                 "The spec is fresh-start: re-add mods through the import flow.",
                 dropped.Count, profileDir);
             profile.Mods = profile.Mods.Where(m => m.ContainerId != Guid.Empty).ToList();

@@ -6,8 +6,8 @@
 ## What this is
 
 **darktide-mod-magos** is the Magos Modificus mod manager for Warhammer 40,000:
-Darktide (.NET 10 + Avalonia 12), built through Phase 3 (the app is user-usable;
-Phase 4 + 5 remain). It launches the game modded via the
+Darktide (.NET 10 + Avalonia 12). The app is user-usable. It launches the game
+modded via the
 [Enginseer runtime](https://github.com/ModifAmorphic/darktide-enginseer) (DLL
 injection: no game-directory footprint, no bundle-database patching; the runtime
 is a separate repo) and stays out of the way for vanilla play (launch from Steam
@@ -25,13 +25,12 @@ game-binary constraints now live with the runtime, in
 
 ## Repository state
 
-- **`main`** — production. Magos Modificus is built through Phase 3 (all four
-  tracks merged: Track A the app shell + profile management, Track D global
-  Preferences + i18n, Track B the mod-list UI + local import, Track C the Launch
-  flow + Settings window + discovery escape-hatch) + Phase 4 Stages 1-6 (the
-  nxm:// scheme handler, Nexus auth + Integrations dialog, mod acquisition, the
-  update-check service, the mod-list update UI, and the DMF new-profile/auth
-  install prompt). The app is user-usable:
+- **`main`** — production. Magos Modificus includes the app shell + profile
+  management, global Preferences + i18n, the mod-list UI + local import, the
+  Launch flow + Settings window + discovery escape-hatch, the nxm:// scheme
+  handler, Nexus auth + Integrations dialog, mod acquisition, the update-check
+  service, the mod-list update UI, and the DMF new-profile/auth install prompt.
+  The app is user-usable:
   create profiles, import mods (folder/`.zip`, Nexus/GitHub/Untracked), manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
   (discovery paths + mod-repo location), and launch modded Darktide. Premium
@@ -40,7 +39,7 @@ game-binary constraints now live with the runtime, in
   download flow. The first time Nexus auth is configured, or whenever a new
   profile is created + set active without DMF in it, a modal prompt offers to
   add/download DMF (Darktide Mod Framework, Nexus mod 8). The Launcher is a
-  stub (Phase 5). Backend libraries: Profiles,
+  stub. Backend libraries: Profiles,
   Mods (the unified mod repository), Steam, Integrations, Enginseer-client,
   General. The Enginseer runtime is a separate repo
   ([darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer));
@@ -56,38 +55,38 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   magos-modificus.sln   solution root (classic .sln)
   Directory.Build.props  shared MSBuild props (net10.0, nullable, implicit usings)
   ui/                   Magos.Modificus.UI — the Avalonia executable + DI composition root
-                          (Phase 3 Track A: shell + profile management: dropdown switch,
+                          (shell + profile management: dropdown switch,
                           persisted active profile, create/rename/delete dialog;
-                          Phase 3 Track D: global Preferences (theme + font scale + language)
+                          global Preferences (theme + font scale + language)
                           via `IPreferencesService` + the i18n infrastructure: `Strings.resx`
                           + `LocalizationService` for dynamic culture switching;
-                          Phase 3 Track B: the mod-list UI;
-                          Phase 3 Track C: Launch wiring + Settings window +
+                          the mod-list UI;
+                          Launch wiring + Settings window +
                           discovery escape-hatch over the shared `Settings/DiscoveryField`
                           descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist +
                           `IModRepository.Relocate/Rescan`;
-                          Phase 4 Stage 1: `AddNxm()` + `StartNxmServer` (single-instance via
+                          `AddNxm()` + `StartNxmServer` (single-instance via
                           `SingleInstanceGuard` process enumeration, separate from the `Magos.Nxm`
                           pipe bind which degrades gracefully on IOException; a second Magos exits
                           via `NxmSingleInstanceException` -> `Environment.Exit(1)` before the
                           window shows);
-                          Phase 4 Stage 2: the Integrations dialog (Nexus-only) + its
+                          the Integrations dialog (Nexus-only) + its
                           `OpenIntegrationsCommand` on the shell (left of the profiles button),
                           wired through `IDialogService.ShowIntegrationsAsync` -> `IntegrationsViewModel`
                           -> `INexusAuthService` (OAuth loopback + API-key validate + sign-out) +
                           the running-state gate (auth controls disable while Darktide runs);
-                          Phase 4 Stage 3: `IModAcquisitionService` (download + extract + place
+                          `IModAcquisitionService` (download + extract + place
                           orchestrator in Integrations) + the real `NxmModDownloadHandler` (in UI,
                           coordinating IDialogService + IProfileSession + Dispatcher.UIThread) that
-                          replaces the Stage 1 no-op via DI last-registration-wins, registered after
+                          replaces the no-op default via DI last-registration-wins, registered after
                           AddNxm() in MagosComposition;
-                          Phase 4 Stage 4: `UpdateCheckRunner` (ui/Session/) the
+                          `UpdateCheckRunner` (ui/Session/) the
                           UI-layer glue that fires `IUpdateCheckService.CheckAsync`
                           fire-and-forget on profile load (startup-with-restored-id
                           + active-profile switch via IProfileSession.PropertyChanged
                           filtered to ActiveProfileId), registered + started
                           best-effort from MagosComposition);
-                          Phase 4 Stage 5: the mod-list update UI per-row update
+                          the mod-list update UI per-row update
                           signal + per-mod update button. `ModListViewModel` subscribes
                           to `IUpdateCheckService.CheckCompleted` (per-row
                           `UpdateAvailable` from `LastResult.Updates` matched by
@@ -110,7 +109,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           `ProgressBar` (toggled by `IsUpdating`) live in a new
                           row column, and the rate-limit + recent-only notices
                           sit in the header. `ModItemViewModel` carries the
-                          new INPC state + derived `SourceUrl`/`UpdatePageUrl`/
+                          INPC state + derived `SourceUrl`/`UpdatePageUrl`/
                           `IsNexusLatest`/`CanShowUpdateButton`/`NexusModId`; a
                           `BoolAllConverter` (ui/Converters/) ANDs the row's
                           `CanShowUpdateButton` with the list VM's
@@ -124,7 +123,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           predates the Month window) fires on the manual "check
                           now" button; both share `LastResult`/`CheckCompleted`,
                           distinguished by the result's `Thorough` flag);
-                          Phase 4 Stage 6: the DMF (Darktide Mod Framework)
+                          the DMF (Darktide Mod Framework)
                           install-prompt coordinator `DmfPromptService`
                           (ui/Session/) + the modal `ProgressDialog`
                           (ui/Views/) used for its in-flight download. The
@@ -177,8 +176,8 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO),
-                        including the NexusConfig slot under Integrations (Phase 4 Stage 2:
-                        AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs)
+                        including the NexusConfig slot under Integrations
+                        (AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs)
   profiles/             Magos.Modificus.Profiles — profile data model, persistence,
                         container-based staging (ProfileService.PrepareModRoot
                         discovers each enabled mod's base folder name inside the
@@ -215,8 +214,8 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
   integrations/         Magos.Modificus.Integrations — GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
-                        + the Nexus Mods v1 client + auth (Phase 4 Stage 2:
-                        INexusClient over the v1 REST endpoints with per-request
+                        + the Nexus Mods v1 client + auth
+                        (INexusClient over the v1 REST endpoints with per-request
                         auth via INexusAuthMessageFactory selector — ApiKey /
                         OAuth / None factories, the latter doing 401-reactive
                         refresh; NexusAuthService the OAuth loopback + API-key
@@ -229,17 +228,17 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         port; Duende.IdentityModel.OidcClient 7.1.0 for the
                         OAuth machinery; client_id is the build-time const
                         "magos-modificus";
-                        Phase 4 Stage 3: IModAcquisitionService the download +
+                        IModAcquisitionService the download +
                         extract + place orchestrator over INexusClient +
                         IModImportService + a plain HttpClient for the CDN
                         download; AcquireFromNexusAsync resolves the download
                         links, fetches name + version metadata, downloads to
                         temp, then imports via IModImportService.Import;
-                        AcquireLatestNexusAsync (Stage 5) resolves the newest
+                        AcquireLatestNexusAsync resolves the newest
                         non-archived MAIN file via ListModFilesAsync then forwards
                         to AcquireFromNexusAsync with null nxm tokens (premium
                         path); ModFile gains an `archived` bool for the filter;
-                        Phase 4 Stage 4: IUpdateCheckService the Nexus-only
+                        IUpdateCheckService the Nexus-only
                         update-check service (1 ModUpdatesAsync call per check,
                         intersected with the profile's LatestPolicy+NexusSource
                         mods; compares LatestFileUpdateUtc against the imported
@@ -249,7 +248,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         outdated install re-acquired today (ImportedAt = now
                         would mask it); rate-limit-aware with the all-zero
                         Unknown guard; LastResult + CheckCompleted event for
-                        the Stage 5 mod-list badges; Integrations now references
+                        the mod-list badges; Integrations now references
                         Profiles, acyclic, for IProfileService.GetModList)
   steam/                Magos.Modificus.Steam — Steam + Darktide + Proton discovery
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup
@@ -259,10 +258,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         (IEnginseerLaunchService.Launch → LaunchResult; Windows: direct
                         launcher Process.Start; Linux: proton run with both STEAM_COMPAT_*
                         env + Z:\-translated paths)
-  launcher/             Magos.Modificus.Launcher — stub (slim profile launcher exe;
-                          the Steam non-steam-shortcut target)
-  nxm/                  Magos.Modificus.Nxm — the nxm:// scheme-handler plumbing
-                        (Phase 4 Stage 1): NxmUrlParser (mod-download / oauth-callback /
+  launcher/             Magos.Modificus.Launcher — stub (the Steam non-steam-shortcut
+                          target placeholder)
+  nxm/                  Magos.Modificus.Nxm — the nxm:// scheme-handler plumbing:
+                        NxmUrlParser (mod-download / oauth-callback /
                         collection URL types), NxmIpcFraming (length-prefixed UTF-8 frames),
                         SingleInstanceGuard (the process-enumeration single-instance check,
                         with an injectable enumerator seam), NxmIpcServer (the named-pipe
@@ -270,7 +269,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         (fatal NxmSingleInstanceException on collision), then the pipe bind
                         which degrades gracefully on IOException; accept loop Disconnects
                         between clients), INxmRouter + no-op INxmModDownloadHandler
-                        default (Stage 3 registers the real handler via AddSingleton
+                        default (the real handler is registered via AddSingleton
                         last-wins, in MagosComposition after AddNxm()), the OS
                         scheme-handler registrar
                         (INxmHandlerRegistrar: WindowsNxmHandlerRegistrar writes
@@ -362,21 +361,20 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   (`UntrackedSource`/`NexusSource`/`GitHubSource`) + `ModSourceParser`; the
   local-import service `IModImportService`). **General** carries cross-cutting
   infra: logging, `ConfigLoader`, and `AppStateStore` (the active-profile id,
-  persisted to `app-state.json`). **Phase 3** (all four tracks) is done: Track A
-  the shell + profile management (with an `IProfileSession` (ui/) as the single
-  authority for the active profile, the switch-block gate, and the live
-  running-state), Track D global Preferences + i18n infrastructure, Track B the
-  mod-list UI (view mods with source/version badges, enable/disable,
-  remove-with-confirm, reorder, per-mod Latest/Pinned policy, auto-sort identity
-  stub, and local folder/`.zip` import via file picker + drag-and-drop, joined
-  to containers via `IModRepository` by `ContainerId`), and Track C Launch
-  (`LaunchCommand` -> `IEnginseerLaunchService.Launch` -> branch on
-  `LaunchResult.Status` (`Launched` -> status note + immediate `IsGameRunning`
-  refresh; `DiscoveryIncomplete` -> the focused discovery escape-hatch modal
-  over the shared `DiscoveryField` descriptor; `Error` -> modal alert) + a
-  Settings window editing `MagosConfig.Discovery` user overrides (per-field
-  read-modify-save) + `ModsFolder` live-relocate via the atomic
-  `IModRepository.Relocate` over the `DiscoveryConfig` +
+  persisted to `app-state.json`). The UI includes the shell + profile
+  management (with an `IProfileSession` (ui/) as the single authority for the
+  active profile, the switch-block gate, and the live running-state), global
+  Preferences + i18n infrastructure, the mod-list UI (view mods with
+  source/version badges, enable/disable, remove-with-confirm, reorder, per-mod
+  Latest/Pinned policy, auto-sort identity stub, and local folder/`.zip` import
+  via file picker + drag-and-drop, joined to containers via `IModRepository` by
+  `ContainerId`), and Launch (`LaunchCommand` -> `IEnginseerLaunchService.Launch`
+  -> branch on `LaunchResult.Status` (`Launched` -> status note + immediate
+  `IsGameRunning` refresh; `DiscoveryIncomplete` -> the focused discovery
+  escape-hatch modal over the shared `DiscoveryField` descriptor; `Error` ->
+  modal alert) + a Settings window editing `MagosConfig.Discovery` user
+  overrides (per-field read-modify-save) + `ModsFolder` live-relocate via the
+  atomic `IModRepository.Relocate` over the `DiscoveryConfig` +
   `SteamService.Discover()` validate+heal+persist pipeline). The DMF (Darktide
   Mod Framework) install-prompt coordinator `DmfPromptService` (ui/Session/)
   offers to add/download DMF on (1) the first Nexus auth None -> configured
@@ -384,7 +382,7 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   flag) + (2) every new profile that becomes active without DMF in it; the
   prompt is a modal on the main window, fired by the shell after the
   triggering ManageProfiles / Integrations dialog closes so it never nests on
-  top of one. The **Launcher** is a stub (Phase 5). See
+  top of one. The **Launcher** is a stub. See
   `docs/architecture/MAGOS-MODIFICUS.md`.
 
 ## Key docs
@@ -502,13 +500,14 @@ Then ensure the Magos Modificus build + tests pass
 (`dotnet build`/`dotnet test magos-modificus/magos-modificus.sln`). **Outdated
 docs in a PR are a review blocker**, including this file.
 
-**No project phase/stage labels in committed docs.** Reference + architecture
-docs (`docs/reference/`, `docs/architecture/`) describe the current system as it
-is, not how or when it got built. Do not write things like "(Phase 4 Stage 4)",
-"new in Phase 3", or "Stage 5 adds...". Those are project-management milestones,
-meaningless to the docs' audience (developers reading current state) and quickly
-stale to us too once the phase ships. Describe the feature/architecture directly.
-If a phasing concept is genuinely architectural (e.g. a phase *of a process* the
-code performs, like "the discovery phase of launch"), that's fine; what's not
-fine is referencing the build's project phases/stages. Planning history lives in
-`_local/` + the git log, not in the docs.
+**No project phase/stage labels in committed docs or code comments.** Docs,
+reference + architecture material, and code comments describe the current system
+as it is, not how or when it got built. Do not write things like
+"(Phase 4 Stage 4)", "new in Phase 3", or "Stage 5 adds..." in any committed
+prose or comment. Those are project-management milestones, meaningless to a
+reader of the current state and quickly stale to us too once the phase ships.
+Describe the feature/architecture directly. If a phasing concept is genuinely
+architectural (e.g. a phase *of a process* the code performs, like "the
+discovery phase of launch"), that's fine; what's not fine is referencing the
+build's project phases/stages. Planning history lives in `_local/` + the git
+log, not in the docs or the code.

@@ -33,7 +33,7 @@ namespace Magos.Modificus.Integrations;
 /// to catch. Cancellation (<see cref="OperationCanceledException"/>) propagates
 /// so a cancelled check is not misreported as "no updates found".</para>
 /// <para>
-/// <b>GitHub descoped.</b> GitHub-sourced mods are skipped alongside Untracked
+/// <b>Nexus-only.</b> GitHub-sourced mods are skipped alongside Untracked
 /// + Pinned. The service has no GitHub code paths anywhere (the
 /// <see cref="IGitHubClient"/> is never touched).</para>
 /// </remarks>
@@ -163,7 +163,7 @@ internal sealed class UpdateCheckService : IUpdateCheckService
 
         // 3. Filter to checkable mods: LatestPolicy + NexusSource. Skip
         //    PinnedPolicy (frozen at a specific release), UntrackedSource (no
-        //    remote to query), and GitHubSource (descoped from Phase 4).
+        //    remote to query), and GitHubSource (out of v1 for the update check).
         var checkable = new List<(ModListEntry Entry, ModContainer Container, NexusSource Nexus)>();
         foreach (var entry in entries)
         {

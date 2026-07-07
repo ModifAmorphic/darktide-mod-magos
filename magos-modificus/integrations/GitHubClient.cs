@@ -17,7 +17,7 @@ namespace Magos.Modificus.Integrations;
 /// <para>
 /// <see cref="ListReleases"/> / <see cref="GetLatestRelease"/> are synchronous
 /// wrappers over the async HTTP work (block with <c>GetAwaiter().GetResult()</c>).
-/// Acceptable for Phase 1's UI callers; the fake-handler test path completes
+/// Acceptable for the UI callers; the fake-handler test path completes
 /// synchronously and the runtime has no legacy sync context to deadlock against.</para>
 /// <para>
 /// Registered as a transient (the <c>AddHttpClient&lt;T,TImpl&gt;</c> default); it

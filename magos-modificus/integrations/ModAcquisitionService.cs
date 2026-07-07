@@ -25,8 +25,8 @@ namespace Magos.Modificus.Integrations;
 /// <para>
 /// <b>3 Nexus API calls per acquisition:</b> <c>download_link.json</c> (the CDN
 /// URL), <c>mods/{id}.json</c> (the name), and <c>mods/{id}/files.json</c> (the
-/// file's version string + file name). Within rate limits (see Stage 2's
-/// grounding). If any metadata call fails, the acquisition fails with a clear
+/// file's version string + file name). Within rate limits (grounded against the
+/// Nexus v1 surface). If any metadata call fails, the acquisition fails with a clear
 /// error (no degraded fallback).</para>
 /// </remarks>
 internal sealed class ModAcquisitionService : IModAcquisitionService

@@ -15,7 +15,7 @@ namespace Magos.Modificus.Integrations;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Scope.</b> Nexus-only: GitHub is descoped from Phase 4 (no GitHub code
+/// <b>Scope.</b> Nexus-only: GitHub is out of v1 (no GitHub code
 /// paths anywhere in the check), and Untracked mods have no remote to query.
 /// <see cref="PinnedPolicy"/> mods are frozen by definition, so they are skipped
 /// too. Only <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods are
@@ -91,7 +91,7 @@ public interface IUpdateCheckService
 
     /// <summary>
     /// The last check result, or <c>null</c> before the first check completes.
-    /// Stage 5 reads this to render badges without awaiting a check. Holds the
+    /// The mod-list view reads this to render badges without awaiting a check. Holds the
     /// most recent result regardless of which method (<see cref="CheckAsync"/>
     /// or <see cref="CheckThoroughAsync"/>) produced it.
     /// </summary>
@@ -109,7 +109,7 @@ public interface IUpdateCheckService
 
     /// <summary>
     /// Raised (on the completing thread) when a check finishes, successful or
-    /// not. Stage 5 subscribes to refresh badges without awaiting a check.
+    /// not. The mod-list view subscribes to refresh badges without awaiting a check.
     /// Always raised exactly once per <see cref="CheckAsync"/> /
     /// <see cref="CheckThoroughAsync"/> call (including the no-auth
     /// short-circuit and the rate-limited / failure paths), with the same
@@ -131,14 +131,14 @@ public interface IUpdateCheckService
 /// <param name="CheckedAt">When the check ran (UTC).</param>
 /// <param name="RateLimited"><c>true</c> if the check was skipped (or aborted
 /// mid-pass) because the Nexus daily or hourly quota was reported exhausted.
-/// Stage 5 surfaces a "check incomplete" indicator rather than "all up to date"
+/// The mod-list view surfaces a "check incomplete" indicator rather than "all up to date"
 /// in this case, so the user understands the badges may not reflect the latest
 /// state.</param>
 /// <param name="Thorough"><c>true</c> if this result came from
 /// <see cref="IUpdateCheckService.CheckThoroughAsync"/> (the manual "check now"
 /// path that also catches mods outside the Month window); <c>false</c> if it
-/// came from the Month-only <see cref="IUpdateCheckService.CheckAsync"/>. Stage
-/// 5 uses this to hint "recent updates only, click refresh for a complete
+/// came from the Month-only <see cref="IUpdateCheckService.CheckAsync"/>. The
+/// mod-list view uses this to hint "recent updates only, click refresh for a complete
 /// check" after a Month-only pass, so the user understands the badges may not
 /// reflect every available update.</param>
 public sealed record UpdateCheckResult(
@@ -148,9 +148,9 @@ public sealed record UpdateCheckResult(
     bool Thorough);
 
 /// <summary>
-/// One mod flagged by an update check. Mirrors the identifying fields Stage 5
-/// needs to render a per-row "update available" badge and drive the per-mod
-/// update button (which calls <c>IModAcquisitionService</c>).
+/// One mod flagged by an update check. Mirrors the identifying fields the
+/// mod-list view needs to render a per-row "update available" badge and drive the
+/// per-mod update button (which calls <c>IModAcquisitionService</c>).
 /// </summary>
 /// <param name="ContainerId">The flagged mod's container id (the join key back
 /// to <see cref="ModContainer"/> and the profile entry).</param>
@@ -161,7 +161,7 @@ public sealed record UpdateCheckResult(
 /// (from <see cref="ModVersion.VersionString"/>, resolved via
 /// <see cref="ModContainer.ResolveVersion"/> with a <see cref="LatestPolicy"/>).</param>
 /// <param name="LatestUpdateAt">The Nexus-reported latest file-update time
-/// (UTC), from <see cref="ModUpdate.LatestFileUpdateUtc"/>. Stage 5 may show
+/// (UTC), from <see cref="ModUpdate.LatestFileUpdateUtc"/>. The mod-list view may show
 /// this as "updated &lt;date&gt;" context.</param>
 public sealed record ModUpdateInfo(
     Guid ContainerId,
