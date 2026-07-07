@@ -3,9 +3,9 @@
 The `nxm://` URL scheme is how the "Mod manager download" button on a Nexus
 Mods file page reaches a mod manager. Magos registers a tiny OS-level handler
 that captures those clicks and relays them to the running app, where the URL
-is parsed, classified, and dispatched to a pluggable handler. Phase 4 Stage 1
-ships the plumbing; Stage 3 plugs the real mod-download handler into the seam
-(see [mod acquisition](mod-acquisition.md)).
+is parsed, classified, and dispatched to a pluggable handler. The mod-download
+handler plugs into a seam exposed by this plumbing (see
+[mod acquisition](mod-acquisition.md)).
 
 > Public surface, exact signatures, and DI registration are documented in the
 > [nxm reference](../reference/magos-modificus/nxm.md). This doc covers the
@@ -39,8 +39,8 @@ ships the plumbing; Stage 3 plugs the real mod-download handler into the seam
        │ + exit        │                │       ┌──────────┴──────────┐         │
        └───────────────┘                │       ▼                     ▼         │
                                         │  INxmModDownloadHandler   OAuth-cb +  │
-                                        │  (Stage 3 real impl;      collection  │
-                                        │   no-op default before)   URLs logged │
+                                        │  (real impl; no-op       collection  │
+                                        │   default in lib)         URLs logged │
                                         │                           + dropped)  │
                                         └──────────────────────────────────────┘
 ```
@@ -122,8 +122,8 @@ and the pipe is its own check that degrades on failure.
 When the handler is invoked and Magos is not running, the handler launches the
 sibling Magos exe (no args) and retries the pipe every 250 ms up to 30 s. Once
 Magos binds the pipe, the handler connects, delivers the URL, and exits. Magos
-has no `--nxm` arg and no cold-start branch; its startup is untouched by
-Stage 1, and the handler owns the entire cold-start orchestration.
+has no `--nxm` arg and no cold-start branch; its startup is unaffected
+by the nxm plumbing, and the handler owns the entire cold-start orchestration.
 
 If the sibling Magos exe is missing, the handler logs to stderr and exits
 non-zero without retrying: there is nothing to retry against, and a headless
@@ -187,26 +187,27 @@ them, and logs unparseable URLs as a warning. Handler exceptions are caught at
 the router boundary so one bad handler invocation cannot kill the IPC accept
 loop.
 
-### Stage 3 seam
+### The mod-download handler seam
 
-Stage 1 ships a **no-op default** `INxmModDownloadHandler` that logs the parsed
-URL at Information. Stage 3 registers a real mod-download handler (the
-[acquisition flow](mod-acquisition.md) downloads via the Nexus client and
-imports into the unified repository). It is drop-in: the no-op default is
-registered with plain `AddSingleton`, and MS DI resolves the last registration,
-so a later `AddSingleton<INxmModDownloadHandler, RealImpl>()` after `AddNxm()`
-supersedes the default.
+The library ships a **no-op default** `INxmModDownloadHandler` that logs the
+parsed URL at Information. The real mod-download handler (the
+[acquisition flow](mod-acquisition.md): download via the Nexus client, import
+into the unified repository) is registered later, in the UI assembly. The
+registration is drop-in: the no-op default is registered with plain
+`AddSingleton`, and MS DI resolves the last registration, so a later
+`AddSingleton<INxmModDownloadHandler, RealImpl>()` after `AddNxm()` supersedes
+the default.
 
-The Stage 3 handler lives in the **UI assembly** (it coordinates UI concerns:
-the active-profile session, the error dialog, UI-thread marshaling). Placing it
-in Integrations would create a dependency cycle. See
+The real handler lives in the **UI assembly** (it coordinates UI concerns: the
+active-profile session, the error dialog, UI-thread marshaling). Placing it in
+Integrations would create a dependency cycle. See
 [mod acquisition](mod-acquisition.md) for why.
 
 ## See also
 
 - [nxm reference](../reference/magos-modificus/nxm.md): public surface, exact
   signatures, DI registration, testing.
-- [mod acquisition](mod-acquisition.md): the Stage 3 handler that plugs into
+- [mod acquisition](mod-acquisition.md): the real handler that plugs into
   the mod-download seam shipped here.
 - [Nexus authentication](nexus-authentication.md): OAuth uses loopback, not the
   `nxm://` handler; the OAuth-callback URL kind is parsed and dropped.

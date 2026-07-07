@@ -379,7 +379,7 @@ public sealed class NexusAuthService : INexusAuthService
         // client's auth factory uses it on the validate call. Save the prior
         // state so we can revert on failure.
         //
-        // Race note (bounded today, broader in Stage 4): this read-modify-write
+        // Race note (bounded today): this read-modify-write
         // is NOT under a lock, so a concurrent OAuth refresh landing between the
         // speculative write + the revert would have its freshly-refreshed tokens
         // clobbered by the revert (restoring priorOAuth from before the
@@ -387,10 +387,10 @@ public sealed class NexusAuthService : INexusAuthService
         // (its own _refreshGate), not here, so a lock in this method alone would
         // not close the race. Today this is safe because Magos is single-instance
         // and the Integrations dialog disables the auth controls while a login
-        // is in flight (no concurrent refresh can land). Stage 4's planned
-        // update-check on profile load makes a concurrent refresh plausible;
-        // revisit then (likely a shared auth-state lock around this method +
-        // NexusOAuthTokenStore.RefreshAsync).
+        // is in flight (no concurrent refresh can land). A concurrent refresh
+        // triggered elsewhere (e.g., the update-check on profile load) makes the
+        // race plausible; revisit if that becomes a concern (likely a shared
+        // auth-state lock around this method + NexusOAuthTokenStore.RefreshAsync).
         var prior = _configLoader.Load().Integrations.Nexus;
         var priorMethod = prior.AuthMethod;
         var priorKey = prior.ApiKey;

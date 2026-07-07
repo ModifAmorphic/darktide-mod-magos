@@ -5,8 +5,8 @@ dialog: **OAuth** (the primary, a loopback OIDC flow via
 `Duende.IdentityModel.OidcClient`) and **API key** (the alternative, validated
 against `GET /v1/users/validate.json`). The user's explicit choice is the
 single source of truth for which method is active; there is no fallback. This
-stage (Phase 4 Stage 2) also ships the v1 Nexus API client that the later
-stages (acquisition, update-checks) call through.
+is also where the v1 Nexus API client is wired up; acquisition and
+update-checks both call through it.
 
 > Public surface, exact signatures, and DI registration are documented in the
 > [integrations reference](../reference/magos-modificus/integrations.md). This
@@ -81,7 +81,7 @@ the store persists them. Three-minute flow timeout; on expiry the service
 surfaces "Login timed out".
 
 Loopback redirect (not `nxm://`) is the RFC 8252 standard and needs no
-scheme-handler involvement. This is independent of the Stage 1
+scheme-handler involvement. This is independent of the
 [nxm:// scheme handler](nxm-scheme-handler.md).
 
 ## API key: the user-facing alternative
@@ -184,10 +184,9 @@ unjustified. RFC 8252 loopback redirects require no client registration.
 **Registration with Nexus is pending for live OAuth.** The client_id string is
 chosen and shipped; end-to-end live OAuth depends on Nexus-side recognition of
 the client (the loopback flow itself works regardless, since RFC 8252 loopback
-redirects require no client registration, but the live authorize endpoint's
-behavior for an unregistered client is the open question). Until then, API key
-is the validated path; OAuth is implemented and tested against stubbed
-endpoints.
+redirects require no client registration, but the live authorize endpoint does
+not currently recognize the client). API key is the validated path; OAuth is
+implemented and tested against stubbed endpoints.
 
 ## App-identification headers and rate limits
 
@@ -198,9 +197,10 @@ convention): `Application-Name: Magos-Modificus`, `Application-Version:
 **Rate limits** are parsed from the `x-rl-*` response headers
 (`x-rl-daily-limit` / `x-rl-daily-remaining` / `x-rl-daily-reset` and the
 hourly equivalents) into a `NexusRateLimits` carried on every `Response<T>`.
-Missing or unparseable headers yield `0` or `null` (never throws). Stage 4
-(update-check) consumes them to back off; Stage 2 just parses and logs them. A
-429 (or a 403 with `*-remaining: 0`) throws `NexusRateLimitException`.
+Missing or unparseable headers yield `0` or `null` (never throws). The
+update-check service consumes them to back off; the client itself just parses
+and logs them. A 429 (or a 403 with `*-remaining: 0`) throws
+`NexusRateLimitException`.
 
 ## v1 endpoints
 
@@ -221,8 +221,8 @@ shape. v3 is Experimental for the surfaces we need, so v1 only:
 
 - [integrations reference](../reference/magos-modificus/integrations.md):
   public surface, exact signatures, DI registration, testing.
-- [mod acquisition](mod-acquisition.md): the Stage 3 flow that calls the v1
-  client through the selected auth factory.
+- [mod acquisition](mod-acquisition.md): the acquisition flow that calls the
+  v1 client through the selected auth factory.
 - [nxm:// scheme handler](nxm-scheme-handler.md): OAuth uses loopback, not the
   `nxm://` handler; the OAuth-callback URL kind is parsed and dropped.
 - [Magos Modificus architecture](MAGOS-MODIFICUS.md): the high-level tie-together.

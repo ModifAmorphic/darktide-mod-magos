@@ -1,9 +1,9 @@
 namespace Magos.Modificus.Integrations;
 
 /// <summary>
-/// The Nexus Mods v1 REST API client. Phase 4 Stage 2 surface: auth validation
-/// (one method per auth mode) + the endpoints later stages call through (mod
-/// updates, download links, mod-page metadata). Mirrors the existing
+/// The Nexus Mods v1 REST API client. Surface: auth validation (one method per
+/// auth mode) + the endpoints the rest of the app calls through (mod updates,
+/// download links, mod-page metadata). Mirrors the existing
 /// <see cref="IGitHubClient"/> shape: typed <c>HttpClient</c> via
 /// <c>AddHttpClient&lt;INexusClient, NexusClient&gt;</c>, auth applied per-request
 /// by the configured <see cref="INexusAuthMessageFactory"/>, and the parsed
@@ -25,8 +25,8 @@ namespace Magos.Modificus.Integrations;
 /// Experimental; this client does not use v3.</para>
 /// <para>
 /// <b>Rate limits.</b> Every response carries the parsed <c>x-rl-*</c> headers
-/// in its <see cref="Response{T}.RateLimits"/>. Stage 4 (update-check) consumes
-/// them to back off; Stage 2 just parses + logs them.</para>
+/// in its <see cref="Response{T}.RateLimits"/>. The update-check service consumes
+/// them to back off; the auth flow just parses + logs them.</para>
 /// </remarks>
 public interface INexusClient
 {
@@ -53,7 +53,7 @@ public interface INexusClient
     /// Lists mods updated in the past <paramref name="period"/> for
     /// <paramref name="gameDomain"/>. Hits
     /// <c>GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}</c>. The
-    /// one-call-per-game update check Stage 4 builds on.
+    /// one-call-per-game update check the update-check service builds on.
     /// </summary>
     Task<Response<ModUpdate[]>> ModUpdatesAsync(
         string gameDomain,
@@ -63,7 +63,7 @@ public interface INexusClient
     /// <summary>
     /// Premium-user download links for the given file. Hits
     /// <c>GET /v1/games/{domain}/mods/{modId}/files/{fileId}/download_link.json</c>
-    /// (premium-only endpoint; Stage 3 acquisition consumes the returned CDN
+    /// (premium-only endpoint; the acquisition service consumes the returned CDN
     /// URLs).
     /// </summary>
     Task<Response<DownloadLink[]>> DownloadLinksAsync(
@@ -75,7 +75,7 @@ public interface INexusClient
     /// <summary>
     /// Free-user download links for the given file, keyed by the per-file token
     /// from the <c>nxm://</c> URL. Hits the same endpoint as the premium overload
-    /// + <c>?key={nxmKey}&amp;expires={epoch}</c>. Stage 3 acquisition consumes
+    /// + <c>?key={nxmKey}&amp;expires={epoch}</c>. The acquisition service consumes
     /// the returned CDN URLs.
     /// </summary>
     Task<Response<DownloadLink[]>> DownloadLinksAsync(
@@ -88,7 +88,7 @@ public interface INexusClient
 
     /// <summary>
     /// The mod-page metadata. Hits
-    /// <c>GET /v1/games/{domain}/mods/{modId}.json</c>. Stage 3 acquisition uses
+    /// <c>GET /v1/games/{domain}/mods/{modId}.json</c>. The acquisition service uses
     /// it to surface the canonical name + version to the user before downloading.
     /// </summary>
     Task<Response<ModInfo>> GetModInfoAsync(
@@ -99,7 +99,7 @@ public interface INexusClient
     /// <summary>
     /// The files attached to a mod. Hits
     /// <c>GET /v1/games/{domain}/mods/{modId}/files.json</c> and unwraps the
-    /// <c>{"files":[...]}</c> envelope to the array. Stage 3 acquisition uses it
+    /// <c>{"files":[...]}</c> envelope to the array. The acquisition service uses it
     /// to let the user pick the file (or resolve the latest by timestamp).
     /// </summary>
     Task<Response<ModFile[]>> ListModFilesAsync(

@@ -56,7 +56,7 @@ Method behavior:
   listing.
 - `GetProfile(id)` — loads the full profile (metadata + mod list). Throws
   `KeyNotFoundException` if the profile dir or `profile.json` is absent. Legacy
-  mod entries lacking `ContainerId` (the Phase 2 shape) are dropped on read +
+  mod entries lacking `ContainerId` are dropped on read +
   logged (fresh-start; the operator re-adds mods).
 - `CreateProfile(name)` — generates the `Guid`, scaffolds the directory tree
   (`staged/`) **before** persisting an empty `profile.json` (so a crash between
@@ -144,9 +144,9 @@ public sealed class IdentityModOrderResolver : IModOrderResolver;   // identity 
 ```
 
 The current implementation is the **identity stub** (`IdentityModOrderResolver`):
-it returns container ids in their current `ModListEntry.Order` (a no-op). The
-real dependency-driven auto-sort algorithm lands in a later phase; this
-interface is the DI-swappable seam so the UI wires against the abstraction now.
+it returns container ids in their current `ModListEntry.Order` (a no-op). A real
+dependency-driven auto-sort algorithm is out of v1; this interface is the
+DI-swappable seam so the UI wires against the abstraction now.
 Pure + deterministic (stable on ties).
 
 ### `ModCleanup` (static)
@@ -178,8 +178,8 @@ public static IServiceCollection AddProfiles(this IServiceCollection services);
 - `TryAddSingleton<SymlinkCreator>(_ => Directory.CreateSymbolicLink)` — the BCL
   default. `TryAdd` so a test may pre-register a throwing/fake delegate.
 - `TryAddSingleton<IModOrderResolver, IdentityModOrderResolver>()`: the auto-
-  sort identity stub. `TryAdd` so a test (or the real dependency-driven resolver,
-  when it lands) may pre-register an override.
+  sort identity stub. `TryAdd` so a test (or a real dependency-driven resolver)
+  may pre-register an override.
 - `AddSingleton<IProfileService, ProfileService>()` — the filesystem-backed
   implementation (internal). Resolves `MagosConfig`, `IModRepository`,
   `SymlinkCreator`, and `ILogger<ProfileService>` from the container.

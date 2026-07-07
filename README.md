@@ -10,11 +10,11 @@ unmodified).
 ## Components
 
 - **Magos Modificus** (this repo): the mod manager app (UI, staging, load order,
-  profiles, dependency resolution, mod-source integrations). Phases 0–3 are
-  complete: the backend libraries (Profiles, Mods, Steam, Integrations,
-  Enginseer-client, General) and the UI (the app shell + profile management,
-  global Preferences, the mod-list UI, the Launch flow + Settings window) are
-  in place. The app is user-usable. The Launcher is a stub (Phase 5). See
+  profiles, dependency resolution, mod-source integrations). The backend
+  libraries (Profiles, Mods, Steam, Integrations, Enginseer-client, General) and
+  the UI (the app shell + profile management, global Preferences, the mod-list
+  UI, the Launch flow + Settings window) are in place. The app is user-usable.
+  The Launcher is a stub. See
   [`magos-modificus/README.md`](magos-modificus/README.md) for developer/build
   details.
 - **Enginseer runtime** (separate repo):

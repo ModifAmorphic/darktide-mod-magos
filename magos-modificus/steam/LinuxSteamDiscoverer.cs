@@ -116,7 +116,8 @@ internal sealed class LinuxSteamDiscoverer : ISteamDiscoverer
     }
 
     /// <summary>
-    /// Phase 1 Proton heuristic (deep Steam per-game config parsing is deferred):
+    /// The Proton selection heuristic (deep Steam per-game config parsing is out
+    /// of v1):
     /// <list type="number">
     /// <item><term>1</term><description><c>Proton - Experimental</c> in <c>steamapps/common</c> (common default).</description></item>
     /// <item><term>2</term><description>The highest-versioned <c>Proton X.Y</c> in <c>steamapps/common</c>.</description></item>

@@ -171,7 +171,7 @@ public sealed class ModImportServiceTests
         // RemoteUploadedAt (mirroring how dedup refreshes files): a
         // re-acquired version carries the current remote-publish timestamp,
         // not the stale one from the first import. This is what makes a
-        // Stage 5 one-click update land the new file's publish date on the
+        // one-click update land the new file's publish date on the
         // reused entry, so the next check does not re-flag it.
         using var fx = new ImportFixture();
         var dir = fx.MakeSourceModFolder("Src");

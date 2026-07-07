@@ -404,9 +404,9 @@ internal sealed class ModImportService : IModImportService
     /// </remarks>
     private static string ValidateArchiveStructure(string archivePath)
     {
-        // Phase 1: open + collect entry keys. A corrupt or truncated archive
+        // Step 1: open + collect entry keys. A corrupt or truncated archive
         // fails here (SharpCompressException / IOException / EndOfStream) and is
-        // rewrapped as InvalidDataException; the structure checks in phase 2 run
+        // rewrapped as InvalidDataException; the structure checks in step 2 run
         // on the successfully-collected keys and throw InvalidOperationException
         // for shape failures, so the two failure modes are cleanly separated.
         List<string> entryKeys;
@@ -433,7 +433,7 @@ internal sealed class ModImportService : IModImportService
                 "It may be corrupted or incomplete. Try downloading it again.", ex);
         }
 
-        // Phase 2: structural checks on the collected keys (no SharpCompress
+        // Step 2: structural checks on the collected keys (no SharpCompress
         // call can throw here; the entries are already materialized).
         var topLevelDirs = new HashSet<string>(StringComparer.Ordinal);
         string? looseFile = null;

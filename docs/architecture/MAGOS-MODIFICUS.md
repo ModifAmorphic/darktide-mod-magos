@@ -8,21 +8,6 @@ Mods, Steam), and the "Launch Darktide" button that invokes the Enginseer
 launcher. Enginseer does the injection + mod loading; Magos Modificus owns the
 management experience around it.
 
-> **Status: Phases 0–3 complete; Phase 4 in progress (Stages 1–4 done).** The
-> foundation (.NET 10 + Avalonia 12 layout, DI composition, structured logging,
-> global config schema/loader) plus the backend libraries are built: Profiles,
-> Steam, Integrations, Enginseer-client (Phase 1) + Mods (Phase 2). The Phase 3
-> UI is in place across all four tracks: Track A (app shell + profile
-> management), Track D (global Preferences + i18n), Track B (the mod-list UI +
-> local import), and Track C (Launch wiring + Settings window + discovery
-> escape-hatch). Phase 4 adds the Nexus integration: the nxm:// scheme handler
-> (Stage 1), Nexus auth + Integrations dialog (Stage 2), mod acquisition
-> (Stage 3), and the update-check service (Stage 4). The app is user-usable:
-> create profiles, import mods, manage the mod list, configure Settings, and
-> launch modded Darktide. The **Launcher** is a stub (Phase 5). It builds on the
-> [Enginseer runtime](https://github.com/ModifAmorphic/darktide-enginseer)
-> (separate repo).
-
 ## In scope for this document
 
 - The component's role, technology choices, and project layout.
@@ -59,13 +44,12 @@ magos-modificus/
   profiles/               Profiles library — profile data, staging, mods.lst
   mods/                   Mods library — unified mod repository (IModRepository) + version-policy + source models
   steam/                  Steam library — Steam/Darktide/Proton discovery + IsGameRunning
-  integrations/           Integrations library — GitHub Releases client (Nexus = Phase 4)
+  integrations/           Integrations library — GitHub Releases client + Nexus v1 client/auth + mod acquisition + update check
   enginseer-client/       Enginseer-client library — the launch façade
-  launcher/ (optional)    slim profile launcher — launches a profile without
-                          the UI (entry point for Steam non-steam shortcuts); Phase 5
+  launcher/               stub launcher — the Steam non-steam-shortcut target placeholder
   nxm/                    Nxm library: nxm:// scheme-handler plumbing (URL parser, IPC
                           server, single-instance guard, router + handler seams, OS
-                          registrar, relay helper); Phase 4 Stage 1
+                          registrar, relay helper)
   nxm-handler/            the OS-registered nxm:// scheme handler (native-AOT console
                           exe; relays the raw URL to running Magos, or cold-starts it)
   tests/                  xUnit test projects per library
@@ -86,7 +70,7 @@ UI models.
 | **Enginseer** | All interaction with the Enginseer runtime. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control — status / hot-reload / live enable-disable — is a future Enginseer contract expansion; out of v1.) |
 | **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, mod repository); resolves each profile mod's version policy to a repository version folder; materializes the profile mod root + writes `mods.lst` at launch. |
 | **Integrations** | External-service calls: Nexus Mods (primary user-mod source), GitHub Releases, local install. Nexus API key / OIDC, version checks, downloads / updates. |
-| **Steam** | Steam operations outside Enginseer: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; add / remove non-steam shortcuts; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
+| **Steam** | Steam operations outside Enginseer: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
 | **General** | Cross-cutting infra: DI composition, structured logging, configuration, shared primitives. |
 
 ## Composition & startup
@@ -120,11 +104,11 @@ through a registered library interface. The UI registers only its own surface
      the root and `IProfileService` always resolves its staging dependency).
    - `AddProfiles()`: profile service + the `SymlinkCreator` staging seam.
     - `AddIntegrations()`: the typed GitHub HTTP client + the typed Nexus v1
-      HTTP client (Phase 4 Stage 2) + the Nexus auth service + the OAuth token
+      HTTP client + the Nexus auth service + the OAuth token
       store + the loopback `IBrowser`.
-   - `AddSteam()`: Steam discovery + the platform process-lookup seam.
-   - `AddEnginseerClient()`: the launch façade + the process-launcher seam.
-   - `AddLauncher()`: the slim profile launcher stub (Phase 5).
+    - `AddSteam()`: Steam discovery + the platform process-lookup seam.
+    - `AddEnginseerClient()`: the launch façade + the process-launcher seam.
+    - `AddLauncher()`: the launcher stub.
    - `AddSingleton<MainWindow>()` + `AddSingleton<MainViewModel>()`: the UI
      surface.
 4. **Build**: `BuildServiceProvider()`.
@@ -254,7 +238,7 @@ an orphan (skip + warn); a "phantom" pin to a version that was never imported
 cannot be expressed (the policy editor offers only the container's actual
 versions, and `SetModPolicy` rejects an unknown id). GitHub release tags and
 Nexus file versions are arbitrary strings (not SemVer); there is no version
-ordering at this layer, and "newer" is decided later (Phase 4) by fetching the
+ordering at this layer, and "newer" is decided by fetching the
 latest release tag and checking string inequality.
 
 Each container also carries a **source** (Untracked / Nexus / GitHub) so a
@@ -285,9 +269,9 @@ owner/repo. Version dedup: re-importing the same tag reuses its folder
 (refreshed); a new tag creates a new version + flips `isLatest`. The service
 returns `(containerId, versionString)`; the caller then adds the profile
 reference via `IProfileService.AddMod`. Remote acquisition (Nexus / GitHub API
-clients, auto-fetch) is Phase 4 Stage 3; the acquisition service downloads the
-archive to a temp path preserving the real Nexus `file_name` extension, then
-hands it to the import service.
+clients, auto-fetch) is handled by `IModAcquisitionService`; the acquisition
+service downloads the archive to a temp path preserving the real Nexus
+`file_name` extension, then hands it to the import service.
 
 **Base-name collision hard-block:** two mods with the same base folder name
 can't coexist in one profile (the mod loader can't tell them apart). Before
@@ -372,7 +356,7 @@ is in [integrations reference](../reference/magos-modificus/integrations.md).
 ## Mod acquisition
 
 When a user clicks "Mod manager download" on Nexus, the
-[nxm handler](nxm-scheme-handler.md) relays the URL and the Stage 3
+[nxm handler](nxm-scheme-handler.md) relays the URL and the
 `NxmModDownloadHandler` orchestrates the download and import into the active
 profile. The reusable core is `IModAcquisitionService` (Integrations): it
 resolves the CDN download links, fetches mod metadata, downloads to a
@@ -380,7 +364,7 @@ resolves the CDN download links, fetches mod metadata, downloads to a
 UI assembly, not Integrations, because it coordinates UI-only services) checks
 auth and an active profile, calls the service, registers the mod with
 `LatestPolicy`, refreshes the mod list, and surfaces errors via
-`ShowAlertAsync`. Stage 5's per-mod update button calls the same service. Full
+`ShowAlertAsync`. The per-mod update button calls the same service. Full
 detail (the acquisition flow, the handler checks, the UI-assembly placement, and
 startup OS registration) is in [mod acquisition architecture](mod-acquisition.md);
 the public surface is in
@@ -388,7 +372,7 @@ the public surface is in
 
 ## Update check
 
-Stage 4's `IUpdateCheckService` (Integrations) is the Nexus-only update check.
+The `IUpdateCheckService` (Integrations) is the Nexus-only update check.
 On profile load it calls `ModUpdatesAsync("warhammer40kdarktide", Month)` once,
 intersects the response with the active profile's `LatestPolicy` +
 `NexusSource` mods, and flags any whose imported version's `ImportedAt`
@@ -398,19 +382,20 @@ regardless of profile size; `PinnedPolicy`, `UntrackedSource`, and
 `GitHubSource` mods are skipped. Rate-limit-aware: if the response reports an
 exhausted daily or hourly quota (and the limit was actually reported, guarding
 against the all-zero header-absent fallback), the result is flagged
-`RateLimited` and Stage 5 surfaces a "check incomplete" indicator rather than
-"all up to date." The full rate-limiting strategy (what Magos observes, how it
-reacts, what it does not do, and what consumes the budget) is documented in
-[Nexus API rate limiting](nexus-rate-limiting.md).
+`RateLimited` and the mod-list UI surfaces a "check incomplete" indicator
+rather than "all up to date." The full rate-limiting strategy (what Magos
+observes, how it reacts, what it does not do, and what consumes the budget) is
+documented in [Nexus API rate limiting](nexus-rate-limiting.md).
 
 The result (`UpdateCheckResult` with per-mod `ModUpdateInfo`) is published via
-`LastResult` + a `CheckCompleted` event for Stage 5's badges to consume without
-re-awaiting. The check is fired fire-and-forget by `UpdateCheckRunner` (UI),
-which subscribes to `IProfileSession.PropertyChanged` filtered to
-`ActiveProfileId` (startup-with-restored-id + active-profile switch). No UI in
-Stage 4; Stage 5 adds the per-row "update available" badges + the per-mod
-update button (which calls Stage 3's `IModAcquisitionService`). The public
-surface is in [integrations reference](../reference/magos-modificus/integrations.md).
+`LastResult` + a `CheckCompleted` event for the mod-list badges to consume
+without re-awaiting. The check is fired fire-and-forget by `UpdateCheckRunner`
+(UI), which subscribes to `IProfileSession.PropertyChanged` filtered to
+`ActiveProfileId` (startup-with-restored-id + active-profile switch). The
+service itself has no UI; the mod-list UI consumes `LastResult` /
+`CheckCompleted` to render per-row "update available" badges + the per-mod
+Update button (which calls `IModAcquisitionService`). The public surface is in
+[integrations reference](../reference/magos-modificus/integrations.md).
 
 ## Mod list (main view)
 
@@ -422,7 +407,7 @@ surface is in [integrations reference](../reference/magos-modificus/integrations
 - When DMF is installed, it appears as a protected first entry (locked first
   by dependency resolution; updateable).
 - **Hot-reload** — tied to the Enginseer live-control contract; out of v1.
-- **Dependency view** — out of v1 (uncertain value; revisit later).
+- **Dependency view** — out of v1.
 - **Conflict detection** — out of v1.
 
 ## Launch
@@ -483,11 +468,9 @@ run under Proton with `STEAM_COMPAT_DATA_PATH` + `STEAM_COMPAT_CLIENT_INSTALL_PA
 set by Magos.
 
 **Known characteristic (not a defect):** when Magos launches directly, Steam
-isn't supervising the session (no overlay / playtime tracking). The **Steam
-non-steam shortcut** path is the answer for users who want full Steam
-integration — see below.
+isn't supervising the session (no overlay / playtime tracking).
 
-### Launch wiring + Settings + escape-hatch (Phase 3 Track C)
+### Launch wiring + Settings + escape-hatch
 
 The shell's `LaunchCommand` invokes `IEnginseerLaunchService.Launch(activeProfileId)`
 (gated by `CanLaunch`: a profile is selected and the game is not running) and
@@ -533,19 +516,6 @@ setter). The canonical names match `DiscoveryResult`'s field names, which are
 what `LaunchResult.MissingDiscoveryFields` carries, so the escape-hatch shows
 exactly the fields launch reported missing.
 
-### Steam non-steam shortcuts
-
-A shortcut added to Steam that launches Darktide with a specific profile, so
-Steam supervises the session (overlay, playtime). Created from Magos against
-the currently-selected profile.
-
-- The shortcut's launch options bake in the resolved paths (compatdata, runtime
-  dir, mod-path) at creation time, so firing the shortcut needs no rediscovery.
-- The optional **slim profile launcher** is the shortcut's target: a thin
-  native binary that accepts a profile argument and does what the Launch button
-  does. It reuses the Magos Steam library for discovery and the Enginseer
-  library for invocation.
-
 ## Configuration
 
 One global config file for system-level settings (structured — e.g. JSON or
@@ -570,31 +540,18 @@ Per-profile settings live with the profile, not in the global config.
   per-mod auto-update override, auto-sort + manual sequential reorder.
 - Mod storage (unified repository keyed by `(source, identity)`, version resolution by policy).
 - Mod sources: Nexus Mods (primary) + GitHub Releases + local; DMF via the
-  open sourcing decision (Phase 4 — see Mod sources).
+  new-profile prompt (Nexus mod 8).
 - Launch Darktide (Windows trivial; Linux native + Proton-at-launch +
   discovery + escape hatch).
-- Steam non-steam shortcuts.
 - Global config + per-profile settings.
 - DMF new-profile prompt.
 
-**Out of v1 (deferred):**
+**Out of v1:**
 
-- Enginseer live-control (status / hot-reload / live enable-disable) — awaits
+- Enginseer live-control (status / hot-reload / live enable-disable): awaits
   an Enginseer IPC contract expansion.
 - Dependency-view mod list.
 - Conflict detection.
-
-## Open / future
-
-- **Enginseer live-control contract** — the IPC / status surface that would
-  enable hot-reload, live enable/disable, and in-Magos status display. Tracked
-  as a GitHub issue on Enginseer; when it lands, the Magos Enginseer library
-  grows from a launch façade to a richer client, and the UI's mod list gains
-  live controls.
-- **Slim profile launcher** — built alongside the Steam-shortcut feature;
-  reuses the Steam + Enginseer libraries.
-- **Distribution / packaging** (.NET self-contained, AppImage, distro
-  packages, etc.) — undecided; a release/delivery concern, not architectural.
 
 ## References
 

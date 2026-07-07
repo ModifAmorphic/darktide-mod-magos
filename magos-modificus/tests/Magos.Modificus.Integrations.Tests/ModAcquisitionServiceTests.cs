@@ -305,7 +305,7 @@ public sealed class ModAcquisitionServiceTests
     public async Task AcquireLatestNexusAsync_forwards_resolved_files_RemoteUploadedAt_to_import()
     {
         // Both acquisition entry points route through AcquireFromNexusAsync, so
-        // both record the publish date. This pins the Stage 5 update path
+        // both record the publish date. This pins the per-mod update path
         // (AcquireLatestNexusAsync): after a one-click update, the new
         // version's RemoteUploadedAt equals the latest file's publish date, so
         // the next check does not re-flag it.
@@ -494,7 +494,7 @@ public sealed class ModAcquisitionServiceTests
             () => service.AcquireFromNexusAsync("", ModId, FileId));
     }
 
-    // ---- AcquireLatestNexusAsync (Stage 5 per-mod update path) --------------
+    // ---- AcquireLatestNexusAsync (the per-mod update path) -----------------
 
     /// <summary>
     /// Builds a <see cref="ModFile"/> with the fields the latest-file resolution

@@ -3,8 +3,8 @@ using Microsoft.Extensions.Logging;
 namespace Magos.Modificus.Nxm;
 
 /// <summary>
-/// The Stage 1 no-op <see cref="INxmModDownloadHandler"/>. Logs the parsed URL
-/// at Information and returns. Replaced by the Stage 3 acquisition flow (a real
+/// The no-op <see cref="INxmModDownloadHandler"/>. Logs the parsed URL
+/// at Information and returns. Replaced by the real acquisition flow (a real
 /// handler registered AFTER <c>AddNxm()</c> via <c>AddSingleton</c>, last
 /// registration wins).
 /// </summary>

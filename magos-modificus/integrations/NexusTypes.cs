@@ -7,7 +7,7 @@ namespace Magos.Modificus.Integrations;
 /// <summary>
 /// A Nexus API response: the parsed payload plus the rate-limit metadata
 /// extracted from the response headers. Mirrors NMA's
-/// <c>Response&lt;T&gt;</c> shape so callers (Stage 4 update-check) can back off
+/// <c>Response&lt;T&gt;</c> shape so callers (the update-check service) can back off
 /// based on <see cref="RateLimits"/> before the next request.
 /// </summary>
 /// <typeparam name="T">The parsed payload type.</typeparam>
@@ -182,7 +182,7 @@ public sealed class ModUpdate
 
 /// <summary>
 /// One CDN download link from <c>download_link.json</c>. <see cref="Uri"/> is the
-/// actual CDN URL the client fetches (Stage 3 acquisition consumes this).
+/// actual CDN URL the client fetches (consumed by the acquisition service).
 /// </summary>
 public sealed class DownloadLink
 {

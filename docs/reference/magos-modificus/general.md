@@ -2,7 +2,7 @@
 
 > Cross-cutting infrastructure: structured logging, JSON config loading, runtime
 > app-state persistence, and the DI registration that wires all three into the
-> container. Status: implemented (Phase 0; app-state store added in Phase 3).
+> container.
 
 The composition root (`magos-modificus/ui/MagosComposition.cs`) calls into this
 library first, before any domain library, to load `MagosConfig` and build the
@@ -38,8 +38,8 @@ public static class LoggingBootstrap
 
 ### `IConfigLoader` / `ConfigLoader`
 
-Loads `MagosConfig` from JSON with full defaults, and (Phase 3 Track D) writes it
-back through `Save`. Consumers inject `IConfigLoader` and re-read on each
+Loads `MagosConfig` from JSON with full defaults, and writes it back through
+`Save`. Consumers inject `IConfigLoader` and re-read on each
 operation (config is read live from disk, not cached at startup; #31), so runtime
 writes via the Settings window or mod-repo relocation are visible immediately.
 A missing or partial file yields a fully-usable config on load: every field has
@@ -49,7 +49,7 @@ a platform-appropriate default (see [config](config.md)).
 public interface IConfigLoader
 {
     MagosConfig Load();
-    void Save(MagosConfig config);   // Phase 3 Track D: atomic write-back
+    void Save(MagosConfig config);   // atomic write-back
 }
 
 public sealed class ConfigLoader : IConfigLoader
@@ -70,7 +70,7 @@ public sealed class ConfigLoader : IConfigLoader
   than letting `SetBasePath` throw. Unset keys keep their defaults. Cheap to
   call per op (the file is tiny); the live-read model avoids a startup cache that
   would only create staleness.
-- `Save(config)` (Phase 3 Track D): writes the whole `MagosConfig` back to the
+- `Save(config)`: writes the whole `MagosConfig` back to the
   JSON file via `System.Text.Json` (config is machine-managed; rewriting it
   wholesale is fine and simpler than per-section merges). The `ThemeMode` enum
   is serialized as a string (camelCase) so the persisted file is human-readable
@@ -159,7 +159,7 @@ v1). `loggerFactory` is a constructed object passed in; `IConfigLoader` +
 ## Testing
 
 `Magos.Modificus.General.Tests` covers `ConfigLoader` (first-run-safe + JSON
-override binding, plus Phase 3 Track D `Preferences` round-trip + `Save` coverage:
+override binding, plus `Preferences` round-trip + `Save` coverage:
 round-trip, parent-dir creation, sibling-section preservation, enum-as-string
 serialization), `AppStateStore` (round-trip + first-run + corrupt-file safety +
 the app-data default path), `LoggingBootstrap` (level parsing, truncation,

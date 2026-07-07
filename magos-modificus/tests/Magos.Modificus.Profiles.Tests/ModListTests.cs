@@ -182,7 +182,7 @@ public sealed class ModListTests
     [Fact]
     public void ReadProfileFile_drops_legacy_Name_based_entries_and_treats_as_empty()
     {
-        // Fresh-start tolerance: a legacy Phase 2 profile.json carries mod entries
+        // Fresh-start tolerance: a legacy profile.json carries mod entries
         // with a Name field instead of ContainerId. Those entries deserialize with
         // ContainerId == Guid.Empty and are dropped on read (logged). The profile
         // is otherwise intact (name + created-at preserved).

@@ -4,8 +4,7 @@
 > **discovers** everything needed to launch Darktide modded on the current OS
 > and reports missing pieces via the result's nullable fields; it does NOT set
 > env vars or invoke Proton — that is [enginseer-client](enginseer-client.md)'s
-> job. Status: implemented (Phase 1; the Track C review fix reshaped
-> `Discover()` from an overlay into a validate + heal + persist pipeline).
+> job.
 
 ## Public surface
 
@@ -167,9 +166,8 @@ per call (all platform logic lives in the discoverer + the shared
 4. **Compatdata** — `steamapps/compatdata/<DarktideAppId>/` probed on the main
    install first, then each library in VDF order (the prefix frequently lives on
    a library drive, not the main install); first existing dir wins.
-5. **Proton** (Phase 1 heuristic — deep Steam per-game config parsing is
-   deferred):
-   1. `Proton - Experimental` in `steamapps/common` (common default).
+5. **Proton** (heuristic — deep Steam per-game config parsing is out of v1):
+    1. `Proton - Experimental` in `steamapps/common` (common default).
    2. The highest-versioned `Proton X.Y` in `steamapps/common`.
    3. The highest-versioned build in `compatibilitytools.d` (ProtonUp-GE).
    4. Nothing → `null` (escape hatch; UI prompts).

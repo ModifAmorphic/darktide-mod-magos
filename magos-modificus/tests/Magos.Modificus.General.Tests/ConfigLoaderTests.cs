@@ -75,7 +75,7 @@ public sealed class ConfigLoaderTests
         Assert.EndsWith(Path.Combine("Magos Modificus", "config.json"), path);
     }
 
-    // ---- Preferences section (Phase 3 Track D) -----------------------------
+    // ---- Preferences section -----------------------------------------------
 
     [Fact]
     public void Load_yields_default_preferences_when_section_is_absent()
@@ -320,7 +320,7 @@ public sealed class ConfigLoaderTests
         }
     }
 
-    // ---- Discovery section (Phase 3 Track C, Phase 1) ----------------------
+    // ---- Discovery section -------------------------------------------------
 
     [Fact]
     public void Load_yields_default_discovery_when_section_is_absent()

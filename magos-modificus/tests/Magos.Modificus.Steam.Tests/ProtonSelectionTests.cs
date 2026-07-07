@@ -1,7 +1,7 @@
 namespace Magos.Modificus.Steam.Tests;
 
 /// <summary>
-/// The Phase 1 Proton selection heuristic, step by step:
+/// The Proton selection heuristic, step by step:
 /// 1. <c>Proton - Experimental</c> in steamapps/common wins when present.
 /// 2. Else the highest-versioned <c>Proton X.Y</c> in steamapps/common.
 /// 3. Else a build under compatibilitytools.d (ProtonUp-GE).

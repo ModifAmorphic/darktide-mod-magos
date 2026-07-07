@@ -1,9 +1,7 @@
 # Config (`Magos.Modificus.Config`): reference
 
 > The global configuration schema: a POCO model with platform-appropriate
-> defaults, bound from JSON by the [General](general.md) library. Status:
-> implemented (Phase 0; Preferences section added in Phase 3 Track D; Discovery
-> section added in Phase 3 Track C).
+> defaults, bound from JSON by the [General](general.md) library.
 
 `MagosConfig` holds system-level settings shared across all profiles. Per-profile
 settings live with the profile, not here. Every field carries a default, so an
@@ -17,8 +15,8 @@ to override.
 
 ### `MagosConfig`
 
-The root config object: the aggregate the loader binds and (Phase 3 Track D) the
-`ConfigLoader.Save` writes back wholesale on a Preferences change.
+The root config object: the aggregate the loader binds and `ConfigLoader.Save`
+writes back wholesale on a Preferences change.
 
 ```csharp
 public sealed class MagosConfig
@@ -41,9 +39,9 @@ public sealed class MagosConfig
 | `ProfilesBaseFolder` | `<app-data>/profiles` | Where profiles and per-profile settings are stored (mods live in `ModsFolder`; see [mods](mods.md)). |
 | `ModsFolder` | `<app-data>/mods` | The global mod store (see [mods](mods.md)). |
 | `EnginseerRuntimeDir` | `<app-data>/enginseer` | Where `magos_launcher.exe`, `magos_shell.dll`, and `mod_loader/` live (consumed by [enginseer-client](enginseer-client.md)). |
-| `Discovery` | see `DiscoveryConfig` | User-supplied discovery overrides (Steam / Darktide / compatdata / Proton paths). Validated on disk + healed from the discoverer + persisted by `SteamService.Discover()`. Phase 3 Track C. |
+| `Discovery` | see `DiscoveryConfig` | User-supplied discovery overrides (Steam / Darktide / compatdata / Proton paths). Validated on disk + healed from the discoverer + persisted by `SteamService.Discover()`. |
 | `Integrations` | see `IntegrationsConfig` | External-service (mod-source) integration settings. |
-| `Preferences` | see `PreferencesConfig` | User-facing global preferences (theme, font scale, language). Phase 3 Track D. |
+| `Preferences` | see `PreferencesConfig` | User-facing global preferences (theme, font scale, language). |
 
 `<app-data>` is `Environment.SpecialFolder.LocalApplicationData`: `%LOCALAPPDATA%`
 on Windows, `~/.local/share` on Linux, under a `Magos Modificus/` subfolder.
@@ -62,12 +60,13 @@ public sealed class LoggingConfig
   `Error`/`Fatal`); an unknown value falls back to `Information` at bootstrap.
 - `LogFile`: the structured log file; truncated on each manager startup.
 
-### `IntegrationsConfig` / `GitHubConfig`
+### `IntegrationsConfig` / `GitHubConfig` / `NexusConfig`
 
 ```csharp
 public sealed class IntegrationsConfig
 {
     public GitHubConfig GitHub { get; set; } = new();
+    public NexusConfig Nexus { get; set; } = new();
 }
 
 public sealed class GitHubConfig
@@ -75,17 +74,95 @@ public sealed class GitHubConfig
     public string BaseUrl { get; set; } = "https://api.github.com";
     public string? Token { get; set; }   // optional PAT
 }
+
+public sealed class NexusConfig
+{
+    public string BaseUrl { get; set; } = "https://api.nexusmods.com";
+    public string OAuthBaseUrl { get; set; } = "https://users.nexusmods.com";
+    public NexusAuthMethod AuthMethod { get; set; } = NexusAuthMethod.None;
+    public string? ApiKey { get; set; }                          // used when AuthMethod == ApiKey
+    public NexusOAuthTokens? OAuth { get; set; }                 // used when AuthMethod == OAuth
+    public bool AutoUpdateCheckEnabled { get; set; } = true;
+    public int AutoUpdateCheckIntervalMinutes { get; set; } = 10;
+    public bool DmfAuthPromptShown { get; set; }
+}
+
+public enum NexusAuthMethod { None, OAuth, ApiKey }
+
+public sealed record NexusOAuthTokens(
+    string AccessToken,
+    string? RefreshToken,
+    string Scope,
+    DateTimeOffset ExpiresAt);
 ```
+
+GitHub fields:
 
 - `BaseUrl`: the GitHub REST API root, without a trailing slash. Override for
   GitHub Enterprise (`https://<host>/api/v3`). The Integrations library
   normalizes the value to end with a trailing slash when configuring
   `HttpClient.BaseAddress`.
 - `Token`: an optional personal access token sent as `Bearer <token>`; when
-  unset, requests are anonymous (public releases need no auth). Phase 1 has no
+  unset, requests are anonymous (public releases need no auth). There is no
   token-management UI; supply via config only.
 
-### `PreferencesConfig` / `ThemeMode` (Phase 3 Track D)
+Nexus fields:
+
+- `BaseUrl`: the Nexus REST API root, without a trailing slash. Defaults to the
+  public endpoint; override only for testing.
+- `OAuthBaseUrl`: the Nexus OAuth issuer root, without a trailing slash. The
+  OIDC discovery, authorize, token, and userinfo endpoints hang off this root.
+  Defaults to the public endpoint; override only for testing.
+- `AuthMethod`: the user's explicit auth-method choice, read live by the auth
+  message factory selector on every request. `None` is the default
+  (unauthenticated; API calls fail with a clear error, callers gate on it).
+  Set by the Integrations dialog: OAuth login sets `OAuth`, API-key validate
+  sets `ApiKey`, sign-out resets to `None`. There is **no fallback**: if the
+  selected method's credentials are missing or expired, the client surfaces an
+  auth error for that method rather than silently using the other. Switching
+  methods clears the other method's credentials (no stale leftovers).
+- `ApiKey`: the Nexus API key (sent as the `apikey` header). Set when
+  `AuthMethod == ApiKey`; cleared on sign-out or when switching to OAuth.
+  `null`/whitespace is treated as "not configured".
+- `OAuth`: the persisted OAuth tokens. Set when `AuthMethod == OAuth`; cleared
+  on sign-out or when switching to API key. `null` is treated as "not
+  authenticated". See `NexusOAuthTokens` below.
+- `AutoUpdateCheckEnabled`: whether the periodic background update check runs
+  while a profile is active. `true` by default. Gates ONLY the periodic timer;
+  the profile-load check (startup + active-profile switch) and the manual "check
+  now" button always run regardless. Read live on each timer tick, so a dialog
+  change takes effect without a restart.
+- `AutoUpdateCheckIntervalMinutes`: the periodic update-check interval, in
+  minutes. `10` by default. Honored to a 1-minute granularity; values below 1
+  are clamped.
+- `DmfAuthPromptShown`: gates the DMF (Darktide Mod Framework) install prompt
+  that fires the first time Nexus auth transitions from `None` to configured.
+  `false` by default; the DMF prompt coordinator flips it to `true` after
+  showing the auth-triggered prompt (whether the user accepted or declined), so
+  subsequent auth changes do not re-prompt. The new-profile trigger has no such
+  flag: each new profile is a fresh ask.
+
+The `NexusAuthMethod` enum carries the three explicit choices. The OAuth client
+id is a build-time constant (in `Magos.Modificus.Integrations.NexusOAuthConstants`),
+not config and not an env var.
+
+`NexusOAuthTokens` is an immutable record holding the OAuth session state:
+
+- `AccessToken`: the OAuth bearer access token sent as
+  `Authorization: Bearer <token>` on every API request.
+- `RefreshToken`: the refresh token used to obtain a new access token when the
+  current one expires (401-reactive refresh). May be `null` when the server did
+  not issue one (rare; effectively single-session).
+- `Scope`: the granted scope string (space-delimited). Persisted for
+  diagnostics; not consulted by the client.
+- `ExpiresAt`: when the access token expires (UTC). The factory does **not**
+  proactively refresh before this; it refreshes reactively on the first 401
+  after expiry.
+
+Set on a successful login; replaced wholesale on a token refresh; cleared on
+sign-out.
+
+### `PreferencesConfig` / `ThemeMode`
 
 User-facing global preferences, exposed through the Preferences dialog. The
 dialog applies each change immediately (theme + font scale + language take
@@ -121,7 +198,7 @@ public enum ThemeMode
   updates the live UI through the UI-layer `LocalizationService` (dynamic, no
   restart).
 
-### `DiscoveryConfig` (Phase 3 Track C)
+### `DiscoveryConfig`
 
 User-supplied overrides for Steam/Darktide/Proton discovery. The Settings
 window and the discovery escape-hatch dialog write these;
@@ -189,8 +266,8 @@ libraries register a loaded `MagosConfig` singleton via `AddGeneral()` (see
 
 Covered transitively: there is no standalone test project. The schema's
 defaults and JSON binding are exercised by `Magos.Modificus.General.Tests`
-(`ConfigLoader` first-run-safe + override tests, plus Phase 3 Track D
-`Preferences` round-trip + `Save` coverage) and by every other library's test
+(`ConfigLoader` first-run-safe + override tests, plus `Preferences`
+round-trip + `Save` coverage) and by every other library's test
 fixtures, which build a `MagosConfig.CreateDefault()` pointing at a temp dir.
 
 ```sh

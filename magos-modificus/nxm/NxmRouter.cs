@@ -15,7 +15,8 @@ namespace Magos.Modificus.Nxm;
 /// <remarks>
 /// The mod-download handler is injected (not resolved from the provider per-call)
 /// because it is a singleton; the router captures the last-registered handler at
-/// construction time, which is exactly the override semantic Stage 3 relies on.
+/// construction time, which is exactly the override semantic the real-handler
+/// registration relies on.
 /// </remarks>
 internal sealed class NxmRouter : INxmRouter
 {

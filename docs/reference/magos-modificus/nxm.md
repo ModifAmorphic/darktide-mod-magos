@@ -2,16 +2,15 @@
 
 > The `nxm://` scheme-handler plumbing: URL parsing, length-prefixed IPC framing
 > between the tiny handler exe and the running app, the Magos-side single-instance
-> guard + IPC server, the router, a pluggable mod-download handler seam (no-op in
-> Stage 1), the OS scheme-handler registration service, and the testable relay
-> helper the handler exe calls. Stage 1 of Phase 4. Status: implemented
-> (Phase 4 Stage 1 + the Stage 2 seam cleanup).
+> guard + IPC server, the router, a pluggable mod-download handler seam (a no-op
+> default that the real handler supersedes via DI last-registration-wins), the OS
+> scheme-handler registration service, and the testable relay helper the handler
+> exe calls.
 >
-> Stage 2 removed the OAuth-callback seam Stage 1 originally shipped (Magos OAuth
+> The OAuth-callback seam that once lived here has been removed (Magos OAuth
 > uses loopback redirect, not `nxm://`; see the
-> [integrations reference](integrations.md#nexus-client--auth-phase-4-stage-2)).
-> Stage 3 (mod download / acquisition) plugs a real handler into the seam shipped
-> here.
+> [integrations reference](integrations.md#nexus-client--auth)). The
+> mod-download handler seam itself is what the real acquisition flow plugs into.
 
 Three projects implement the nxm path:
 
@@ -72,8 +71,8 @@ Three URL kinds, grounded against MO2 `nxmurl.cpp` and NMA `OAuth.cs`:
 - **`NxmOAuthCallbackUrl`**: `nxm://oauth/callback?code=<code>&state=<state>`.
   Both `code` and `state` are required and must be non-empty. Kept as a parsed
   type so the router can recognize the shape; the router **logs + drops** these
-  (Stage 2 removed the OAuth-callback handler seam in favor of loopback
-  redirect, RFC 8252). In normal operation no such URL is delivered over IPC.
+  (Magos OAuth uses loopback redirect, not `nxm://`, per RFC 8252). In normal
+  operation no such URL is delivered over IPC.
 - **`NxmCollectionUrl`**: `nxm://<game>/collections/<id>/revisions/<rev>`. Parsed
   so the router can log "unsupported in v1" rather than "unknown URL". No handler
   is invoked.
@@ -223,20 +222,22 @@ public interface INxmModDownloadHandler
 The default `NxmRouter` (internal) parses the raw URL via `NxmUrlParser`,
 dispatches mod-download URLs to `INxmModDownloadHandler`, logs OAuth-callback
 URLs as "handled by the loopback listener, not the nxm handler" + drops them
-(Stage 2 removed the OAuth-callback seam in favor of RFC 8252 loopback
-redirect), logs collection URLs as "unsupported in v1", and logs unparseable
+(Magos OAuth uses loopback redirect, independent of the `nxm://` handler, per
+RFC 8252), logs collection URLs as "unsupported in v1", and logs unparseable
 URLs as a warning. Handler exceptions are caught at the router boundary so one
 bad handler invocation cannot kill the IPC accept loop.
 
-Stage 1 ships a **no-op default implementation** of the mod-download handler
+The library ships a **no-op default implementation** of the mod-download handler
 (internal, `NoOpNxmModDownloadHandler`): it logs the parsed URL at Information
-and returns. Stage 3 replaces it.
+and returns. A real implementation (the acquisition flow) supersedes it via DI
+last-registration-wins (see [DI wiring](#di-registration)).
 
-**Stage 2 removed the `INxmOAuthCallbackHandler` seam.** Stage 1 originally
-shipped one expecting the OAuth flow to ride on `nxm://`; Stage 2 corrects that
-(Magos OAuth uses loopback, independent of the `nxm://` handler). The
-`NxmOAuthCallbackUrl` parsed type stays (so the parser keeps recognizing the
-shape rather than classifying it as unknown); the router just drops it.
+**The `INxmOAuthCallbackHandler` seam has been removed.** An earlier form of
+this library shipped one expecting the OAuth flow to ride on `nxm://`; Magos
+OAuth instead uses loopback redirect (RFC 8252), independent of the `nxm://`
+handler. The `NxmOAuthCallbackUrl` parsed type stays (so the parser keeps
+recognizing the shape rather than classifying it as unknown); the router just
+drops it.
 
 ### Handler-exe relay helper
 
@@ -287,8 +288,8 @@ directly). Setting it to `true` on Linux for detached launch routes through
 is needed. `CreateNoWindow=true` on Windows keeps the secondary launch quiet.
 
 **Cold start is owned by the handler, not Magos.** Magos has no `--nxm` arg and
-no cold-start branch; its startup is untouched by Stage 1. The handler owns the
-entire cold-start orchestration.
+no cold-start branch; its startup is untouched by the handler. The handler owns
+the entire cold-start orchestration.
 
 **Missing sibling exe.** `ResolveMagosMainExe` (called by the default launch
 factory) verifies the sibling Magos exe exists and throws
@@ -334,8 +335,8 @@ handler assembly name via `NxmHandlerPaths.GetHandlerExePath()` (the handler shi
 as a sibling of the main Magos exe). `NxmHandlerPaths.LinuxDesktopFileId`
 (`magos-nxm-handler.desktop`) is the shared desktop-file id.
 
-Stage 3 added **startup auto-registration**: `MagosComposition.Build()`
-calls `RegisterNxmHandler` after the IPC server starts, which checks
+**Startup auto-registration**: `MagosComposition.Build()` calls
+`RegisterNxmHandler` after the IPC server starts, which checks
 `IsRegistered()` and calls `Register()` if not. This is the expected behavior
 for a mod manager (MO2, NMA, and Vortex all auto-register on startup).
 Best-effort: a failure is logged + swallowed so a registration problem never
@@ -356,14 +357,14 @@ failure rather than a silent no-op).
 
 **Handler override convention (last registration wins).** The no-op
 mod-download default is registered with plain `AddSingleton` (not `TryAdd`).
-Stage 3 registers a real implementation AFTER `AddNxm()` via
+The composition root registers a real implementation AFTER `AddNxm()` via
 `services.AddSingleton<INxmModDownloadHandler, ...>()`; MS DI resolves the LAST
 registration, so the real handler supersedes the no-op. The router captures
 whichever handler is resolved at its (singleton) construction.
 
-(Stage 2 removed the parallel OAuth-callback override convention along with the
-`INxmOAuthCallbackHandler` seam; see the reference doc's "Router + pluggable
-handler" section above.)
+(The parallel OAuth-callback override convention is gone with the
+`INxmOAuthCallbackHandler` seam; see the "Router + pluggable handler" section
+above.)
 
 ## Composition wiring
 
@@ -414,7 +415,8 @@ Process model:
 - **Magos running, user clicks "Mod manager download" on Nexus:** the OS invokes
   the handler exe with the `nxm://` URL; the handler connects to the `Magos.Nxm`
   pipe, writes one framed URL, and exits. Magos's accept loop reads it, routes
-  it, and the resolved handler acts on it (the no-op default logs it in Stage 1).
+  it, and the resolved handler acts on it (the no-op default logs it; the real
+  handler acquires the mod).
 - **Magos not running (cold start):** the handler's connect is refused, so it
   launches the sibling Magos exe (no args) and retries the pipe every 250ms up to
   30s. Once Magos's `Bind` succeeds, the handler connects, delivers the URL, and
@@ -453,8 +455,8 @@ Process model:
   (proceeds); the production enumerator path is not exercised against real
   processes.
 - **`NxmRouter`**: a mod-download URL routes to the mod handler with parsed
-  fields; an OAuth callback URL is logged + dropped (Stage 2 removed the OAuth
-  handler seam); collection and unparseable URLs route to neither; a throwing
+  fields; an OAuth callback URL is logged + dropped (the OAuth-callback
+  handler seam is gone; Magos OAuth uses loopback); collection and unparseable URLs route to neither; a throwing
   handler does not propagate.
 - **`NxmHandlerRelay`**: hot path (connect first try, no launch), cold start
   (refuse, launch, retry, deliver), cold-start timeout, no-URL arg, multi-arg,
@@ -489,6 +491,6 @@ dotnet publish magos-modificus/nxm-handler -c Release     # stripped native bina
 - [Magos Modificus architecture](../../architecture/MAGOS-MODIFICUS.md): the
   [nxm:// scheme handler](../../architecture/MAGOS-MODIFICUS.md#nxm-scheme-handler)
   section.
-- [integrations](integrations.md): the GitHub Releases client (Phase 1). The
-  Nexus client arrives in a later Phase 4 stage and plugs the mod-download
-  handler shipped here.
+- [integrations](integrations.md): the GitHub Releases client + the Nexus
+  client/auth + the acquisition service that plugs the real mod-download
+  handler into the seam shipped here.

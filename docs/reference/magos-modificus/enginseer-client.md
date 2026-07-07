@@ -3,8 +3,7 @@
 > The v1 launch façade over the Enginseer runtime. Resolves the profile + Steam
 > discovery, assembles the launcher args, and invokes `magos_launcher.exe` —
 > directly on Windows, under `proton run` on Linux. Fire-and-forget in v1: it
-> starts the launcher and returns; it does not track the game process. Status:
-> implemented (Phase 1).
+> starts the launcher and returns; it does not track the game process.
 
 ## Public surface
 

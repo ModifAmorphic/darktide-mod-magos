@@ -25,7 +25,7 @@ namespace Magos.Modificus.Nxm;
 /// </para>
 /// <para>
 /// <b>Cold start is owned by the handler, not Magos.</b> Magos's startup is
-/// untouched by Stage 1: no <c>--nxm</c> arg, no cold-start branch. The handler
+/// untouched by the nxm handler: no <c>--nxm</c> arg, no cold-start branch. The handler
 /// owns the entire orchestration.
 /// </para>
 /// <para>
