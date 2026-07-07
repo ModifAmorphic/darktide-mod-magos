@@ -1,28 +1,28 @@
 # nxm:// scheme handler: architecture
 
 The `nxm://` URL scheme is how the "Mod manager download" button on a Nexus
-Mods file page reaches a mod manager. Magos registers a tiny OS-level handler
+Mods file page reaches a mod manager. Curator registers a tiny OS-level handler
 that captures those clicks and relays them to the running app, where the URL
 is parsed, classified, and dispatched to a pluggable handler. The mod-download
 handler plugs into a seam exposed by this plumbing (see
 [mod acquisition](mod-acquisition.md)).
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [nxm reference](../reference/magos-modificus/nxm.md). This doc covers the
+> [nxm reference](../reference/src/nxm.md). This doc covers the
 > architecture and the why.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────┐         ┌──────────────────────────────────────┐
-│   OS invokes handler exe    │         │   Magos (main app, primary instance)  │
+│   OS invokes handler exe    │         │   Curator (main app, primary instance)  │
 │   with nxm:// URL as arg    │         │                                       │
-└──────────────┬──────────────┘         │   MagosComposition.Build()            │
+└──────────────┬──────────────┘         │   CuratorComposition.Build()            │
                │                        │   ┌──────────────────────────────┐    │
                │                        │   │ 1. SingleInstanceGuard        │    │
                │                        │   │    process enumeration;       │    │
                │  named pipe (fixed     │   │    FATAL on collision         │    │
-               │  name: Magos.Nxm)      │   │ 2. NxmIpcServer.Bind          │    │
+               │  name: Modificus.Curator.Nxm)      │   │ 2. NxmIpcServer.Bind          │    │
                │  one framed URL msg    │   │    pipe; degrades gracefully  │    │
                ├───────────────────────►│   │    on IOException             │    │
                │                        │   │ 3. accept loop reads framed   │    │
@@ -31,7 +31,7 @@ handler plugs into a seam exposed by this plumbing (see
        ┌───────┴───────┐                │                  │                    │
        │ if connect    │                │                  ▼                    │
        │ refused:      │                │   ┌──────────────────────────────┐    │
-       │ launch Magos  │───────────────►│   │ NxmRouter.Route(url)         │    │
+       │ launch Curator  │───────────────►│   │ NxmRouter.Route(url)         │    │
        │ (no args),    │  process start │   │  parse → classify →          │    │
        │ retry pipe    │                │   │  dispatch to DI handler      │    │
        │ ~250ms / 30s, │                │   └──────────────┬───────────────┘    │
@@ -45,7 +45,7 @@ handler plugs into a seam exposed by this plumbing (see
                                         └──────────────────────────────────────┘
 ```
 
-The handler is deliberately dumb: it forwards the raw URL string. Magos owns
+The handler is deliberately dumb: it forwards the raw URL string. Curator owns
 URL semantics. This keeps the OS-invoked path fast (the handler is native AOT,
 starts in tens of ms, carries no DI graph) and puts all routing logic where it
 is unit-testable.
@@ -54,15 +54,15 @@ is unit-testable.
 
 Two projects implement the path:
 
-- **`Magos.NxmHandler`** (`magos-modificus/nxm-handler/`): the OS-registered
+- **`Modificus.Curator.NxmHandler`** (`src/nxm-handler/`): the OS-registered
   scheme handler. A native-AOT console exe whose `Program.cs` is one line,
   `NxmHandlerRelay.RunAsync(args)`. It does no parsing and carries no DI graph;
-  it forwards the raw URL over the fixed named pipe (`Magos.Nxm`), or (cold
-  start) launches Magos and retries the pipe until it comes up. AOT keeps it
+  it forwards the raw URL over the fixed named pipe (`Modificus.Curator.Nxm`), or (cold
+  start) launches Curator and retries the pipe until it comes up. AOT keeps it
   tiny and fast, and the relay, framing, and parser stay trim-friendly so the
   trimmer drops everything else from the handler's closure.
-- **`Magos.Modificus.Nxm`** (`magos-modificus/nxm/`): the library. URL types
-  and parser, length-prefixed IPC framing, the Magos-side IPC server, the
+- **`Modificus.Curator.Nxm`** (`src/nxm/`): the library. URL types
+  and parser, length-prefixed IPC framing, the Curator-side IPC server, the
   single-instance guard, the router and handler seams, the OS registrar, and
   the testable relay helper the handler exe calls.
 
@@ -70,9 +70,9 @@ The two reference implementations in the ecosystem (NexusMods.App and
 ModOrganizer2) both use a small separate handler exe rather than the main app,
 because the OS invokes the handler on every `nxm://` click and the main app's
 startup is too heavy for a relay-then-exit, and spawning a second full app
-instance to do single-instance detection and IPC is fragile given Magos's
+instance to do single-instance detection and IPC is fragile given Curator's
 singleton services (`IModRepository` scans and writes manifests; `ConfigLoader`
-does atomic config writes). Magos follows the same pattern.
+does atomic config writes). Curator follows the same pattern.
 
 The IPC protocol is one framed UTF-8 message per connection: a 4-byte
 little-endian length prefix plus the URL payload, capped at 8 KiB. The handler
@@ -82,7 +82,7 @@ pipe name stays claimed for the app's lifetime).
 
 ## Single-instance: process enumeration, not the pipe bind
 
-Magos enforces single-instance **before** binding the IPC pipe. The check lives
+Curator enforces single-instance **before** binding the IPC pipe. The check lives
 in `SingleInstanceGuard` and works by **process enumeration**: it asks
 `Process.GetProcessesByName` for live processes sharing the current process's
 name (excluding self by PID), and throws `NxmSingleInstanceException` if any
@@ -94,7 +94,7 @@ reliable cross-platform single-instance claim: on Linux the transport is a Unix
 domain socket, and two processes can both bind the same path. A probe-as-client
 (the alternative the original spec considered) works but adds a startup tax on
 Linux because the probe pends when no server exists. Process enumeration
-directly answers "is another Magos already running?", is fast, unprivileged
+directly answers "is another Curator already running?", is fast, unprivileged
 (no elevation), and is decoupled from the IPC transport.
 
 **Accepted v1 race.** Two instances starting within milliseconds could both
@@ -119,23 +119,23 @@ and the pipe is its own check that degrades on failure.
 
 ## Cold-start path
 
-When the handler is invoked and Magos is not running, the handler launches the
-sibling Magos exe (no args) and retries the pipe every 250 ms up to 30 s. Once
-Magos binds the pipe, the handler connects, delivers the URL, and exits. Magos
+When the handler is invoked and Curator is not running, the handler launches the
+sibling Curator exe (no args) and retries the pipe every 250 ms up to 30 s. Once
+Curator binds the pipe, the handler connects, delivers the URL, and exits. Curator
 has no `--nxm` arg and no cold-start branch; its startup is unaffected
 by the nxm plumbing, and the handler owns the entire cold-start orchestration.
 
-If the sibling Magos exe is missing, the handler logs to stderr and exits
+If the sibling Curator exe is missing, the handler logs to stderr and exits
 non-zero without retrying: there is nothing to retry against, and a headless
 handler never raises a desktop dialog. `UseShellExecute` stays `false` on both
 OSes (the handler launches the exe directly); `Process.Start` without
 `WaitForExit` already detaches, and `CreateNoWindow=true` on Windows keeps the
 secondary launch quiet.
 
-**Concurrent cold-start clicks** (two handlers race while Magos is closed):
-both launch Magos; single-instance enforcement means only the first Magos
-becomes primary; subsequent Magos instances exit. Each handler's retry loop
-eventually connects to whichever Magos won the bind. Self-resolving.
+**Concurrent cold-start clicks** (two handlers race while Curator is closed):
+both launch Curator; single-instance enforcement means only the first Curator
+becomes primary; subsequent Curator instances exit. Each handler's retry loop
+eventually connects to whichever Curator won the bind. Self-resolving.
 
 ## OS scheme-handler registration
 
@@ -146,13 +146,13 @@ selected by runtime OS at DI time (mirroring `IPlatformLaunchStrategy`,
 - **Windows** (`WindowsNxmHandlerRegistrar`) writes `HKCU\Software\Classes\nxm`
   (per-user, no elevation) with the handler exe as the `shell\open\command`.
 - **Linux** (`LinuxNxmHandlerRegistrar`) writes
-  `~/.local/share/applications/magos-nxm-handler.desktop` (the source of truth
+  `~/.local/share/applications/modificus-curator-nxm-handler.desktop` (the source of truth
   most desktops honor) with `Exec="<handler-exe>" %u` and
   `MimeType=x-scheme-handler/nxm;`, plus a best-effort `xdg-mime default`
   invocation. The `.desktop` file is still the registration if `xdg-mime` is
   absent; the failure is logged, not thrown.
 
-**Startup auto-registration.** On startup, `MagosComposition.Build()` calls
+**Startup auto-registration.** On startup, `CuratorComposition.Build()` calls
 `RegisterNxmHandler` after the IPC server starts, which calls `Register()` if
 `IsRegistered()` is false. This is the expected behavior for a mod manager
 (MO2, NMA, and Vortex all auto-register on startup). Best-effort: a
@@ -161,7 +161,7 @@ blocks startup (the app still runs; the user just cannot click-download from
 Nexus until it is resolved).
 
 The handler-exe path is derived from `AppContext.BaseDirectory` plus the fixed
-handler assembly name. The handler ships as a sibling of the main Magos exe.
+handler assembly name. The handler ships as a sibling of the main Curator exe.
 
 ## URL parsing and routing
 
@@ -174,7 +174,7 @@ returns `false` on malformed input. Three URL kinds, grounded against MO2's
   download" button on a Nexus Mods file page produces one.
 - **`NxmOAuthCallbackUrl`**: `nxm://oauth/callback?code=<code>&state=<state>`.
   Kept as a parsed type so the router can recognize the shape, then logged and
-  dropped. Magos OAuth uses loopback redirect (RFC 8252), not `nxm://`, so in
+  dropped. Curator OAuth uses loopback redirect (RFC 8252), not `nxm://`, so in
   normal operation no such URL is delivered over IPC (see
   [Nexus authentication](nexus-authentication.md)).
 - **`NxmCollectionUrl`**: `nxm://<game>/collections/<id>/revisions/<rev>`.
@@ -205,10 +205,10 @@ Integrations would create a dependency cycle. See
 
 ## See also
 
-- [nxm reference](../reference/magos-modificus/nxm.md): public surface, exact
+- [nxm reference](../reference/src/nxm.md): public surface, exact
   signatures, DI registration, testing.
 - [mod acquisition](mod-acquisition.md): the real handler that plugs into
   the mod-download seam shipped here.
 - [Nexus authentication](nexus-authentication.md): OAuth uses loopback, not the
   `nxm://` handler; the OAuth-callback URL kind is parsed and dropped.
-- [Magos Modificus architecture](MAGOS-MODIFICUS.md): the high-level tie-together.
+- [Modificus Curator architecture](MODIFICUS-CURATOR.md): the high-level tie-together.

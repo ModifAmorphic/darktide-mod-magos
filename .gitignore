@@ -82,10 +82,10 @@ _local/
 /launch.bat
 
 # Local mods directory (repo-root only). Anchored so it does NOT also ignore
-# magos-modificus/mods/ (the Mods library source).
+# src/mods/ (the Mods library source).
 /mods/
 
-## .NET / Magos Modificus
+## .NET / Modificus Curator
 ## Canonical .NET .gitignore from CommunityToolkit/dotnet
 ## (https://github.com/CommunityToolkit/dotnet/blob/main/.gitignore)
 ## Ignore Visual Studio temporary files, build results, and

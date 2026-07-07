@@ -1,0 +1,278 @@
+# Profiles (`Modificus.Curator.Profiles`) -- reference
+
+> Profile + per-profile mod-list management: the profile data model, its on-disk
+> persistence, and the projection of the mod list into a staged mod root
+> (symlinks to the repository's resolved version folders) + `mods.lst` for the
+> Enginseer runtime. Status: implemented (the unified mod repository replaced
+> the earlier shared-store + per-profile allocation model in #30; staging now
+> symlinks into the repository rather than copying).
+
+A profile owns its own mod list, mod settings, and load order. The profile's
+staged mod root is what Curator passes to the Enginseer launcher as `--mod-path`;
+Curator writes `mods.lst` into it on each launch. A profile references mods by
+their repository container id and stores no mod files of its own.
+
+## Public surface
+
+### `IProfileService`
+
+Profile lifecycle + per-profile mod-list management. All storage details (paths,
+version-folder resolution) stay behind the interface.
+
+```csharp
+public interface IProfileService
+{
+    event EventHandler<ProfileSummary>? ProfileCreated;
+
+    IReadOnlyList<ProfileSummary> ListProfiles();
+    Profile GetProfile(Guid id);
+    Profile CreateProfile(string name);
+    void RenameProfile(Guid id, string newName);
+    void DeleteProfile(Guid id);
+
+    IReadOnlyList<ModListEntry> GetModList(Guid id);
+    void SetModOrder(Guid id, IReadOnlyList<Guid> containerIdsInOrder);
+    void SetModEnabled(Guid id, Guid containerId, bool enabled);
+    void AddMod(Guid id, Guid containerId, ModVersionPolicy policy);
+    void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy);
+    void RemoveMod(Guid id, Guid containerId);
+
+    ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId);  // import-time hard-block
+
+    string PrepareModRoot(Guid id);
+}
+```
+
+Method behavior:
+
+- `ProfileCreated` -- raised whenever `CreateProfile` successfully persists a new
+  profile (carries the new profile's summary). The UI's `DmfPromptService`
+  subscribes so it can surface the DMF install prompt on a new active profile
+  missing DMF; subscribers that need to react to "a profile was just created"
+  use this rather than diffing `ListProfiles()`.
+- `ListProfiles()` -- every profile under `ProfilesBaseFolder`, as lightweight
+  summaries, sorted by `Name` (ordinal). Non-`Guid` directories and unreadable
+  profiles are skipped with a debug/warning log; one bad profile never breaks
+  listing.
+- `GetProfile(id)` -- loads the full profile (metadata + mod list). Throws
+  `KeyNotFoundException` if the profile dir or `profile.json` is absent. Legacy
+  mod entries lacking `ContainerId` are dropped on read +
+  logged (fresh-start; the operator re-adds mods).
+- `CreateProfile(name)` -- generates the `Guid`, scaffolds the directory tree
+  (`staged/`) **before** persisting an empty `profile.json` (so a crash between
+  the two never leaves a `profile.json` without its tree), and returns the new
+  profile. `name` must be non-whitespace. There is no per-profile `mods/`
+  directory (mods live in the repository).
+- `RenameProfile(id, newName)` -- display label only; the id and on-disk dir are
+  unchanged.
+- `DeleteProfile(id)` -- removes the entry and its entire directory tree
+  (recursive). Throws `KeyNotFoundException` if absent.
+- `GetModList(id)` -- the profile's mods in stored order, not load order.
+- `SetModOrder(id, containerIdsInOrder)` -- reassigns each entry's `Order` so the
+  listed containers come first; unmentioned mods keep their relative order
+  appended after; unknown ids are ignored. No mods are added or removed.
+- `SetModEnabled(id, containerId, enabled)` -- toggles a single mod. Throws
+  `KeyNotFoundException` if the profile or the container is not in its list.
+- `AddMod(id, containerId, policy)` -- appends a mod entry (`Enabled = true`) at
+  the end. **List entry only: does NOT fetch or install mod files** (the
+  repository holds the files; staging symlinks to them). Idempotent: re-adding a
+  `containerId` already in the list is a no-op (order/enabled/policy untouched).
+- `SetModPolicy(id, containerId, policy)` -- records the new policy. Resolution
+  happens at stage time, so there is no on-disk transition (the policy is just
+  metadata; `PrepareModRoot` re-resolves on the next launch). A `PinnedPolicy` is
+  validated: its `VersionId` must reference a version present on the container,
+  else `ArgumentException` (the UI dropdown can't produce a bad id; this guards
+  programmatic / stale-id calls). `LatestPolicy` needs no check.
+- `RemoveMod(id, containerId)` -- drops the entry. The repository copy is **not**
+  touched (other profiles may still reference it; the startup prune reclaims it
+  when no profile does).
+- `GetBaseNameCollision(id, baseName, excludeContainerId)`: pre-checks a
+  base-name collision for the add flow: returns the profile mod (if any) whose
+  resolved base folder name matches `baseName`, excluding
+  `excludeContainerId` (the container a re-add would dedup to, so a re-add is
+  not flagged). Considers **all** mods (enabled + disabled); a mod whose base
+  name can't be resolved (missing container/version, corrupted version folder)
+  is skipped silently. Pure query: no logging, no side effects. Throws
+  `KeyNotFoundException` for an unknown profile; `ArgumentException` for a
+  null/whitespace `baseName`. Used by the add flow to REFUSE an import that
+  would stage two mods under the same folder name.
+- `PrepareModRoot(id)` -- regenerates the staged mod root (the `--mod-path`) from
+  the current per-mod version resolution and writes `mods.lst`. Idempotent
+  (clears + rebuilds `staged/` each call). Returns the `--mod-path` to pass to
+  the Enginseer launcher. Throws `SymlinkStagingException` if a symlink cannot be
+  created (the manager never silently copies).
+
+### Key types
+
+- `ModListEntry` -- a single mod within a profile's list (immutable record):
+  `ContainerId` (Guid; the join key against `IModRepository`), `Enabled`
+  (disabled mods are omitted from `mods.lst`: enable-by-omission), `Order`
+  (`int`, lower loads first), `Policy` (default `ModVersionPolicy.Latest`;
+  drives version resolution). Mutations go through `IProfileService`, which
+  rebuilds the changed entry via `with` expressions and persists.
+- `Profile` -- the aggregate root persisted to
+  `<ProfilesBaseFolder>/<Id>/profile.json`. Identity is `Id` (a `Guid`, stable
+  across renames and the on-disk directory name); `Name` is a display label, not
+  unique, not a path. `CreatedAt` is UTC. `Mods` is exposed as an immutable
+  `IReadOnlyList<ModListEntry>`.
+- `ProfileSummary(Guid Id, string Name)` -- a lightweight projection for profile
+  pickers (no mod list loaded).
+- `SymlinkCreator` -- a `delegate` that creates a directory symlink
+  (`Directory.CreateSymbolicLink` by default). Injectable so tests exercise the
+  failure path without platform permission hacks.
+- `SymlinkStagingException` -- an `InvalidOperationException` thrown by
+  `PrepareModRoot` when a staged symlink cannot be created (typically Windows
+  without symlink permissions / Developer Mode). The staging layer never
+  silently copies.
+
+`ModVersionPolicy` (PinnedPolicy/LatestPolicy), `ModSource`, `ModContainer`, and
+`ModVersion` live in the [mods](mods.md) library; Profiles consumes
+them.
+
+### `IModOrderResolver` + `IdentityModOrderResolver`
+
+The auto-sort seam. The mod-list UI's auto-sort toggle resolves an order via
+this interface, then applies it through `IProfileService.SetModOrder`.
+
+```csharp
+public interface IModOrderResolver
+{
+    IReadOnlyList<Guid> ResolveOrder(IReadOnlyList<ModListEntry> mods);
+}
+
+public sealed class IdentityModOrderResolver : IModOrderResolver;   // identity stub
+```
+
+The current implementation is the **identity stub** (`IdentityModOrderResolver`):
+it returns container ids in their current `ModListEntry.Order` (a no-op). A real
+dependency-driven auto-sort algorithm is out of v1; this interface is the
+DI-swappable seam so the UI wires against the abstraction now.
+Pure + deterministic (stable on ties).
+
+### `ModCleanup` (static)
+
+Startup prune orchestration. Collects every `(containerId, versionFolder)`
+referenced by any profile (resolving each entry's policy against its container
+via `ModContainer.ResolveVersion`), then calls
+`IModRepository.PruneUnreferenced`. The composition root invokes it once after
+building the service provider; a failure is logged + swallowed so cleanup never
+blocks startup.
+
+```csharp
+public static class ModCleanup
+{
+    public static void PruneUnreferenced(IProfileService profiles, IModRepository repo);
+}
+```
+
+## DI registration
+
+```csharp
+public static IServiceCollection AddProfiles(this IServiceCollection services);
+```
+
+`AddProfiles()` registers:
+
+- `AddMods()` -- called defensively (idempotent) so a lone `AddProfiles()`
+  yields a resolvable `IProfileService`; the composition root also calls it.
+- `TryAddSingleton<SymlinkCreator>(_ => Directory.CreateSymbolicLink)` -- the BCL
+  default. `TryAdd` so a test may pre-register a throwing/fake delegate.
+- `TryAddSingleton<IModOrderResolver, IdentityModOrderResolver>()`: the auto-
+  sort identity stub. `TryAdd` so a test (or a real dependency-driven resolver)
+  may pre-register an override.
+- `AddSingleton<IProfileService, ProfileService>()` -- the filesystem-backed
+  implementation (internal). Resolves `CuratorConfig`, `IModRepository`,
+  `SymlinkCreator`, and `ILogger<ProfileService>` from the container.
+
+Registered as a singleton: it holds no per-request state, and `CuratorConfig` (its
+only config source) is itself a singleton.
+
+## On-disk layout
+
+```
+<ProfilesBaseFolder>/              (auto-created on first run)
+  <guid>/                          (profile dir; id-named)
+    profile.json                   (metadata + mod list - the source of truth)
+    staged/                        (the staged mod root = the --mod-path;
+                                     REGENERATED each launch - a projection)
+      <baseName>                   (symlink -> <versionFolder>/<baseName>/)
+      mods.lst                     (successfully-staged enabled mods, in order)
+```
+
+`profile.json` and `mods.lst` are UTF-8 without BOM. There is no per-profile
+`mods/` directory (mods live in the repository).
+
+### Staging (`PrepareModRoot`)
+
+Each enabled mod resolves its `ModVersionPolicy` against its container, then
+**discovers the base folder name on the fly** as the single subdirectory inside
+the resolved version folder (the import validation guarantees exactly one). The
+link + the `mods.lst` entry carry the **base name**, not the container's display
+name: mods bake their folder name into their code, so the link must carry the
+base name for the mod's hardcoded paths to resolve. The container `Name` is UI
+display only.
+
+- **LatestPolicy** → symlink `staged/<baseName>` → `<versionFolder>/<baseName>/`
+  where the version is the container's `IsLatest`.
+- **PinnedPolicy(vId)** → symlink `staged/<baseName>` → `<versionFolder>/<baseName>/`
+  where the version's `Folder == vId` (resolution by opaque version id, not by
+  tag).
+- **No match / corrupted** (container missing, no versions, no `IsLatest`, the
+  pinned version id is absent, the version folder is missing on disk, or it has
+  zero/multiple subdirs so no base name can be derived) → skipped with a warning
+  (no `staged/` entry, no `mods.lst` entry).
+
+Staging is a **simple loop**: base-name collisions are blocked at import time
+(`GetBaseNameCollision`), so staging never sees two mods with the same base
+folder name in normal use. No dedupe, no last-wins, no disambiguation.
+**Symlinks, never copies** -- the repository holds the files; `staged/` is a
+symlink projection. `mods.lst` lists exactly what got staged, in `Order`: no
+DMF-first enforcement, no auto-sort (those are higher-layer concerns).
+
+### Moving `IsLatest` requires zero profile-entry changes
+
+Because a profile references `(containerId, policy)` and resolves at stage time,
+flipping which version is `IsLatest` in the repository is a one-field manifest
+edit. Every profile with `LatestPolicy` on that container picks up the new
+version on the next `PrepareModRoot`; no profile entry changes.
+
+### Data safety -- `ClearStagedDir`
+
+`staged/` is cleared before each rebuild. The clear is **symlink-aware**: it
+removes each top-level entry as a link (never following it into the repository).
+A naive `Directory.Delete(staged, recursive: true)` could follow a directory
+symlink and delete repository mod files. The delete API is chosen to match the
+link's kind -- directory symlinks use `Directory.Delete` (the link only), file
+symlinks use `File.Delete` -- so it stays data-safe on both OSes.
+
+## Dependencies
+
+- **Curator libraries:** `config` (`CuratorConfig.ProfilesBaseFolder`), `mods`
+  (`IModRepository`, `ModContainer` / `ModVersion`, `ModVersionPolicy`). The
+  dependency direction is clean: Profiles depends on Mods (the repository
+  knows nothing of profiles).
+- **NuGet:** `Microsoft.Extensions.DependencyInjection.Abstractions`,
+  `Microsoft.Extensions.Logging.Abstractions`.
+
+## Testing
+
+`Modificus.Curator.Profiles.Tests` covers profile CRUD (`ProfileCrudTests`), mod
+list ordering/enable/policy + the base-name collision hard-block
+(`ModListTests`, including the legacy-Name-entry drop + null-Policy coercion +
+`GetBaseNameCollision` over all/none/disabled/excluded/corrupted cases),
+`PrepareModRoot` + symlink staging + the data-safe `ClearStagedDir`
+(`PrepareModRootTests`, `StagingTests`), and the `AddProfiles` DI wiring
+(including the `TryAdd` `SymlinkCreator` override).
+
+```sh
+dotnet test src/modificus-curator.sln -c Release
+```
+
+## See also
+
+- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md) -- the
+  [Profiles](../../architecture/MODIFICUS-CURATOR.md#profiles) +
+  [Mod repository](../../architecture/MODIFICUS-CURATOR.md#mod-repository) sections.
+- [mods](mods.md) -- the unified mod repository + version-policy model.
+- [enginseer-client](enginseer-client.md) -- the launch façade that consumes
+  `PrepareModRoot`.

@@ -1,0 +1,623 @@
+# UI (`Modificus.Curator.UI`): reference
+
+> The Avalonia 12 front end of Modificus Curator. Owns the shell, profile
+> management, the mod list, every dialog (Settings, Preferences,
+> Integrations, Manage profiles, import, discovery escape-hatch, progress),
+> global preferences (theme, font scale, language), the i18n infrastructure,
+> the DMF install-prompt coordinator, and the update-check runner. The UI
+> never touches the filesystem or the network directly; every data operation
+> flows through a backend library service.
+
+The UI is an executable (`OutputType=WinExe`), not a library: it is the
+composition root and the only project that constructs Avalonia windows. It
+exposes a small set of interfaces and types so its logic stays unit-testable
+and so backend libraries do not depend on it.
+
+## The profile session
+
+### `IProfileSession`
+
+The single authority for "which profile is active, can it change, and is the
+game running." Both the shell dropdown switch and the Manage-profiles
+dialog's create-sets-active route through the same gate.
+
+```csharp
+public interface IProfileSession : INotifyPropertyChanged
+{
+    Guid? ActiveProfileId { get; }
+    bool IsRunning { get; }
+    void RequestActive(Guid id);
+    bool CanDeleteProfile(Guid id);
+    void ReconcileActive();
+    void Refresh();
+}
+```
+
+- `ActiveProfileId`: the current active profile id, or null when none is
+  active. Persisted on every change. Raises `PropertyChanged` on assignment
+  (so the shell and the mod list reload on a switch).
+- `IsRunning`: whether Darktide is currently running. Live, refreshed by a
+  polling timer (~3 s, a cheap process scan). The status strip,
+  launch-availability, and the switch-block gate all read this. Raises
+  `PropertyChanged` on assignment.
+- `RequestActive(id)`: the sole active-change gate. Applied and persisted
+  only when the game is not running; otherwise a no-op (the active stays
+  put). Both the dropdown switch and the dialog's create-sets-active call
+  this. Rename and delete-of-active do not (rename leaves the id stable;
+  delete uses `ReconcileActive`).
+- `CanDeleteProfile(id)`: whether the profile `id` may be deleted right now.
+  False when `id` is the active id and the game is running; true otherwise.
+  The Manage-profiles dialog binds each row's trash button to this so the
+  active row's trash disables while the game runs.
+- `ReconcileActive()`: recovery after CRUD that may have removed the active
+  profile: if the current active id no longer exists in
+  `IProfileService.ListProfiles`, clears the active id (null) and persists.
+  A no-op when the active id is still present, or when no active is set
+  (first run / nothing chosen). Never auto-selects a remaining profile.
+- `Refresh()`: re-checks `IsRunning` against the running-state source right
+  now, rather than waiting for the next polling-timer tick. Used by callers
+  that just caused a state change (the shell after a successful launch) so
+  the indicator and launch-availability react immediately.
+
+### `ProfileSession`
+
+The production implementation. `ObservableObject` (CommunityToolkit.Mvvm) so
+`[ObservableProperty]` raises `PropertyChanged` for `ActiveProfileId` and
+`IsRunning`. Owns:
+
+- The active id, restored from `IAppStateStore` at startup (straight into
+  the backing field; no write-back, no subscribers yet). A stale id (deleted
+  while Curator was closed) resolves to no selection in the shell and is
+  cleaned up lazily on the next delete-of-active reconcile rather than
+  rewritten at startup. Persisted on every change via `OnActiveProfileIdChanged`.
+- The can-change gate (`RequestActive`).
+- The live running-state (a polling timer that calls `Refresh`).
+
+```csharp
+public sealed partial class ProfileSession : ObservableObject, IProfileSession
+{
+    public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+
+    public ProfileSession(
+        ISteamService steam,
+        IProfileService profiles,
+        IAppStateStore appState,
+        Action<Action>? startTimer = null);
+}
+```
+
+The polling timer is injected as a `startTimer` delegate so unit tests
+construct the session without a UI dispatcher and call `Refresh` directly for
+deterministic running-state changes. Production wires a `DispatcherTimer`
+(`CuratorComposition.StartRunningStatePolling`). The session's own logic (gate,
+persistence, fallback) has no time dependency and no Avalonia dependency.
+
+## Dialog service
+
+### `IDialogService`
+
+The application's UI-dialog abstraction. Keeps view models free of direct
+Avalonia `Window` construction so their logic stays unit-testable: a view
+model depends on this seam, and tests inject a recording fake instead of a
+real window. The production `DialogService` owns every real `Window` and
+`ShowDialog` wiring.
+
+```csharp
+public interface IDialogService
+{
+    Task<bool> ConfirmAsync(string title, string message);
+    Task ShowManageProfilesAsync();
+    Task ShowPreferencesAsync();
+    Task<ImportModResult?> ShowImportModAsync(ImportModRequest request);
+    Task ShowSettingsAsync();
+    Task ShowIntegrationsAsync();
+    Task<bool> ShowDiscoveryEscapeHatchAsync(IReadOnlyList<string> missingFields);
+    Task ShowAlertAsync(string title, string message);
+    Task<T> ShowProgressAsync<T>(string title, string message, Func<Task<T>> work);
+}
+```
+
+- `ConfirmAsync(title, message)`: a modal confirmation. Returns true when
+  the user confirms, false otherwise (cancel / dismiss). Gates destructive
+  actions (profile delete, mod remove, the DMF download prompt).
+- `ShowManageProfilesAsync()`: the Manage-profiles modal (create / rename /
+  delete). Active changes are applied live through `IProfileSession` during
+  the dialog's session, so on completion the session already reflects
+  whatever the gate allowed. The caller refreshes its profile-list snapshot
+  on completion.
+- `ShowPreferencesAsync()`: the Preferences modal (theme / font scale /
+  language). Each change applies immediately through `IPreferencesService`
+  (which also persists), so on completion the running app and the persisted
+  config already reflect the user's choices.
+- `ShowImportModAsync(request)`: the per-mod import modal (source chooser,
+  conditional Version and URL), pre-filled from `request`. Returns the
+  confirmed `ImportModResult` (URL parsed to canonical source) when the user
+  confirms, or null when they cancel / dismiss. The mod-list add flow calls
+  this once per imported path (sequentially); a null cancels the remaining
+  batch.
+- `ShowSettingsAsync()`: the Settings modal (discovery paths + mod-repo
+  location). Each setting applies and persists immediately. On completion
+  the caller reloads the mod list so a Settings relocate's rescan is
+  reflected in the rows.
+- `ShowIntegrationsAsync()`: the Integrations modal (Nexus auth: OAuth
+  login, API-key validate, sign-out). Nexus-only in v1; GitHub stays
+  config-file-only. Each auth action applies and persists immediately
+  through `NexusAuthService`.
+- `ShowDiscoveryEscapeHatchAsync(missingFields)`: the discovery escape-hatch
+  modal, focused on the missing discovery fields the launch reported. Inputs
+  are shown only for the fields in `missingFields`. Returns true when the
+  user submitted (the entered paths are now persisted), false when they
+  cancelled (no writes). No auto-retry: the caller does not re-launch on a
+  true return; the user clicks Launch again.
+- `ShowAlertAsync(title, message)`: a simple modal alert (a single OK
+  button, no cancel). Used to surface a launch `Error`, a download failure,
+  or the DMF informational case where there is nothing for the user to
+  decide, only acknowledge.
+- `ShowProgressAsync<T>(title, message, work)`: a buttonless, non-closeable
+  modal spinner over the supplied async work. The user cannot dismiss the
+  spinner: the work runs to completion and the caller surfaces its result.
+  The work's exception (if any) propagates to the caller; the spinner is
+  closed in either case. Used for the DMF in-app download.
+
+### Import-modal payload types
+
+```csharp
+public sealed record ImportModRequest
+{
+    public string ModName { get; set; }    // pre-filled; two-way bound so the
+                                           // user's rename-at-import flows back
+    public string SourcePath { get; set; } // absolute path to a folder OR .zip
+
+    public ImportModRequest(string modName, string sourcePath);
+}
+
+public sealed record ImportModResult(
+    ModSource Source,           // parsed canonical source (URL resolved to identity)
+    string Version,             // raw release tag; string.Empty for untracked
+    ModVersionPolicy Policy);   // Latest (default) or Pinned (carries an empty
+                                // VersionId here; the add flow substitutes the
+                                // id returned by IModImportService.Import)
+```
+
+`ModSource`, `ModVersionPolicy`, and `LatestPolicy` / `PinnedPolicy` live in
+the [mods](mods.md) library; the UI consumes them.
+
+## Preferences service
+
+### `IPreferencesService`
+
+The single authority for applying user-facing preferences (theme, font scale,
+language) to the running app and persisting them to `CuratorConfig`.
+
+```csharp
+public interface IPreferencesService
+{
+    void ApplyAndPersist(ThemeMode theme, double fontScale, string language);
+}
+```
+
+`ApplyAndPersist` applies the theme via `Application.RequestedThemeVariant`,
+the font scale via application-level `AppFontSize` + `AppStatusFontSize`
+resources (cascading to all controls through inheritance and `DynamicResource`),
+and the language via `LocalizationService.SetCulture`. It then persists all
+three to the config file via a read-modify-save through `IConfigLoader`. Safe
+to call at startup (the values may match the loaded config, which is a
+no-op apply).
+
+`ThemeMode` and `PreferencesConfig` live in the [config](config.md) library.
+
+### `PreferencesService`
+
+```csharp
+public sealed class PreferencesService : IPreferencesService
+{
+    public const double BaseFontSize = 14.0;        // AppFontSize base, px
+    public const double BaseStatusFontSize = 12.0;  // AppStatusFontSize base, px
+}
+```
+
+The font scale is applied as `BaseFontSize * scale` (and
+`BaseStatusFontSize * scale`). The `AppFontSize` resource is read by the
+Window style in `App.axaml` (`Window.FontSize` binds to it via
+`DynamicResource`), so all open windows and their inheriting children
+re-resolve when the resource changes; `MainWindow`'s status `TextBlock` binds
+to `AppStatusFontSize`. Both use the same scale so the status strip grows
+with the body. A non-finite or non-positive scale falls back to 1.0.
+
+## Localization
+
+### `LocalizationService`
+
+The single authority for resolving localized strings at runtime. A singleton
+(registered in DI) that holds the current UI culture, exposes a string
+indexer used by every XAML binding, and raises `PropertyChanged` so bindings
+refresh live when the culture changes.
+
+```csharp
+public sealed class LocalizationService : INotifyPropertyChanged
+{
+    public LocalizationService();   // over "Modificus.Curator.UI.Resources.Strings"
+
+    CultureInfo Culture { get; set; }      // assigning raises PropertyChanged for
+                                           // "Item[]" + "Culture"
+    void SetCulture(string name);          // empty / unknown -> invariant
+
+    string this[string key] { get; }       // missing key -> the key itself
+    string Format(string key, params object[] args);  // string.Format(culture, ...)
+}
+```
+
+- `Culture`: the current UI culture. Assigning a different culture raises
+  `PropertyChanged` for `"Item[]"` (the indexer wildcard, so every
+  `{Binding [Key], Source={StaticResource Loc}}` re-evaluates and the whole
+  UI refreshes) and for `Culture` itself. Unknown or null names keep the
+  current culture (graceful: a missing translation file does not crash the
+  UI).
+- `SetCulture(name)`: sets the culture by name (e.g. `"en"`, `"fr"`). An
+  empty or unknown name resolves to `CultureInfo.InvariantCulture` (the
+  neutral resx). A name that parses but matches the current culture is a
+  no-op.
+- `this[key]`: resolves `key` for the current culture via the
+  `ResourceManager`. A missing key returns the key itself (visible, never
+  throws).
+- `Format(key, args)`: resolves `key` for the current culture and applies
+  `string.Format(IFormatProvider, string, object[])` with the supplied args
+  (using the current culture for any number or date formatting). Used for
+  parameterized messages (e.g. the delete confirmation: `"Delete profile
+  {0}?…"`).
+
+The service holds its own culture and resolves strings with it directly. It
+does not mutate the thread's `CurrentUICulture` (avoiding surprising global
+side effects); only the UI text follows the chosen language. The neutral
+`Strings.resx` lives at `src/ui/Resources/Strings.resx` under
+the default namespace `Modificus.Curator.UI`.
+
+`App.OnFrameworkInitializationCompleted` swaps the XAML resource placeholder
+for the real DI singleton (`Resources["Loc"] = localization`), so every
+view's `{Binding [Key], Source={StaticResource Loc}}` resolves through the
+live service. The XAML uses `{ReflectionBinding [Key], Source=...}` rather
+than a compiled binding because the indexer-based dynamic-language path is
+not expressible as a compiled binding.
+
+## The DMF prompt coordinator
+
+### `DmfPromptService`
+
+The DMF (Darktide Mod Framework, Nexus mod 8) install-prompt coordinator.
+Records triggers from `IProfileService.ProfileCreated` and
+`INexusAuthService.AuthStateChanged` (both fire from inside the
+Manage-profiles and Integrations dialogs) and processes them when the shell
+calls `ProcessPendingAsync` after the triggering dialog closes, so the DMF
+prompt is the topmost modal at that point (no dialog-on-dialog).
+
+```csharp
+public sealed class DmfPromptService
+{
+    public const int DmfModId = 8;     // Nexus mod id of Darktide Mod Framework
+
+    public DmfPromptService(
+        IProfileService profiles,
+        IProfileSession session,
+        IModRepository repo,
+        IModAcquisitionService acquisition,
+        INexusAuthService auth,
+        IConfigLoader configLoader,
+        IDialogService dialogs,
+        LocalizationService localization,
+        ILogger<DmfPromptService> logger,
+        Func<Uri, bool>? launchExternal = null);
+
+    public Task ProcessPendingAsync();
+}
+```
+
+- `DmfModId`: the Nexus mod id of Darktide Mod Framework (8). DMF is
+  required for most Darktide mods; the prompt offers to install it when
+  missing.
+- `ProcessPendingAsync()`: processes any pending triggers, in the order they
+  would naturally surface (new-profile before auth). Called by the shell
+  after the Manage-profiles and Integrations dialogs close. Safe to call when
+  nothing is pending (a no-op). Each trigger is consumed (cleared) before it
+  is processed so an exception in one prompt does not leave it stuck pending
+  for the next call; each prompt is wrapped in a try/catch that logs and
+  swallows non-cancellation exceptions.
+
+### Triggers + cases
+
+Two triggers fire when DMF is not in the active profile:
+
+1. **New profile becomes active** (a fresh ask per profile; no persisted
+   flag). A profile created while Darktide runs does not become active (the
+   session gates it), so no prompt fires in that case.
+2. **First Nexus auth `None` to configured transition** (gated by the
+   persisted `CuratorConfig.Nexus.DmfAuthPromptShown` flag so it fires once
+   ever; subsequent auth changes do not re-prompt).
+
+Three cases on a trigger:
+
+1. DMF in the repo but not in the profile: a Yes/No confirm. On Yes,
+   `IProfileService.AddMod` adds it instantly.
+2. DMF not in the repo plus auth configured: a Yes/No confirm. On Yes,
+   premium users get the in-app API download under a modal spinner (via
+   `IDialogService.ShowProgressAsync` plus
+   `IModAcquisitionService.AcquireLatestNexusAsync`); non-premium users (or
+   unknown premium state) get their browser opened at DMF's Nexus files page
+   (`https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files`) via
+   the OS shell-open (`UseShellExecute = true`). The user clicks Download on
+   the page and the existing `nxm://` handler picks up the URL.
+3. DMF not in the repo plus auth not configured: an informational OK-only
+   alert. Only reachable from the new-profile trigger.
+
+The auth-trigger flag is flipped after the prompt fires (accepted, declined,
+or informational). The new-profile trigger has no flag.
+
+`launchExternal` is injectable so tests exercise the browser-open failure
+path without launching a real browser. The default uses `Process.Start` with
+`UseShellExecute = true`; the exception filter is narrow
+(`Win32Exception`, `PlatformNotSupportedException`,
+`FileNotFoundException`) so a real wiring bug is not silently swallowed.
+
+## The update check runner
+
+### `UpdateCheckRunner`
+
+The UI-layer glue between `IProfileSession` (the active-profile authority)
+and `IUpdateCheckService` (the Integrations update check). The check itself
+is backend-only; this runner owns when the UI fires it.
+
+```csharp
+public sealed class UpdateCheckRunner
+{
+    public static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(1);
+
+    public UpdateCheckRunner(
+        IProfileSession session,
+        IUpdateCheckService updateCheck,
+        IConfigLoader configLoader,
+        ILogger<UpdateCheckRunner> logger,
+        Action<Action>? startTimer = null,
+        Func<DateTimeOffset>? getNow = null);
+
+    public void Start();
+    public Task CheckNowAsync();
+}
+```
+
+- `TickInterval`: the periodic timer's fixed tick granularity (1 minute).
+  The user-configured interval
+  (`CuratorConfig.Nexus.AutoUpdateCheckIntervalMinutes`) is honored to this
+  granularity: the runner fires when that much time has elapsed since the
+  last check, checked on each tick.
+- `Start()`: subscribes to the session's active-profile changes, starts the
+  periodic tick, and fires an opening check if a profile was already
+  restored at startup. Called once from the composition root after the
+  provider is built (best-effort: failures are logged and swallowed, never
+  blocking startup).
+- `CheckNowAsync()`: the manual "check now" trigger (the mod-list header
+  refresh button). Fires an immediate thorough check for the active profile
+  (`IUpdateCheckService.CheckThoroughAsync`, the per-mod pass that also
+  catches mods outside the Month window). Awaitable so the caller (the list
+  VM's `CheckForUpdatesNow` command) can drive an `IsCheckingNow` affordance
+  while it runs. No-op (returns `Task.CompletedTask`) when no profile is
+  active. Resets the periodic clock.
+
+The four triggers:
+
+| Trigger | Check shape | Awaited? | Gated? |
+| --- | --- | --- | --- |
+| Startup (restored active id) | Month-only `CheckAsync` | no (fire-and-forget) | no |
+| Active-profile switch | Month-only `CheckAsync` | no (fire-and-forget) | no |
+| Periodic timer | Month-only `CheckAsync` | no (fire-and-forget) | yes (`AutoUpdateCheckEnabled` + interval) |
+| Manual "check now" | Thorough `CheckThoroughAsync` | yes (caller drives spinner) | no |
+
+The periodic timer is the only gated trigger. Profile-load (startup plus
+switch) and `CheckNowAsync` always fire regardless of the toggle; only the
+periodic timer respects it. The toggle and interval are read live on each
+tick so a runtime change in the Integrations dialog takes effect without a
+restart. The last-check timestamp is shared across every trigger, so a
+manual or profile-load check resets the periodic clock (no double-fire
+right after a switch).
+
+The runner never blocks on a check beyond the await the manual trigger opts
+into, never surfaces its result (the mod list reads
+`IUpdateCheckService.LastResult` and subscribes to `CheckCompleted`), and
+never lets an unobserved exception escape the threadpool task. A
+fire-and-forget `Task` whose only awaited operation throws must not surface
+that as an unobserved exception; `OperationCanceledException` is swallowed
+silently, anything else is logged.
+
+The timer and the clock are injected (`startTimer`, `getNow`) so tests drive
+time deterministically. Production wires a `DispatcherTimer` and
+`DateTimeOffset.UtcNow`. The runner lives in the UI assembly (mirrors
+`NxmModDownloadHandler`): it observes a UI-layer singleton
+(`IProfileSession`) and drives an Integrations service, so it belongs on the
+consumer side of that boundary.
+
+## Converters
+
+### `BoolAllConverter`
+
+A multi-value converter that ANDs every bound value (treating non-bool, null,
+and `AvaloniaProperty.UnsetValue` values as false). A `MarkupExtension` so it
+can be used as `{Converters:BoolAllConverter}` in AXAML; a stateless shared
+instance is exposed as `Instance`.
+
+```csharp
+public class BoolAllConverter : MarkupExtension, IMultiValueConverter
+{
+    public object Convert(IList<object?> values, Type targetType, object? parameter, CultureInfo culture);
+    public override object ProvideValue(IServiceProvider serviceProvider) => Instance;
+    public static readonly BoolAllConverter Instance = new();
+}
+```
+
+Used for the per-row Update button's `IsVisible`, which combines list-level
+state (the parent `ModListViewModel.IsPremiumUser`) with row-level state
+(`CanShowUpdateButton`, itself the conjunction of `IsNexusLatest`,
+`UpdateAvailable`, and `!IsUpdating`): a single Avalonia compiled binding
+cannot express a cross-VM conjunction through an `ItemsControl` row
+`DataTemplate`, so the view binds all the inputs to a `MultiBinding` over
+this converter. A bound false short-circuits the result to false; a non-bool
+binding result (null, `UnsetValue`, or any non-bool) also returns false so a
+failed binding collapses the button rather than showing it spuriously. The
+button's `IsEnabled` binds directly to the parent's pre-computed
+`IsUpdateEnabled` (a single `ReflectionBinding`, not a `MultiBinding`).
+
+## DI registration
+
+The composition root is `src/ui/CuratorComposition.cs` (a static
+`Build()` that returns the application `IServiceProvider`). It runs: config
+load, logger build, every backend `Add<Library>()` extension, then the UI
+surface, then the startup prune, startup discovery, the nxm IPC server bind,
+the OS scheme-handler registration, and the update-check runner start. The
+UI registers its own surface after the backend libraries:
+
+```csharp
+// Singletons: one shell, one list, one dialog service, one session.
+services.AddSingleton<IProfileSession>(sp => new ProfileSession(
+    sp.GetRequiredService<ISteamService>(),
+    sp.GetRequiredService<IProfileService>(),
+    sp.GetRequiredService<IAppStateStore>(),
+    StartRunningStatePolling));                 // DispatcherTimer, 3s
+services.AddSingleton<LocalizationService>();
+services.AddSingleton<IPreferencesService, PreferencesService>();
+services.AddSingleton<MainWindow>();
+services.AddSingleton<Action<Action>>(_ => action => Dispatcher.UIThread.Post(action));
+services.AddSingleton<ModListViewModel>();
+services.AddSingleton<ShellViewModel>();
+services.AddSingleton<IDialogService>(sp => new DialogService(/* … */));
+services.AddSingleton(sp => new UpdateCheckRunner(/* … */, StartUpdateCheckPolling));
+services.AddSingleton<DmfPromptService>();
+```
+
+Key wiring notes:
+
+- `IProfileSession` is registered with a factory that injects the polling
+  timer (`StartRunningStatePolling` constructs a `DispatcherTimer` at
+  `ProfileSession.PollInterval`). The session is shared by the shell, the
+  Manage-profiles dialog, the update-check runner, and the DMF prompt
+  coordinator.
+- `MainWindow` is a singleton: the desktop lifetime installs the resolved
+  instance as `desktop.MainWindow`, and `DialogService` resolves the same
+  instance as the owner for modal dialogs.
+- `Action<Action>` is registered as a factory that posts to
+  `Dispatcher.UIThread`. `ModListViewModel` injects it as its `invokeOnUi`
+  seam so the `CheckCompleted` handler (which fires on a threadpool thread)
+  marshals its `Mods` collection iteration to the UI thread.
+- `INxmModDownloadHandler` is registered AFTER `AddNxm()` with a factory
+  that resolves its dependencies lazily at first use (the handler is first
+  resolved by the IPC router, by which point all dependencies are
+  registered). MS DI resolves the last registration for an interface, so
+  this supersedes the no-op default registered inside `AddNxm()`. See
+  [nxm reference](nxm.md) + [mod acquisition](../../architecture/mod-acquisition.md).
+- `UpdateCheckRunner.Start()` is called after the provider is built
+  (best-effort; a wiring failure is logged and swallowed, never blocks
+  startup).
+
+`App.OnFrameworkInitializationCompleted` runs `CuratorComposition.Build()`,
+applies the user's preferences before any window shows (so the first paint
+already reflects them), swaps the XAML resource placeholder for the real
+`LocalizationService` singleton, installs the resolved `MainWindow` as the
+desktop lifetime's main window, and sets its `DataContext` to the resolved
+`ShellViewModel`. A `NxmSingleInstanceException` from `Build()` (single
+instance violation) propagates out; `App` catches it and calls
+`Environment.Exit(1)` before any window shows.
+
+## Dependencies
+
+- **Curator libraries:** `config` (`CuratorConfig`, `PreferencesConfig`,
+  `ThemeMode`, `NexusConfig`, `DiscoveryConfig`), `general` (`IConfigLoader`,
+  `IAppStateStore`, `LoggingBootstrap`), `profiles` (`IProfileService`,
+  `ProfileSummary`, `ModListEntry`, `IModOrderResolver`), `mods`
+  (`IModRepository`, `IModImportService`, `ModContainer`, `ModVersion`,
+  `ModVersionPolicy`, `ModSource`, `NexusSource`, `GitHubSource`,
+  `UntrackedSource`), `integrations` (`INexusAuthService`,
+  `IModAcquisitionService`, `IUpdateCheckService`, `UpdateCheckResult`,
+  `ModUpdateInfo`), `steam` (`ISteamService`), `enginseer-client`
+  (`IEnginseerLaunchService`, `LaunchResult`, `LaunchStatus`), `nxm`
+  (`INxmModDownloadHandler`, `NxmSingleInstanceException`, `NxmIpcServer`,
+  `INxmHandlerRegistrar`), `launcher` (the stub).
+- **NuGet:** `Avalonia` 12.0.5 + `Avalonia.Desktop` 12.0.5 +
+  `Avalonia.Themes.Fluent` 12.0.5 (the UI framework), `CommunityToolkit.Mvvm`
+  8.4.2 (`ObservableObject`, `[ObservableProperty]`, `[RelayCommand]`),
+  `Microsoft.Extensions.DependencyInjection` 10.0.9,
+  `Microsoft.Extensions.Logging` 10.0.9.
+- **BCL otherwise:** `System.Resources.ResourceManager` (the i18n lookup),
+  `System.Globalization.CultureInfo`, `Avalonia.Threading.DispatcherTimer`
+  (the polling timers), `Avalonia.Styling.ThemeVariant` (the theme) all
+  in-box on net10.0.
+
+The UI references every backend library because it is the composition root.
+No backend library references the UI (the dependency direction is one-way).
+
+## Testing
+
+`Modificus.Curator.UI.Tests` covers:
+
+- **`ShellViewModelTests`**: profile CRUD and switch, active-profile
+  persist, switch-blocked-while-running, the launch result branches
+  (Launched / DiscoveryIncomplete / Error), the `_syncing` guard against
+  spurious dropdown events, and the post-dialog DMF prompt path.
+- **`ProfileSessionTests`**: the gate (RequestActive applies only when not
+  running), persistence, `CanDeleteProfile`, `ReconcileActive` (delete of
+  active clears to null; never auto-selects), `Refresh`.
+- **`ManageProfilesViewModelTests`**: the create / rename / delete dialog
+  view model (via an injectable `IDialogService` seam).
+- **`ModListViewModelTests`**: enable / disable, reorder, per-mod policy,
+  remove (with confirm), auto-sort (identity stub), the add flow (peek,
+  collision hard-block, import, add-mod), `CheckCompleted` per-row state,
+  `UpdateCommand` success / failure / one-at-a-time / premium gating,
+  `CheckForUpdatesNow`, `IsRateLimited` / `IsRecentOnly` /
+  `ShowRecentOnlyNotice` precedence.
+- **`PreferencesViewModelTests`** + **`PreferencesServiceTests`**: the
+  Preferences dialog view model and the service that applies theme / font
+  scale / language and persists.
+- **`LocalizationServiceTests`**: the indexer, `Format`, `SetCulture`
+  (unknown name -> invariant), the `Item[]` event that refreshes every
+  indexer binding.
+- **`SettingsViewModelTests`**: the Settings dialog (discovery overrides +
+  mod-repo relocation).
+- **`ImportModViewModelTests`**: the per-mod import modal (URL parsing,
+  version field, name edit).
+- **`DiscoveryEscapeHatchViewModelTests`**: the focused escape-hatch form
+  (only the missing fields shown).
+- **`IntegrationsViewModelTests`**: the Integrations dialog (OAuth login,
+  API-key validate, sign-out) + the running-state gate (auth controls
+  disable while Darktide runs).
+- **`UpdateCheckRunnerTests`**: the four triggers (startup restore,
+  active-switch, periodic timer with the live toggle + interval, manual
+  CheckNowAsync), the periodic-clock reset, the unobserved-exception safety,
+  the thorough vs Month-only check selection.
+- **`DmfPromptServiceTests`**: the three DMF cases, the new-profile and
+  auth-configured triggers, the ask-once auth flag, the decline path, and
+  the dialog-on-dialog avoidance (the prompt fires from the shell after the
+  triggering dialog closes).
+- **`NxmModDownloadHandlerTests`**: the auth + active-profile gates, the
+  acquire / register / refresh flow, the error wiring (alert on failure),
+  the UI-thread marshaling seam.
+
+The internal `NxmModDownloadHandler` implementation is visible to the test
+assembly via `InternalsVisibleTo` (the handler is constructed by the
+composition root via a factory; tests construct it directly with a
+pass-through UI-thread seam).
+
+```sh
+dotnet test src/modificus-curator.sln -c Release
+```
+
+## See also
+
+- [UI architecture](../../architecture/ui-architecture.md): the shell
+  layout, the profile session, the mod list, the update UI, the DMF prompt,
+  and the dialog / preferences / i18n design.
+- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md): the
+  high-level tie-together (component model, the Enginseer contract Curator
+  consumes, profiles, launch).
+- [integrations](integrations.md): the `INexusAuthService`,
+  `IModAcquisitionService`, and `IUpdateCheckService` the UI consumes.
+- [profiles](profiles.md): `IProfileService`, `IModOrderResolver`, and the
+  profile / mod-list model the UI drives.
+- [mods](mods.md): `IModRepository`, `IModImportService`, and the
+  source / version-policy model the UI reads.
+- [config](config.md): `CuratorConfig`, `PreferencesConfig`, `ThemeMode`,
+  `NexusConfig`.

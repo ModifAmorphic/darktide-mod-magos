@@ -1,6 +1,6 @@
-# darktide-mod-magos
+# Modificus Curator
 
-**Magos** is a mod manager for **Warhammer 40,000: Darktide**. It launches the
+**Modificus Curator** is a mod manager for **Warhammer 40,000: Darktide**. It launches the
 game modded via the
 [Enginseer runtime](https://github.com/ModifAmorphic/darktide-enginseer) (DLL
 injection: no files in the game directory, no bundle-database patching) and
@@ -9,24 +9,24 @@ unmodified).
 
 ## Components
 
-- **Magos Modificus** (this repo): the mod manager app (UI, staging, load order,
+- **Modificus Curator** (this repo): the mod manager app (UI, staging, load order,
   profiles, dependency resolution, mod-source integrations). The backend
   libraries (Profiles, Mods, Steam, Integrations, Enginseer-client, General) and
   the UI (the app shell + profile management, global Preferences, the mod-list
   UI, the Launch flow + Settings window) are in place. The app is user-usable.
   The Launcher is a stub. See
-  [`magos-modificus/README.md`](magos-modificus/README.md) for developer/build
+  [`src/README.md`](src/README.md) for developer/build
   details.
 - **Enginseer runtime** (separate repo):
   [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer): the
   injected modding runtime + its launcher (including the mod loader that loads
-  DMF + user mods). Magos consumes its launcher.
+  DMF + user mods). Curator consumes its launcher.
 
 ## Status
 
-Magos Modificus is **pre-release**. The app is not distributed yet; to try it,
+Modificus Curator is **pre-release**. The app is not distributed yet; to try it,
 build it from source (see
-[`magos-modificus/README.md`](magos-modificus/README.md)). Runtime artifacts
+[`src/README.md`](src/README.md)). Runtime artifacts
 (launcher, shell DLL, mod loader) come from the
 [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer) repo.
 

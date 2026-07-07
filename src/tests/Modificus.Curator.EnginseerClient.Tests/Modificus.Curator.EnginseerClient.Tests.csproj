@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!--
+      Dual-purpose project: `dotnet test` runs the xUnit suite via the VSTest
+      adapter (which does not touch Main), and `dotnet run` with the launch flag
+      runs the launch smoke-test harness in Program.cs against the user's real
+      Steam/Darktide setup. OutputType=Exe gives `dotnet run` an entry point;
+      GenerateProgramFile=false stops the SDK from emitting its own Program.cs
+      so the harness Main is the sole entry point.
+    -->
+    <OutputType>Exe</OutputType>
+    <GenerateProgramFile>false</GenerateProgramFile>
+    <RootNamespace>Modificus.Curator.EnginseerClient.Tests</RootNamespace>
+    <AssemblyName>Modificus.Curator.EnginseerClient.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="10.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.9" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Library under test. -->
+    <ProjectReference Include="..\..\enginseer-client\Modificus.Curator.EnginseerClient.csproj" />
+    <!--
+      The harness composes the REAL services (config + profiles + steam +
+      general) to validate an actual launch against the user's setup. The unit
+      tests only need the library under test (transitive refs cover the rest),
+      but explicit refs keep the harness composition legible.
+    -->
+    <ProjectReference Include="..\..\config\Modificus.Curator.Config.csproj" />
+    <ProjectReference Include="..\..\profiles\Modificus.Curator.Profiles.csproj" />
+    <ProjectReference Include="..\..\steam\Modificus.Curator.Steam.csproj" />
+    <ProjectReference Include="..\..\general\Modificus.Curator.General.csproj" />
+  </ItemGroup>
+
+</Project>

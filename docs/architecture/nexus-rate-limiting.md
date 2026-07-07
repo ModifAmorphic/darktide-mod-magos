@@ -1,7 +1,7 @@
 # Nexus API rate limiting
 
-Magos Modificus talks to the Nexus Mods v1 REST API under a per-user rate
-budget. This doc explains how Nexus's quota works, what Magos does to observe
+Modificus Curator talks to the Nexus Mods v1 REST API under a per-user rate
+budget. This doc explains how Nexus's quota works, what Curator does to observe
 and react to it today, what it deliberately does not do, and the call patterns
 that consume the budget.
 
@@ -19,17 +19,17 @@ response in the `x-rl-*` headers (`x-rl-daily-limit`, `x-rl-daily-remaining`,
 `x-rl-daily-reset`, and the matching `x-rl-hourly-*` trio). The standard
 free-tier limits are 2000/hour and 20000/day (per Nexus's
 [rate-limit help article](https://help.nexusmods.com/article/105-i-have-reached-a-daily-or-hourly-limit-api-requests-have-been-consumed-rate-limit-exceeded-what-does-this-mean));
-premium accounts get higher limits. Magos does not hardcode these numbers. It
+premium accounts get higher limits. Curator does not hardcode these numbers. It
 reads them from the headers.
 
-**The budget is the user's, not Magos's.** The same daily and hourly quota is
+**The budget is the user's, not Curator's.** The same daily and hourly quota is
 shared across everything the user has hitting the Nexus API on their key:
-Vortex, MO2, the Nexus Mod App, browser sessions, and Magos. The API does not
-break the budget down per client, so Magos cannot know how much of the reported
-"remaining" is theoretically its own. A rate-limit hit reported to Magos may
-reflect consumption by another tool the user is running, not by Magos.
+Vortex, MO2, the Nexus Mod App, browser sessions, and Curator. The API does not
+break the budget down per client, so Curator cannot know how much of the reported
+"remaining" is theoretically its own. A rate-limit hit reported to Curator may
+reflect consumption by another tool the user is running, not by Curator.
 
-## How Magos observes
+## How Curator observes
 
 Every Nexus API call goes through `NexusClient.SendAsync`, which:
 
@@ -46,7 +46,7 @@ Every Nexus API call goes through `NexusClient.SendAsync`, which:
 There is no persistent record of the limits across calls. Each response's limits
 are used by the immediate caller, or discarded once the response is consumed.
 
-## How Magos reacts
+## How Curator reacts
 
 Two reactive paths. Both run after the call has already been made and consumed a
 unit.
@@ -77,30 +77,30 @@ flag to show "check incomplete."
 Both paths react only after the call has consumed a unit or hit the wall.
 Nothing anticipates the wall.
 
-## What Magos does not do
+## What Curator does not do
 
 Stated plainly, because the gaps matter as much as the handling:
 
 - **No proactive back-off.** No operation checks the last-known remaining before
   making a call. The update check fires `ModUpdatesAsync` even if the previous
   response showed remaining at 5.
-- **No low-remaining reaction.** Magos reacts at zero (the update-check flag)
+- **No low-remaining reaction.** Curator reacts at zero (the update-check flag)
   and at the hard wall (the exception). "Low but not zero" gets no throttle, no
   skip, no warning.
 - **No cross-call budget tracking.** Remaining is observed per-response and
   discarded once the caller consumes it. There is no running "what is our
   remaining right now" state across operations, so nothing can reason about the
   budget between calls.
-- **No shared-quota awareness.** Magos cannot tell how much of the reported
+- **No shared-quota awareness.** Curator cannot tell how much of the reported
   remaining is theoretically its own (the API does not break it down per
   client), and it does not surface the shared-budget framing to the user. A
-  rate-limit hit reads to the user as "Magos failed," not "the user's overall
+  rate-limit hit reads to the user as "Curator failed," not "the user's overall
   Nexus budget is exhausted across tools."
 - **No retry/backoff on the hard wall.** A `NexusRateLimitException` propagates
-  as a terminal error for the operation; Magos does not wait for the reset
+  as a terminal error for the operation; Curator does not wait for the reset
   window and retry.
 
-Net: Magos observes the rate window on every call and reacts to the wall, but it
+Net: Curator observes the rate window on every call and reacts to the wall, but it
 does not actively manage the budget or avoid the wall.
 
 ## What consumes the budget
@@ -127,7 +127,7 @@ essentially all user-initiated. The update check is the only automatic
 
 ## See also
 
-- [integrations reference](../reference/magos-modificus/integrations.md): the
+- [integrations reference](../reference/src/integrations.md): the
   `INexusClient` surface, the `Response<T>` and `NexusRateLimits` types, and the
   typed `NexusRateLimitException`.
 - [Nexus authentication](nexus-authentication.md): the API-key and OAuth auth

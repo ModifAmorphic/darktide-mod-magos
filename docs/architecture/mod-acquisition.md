@@ -13,7 +13,7 @@ bar, no notification system, no download-history panel. On success, the mod
 appears in the profile's mod list.
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [integrations reference](../reference/magos-modificus/integrations.md). This
+> [integrations reference](../reference/src/integrations.md). This
 > doc covers the architecture and the why.
 
 ## Architecture
@@ -166,7 +166,7 @@ value).
 
 ### The handler lives in the UI assembly
 
-`NxmModDownloadHandler` lives in the UI assembly (`Magos.Modificus.UI.Nxm`),
+`NxmModDownloadHandler` lives in the UI assembly (`Modificus.Curator.UI.Nxm`),
 not Integrations, because it coordinates UI concerns: it reads the active
 profile from `IProfileSession` (UI), shows error dialogs through
 `IDialogService` (UI), and marshals those dialogs to the UI thread via
@@ -181,7 +181,7 @@ supersedes the no-op default (the no-op default is registered with plain
 
 ## Startup OS registration
 
-On startup, `MagosComposition.Build()` calls `RegisterNxmHandler` after the
+On startup, `CuratorComposition.Build()` calls `RegisterNxmHandler` after the
 IPC server starts, which resolves `INxmHandlerRegistrar` and calls `Register()`
 if `IsRegistered()` is false. This is the expected behavior for a mod manager
 (MO2, NMA, and Vortex all auto-register on startup) so the OS knows to invoke
@@ -189,7 +189,7 @@ the handler exe when an `nxm://` URL arrives (the "Mod manager download"
 button on Nexus).
 
 - **Linux** writes a `.desktop` file to `~/.local/share/applications/`
-  (`magos-nxm-handler.desktop`, under the `applications/` subdirectory of the
+  (`modificus-curator-nxm-handler.desktop`, under the `applications/` subdirectory of the
   local data dir) with `Exec="<handler-exe>" %u` and
   `MimeType=x-scheme-handler/nxm;`, plus a best-effort `xdg-mime default` to
   set it as the default for `x-scheme-handler/nxm`.
@@ -202,11 +202,11 @@ click-download from Nexus until it is resolved).
 
 ## See also
 
-- [integrations reference](../reference/magos-modificus/integrations.md):
+- [integrations reference](../reference/src/integrations.md):
   `IModAcquisitionService` public surface, the acquisition flow, the
   `NxmModDownloadHandler`, DI registration, testing.
 - [nxm:// scheme handler](nxm-scheme-handler.md): the plumbing that
   delivers the URL to the handler implemented here.
 - [Nexus authentication](nexus-authentication.md): the auth factory the v1
   client uses for the download-link and metadata calls.
-- [Magos Modificus architecture](MAGOS-MODIFICUS.md): the high-level tie-together.
+- [Modificus Curator architecture](MODIFICUS-CURATOR.md): the high-level tie-together.

@@ -1,11 +1,11 @@
-# AGENTS.md — darktide-mod-magos
+# AGENTS.md -- Modificus Curator
 
 > Orientation for any agent working in this repo. Read this first. This file
-> is for **agents**, not humans — the human-facing entry point is `README.md`.
+> is for **agents**, not humans -- the human-facing entry point is `README.md`.
 
 ## What this is
 
-**darktide-mod-magos** is the Magos Modificus mod manager for Warhammer 40,000:
+**Modificus Curator** is the mod manager for Warhammer 40,000:
 Darktide (.NET 10 + Avalonia 12). The app is user-usable. It launches the game
 modded via the
 [Enginseer runtime](https://github.com/ModifAmorphic/darktide-enginseer) (DLL
@@ -25,7 +25,7 @@ game-binary constraints now live with the runtime, in
 
 ## Repository state
 
-- **`main`** — production. Magos Modificus includes the app shell + profile
+- **`main`** -- production. Modificus Curator includes the app shell + profile
   management, global Preferences + i18n, the mod-list UI + local import, the
   Launch flow + Settings window + discovery escape-hatch, the nxm:// scheme
   handler, Nexus auth + Integrations dialog, mod acquisition, the update-check
@@ -43,18 +43,18 @@ game-binary constraints now live with the runtime, in
   Mods (the unified mod repository), Steam, Integrations, Enginseer-client,
   General. The Enginseer runtime is a separate repo
   ([darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer));
-  this repo holds Magos Modificus only.
-- **`poc`** — historical proof-of-concept, reference only. Not built upon.
+  this repo holds Modificus Curator only.
+- **`poc`** -- historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
   covered + qa'd + CI green).
 
 ## Directory structure (current `main`)
 
 ```
-magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalonia 12)
-  magos-modificus.sln   solution root (classic .sln)
+src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
+  modificus-curator.sln   solution root (classic .sln)
   Directory.Build.props  shared MSBuild props (net10.0, nullable, implicit usings)
-  ui/                   Magos.Modificus.UI — the Avalonia executable + DI composition root
+  ui/                   Modificus.Curator.UI -- the Avalonia executable + DI composition root
                           (shell + profile management: dropdown switch,
                           persisted active profile, create/rename/delete dialog;
                           global Preferences (theme + font scale + language)
@@ -66,8 +66,8 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist +
                           `IModRepository.Relocate/Rescan`;
                           `AddNxm()` + `StartNxmServer` (single-instance via
-                          `SingleInstanceGuard` process enumeration, separate from the `Magos.Nxm`
-                          pipe bind which degrades gracefully on IOException; a second Magos exits
+                          `SingleInstanceGuard` process enumeration, separate from the `Modificus.Curator.Nxm`
+                          pipe bind which degrades gracefully on IOException; a second Curator exits
                           via `NxmSingleInstanceException` -> `Environment.Exit(1)` before the
                           window shows);
                           the Integrations dialog (Nexus-only) + its
@@ -79,13 +79,13 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           orchestrator in Integrations) + the real `NxmModDownloadHandler` (in UI,
                           coordinating IDialogService + IProfileSession + Dispatcher.UIThread) that
                           replaces the no-op default via DI last-registration-wins, registered after
-                          AddNxm() in MagosComposition;
+                          AddNxm() in CuratorComposition;
                           `UpdateCheckRunner` (ui/Session/) the
                           UI-layer glue that fires `IUpdateCheckService.CheckAsync`
                           fire-and-forget on profile load (startup-with-restored-id
                           + active-profile switch via IProfileSession.PropertyChanged
                           filtered to ActiveProfileId), registered + started
-                          best-effort from MagosComposition);
+                          best-effort from CuratorComposition);
                           the mod-list update UI per-row update
                           signal + per-mod update button. `ModListViewModel` subscribes
                           to `IUpdateCheckService.CheckCompleted` (per-row
@@ -139,7 +139,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           triggers when DMF is not in the active profile: (1)
                           the first time Nexus auth transitions from None to
                           configured (gated by the persisted
-                          `MagosConfig.Nexus.DmfAuthPromptShown` flag so
+                          `CuratorConfig.Nexus.DmfAuthPromptShown` flag so
                           subsequent auth changes do not re-prompt), and (2)
                           every new profile that becomes active (no flag: a
                           fresh ask per profile). Three cases: DMF in the repo
@@ -173,12 +173,12 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           active change `CommitCreate` just made inside the
                           dialog). Bracketing the swap under `_syncing` makes
                           those events no-ops)
-  general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
+  general/              Modificus.Curator.General -- cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
-  config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO),
+  config/               Modificus.Curator.Config -- the CuratorConfig schema + defaults (POCO),
                         including the NexusConfig slot under Integrations
                         (AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs)
-  profiles/             Magos.Modificus.Profiles — profile data model, persistence,
+  profiles/             Modificus.Curator.Profiles -- profile data model, persistence,
                         container-based staging (ProfileService.PrepareModRoot
                         discovers each enabled mod's base folder name inside the
                         resolved version folder + symlinks staged/<baseName> ->
@@ -191,7 +191,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         (IModOrderResolver/IdentityModOrderResolver, identity stub now;
                         real dependency-driven resolver later) + ModCleanup (the startup
                         prune orchestration)
-  mods/          Magos.Modificus.Mods — the unified mod repository
+  mods/          Modificus.Curator.Mods -- the unified mod repository
                         (IModRepository: UUID containers per (source, identity),
                         opaque-ID version subfolders, per-container container.json
                         manifests, in-memory index rebuilt from a scan, PruneUnreferenced
@@ -211,12 +211,12 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         preserves the base folder under <versionFolder>/<base>/;
                         exposes GetBaseName + FindExistingContainer peeks for the
                         collision block).
-  integrations/         Magos.Modificus.Integrations — GitHub Releases client
+  integrations/         Modificus.Curator.Integrations -- GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
                         + the Nexus Mods v1 client + auth
                         (INexusClient over the v1 REST endpoints with per-request
-                        auth via INexusAuthMessageFactory selector — ApiKey /
+                        auth via INexusAuthMessageFactory selector -- ApiKey /
                         OAuth / None factories, the latter doing 401-reactive
                         refresh; NexusAuthService the OAuth loopback + API-key
                         validate + sign-out orchestrator (raises
@@ -227,7 +227,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         the IBrowser impl with an HttpListener on an ephemeral
                         port; Duende.IdentityModel.OidcClient 7.1.0 for the
                         OAuth machinery; client_id is the build-time const
-                        "magos-modificus";
+                        "modificus-curator";
                         IModAcquisitionService the download +
                         extract + place orchestrator over INexusClient +
                         IModImportService + a plain HttpClient for the CDN
@@ -250,17 +250,17 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         Unknown guard; LastResult + CheckCompleted event for
                         the mod-list badges; Integrations now references
                         Profiles, acyclic, for IProfileService.GetModList)
-  steam/                Magos.Modificus.Steam — Steam + Darktide + Proton discovery
+  steam/                Modificus.Curator.Steam -- Steam + Darktide + Proton discovery
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup
                         via process comm on Windows; LinuxProcessLookup via /proc
-                        argv[0] under Proton — selected once by DI), injectable seams
-  enginseer-client/     Magos.Modificus.EnginseerClient — the v1 launch façade
+                        argv[0] under Proton -- selected once by DI), injectable seams
+  enginseer-client/     Modificus.Curator.EnginseerClient -- the v1 launch façade
                         (IEnginseerLaunchService.Launch → LaunchResult; Windows: direct
                         launcher Process.Start; Linux: proton run with both STEAM_COMPAT_*
                         env + Z:\-translated paths)
-  launcher/             Magos.Modificus.Launcher — stub (the Steam non-steam-shortcut
+  launcher/             Modificus.Curator.Launcher -- stub (the Steam non-steam-shortcut
                           target placeholder)
-  nxm/                  Magos.Modificus.Nxm — the nxm:// scheme-handler plumbing:
+  nxm/                  Modificus.Curator.Nxm -- the nxm:// scheme-handler plumbing:
                         NxmUrlParser (mod-download / oauth-callback /
                         collection URL types), NxmIpcFraming (length-prefixed UTF-8 frames),
                         SingleInstanceGuard (the process-enumeration single-instance check,
@@ -270,7 +270,7 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         which degrades gracefully on IOException; accept loop Disconnects
                         between clients), INxmRouter + no-op INxmModDownloadHandler
                         default (the real handler is registered via AddSingleton
-                        last-wins, in MagosComposition after AddNxm()), the OS
+                        last-wins, in CuratorComposition after AddNxm()), the OS
                         scheme-handler registrar
                         (INxmHandlerRegistrar: WindowsNxmHandlerRegistrar writes
                         HKCU\Software\Classes\nxm; LinuxNxmHandlerRegistrar writes a .desktop
@@ -278,15 +278,15 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         handler exe calls: hot-path IPC delivery + cold-start launch+retry,
                         UseShellExecute=false on both OSes). AOT-friendly (IsAotCompatible;
                         only raw byte/UTF-8 IO in the handler path).
-  nxm-handler/          Magos.Modificus.NxmHandler — the OS-registered nxm:// scheme handler
+  nxm-handler/          Modificus.Curator.NxmHandler -- the OS-registered nxm:// scheme handler
                         (console exe, native AOT). Program.cs is one line: NxmHandlerRelay.RunAsync.
-                        Forwards the raw URL to running Magos over the fixed pipe, or (cold start)
-                        launches Magos (no args) + retries the pipe ~250ms/30s, then delivers.
+                        Forwards the raw URL to running Curator over the fixed pipe, or (cold start)
+                        launches Curator (no args) + retries the pipe ~250ms/30s, then delivers.
   tests/
-    Magos.Modificus.General.Tests/         xUnit tests for the general library
-    Magos.Modificus.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
-    Magos.Modificus.Mods.Tests/      xUnit tests for the mod repository + import
-    Magos.Modificus.Integrations.Tests/    xUnit tests for the GitHub Releases client
+    Modificus.Curator.General.Tests/         xUnit tests for the general library
+    Modificus.Curator.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
+    Modificus.Curator.Mods.Tests/      xUnit tests for the mod repository + import
+    Modificus.Curator.Integrations.Tests/    xUnit tests for the GitHub Releases client
                                           + the Nexus client (against a fake HttpMessageHandler),
                                           the auth factories (apikey / OAuth / None + selector),
                                           the OAuth flow scripted with a fake IBrowser + stub
@@ -298,10 +298,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                                           + the UpdateCheckService (Nexus-only
                                           update check against a fake INexusClient +
                                           fake IProfileService + fake IModRepository)
-    Magos.Modificus.Steam.Tests/           xUnit tests for discovery + IsGameRunning
-    Magos.Modificus.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
+    Modificus.Curator.Steam.Tests/           xUnit tests for discovery + IsGameRunning
+    Modificus.Curator.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
                                             `dotnet test` = xUnit; `dotnet run` = composition smoke harness)
-    Magos.Modificus.UI.Tests/              xUnit tests for the shell + manage-profiles
+    Modificus.Curator.UI.Tests/              xUnit tests for the shell + manage-profiles
                                             view models (profile CRUD/switch, active-profile
                                             persist, switch-blocked-while-running; dialog via
                                             an injectable IDialogService seam; + the
@@ -313,28 +313,28 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                                             new-profile + auth-configured triggers, the
                                             ask-once auth flag, the decline path, and the
                                             dialog-on-dialog avoidance), against in-memory fakes)
-    Magos.Modificus.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
+    Modificus.Curator.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
                                             IPC server resilience, SingleInstanceGuard, router,
                                             relay helper, Linux registrar, AddNxm wiring;
                                             serialized via DisableTestParallelization since
                                             real named pipes are an OS-level shared resource)
-docs/               architecture/ + reference/ (magos-modificus/ per-library API refs)
-.github/workflows/  CI: magos-build (Magos Modificus)
+docs/               architecture/ + reference/ (src/ per-library API refs)
+.github/workflows/  CI: curator-build (Modificus Curator)
 .gitignore          ignores .NET bin/obj, build artifacts, _local/
 ```
-## Magos Modificus ops
+## Modificus Curator ops
 
-Build + test the mod-manager app — run from the repo root (.NET 10 SDK required):
+Build + test the mod-manager app -- run from the repo root (.NET 10 SDK required):
 ```sh
-dotnet build magos-modificus/magos-modificus.sln --configuration Release
-dotnet test  magos-modificus/magos-modificus.sln --configuration Release
-dotnet run   --project magos-modificus/ui --configuration Release   # app shell window
+dotnet build src/modificus-curator.sln --configuration Release
+dotnet test  src/modificus-curator.sln --configuration Release
+dotnet run   --project src/ui --configuration Release   # app shell window
 ```
-- The composition root is `magos-modificus/ui/MagosComposition.cs` (loads
+- The composition root is `src/ui/CuratorComposition.cs` (loads
   config → builds the Serilog logger → wires every `Add<Library>()` → runs the
   startup `ModCleanup.PruneUnreferenced` pass + the startup
   `ISteamService.Discover()` validate/heal/persist pass).
-- **Config** is `MagosConfig` (`magos-modificus/config/`) — defaults under the
+- **Config** is `CuratorConfig` (`src/config/`) -- defaults under the
   OS local-app-data dir; loaded live from JSON by `general/ConfigLoader.cs`
   (consumers inject `IConfigLoader` and re-read per op, so runtime config
   changes via the Settings window take effect immediately; #31). Missing
@@ -372,26 +372,26 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
   -> branch on `LaunchResult.Status` (`Launched` -> status note + immediate
   `IsGameRunning` refresh; `DiscoveryIncomplete` -> the focused discovery
   escape-hatch modal over the shared `DiscoveryField` descriptor; `Error` ->
-  modal alert) + a Settings window editing `MagosConfig.Discovery` user
+  modal alert) + a Settings window editing `CuratorConfig.Discovery` user
   overrides (per-field read-modify-save) + `ModsFolder` live-relocate via the
   atomic `IModRepository.Relocate` over the `DiscoveryConfig` +
   `SteamService.Discover()` validate+heal+persist pipeline). The DMF (Darktide
   Mod Framework) install-prompt coordinator `DmfPromptService` (ui/Session/)
   offers to add/download DMF on (1) the first Nexus auth None -> configured
-  transition (gated by the persisted `MagosConfig.Nexus.DmfAuthPromptShown`
+  transition (gated by the persisted `CuratorConfig.Nexus.DmfAuthPromptShown`
   flag) + (2) every new profile that becomes active without DMF in it; the
   prompt is a modal on the main window, fired by the shell after the
   triggering ManageProfiles / Integrations dialog closes so it never nests on
   top of one. The **Launcher** is a stub. See
-  `docs/architecture/MAGOS-MODIFICUS.md`.
+  `docs/architecture/MODIFICUS-CURATOR.md`.
 
 ## Key docs
 
-- `docs/architecture/` — the Magos Modificus architecture (component model,
-  the Enginseer contract Magos consumes, profiles, launch).
-- `docs/reference/magos-modificus/` — per-library API reference for the Magos
-  Modificus backend libraries.
-- [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer) —
+- `docs/architecture/` -- the Modificus Curator architecture (component model,
+  the Enginseer contract Curator consumes, profiles, launch).
+- `docs/reference/src/` -- per-library API reference for the Modificus
+  Curator backend libraries.
+- [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer) --
   the Enginseer runtime (architecture, build, game-binary reference, mod
   loader).
 
@@ -453,14 +453,14 @@ dotnet run   --project magos-modificus/ui --configuration Release   # app shell 
 
 ## Naming convention
 
-Keep the established thematic name, **Magos** (the app), for user-facing UI
-surfaces (Magos Modificus). Use plain, descriptive names for code components
+Keep the established thematic name, **Curator** (the app), for user-facing UI
+surfaces (Modificus Curator). Use plain, descriptive names for code components
 (libraries, modules, types, functions). Reserve Warhammer 40k / Adeptus
 Mechanicus flavor for the UI; docs and code read as plain engineering
 documentation.
 
 - **Folders/filenames:** lowercase.
-- **Prose/docs:** "Magos Modificus" is the app's public name; "the Enginseer
+- **Prose/docs:** "Modificus Curator" is the app's public name; "the Enginseer
   runtime" / "Enginseer" refers to the separate runtime repo
   ([darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer)).
 - Don't obscure: names should be descriptive and accessible, not cryptic.
@@ -469,13 +469,13 @@ documentation.
 
 Docs follow a two-tier README pattern:
 
-- **Root `README.md`** — audience is the **general / end user**: what Magos is,
+- **Root `README.md`** -- audience is the **general / end user**: what Curator is,
   its components, and how to get it running. **No build internals.**
-- **Component-dir `README.md`** (e.g. `magos-modificus/README.md`) — audience is
+- **Component-dir `README.md`** (e.g. `src/README.md`) -- audience is
   **developers / power users**: build instructions, sub-component details,
   testing, links to the architecture specs.
 
-The **root README links to** the component READMEs — it does **not** duplicate
+The **root README links to** the component READMEs -- it does **not** duplicate
 their content. When a component gets (or changes) a README, ensure the root
 links to it and that the split holds (user-facing up top, dev detail under the
 component).
@@ -489,15 +489,15 @@ affects repo structure, build, architecture, or ops, update:
 - **`README.md`** (root): if the **user-facing** structure/status changed.
   Keep it user-facing (see [README pattern](#readme-pattern)); dev/build detail
   goes in the relevant component README, and the root must link to it.
-- **Component-dir `README.md`** (e.g. `magos-modificus/README.md`): for
+- **Component-dir `README.md`** (e.g. `src/README.md`): for
   build/dev detail under that component; ensure the root links to it.
 - **`docs/architecture/`** for any architecture change.
-- **`docs/reference/magos-modificus/`**: per-library API reference. When a Magos
-  Modificus library's public surface, key types, or DI registration changes,
-  update its `docs/reference/magos-modificus/<library>.md` in the same PR.
+- **`docs/reference/src/`**: per-library API reference. When a Modificus
+  Curator library's public surface, key types, or DI registration changes,
+  update its `docs/reference/src/<library>.md` in the same PR.
 
-Then ensure the Magos Modificus build + tests pass
-(`dotnet build`/`dotnet test magos-modificus/magos-modificus.sln`). **Outdated
+Then ensure the Modificus Curator build + tests pass
+(`dotnet build`/`dotnet test src/modificus-curator.sln`). **Outdated
 docs in a PR are a review blocker**, including this file.
 
 **No project phase/stage labels in committed docs or code comments.** Docs,

@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Modificus.Curator.Config</RootNamespace>
+    <AssemblyName>Modificus.Curator.Config</AssemblyName>
+  </PropertyGroup>
+
+</Project>
