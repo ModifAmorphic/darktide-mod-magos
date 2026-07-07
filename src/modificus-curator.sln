@@ -23,9 +23,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "steam", "steam", "{9D2CC102
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modificus.Curator.Steam", "steam\Modificus.Curator.Steam.csproj", "{BF4015C5-5476-4D5C-828C-59A5AE219171}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "enginseer-client", "enginseer-client", "{EA25846F-BFB3-0631-9883-7E04004497FB}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "relay-client", "relay-client", "{EA25846F-BFB3-0631-9883-7E04004497FB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modificus.Curator.EnginseerClient", "enginseer-client\Modificus.Curator.EnginseerClient.csproj", "{3E904C9B-AD90-4E46-904D-D867D326ECEB}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modificus.Curator.RelayClient", "relay-client\Modificus.Curator.RelayClient.csproj", "{3E904C9B-AD90-4E46-904D-D867D326ECEB}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "launcher", "launcher", "{740C5202-8AD2-6D86-0CA9-F95B1A2D697C}"
 EndProject
@@ -45,7 +45,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modificus.Curator.Steam.Tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modificus.Curator.Integrations.Tests", "tests\Modificus.Curator.Integrations.Tests\Modificus.Curator.Integrations.Tests.csproj", "{6DB44E7F-2EAA-484E-AFCA-22742857C817}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modificus.Curator.EnginseerClient.Tests", "tests\Modificus.Curator.EnginseerClient.Tests\Modificus.Curator.EnginseerClient.Tests.csproj", "{2441E9E9-8D30-4BE9-AB19-CFB8AB8EF3F9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modificus.Curator.RelayClient.Tests", "tests\Modificus.Curator.RelayClient.Tests\Modificus.Curator.RelayClient.Tests.csproj", "{2441E9E9-8D30-4BE9-AB19-CFB8AB8EF3F9}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "mods", "mods", "{82E21D46-CB55-58F2-B30A-44B68825D3B3}"
 EndProject

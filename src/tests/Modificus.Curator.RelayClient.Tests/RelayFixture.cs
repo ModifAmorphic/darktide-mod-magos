@@ -4,14 +4,14 @@ using Modificus.Curator.Profiles;
 using Modificus.Curator.Steam;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace Modificus.Curator.EnginseerClient.Tests;
+namespace Modificus.Curator.RelayClient.Tests;
 
 /// <summary>
-/// Per-test fixture: scaffolds a temp Enginseer runtime dir with a stub
-/// <c>curator_launcher.exe</c> (so the runtime-dir check passes), and supplies
+/// Per-test fixture: scaffolds a temp Relay dir with a stub
+/// <c>modificus_relay.exe</c> (so the runtime-dir check passes), and supplies
 /// fakes for <see cref="IProfileService"/> + <see cref="ISteamService"/> +
 /// <see cref="IProcessLauncher"/>. Builds the internal
-/// <see cref="EnginseerLaunchService"/> with a concrete
+/// <see cref="RelayLaunchService"/> with a concrete
 /// <see cref="IPlatformLaunchStrategy"/> (backed by the fake launcher) so both
 /// the Windows and Linux code paths are exercisable on any CI OS. Disposes the
 /// temp tree on teardown so tests are isolated regardless of outcome.
@@ -22,7 +22,7 @@ namespace Modificus.Curator.EnginseerClient.Tests;
 /// constructed via its DI constructor with the chosen strategy; the DI path is
 /// covered separately in the service-collection tests.
 /// </remarks>
-internal sealed class EnginseerFixture : IDisposable
+internal sealed class RelayFixture : IDisposable
 {
     public string TempRoot { get; }
     public string RuntimeDir { get; }
@@ -32,19 +32,19 @@ internal sealed class EnginseerFixture : IDisposable
     public FakeConfigLoader ConfigLoader { get; }
     public CuratorConfig Config { get; }
 
-    public EnginseerFixture()
+    public RelayFixture()
     {
-        TempRoot = Path.Combine(Path.GetTempPath(), "curator-enginseer-" + Guid.NewGuid().ToString("N"));
-        RuntimeDir = Path.Combine(TempRoot, "enginseer");
+        TempRoot = Path.Combine(Path.GetTempPath(), "curator-relay-" + Guid.NewGuid().ToString("N"));
+        RuntimeDir = Path.Combine(TempRoot, "relay");
         Directory.CreateDirectory(RuntimeDir);
 
         // Deploy a stub launcher.exe so the runtime-dir existence check passes
         // for the success-path tests. Tests that need it absent call DeleteLauncher().
-        LauncherPath = Path.Combine(RuntimeDir, EnginseerLaunchService.LauncherExecutableName);
+        LauncherPath = Path.Combine(RuntimeDir, RelayLaunchService.LauncherExecutableName);
         File.WriteAllText(LauncherPath, string.Empty);
 
         Config = CuratorConfig.CreateDefault();
-        Config.EnginseerRuntimeDir = RuntimeDir;
+        Config.RelayDir = RuntimeDir;
         // The fake returns the same mutable Config instance on each Load(), so a
         // test may mutate fx.Config between launches and the next Launch sees it.
         ConfigLoader = new FakeConfigLoader { Config = Config };
@@ -58,7 +58,7 @@ internal sealed class EnginseerFixture : IDisposable
     /// invocation, untranslated args) - the real <see cref="WindowsLaunchStrategy"/>
     /// driven by the fixture's fake <see cref="IProcessLauncher"/>.
     /// </summary>
-    public EnginseerLaunchService BuildWindowsService() =>
+    public RelayLaunchService BuildWindowsService() =>
         BuildService(new WindowsLaunchStrategy(Launcher, NullLogger<WindowsLaunchStrategy>.Instance));
 
     /// <summary>
@@ -67,12 +67,12 @@ internal sealed class EnginseerFixture : IDisposable
     /// real <see cref="LinuxLaunchStrategy"/> driven by the fixture's fake
     /// <see cref="IProcessLauncher"/>.
     /// </summary>
-    public EnginseerLaunchService BuildLinuxService() =>
+    public RelayLaunchService BuildLinuxService() =>
         BuildService(new LinuxLaunchStrategy(Launcher, NullLogger<LinuxLaunchStrategy>.Instance));
 
     /// <summary>Builds the service under test with an explicit strategy.</summary>
-    public EnginseerLaunchService BuildService(IPlatformLaunchStrategy strategy) =>
-        new(Profiles, Steam, ConfigLoader, strategy, NullLogger<EnginseerLaunchService>.Instance);
+    public RelayLaunchService BuildService(IPlatformLaunchStrategy strategy) =>
+        new(Profiles, Steam, ConfigLoader, strategy, NullLogger<RelayLaunchService>.Instance);
 
     /// <summary>Removes the stub launcher so the runtime-dir check fails.</summary>
     public void DeleteLauncher()

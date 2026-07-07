@@ -32,7 +32,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\config\Modificus.Curator.Config.csproj" />
-    <ProjectReference Include="..\enginseer-client\Modificus.Curator.EnginseerClient.csproj" />
+    <ProjectReference Include="..\relay-client\Modificus.Curator.RelayClient.csproj" />
     <ProjectReference Include="..\general\Modificus.Curator.General.csproj" />
     <ProjectReference Include="..\integrations\Modificus.Curator.Integrations.csproj" />
     <ProjectReference Include="..\launcher\Modificus.Curator.Launcher.csproj" />

@@ -533,8 +533,8 @@ instance violation) propagates out; `App` catches it and calls
   `ModVersionPolicy`, `ModSource`, `NexusSource`, `GitHubSource`,
   `UntrackedSource`), `integrations` (`INexusAuthService`,
   `IModAcquisitionService`, `IUpdateCheckService`, `UpdateCheckResult`,
-  `ModUpdateInfo`), `steam` (`ISteamService`), `enginseer-client`
-  (`IEnginseerLaunchService`, `LaunchResult`, `LaunchStatus`), `nxm`
+  `ModUpdateInfo`), `steam` (`ISteamService`), `relay-client`
+  (`IRelayLaunchService`, `LaunchResult`, `LaunchStatus`), `nxm`
   (`INxmModDownloadHandler`, `NxmSingleInstanceException`, `NxmIpcServer`,
   `INxmHandlerRegistrar`), `launcher` (the stub).
 - **NuGet:** `Avalonia` 12.0.5 + `Avalonia.Desktop` 12.0.5 +
@@ -611,7 +611,7 @@ dotnet test src/modificus-curator.sln -c Release
   layout, the profile session, the mod list, the update UI, the DMF prompt,
   and the dialog / preferences / i18n design.
 - [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md): the
-  high-level tie-together (component model, the Enginseer contract Curator
+  high-level tie-together (component model, the Relay contract Curator
   consumes, profiles, launch).
 - [integrations](integrations.md): the `INexusAuthService`,
   `IModAcquisitionService`, and `IUpdateCheckService` the UI consumes.

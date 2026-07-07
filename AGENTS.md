@@ -7,8 +7,8 @@
 
 **Modificus Curator** is the mod manager for Warhammer 40,000:
 Darktide (.NET 10 + Avalonia 12). The app is user-usable. It launches the game
-modded via the
-[Enginseer runtime](https://github.com/ModifAmorphic/darktide-enginseer) (DLL
+modded via
+[Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay) (DLL
 injection: no game-directory footprint, no bundle-database patching; the runtime
 is a separate repo) and stays out of the way for vanilla play (launch from Steam
 = unmodified game). See `docs/architecture/` for the architecture.
@@ -21,7 +21,7 @@ testability, review, and production-readiness as first-class goals. The POC
 carries forward proof of feasibility only; it does not carry forward code.
 Requirements, architecture, and technology choices are made fresh. (Runtime +
 game-binary constraints now live with the runtime, in
-[darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer).)
+[darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay).)
 
 ## Repository state
 
@@ -40,9 +40,9 @@ game-binary constraints now live with the runtime, in
   profile is created + set active without DMF in it, a modal prompt offers to
   add/download DMF (Darktide Mod Framework, Nexus mod 8). The Launcher is a
   stub. Backend libraries: Profiles,
-  Mods (the unified mod repository), Steam, Integrations, Enginseer-client,
-  General. The Enginseer runtime is a separate repo
-  ([darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer));
+  Mods (the unified mod repository), Steam, Integrations, Relay-client,
+  General. Modificus Relay is a separate repo
+  ([darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay));
   this repo holds Modificus Curator only.
 - **`poc`** -- historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
@@ -254,8 +254,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup
                         via process comm on Windows; LinuxProcessLookup via /proc
                         argv[0] under Proton -- selected once by DI), injectable seams
-  enginseer-client/     Modificus.Curator.EnginseerClient -- the v1 launch façade
-                        (IEnginseerLaunchService.Launch → LaunchResult; Windows: direct
+  relay-client/         Modificus.Curator.RelayClient -- the v1 launch façade
+                        (IRelayLaunchService.Launch → LaunchResult; Windows: direct
                         launcher Process.Start; Linux: proton run with both STEAM_COMPAT_*
                         env + Z:\-translated paths)
   launcher/             Modificus.Curator.Launcher -- stub (the Steam non-steam-shortcut
@@ -299,7 +299,7 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                           update check against a fake INexusClient +
                                           fake IProfileService + fake IModRepository)
     Modificus.Curator.Steam.Tests/           xUnit tests for discovery + IsGameRunning
-    Modificus.Curator.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose:
+    Modificus.Curator.RelayClient.Tests/ xUnit tests for the launch façade (dual-purpose:
                                             `dotnet test` = xUnit; `dotnet run` = composition smoke harness)
     Modificus.Curator.UI.Tests/              xUnit tests for the shell + manage-profiles
                                             view models (profile CRUD/switch, active-profile
@@ -352,7 +352,7 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   **Integrations** (GitHub Releases client + the Nexus v1 client/auth +
   `IModAcquisitionService` the download + extract + place orchestrator +
   `IUpdateCheckService` the Nexus-only update-check service),
-  **Enginseer-client** (the launch
+  **Relay-client** (the launch
   façade), **Mods** (the unified `IModRepository`: UUID containers per
   (source, identity), opaque-ID version subfolders, per-container
   `container.json` manifests, in-memory index rebuilt from a scan,
@@ -368,7 +368,7 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   source/version badges, enable/disable, remove-with-confirm, reorder, per-mod
   Latest/Pinned policy, auto-sort identity stub, and local folder/`.zip` import
   via file picker + drag-and-drop, joined to containers via `IModRepository` by
-  `ContainerId`), and Launch (`LaunchCommand` -> `IEnginseerLaunchService.Launch`
+  `ContainerId`), and Launch (`LaunchCommand` -> `IRelayLaunchService.Launch`
   -> branch on `LaunchResult.Status` (`Launched` -> status note + immediate
   `IsGameRunning` refresh; `DiscoveryIncomplete` -> the focused discovery
   escape-hatch modal over the shared `DiscoveryField` descriptor; `Error` ->
@@ -388,11 +388,11 @@ dotnet run   --project src/ui --configuration Release   # app shell window
 ## Key docs
 
 - `docs/architecture/` -- the Modificus Curator architecture (component model,
-  the Enginseer contract Curator consumes, profiles, launch).
+  the Relay contract Curator consumes, profiles, launch).
 - `docs/reference/src/` -- per-library API reference for the Modificus
   Curator backend libraries.
-- [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer) --
-  the Enginseer runtime (architecture, build, game-binary reference, mod
+- [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay) --
+  Modificus Relay (architecture, build, game-binary reference, mod
   loader).
 
 ## Conventions
@@ -460,9 +460,9 @@ Mechanicus flavor for the UI; docs and code read as plain engineering
 documentation.
 
 - **Folders/filenames:** lowercase.
-- **Prose/docs:** "Modificus Curator" is the app's public name; "the Enginseer
-  runtime" / "Enginseer" refers to the separate runtime repo
-  ([darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer)).
+- **Prose/docs:** "Modificus Curator" is the app's public name; "Modificus
+  Relay" / "Relay" refers to the separate runtime repo
+  ([darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay)).
 - Don't obscure: names should be descriptive and accessible, not cryptic.
 
 ## README pattern

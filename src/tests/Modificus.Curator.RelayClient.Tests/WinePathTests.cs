@@ -1,4 +1,4 @@
-namespace Modificus.Curator.EnginseerClient.Tests;
+namespace Modificus.Curator.RelayClient.Tests;
 
 /// <summary>
 /// Direct unit tests for the <c>Z:\</c> translation helper -- the Linux launch
@@ -13,7 +13,7 @@ public sealed class WinePathTests
         @"Z:\home\u\.local\share\Modificus Curator\profiles\abc\mods")]
     [InlineData("/home/u/.steam/steam/steamapps/common/Warhammer 40,000 DARKTIDE/binaries/Darktide.exe",
         @"Z:\home\u\.steam\steam\steamapps\common\Warhammer 40,000 DARKTIDE\binaries\Darktide.exe")]
-    [InlineData("/opt/enginseer", @"Z:\opt\enginseer")]
+    [InlineData("/opt/relay", @"Z:\opt\relay")]
     public void ToWine_translates_absolute_posix_path(string posix, string expected)
     {
         Assert.Equal(expected, WinePath.ToWine(posix));

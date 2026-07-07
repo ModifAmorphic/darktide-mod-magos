@@ -2,14 +2,14 @@ using System.Runtime.InteropServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace Modificus.Curator.EnginseerClient;
+namespace Modificus.Curator.RelayClient;
 
-/// <summary>DI registration for the Enginseer-client library.</summary>
+/// <summary>DI registration for the Relay-client library.</summary>
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers <see cref="IEnginseerLaunchService"/> →
-    /// <see cref="EnginseerLaunchService"/> and its supporting collaborators: the
+    /// Registers <see cref="IRelayLaunchService"/> →
+    /// <see cref="RelayLaunchService"/> and its supporting collaborators: the
     /// <see cref="IProcessLauncher"/> spawn seam and the platform
     /// <see cref="IPlatformLaunchStrategy"/>. The service resolves
     /// <c>IProfileService</c>, <c>ISteamService</c>, <c>IConfigLoader</c>, the
@@ -21,7 +21,7 @@ public static class ServiceCollectionExtensions
     /// <para>
     /// <see cref="IProcessLauncher"/> is registered with <c>TryAdd</c> so tests
     /// (and hosts wiring a custom launch hook) can pre-register an override before
-    /// calling <see cref="AddEnginseerClient"/>, the same pattern the Steam
+    /// calling <see cref="AddRelayClient"/>, the same pattern the Steam
     /// library uses for its platform seams. The <see cref="IPlatformLaunchStrategy"/>
     /// is selected once, here, from the host OS (<see cref="WindowsLaunchStrategy"/>
     /// on Windows, <see cref="LinuxLaunchStrategy"/> on Linux); the launch service
@@ -29,7 +29,7 @@ public static class ServiceCollectionExtensions
     /// can pre-register a concrete strategy to exercise either path on any CI OS.
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddEnginseerClient(this IServiceCollection services)
+    public static IServiceCollection AddRelayClient(this IServiceCollection services)
     {
         services.TryAddSingleton<IProcessLauncher, ProcessLauncher>();
 
@@ -38,7 +38,7 @@ public static class ServiceCollectionExtensions
         else
             services.TryAddSingleton<IPlatformLaunchStrategy, LinuxLaunchStrategy>();
 
-        services.AddSingleton<IEnginseerLaunchService, EnginseerLaunchService>();
+        services.AddSingleton<IRelayLaunchService, RelayLaunchService>();
         return services;
     }
 }

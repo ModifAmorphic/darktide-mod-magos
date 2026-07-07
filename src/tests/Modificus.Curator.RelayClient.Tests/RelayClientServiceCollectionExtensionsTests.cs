@@ -6,31 +6,31 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
-namespace Modificus.Curator.EnginseerClient.Tests;
+namespace Modificus.Curator.RelayClient.Tests;
 
 /// <summary>
-/// Proves <c>AddEnginseerClient()</c> registers <see cref="IEnginseerLaunchService"/>
+/// Proves <c>AddRelayClient()</c> registers <see cref="IRelayLaunchService"/>
 /// (and the supporting <see cref="IProcessLauncher"/> seam) so it is resolvable
 /// from DI with the production-style deps (<c>IProfileService</c> +
 /// <c>ISteamService</c> + <c>IConfigLoader</c>), and that pre-registered overrides
 /// win over the defaults via TryAdd.
 /// </summary>
-public sealed class EnginseerClientServiceCollectionExtensionsTests
+public sealed class RelayClientServiceCollectionExtensionsTests
 {
     [Fact]
-    public void AddEnginseerClient_registers_resolvable_IEnginseerLaunchService()
+    public void AddRelayClient_registers_resolvable_IRelayLaunchService()
     {
         var services = BuildComposition();
 
         using var provider = services.BuildServiceProvider();
-        var service = provider.GetService<IEnginseerLaunchService>();
+        var service = provider.GetService<IRelayLaunchService>();
 
         Assert.NotNull(service);
-        Assert.IsAssignableFrom<IEnginseerLaunchService>(service);
+        Assert.IsAssignableFrom<IRelayLaunchService>(service);
     }
 
     [Fact]
-    public void AddEnginseerClient_registers_default_IProcessLauncher()
+    public void AddRelayClient_registers_default_IProcessLauncher()
     {
         var services = BuildComposition();
 
@@ -39,7 +39,7 @@ public sealed class EnginseerClientServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddEnginseerClient_pre_registered_IProcessLauncher_wins_over_default()
+    public void AddRelayClient_pre_registered_IProcessLauncher_wins_over_default()
     {
         // A host/tests can inject a custom launch hook; TryAdd must defer.
         var custom = new FakeProcessLauncher();
@@ -54,20 +54,20 @@ public sealed class EnginseerClientServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddEnginseerClient_is_idempotent_and_returns_same_collection()
+    public void AddRelayClient_is_idempotent_and_returns_same_collection()
     {
         var services = new ServiceCollection();
 
-        var returned = services.AddEnginseerClient();
+        var returned = services.AddRelayClient();
 
         Assert.Same(services, returned);
     }
 
     /// <summary>
     /// Builds the minimal composition that makes
-    /// <see cref="IEnginseerLaunchService"/> resolvable: fakes for the profile +
+    /// <see cref="IRelayLaunchService"/> resolvable: fakes for the profile +
     /// steam services, a default config loader, logging, then
-    /// <see cref="ServiceCollectionExtensions.AddEnginseerClient"/>.
+    /// <see cref="ServiceCollectionExtensions.AddRelayClient"/>.
     /// </summary>
     private static ServiceCollection BuildComposition()
     {
@@ -76,7 +76,7 @@ public sealed class EnginseerClientServiceCollectionExtensionsTests
         services.AddSingleton<IConfigLoader>(new FakeConfigLoader());
         services.AddSingleton<IProfileService, FakeProfileService>();
         services.AddSingleton<ISteamService, FakeSteamService>();
-        services.AddEnginseerClient();
+        services.AddRelayClient();
         return services;
     }
 }

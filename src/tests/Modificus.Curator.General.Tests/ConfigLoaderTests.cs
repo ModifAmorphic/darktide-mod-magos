@@ -22,7 +22,7 @@ public sealed class ConfigLoaderTests
         Assert.False(string.IsNullOrEmpty(config.Logging.LogFile));
         Assert.False(string.IsNullOrEmpty(config.ProfilesBaseFolder));
         Assert.False(string.IsNullOrEmpty(config.ModsFolder));
-        Assert.False(string.IsNullOrEmpty(config.EnginseerRuntimeDir));
+        Assert.False(string.IsNullOrEmpty(config.RelayDir));
         Assert.EndsWith("profiles", config.ProfilesBaseFolder);
     }
 
@@ -35,7 +35,7 @@ public sealed class ConfigLoaderTests
         File.WriteAllText(configPath, """
             {
               "Logging": { "Level": "Debug" },
-              "EnginseerRuntimeDir": "/custom/runtime"
+              "RelayDir": "/custom/runtime"
             }
             """);
 
@@ -44,7 +44,7 @@ public sealed class ConfigLoaderTests
             var config = new ConfigLoader(configPath).Load();
 
             Assert.Equal("Debug", config.Logging.Level);
-            Assert.Equal("/custom/runtime", config.EnginseerRuntimeDir);
+            Assert.Equal("/custom/runtime", config.RelayDir);
             // Untouched fields keep their defaults.
             Assert.False(string.IsNullOrEmpty(config.ProfilesBaseFolder));
         }
@@ -193,7 +193,7 @@ public sealed class ConfigLoaderTests
         File.WriteAllText(configPath, """
             {
               "Logging": { "Level": "Warning" },
-              "EnginseerRuntimeDir": "/custom/runtime"
+              "RelayDir": "/custom/runtime"
             }
             """);
 
@@ -207,7 +207,7 @@ public sealed class ConfigLoaderTests
             var reloaded = loader.Load();
 
             Assert.Equal("Warning", reloaded.Logging.Level);
-            Assert.Equal("/custom/runtime", reloaded.EnginseerRuntimeDir);
+            Assert.Equal("/custom/runtime", reloaded.RelayDir);
             Assert.Equal(ThemeMode.Light, reloaded.Preferences.Theme);
         }
         finally
@@ -290,7 +290,7 @@ public sealed class ConfigLoaderTests
     public void Load_picks_up_a_runtime_folder_change_with_no_new_instance()
     {
         // Proves the live-read contract for path-valued fields: a consumer that
-        // resolves ProfilesBaseFolder / ModsFolder / EnginseerRuntimeDir per-op
+        // resolves ProfilesBaseFolder / ModsFolder / RelayDir per-op
         // from the loader sees a runtime change without restarting. This is the
         // property the upcoming Settings window + mod-repository relocation
         // rely on.
@@ -422,7 +422,7 @@ public sealed class ConfigLoaderTests
         File.WriteAllText(configPath, """
             {
               "Logging": { "Level": "Warning" },
-              "EnginseerRuntimeDir": "/custom/runtime"
+              "RelayDir": "/custom/runtime"
             }
             """);
 
@@ -436,7 +436,7 @@ public sealed class ConfigLoaderTests
             var reloaded = loader.Load();
 
             Assert.Equal("Warning", reloaded.Logging.Level);
-            Assert.Equal("/custom/runtime", reloaded.EnginseerRuntimeDir);
+            Assert.Equal("/custom/runtime", reloaded.RelayDir);
             Assert.Equal("/override/steam", reloaded.Discovery.UserSteamInstallPath);
         }
         finally

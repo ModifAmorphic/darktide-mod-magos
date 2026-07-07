@@ -1,4 +1,4 @@
-namespace Modificus.Curator.EnginseerClient;
+namespace Modificus.Curator.RelayClient;
 
 /// <summary>
 /// Native POSIX → Wine path translation. Wine maps the POSIX root to the

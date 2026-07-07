@@ -74,7 +74,7 @@ a UI-layer singleton that the shell (and other view models) inject:
 ```
 
 The backend libraries (`Profiles`, `Mods`, `Integrations`, `Steam`,
-`EnginseerClient`, `General`, `Nxm`) sit below this layer. The UI injects
+`RelayClient`, `General`, `Nxm`) sit below this layer. The UI injects
 their interfaces; it never constructs a backend type directly.
 
 ## The profile session (`IProfileSession`)
@@ -142,7 +142,7 @@ use this pattern.
 
 ### Launch + the three result branches
 
-`LaunchCommand` calls `IEnginseerLaunchService.Launch(activeProfileId)` and
+`LaunchCommand` calls `IRelayLaunchService.Launch(activeProfileId)` and
 branches on `LaunchResult.Status`:
 
 - **`Launched`**: a brief localized status note ("Launched 'X'") plus an
@@ -476,7 +476,7 @@ dismiss an in-flight operation.
 - [UI reference](../reference/src/ui.md): public surface, exact
   signatures, and DI registration for the UI layer.
 - [Modificus Curator architecture](MODIFICUS-CURATOR.md): the high-level
-  tie-together (component model, the Enginseer contract, profiles, launch).
+  tie-together (component model, the Relay contract, profiles, launch).
 - [mod acquisition](mod-acquisition.md): the `NxmModDownloadHandler` (in the
   UI assembly) that coordinates the nxm download flow, and the
   `IModAcquisitionService` the per-mod Update button calls.

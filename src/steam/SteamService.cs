@@ -53,10 +53,10 @@ namespace Modificus.Curator.Steam;
 /// <item>The composition root calls <see cref="Discover"/> at startup (non-
 /// blocking). A missing-fields result is logged as a warning so the user can
 /// still use the app; they just cannot launch until resolved.</item>
-/// <item><see cref="EnginseerClient.EnginseerLaunchService"/> calls
+/// <item><see cref="RelayClient.RelayLaunchService"/> calls
 /// <see cref="Discover"/> at launch (blocking). A missing-fields result yields
-/// <see cref="EnginseerClient.LaunchResult.Status"/> =
-/// <see cref="EnginseerClient.LaunchStatus.DiscoveryIncomplete"/>, surfacing the
+/// <see cref="RelayClient.LaunchResult.Status"/> =
+/// <see cref="RelayClient.LaunchStatus.DiscoveryIncomplete"/>, surfacing the
 /// escape-hatch modal.</item>
 /// <item>The Settings window reads <see cref="DiscoveryConfig"/> directly (now
 /// populated by the startup Discover's validate + heal), so the discovery fields

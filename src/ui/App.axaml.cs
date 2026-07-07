@@ -62,10 +62,10 @@ public class App : Application
         logger.LogInformation("Modificus Curator starting");
         logger.LogInformation(
             "Config loaded: ProfilesBaseFolder={Profiles}; ModsFolder={Mods}; " +
-            "EnginseerRuntimeDir={Runtime}; LogLevel={Level}; LogFile={LogFile}",
+            "RelayDir={Runtime}; LogLevel={Level}; LogFile={LogFile}",
             config.ProfilesBaseFolder,
             config.ModsFolder,
-            config.EnginseerRuntimeDir,
+            config.RelayDir,
             config.Logging.Level,
             config.Logging.LogFile);
 

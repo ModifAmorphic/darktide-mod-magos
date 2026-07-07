@@ -16,5 +16,5 @@ public static class AppPaths
     public static readonly string DefaultLogFile = Path.Combine(AppDataDir, "logs", "curator.log");
     public static readonly string DefaultProfilesBaseFolder = Path.Combine(AppDataDir, "profiles");
     public static readonly string DefaultModsFolder = Path.Combine(AppDataDir, "mods");
-    public static readonly string DefaultEnginseerRuntimeDir = Path.Combine(AppDataDir, "enginseer");
+    public static readonly string DefaultRelayDir = Path.Combine(AppDataDir, "relay");
 }

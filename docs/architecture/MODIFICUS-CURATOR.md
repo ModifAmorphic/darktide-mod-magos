@@ -1,28 +1,28 @@
 # Modificus Curator -- architecture
 
 **Modificus Curator** is the user-facing mod manager app --
-the second of the project's two components, sitting on top of the Enginseer
-runtime. It owns everything user-facing: profile management, mod staging, load
+the second of the project's two components, sitting on top of Modificus
+Relay. It owns everything user-facing: profile management, mod staging, load
 order, dependency resolution, mod-source integrations (GitHub Releases, Nexus
-Mods, Steam), and the "Launch Darktide" button that invokes the Enginseer
-launcher. Enginseer does the injection + mod loading; Modificus Curator owns the
+Mods, Steam), and the "Launch Darktide" button that invokes the Relay
+launcher. Relay does the injection + mod loading; Modificus Curator owns the
 management experience around it.
 
 ## In scope for this document
 
 - The component's role, technology choices, and project layout.
 - The domain-library breakdown and each library's responsibilities.
-- The Enginseer contract Curator consumes (the stable surface it builds against).
+- The Relay contract Curator consumes (the stable surface it builds against).
 - The profiles model, mod storage, mod sources, and the launch flow on Windows and Linux.
 - The v1 scope cut.
 
 ## Out of scope (handled elsewhere)
 
-- The Enginseer runtime internals: see the
-  [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer) repo.
-- The mod loader ↔ DMF integration: darktide-enginseer.
+- The Modificus Relay internals: see the
+  [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay) repo.
+- The mod loader ↔ DMF integration: darktide-modificus-relay.
 - The load-order file contract (`mods.lst`): Curator authors `mods.lst` and
-  Enginseer consumes it; the contract is specified in darktide-enginseer.
+  Relay consumes it; the contract is specified in darktide-modificus-relay.
 
 ## Technology
 
@@ -45,7 +45,7 @@ src/
   mods/                   Mods library -- unified mod repository (IModRepository) + version-policy + source models
   steam/                  Steam library -- Steam/Darktide/Proton discovery + IsGameRunning
   integrations/           Integrations library -- GitHub Releases client + Nexus v1 client/auth + mod acquisition + update check
-  enginseer-client/       Enginseer-client library -- the launch façade
+  relay-client/           Relay-client library -- the launch façade
   launcher/               stub launcher -- the Steam non-steam-shortcut target placeholder
   nxm/                    Nxm library: nxm:// scheme-handler plumbing (URL parser, IPC
                           server, single-instance guard, router + handler seams, OS
@@ -67,10 +67,10 @@ UI models.
 
 | Library | Owns |
 | --- | --- |
-| **Enginseer** | All interaction with the Enginseer runtime. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control -- status / hot-reload / live enable-disable -- is a future Enginseer contract expansion; out of v1.) |
+| **Relay** | All interaction with Modificus Relay. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control -- status / hot-reload / live enable-disable -- is a future Relay contract expansion; out of v1.) |
 | **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, mod repository); resolves each profile mod's version policy to a repository version folder; materializes the profile mod root + writes `mods.lst` at launch. |
 | **Integrations** | External-service calls: Nexus Mods (primary user-mod source), GitHub Releases, local install. Nexus API key / OIDC, version checks, downloads / updates. |
-| **Steam** | Steam operations outside Enginseer: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
+| **Steam** | Steam operations outside Relay: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
 | **General** | Cross-cutting infra: DI composition, structured logging, configuration, shared primitives. |
 
 ## Composition & startup
@@ -107,7 +107,7 @@ through a registered library interface. The UI registers only its own surface
       HTTP client + the Nexus auth service + the OAuth token
       store + the loopback `IBrowser`.
     - `AddSteam()`: Steam discovery + the platform process-lookup seam.
-    - `AddEnginseerClient()`: the launch façade + the process-launcher seam.
+    - `AddRelayClient()`: the launch façade + the process-launcher seam.
     - `AddLauncher()`: the launcher stub.
    - `AddSingleton<MainWindow>()` + `AddSingleton<MainViewModel>()`: the UI
      surface.
@@ -125,7 +125,7 @@ through a registered library interface. The UI registers only its own surface
 accepts only interfaces or primitives (never concrete UI models). Supporting
 services and injectable seams are registered with `TryAdd` -- `SteamDiscoveryOptions`,
 `ISteamRegistryReader`, `IProcessLookup` (Steam), `SymlinkCreator` (Profiles),
-`IProcessLauncher` (Enginseer-client), `IModRepository` (Mods) -- so tests
+`IProcessLauncher` (Relay-client), `IModRepository` (Mods) -- so tests
 and hosts can pre-register overrides (e.g. the Steam fixture's fakes, or a
 throwing `SymlinkCreator` to exercise the failure path) and have them survive the
 `Add<Library>()` chain. `TryAdd` is specifically load-bearing for `AddProfiles()`,
@@ -139,11 +139,11 @@ load order, per-mod policies) live with the profile, not in the global config.
 Per-library public surfaces -- interfaces, key types, exact DI registrations --
 are documented under [Reference -- Modificus Curator](../reference/src/).
 
-## The Enginseer contract Curator consumes
+## The Relay contract Curator consumes
 
-Stable surface (Enginseer is built; this is the boundary Curator builds against):
+Stable surface (Relay is built; this is the boundary Curator builds against):
 
-- **Invocation:** subprocess `curator_launcher.exe`, precedence **flag > env > default**.
+- **Invocation:** subprocess `modificus_relay.exe`, precedence **flag > env > default**.
 - **Flags:** `--game-binary <path>` (required) · `--mod-path <path>` (the mod
   root) · `--log-file <path>` · `--log-level <level>` · `--steam-app-id <id>`
   (default `1361210`).
@@ -153,25 +153,25 @@ Stable surface (Enginseer is built; this is the boundary Curator builds against)
   Curator on every launch** from the profile's mod list (a projection, not a
   source of truth). Enable/disable is by omission -- disabled mods aren't
   listed. DMF is a normal first entry (Curator writes it first via dependency
-  resolution). Missing/empty file → Enginseer loads nothing (graceful).
+  resolution). Missing/empty file → Relay loads nothing (graceful).
 - **Two roots (Curator must respect):** the mod root is Curator-owned; the loader
-  root (`<dll-dir>/mod_loader/`) is Enginseer-owned and untouchable.
-- **What Enginseer does NOT do (so Curator must):** load-order computation,
+  root (`<dll-dir>/mod_loader/`) is Relay-owned and untouchable.
+- **What Relay does NOT do (so Curator must):** load-order computation,
   dependency resolution, profile/staging management, platform plumbing on
   Linux.
 - **Live control:** none in v1 -- launch is fire-and-forget; the launcher exits
   after resume. Status / hot-reload / live enable-disable are a tracked future
-  Enginseer contract expansion (GitHub issue), not v1.
+  Relay contract expansion (GitHub issue), not v1.
 
 See the
-[Enginseer runtime docs](https://github.com/ModifAmorphic/darktide-enginseer)
+[Modificus Relay docs](https://github.com/ModifAmorphic/darktide-modificus-relay)
 for the full contract (env-var table, logging, the hook-ready handshake).
 
 ## Profiles
 
 - A profile owns its own mods, mod settings, and load order. All settings
   except global are per-profile.
-- The profile's mod root is what Curator passes to Enginseer as `--mod-path`;
+- The profile's mod root is what Curator passes to Relay as `--mod-path`;
   Curator writes `mods.lst` into it on each launch.
 - **DMF on profile creation:** the new-profile flow surfaces a Yes/No confirm
   offering to add DMF (most mods depend on it, so this is the common case; DMF
@@ -187,7 +187,7 @@ for the full contract (env-var table, logging, the hook-ready handshake).
   the per-file token); DMF not in the repo + auth not configured →
   informational alert telling the user to set up Nexus auth or import DMF
   manually. DMF is a normal mod with exactly two exceptions: (1) the
-  creation-time prompt; (2) DMF is never auto-placed by an Enginseer-side rule
+  creation-time prompt; (2) DMF is never auto-placed by a Relay-side rule
   -- Curator writes it first in `mods.lst` because dependency resolution puts it
   there. Beyond those, DMF is fully user-controllable (a user could remove /
   disable / reorder it and break dependent mods -- sharp-tools philosophy;
@@ -406,31 +406,31 @@ Update button (which calls `IModAcquisitionService`). The public surface is in
   view overrides auto-sort.
 - When DMF is installed, it appears as a protected first entry (locked first
   by dependency resolution; updateable).
-- **Hot-reload** -- tied to the Enginseer live-control contract; out of v1.
+- **Hot-reload** -- tied to the Relay live-control contract; out of v1.
 - **Dependency view** -- out of v1.
 - **Conflict detection** -- out of v1.
 
 ## Launch
 
 The launch path **diverges by OS**. In both cases Curator resolves the profile,
-writes `mods.lst` into the profile's mod root, then invokes the Enginseer
+writes `mods.lst` into the profile's mod root, then invokes the Relay
 launcher with `--game-binary`, `--mod-path`, `--log-file`, `--log-level`.
 
 ### Windows (trivial)
 
-Curator is a native .NET process; `curator_launcher.exe` is a native Windows
-binary. The Enginseer library assembles the args and `Process.Start`s the
+Curator is a native .NET process; `modificus_relay.exe` is a native Windows
+binary. The Relay library assembles the args and `Process.Start`s the
 launcher directly. No Proton, no prefix, no path translation.
 
 ### Linux (native Curator + Proton-at-launch)
 
-Curator runs **natively** on Linux (not Proton-wrapped). `curator_launcher.exe` is
+Curator runs **natively** on Linux (not Proton-wrapped). `modificus_relay.exe` is
 a Windows binary, so to run it Curator invokes it under **Proton**, using
 **Darktide's own compatdata** as the prefix -- required, because the launcher
 `CreateProcess`es Darktide, so the two must share the prefix.
 
 **The constraint that shapes the design:** Proton reads
-`STEAM_COMPAT_DATA_PATH` from the environment *before* `curator_launcher.exe`
+`STEAM_COMPAT_DATA_PATH` from the environment *before* `modificus_relay.exe`
 runs, to decide which prefix to use. By the time the launcher executes it's
 already inside that prefix; it cannot relocate itself, and Darktide inherits
 the prefix regardless. So the compatdata must be set by whoever invokes Proton
@@ -438,7 +438,7 @@ the prefix regardless. So the compatdata must be set by whoever invokes Proton
 `STEAM_COMPAT_DATA_PATH` (the Wine prefix) and
 `STEAM_COMPAT_CLIENT_INSTALL_PATH` (the Steam install dir) in the environment
 when it invokes Proton.** (The live-validated working invocation set both env
-vars.) Steam discovers both; Enginseer-client sets both.
+vars.) Steam discovers both; Relay-client sets both.
 
 Responsibilities:
 
@@ -451,18 +451,18 @@ Responsibilities:
     Proton, or `compatibilitytools.d/` custom builds like ProtonUp-GE).
   - **Escape hatch:** when auto-discovery can't resolve any of the above,
     prompt the user for the missing path(s). This is possible only because
-    discovery lives in the UI app, not in Enginseer (which has no UI and could
+    discovery lives in the UI app, not in Relay (which has no UI and could
     only fail with a log line). Validate at Curator startup / profile setup so
     misconfiguration surfaces early (fail-fast), not at launch.
-- **Enginseer library -- invocation:**
+- **Relay library -- invocation:**
   - Translate the profile's native mod-path → `Z:\...` (and confirm
     `--game-binary` is the in-prefix Windows path).
   - Assemble the launcher args.
   - `Process.Start` with `STEAM_COMPAT_DATA_PATH = <compatdata>` and
     `STEAM_COMPAT_CLIENT_INSTALL_PATH = <steam-install>` in env,
-    command = `<proton> run <runtime-dir>/curator_launcher.exe <args>`.
+    command = `<proton> run <runtime-dir>/modificus_relay.exe <args>`.
 
-**Enginseer is unchanged on Linux** -- no Linux helper, no Steam/Proton
+**Relay is unchanged on Linux** -- no Linux helper, no Steam/Proton
 discovery, no new flag. It remains the Windows launcher + shell + mod_loader,
 run under Proton with `STEAM_COMPAT_DATA_PATH` + `STEAM_COMPAT_CLIENT_INSTALL_PATH`
 set by Curator.
@@ -472,7 +472,7 @@ isn't supervising the session (no overlay / playtime tracking).
 
 ### Launch wiring + Settings + escape-hatch
 
-The shell's `LaunchCommand` invokes `IEnginseerLaunchService.Launch(activeProfileId)`
+The shell's `LaunchCommand` invokes `IRelayLaunchService.Launch(activeProfileId)`
 (gated by `CanLaunch`: a profile is selected and the game is not running) and
 branches on `LaunchResult.Status`:
 
@@ -521,11 +521,11 @@ exactly the fields launch reported missing.
 One global config file for system-level settings (structured -- e.g. JSON or
 TOML):
 
-- Log file location + level (the log is **truncated on each manager startup** -- no rolling/retention/backup, matching the `curator_launcher` pattern).
+- Log file location + level (the log is **truncated on each manager startup** -- no rolling/retention/backup, matching the Relay launcher pattern).
 - Profiles base folder (where profiles, mods, and settings are stored).
 - Mods folder (the global mod store; see
   [Mod repository](#mod-repository)).
-- Enginseer runtime dir (where `curator_launcher.exe` + `curator_shell.dll` +
+- Relay dir (where `modificus_relay.exe` + `relay_shell.dll` +
   `mod_loader/` live).
 
 Per-profile settings live with the profile, not in the global config.
@@ -548,14 +548,14 @@ Per-profile settings live with the profile, not in the global config.
 
 **Out of v1:**
 
-- Enginseer live-control (status / hot-reload / live enable-disable): awaits
-  an Enginseer IPC contract expansion.
+- Relay live-control (status / hot-reload / live enable-disable): awaits
+  a Relay IPC contract expansion.
 - Dependency-view mod list.
 - Conflict detection.
 
 ## References
 
-- [darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer): the
+- [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay): the
   runtime Curator builds on (launcher/shell contract, mod loader, `mods.lst`
   contract, two-roots model).
 - `docs/architecture/README.md`: the Modificus Curator architecture + component

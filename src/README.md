@@ -1,9 +1,9 @@
 # Modificus Curator
 
 The mod-manager application -- the user-facing layer on
-top of the Enginseer runtime. It owns profiles, mod staging, load order,
+top of Modificus Relay. It owns profiles, mod staging, load order,
 dependency resolution, mod-source integrations (Nexus Mods, GitHub Releases,
-Steam), and the "Launch Darktide" button that invokes the Enginseer launcher.
+Steam), and the "Launch Darktide" button that invokes the Relay launcher.
 Target architecture:
 [`../docs/architecture/MODIFICUS-CURATOR.md`](../docs/architecture/MODIFICUS-CURATOR.md).
 
@@ -35,7 +35,7 @@ src/
   mods/                           Modificus.Curator.Mods              unified mod repository + version-policy + source models + import
   integrations/                   Modificus.Curator.Integrations      GitHub Releases client + Nexus v1 client/auth + mod acquisition + update check
   steam/                          Modificus.Curator.Steam             Steam/Darktide/Proton discovery + IsGameRunning
-  enginseer-client/               Modificus.Curator.EnginseerClient   the launch façade
+  relay-client/                   Modificus.Curator.RelayClient       the launch façade
   launcher/                       Modificus.Curator.Launcher          stub (Steam non-steam-shortcut target placeholder)
   tests/
     Modificus.Curator.General.Tests/         xUnit tests for the general library
@@ -43,7 +43,7 @@ src/
     Modificus.Curator.Mods.Tests/            xUnit tests for the mod repository + import
     Modificus.Curator.Integrations.Tests/    xUnit tests for the GitHub Releases client
     Modificus.Curator.Steam.Tests/           xUnit tests for discovery + IsGameRunning
-    Modificus.Curator.EnginseerClient.Tests/ xUnit tests for the launch façade (dual-purpose: dotnet test / dotnet run smoke harness)
+    Modificus.Curator.RelayClient.Tests/     xUnit tests for the launch façade (dual-purpose: dotnet test / dotnet run smoke harness)
     Modificus.Curator.UI.Tests/              xUnit tests for the shell + manage-profiles + mod-list view models
 ```
 
@@ -126,6 +126,6 @@ for the schema.
 | `Logging:LogFile`      | `<app-data>/Modificus Curator/logs/curator.log`     |
 | `ProfilesBaseFolder`   | `<app-data>/Modificus Curator/profiles`           |
 | `ModsFolder`           | `<app-data>/Modificus Curator/mods`               |
-| `EnginseerRuntimeDir`  | `<app-data>/Modificus Curator/enginseer`          |
+| `RelayDir`             | `<app-data>/Modificus Curator/relay`              |
 
 Per-profile settings live with the profile, not in the global config.

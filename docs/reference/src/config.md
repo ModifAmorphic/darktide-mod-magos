@@ -24,7 +24,7 @@ public sealed class CuratorConfig
     public LoggingConfig Logging { get; set; } = new();
     public string ProfilesBaseFolder { get; set; }      // default profiles root
     public string ModsFolder { get; set; }         // default mods root
-    public string EnginseerRuntimeDir { get; set; }      // default enginseer root
+    public string RelayDir { get; set; }      // default relay root
     public DiscoveryConfig Discovery { get; set; } = new();
     public IntegrationsConfig Integrations { get; set; } = new();
     public PreferencesConfig Preferences { get; set; } = new();
@@ -38,7 +38,7 @@ public sealed class CuratorConfig
 | `Logging` | see `LoggingConfig` | Log level + file (consumed by `LoggingBootstrap`). |
 | `ProfilesBaseFolder` | `<app-data>/profiles` | Where profiles and per-profile settings are stored (mods live in `ModsFolder`; see [mods](mods.md)). |
 | `ModsFolder` | `<app-data>/mods` | The global mod store (see [mods](mods.md)). |
-| `EnginseerRuntimeDir` | `<app-data>/enginseer` | Where `curator_launcher.exe`, `curator_shell.dll`, and `mod_loader/` live (consumed by [enginseer-client](enginseer-client.md)). |
+| `RelayDir` | `<app-data>/relay` | Where `modificus_relay.exe`, `relay_shell.dll`, and `mod_loader/` live (consumed by [relay-client](relay-client.md)). |
 | `Discovery` | see `DiscoveryConfig` | User-supplied discovery overrides (Steam / Darktide / compatdata / Proton paths). Validated on disk + healed from the discoverer + persisted by `SteamService.Discover()`. |
 | `Integrations` | see `IntegrationsConfig` | External-service (mod-source) integration settings. |
 | `Preferences` | see `PreferencesConfig` | User-facing global preferences (theme, font scale, language). |

@@ -1,19 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <RootNamespace>Modificus.Curator.EnginseerClient</RootNamespace>
-    <AssemblyName>Modificus.Curator.EnginseerClient</AssemblyName>
+    <RootNamespace>Modificus.Curator.RelayClient</RootNamespace>
+    <AssemblyName>Modificus.Curator.RelayClient</AssemblyName>
   </PropertyGroup>
 
   <!--
-    Exposes the internal EnginseerLaunchService / ProcessLauncher / WinePath to
+    Exposes the internal RelayLaunchService / ProcessLauncher / WinePath to
     the test assembly so the launch path can be unit-tested with a forced
     platform + a fake process launcher, without widening the library's public
     surface. The implementation stays internal and is also exercised through
-    IEnginseerLaunchService via DI in the service-collection tests.
+    IRelayLaunchService via DI in the service-collection tests.
   -->
   <ItemGroup>
-    <InternalsVisibleTo Include="Modificus.Curator.EnginseerClient.Tests" />
+    <InternalsVisibleTo Include="Modificus.Curator.RelayClient.Tests" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,7 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- CuratorConfig (EnginseerRuntimeDir + Logging) is read at launch time. -->
+    <!-- CuratorConfig (RelayDir + Logging) is read at launch time. -->
     <ProjectReference Include="..\config\Modificus.Curator.Config.csproj" />
     <!-- PrepareModRoot (the mod-path; writes mods.lst) is invoked internally. -->
     <ProjectReference Include="..\profiles\Modificus.Curator.Profiles.csproj" />

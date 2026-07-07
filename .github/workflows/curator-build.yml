@@ -1,6 +1,6 @@
 # Modificus Curator: builds the .NET 10 + Avalonia 12 mod-manager app.
-# Scoped to src/** (the Enginseer runtime lives in a separate
-# repo: https://github.com/ModifAmorphic/darktide-enginseer).
+# Scoped to src/** (Modificus Relay lives in a separate
+# repo: https://github.com/ModifAmorphic/darktide-modificus-relay).
 name: curator-build
 
 on:

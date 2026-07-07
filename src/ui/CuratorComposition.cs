@@ -13,7 +13,7 @@ using Modificus.Curator.UI.Preferences;
 using Modificus.Curator.UI.Session;
 using Modificus.Curator.UI.ViewModels;
 using Modificus.Curator.UI.Views;
-using Modificus.Curator.EnginseerClient;
+using Modificus.Curator.RelayClient;
 using Modificus.Curator.Launcher;
 using Modificus.Curator.UI.Nxm;
 
@@ -59,7 +59,7 @@ public static class CuratorComposition
         services.AddProfiles();
         services.AddIntegrations();
         services.AddSteam();
-        services.AddEnginseerClient();
+        services.AddRelayClient();
         services.AddLauncher();
         // The nxm scheme-handler plumbing: IPC server (single-instance via
         // process enumeration, pipe bind degrades gracefully on failure), router

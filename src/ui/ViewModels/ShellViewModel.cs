@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Modificus.Curator.EnginseerClient;
+using Modificus.Curator.RelayClient;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.UI.Dialogs;
 using Modificus.Curator.UI.Localization;
@@ -32,7 +32,7 @@ namespace Modificus.Curator.UI.ViewModels;
 /// when the UI culture changes (Preferences dialog), so the shell copy refreshes
 /// in-step with the rest of the UI on a language switch.</para>
 /// <para><b>Track C is wired:</b> <see cref="LaunchCommand"/> invokes
-/// <see cref="IEnginseerLaunchService.Launch"/> and branches on
+/// <see cref="IRelayLaunchService.Launch"/> and branches on
 /// <see cref="LaunchResult.Status"/> (Launched -> status note + an immediate
 /// <see cref="IsGameRunning"/> refresh; DiscoveryIncomplete -> the focused
 /// escape-hatch dialog over the missing fields; Error -> a modal alert), and
@@ -52,7 +52,7 @@ public partial class ShellViewModel : ObservableObject
 {
     private readonly IProfileService _profileService;
     private readonly IProfileSession _session;
-    private readonly IEnginseerLaunchService _launchService;
+    private readonly IRelayLaunchService _launchService;
     private readonly IDialogService _dialogs;
     private readonly DmfPromptService _dmfPrompts;
     private readonly LocalizationService _localization;
@@ -70,7 +70,7 @@ public partial class ShellViewModel : ObservableObject
     public ShellViewModel(
         IProfileService profiles,
         IProfileSession session,
-        IEnginseerLaunchService launchService,
+        IRelayLaunchService launchService,
         IDialogService dialogs,
         DmfPromptService dmfPrompts,
         LocalizationService localization,

@@ -2,13 +2,13 @@
 
 > Profile + per-profile mod-list management: the profile data model, its on-disk
 > persistence, and the projection of the mod list into a staged mod root
-> (symlinks to the repository's resolved version folders) + `mods.lst` for the
-> Enginseer runtime. Status: implemented (the unified mod repository replaced
+> (symlinks to the repository's resolved version folders) + `mods.lst` for
+> Modificus Relay. Status: implemented (the unified mod repository replaced
 > the earlier shared-store + per-profile allocation model in #30; staging now
 > symlinks into the repository rather than copying).
 
 A profile owns its own mod list, mod settings, and load order. The profile's
-staged mod root is what Curator passes to the Enginseer launcher as `--mod-path`;
+staged mod root is what Curator passes to the Relay launcher as `--mod-path`;
 Curator writes `mods.lst` into it on each launch. A profile references mods by
 their repository container id and stores no mod files of its own.
 
@@ -99,7 +99,7 @@ Method behavior:
 - `PrepareModRoot(id)` -- regenerates the staged mod root (the `--mod-path`) from
   the current per-mod version resolution and writes `mods.lst`. Idempotent
   (clears + rebuilds `staged/` each call). Returns the `--mod-path` to pass to
-  the Enginseer launcher. Throws `SymlinkStagingException` if a symlink cannot be
+  the Relay launcher. Throws `SymlinkStagingException` if a symlink cannot be
   created (the manager never silently copies).
 
 ### Key types
@@ -274,5 +274,5 @@ dotnet test src/modificus-curator.sln -c Release
   [Profiles](../../architecture/MODIFICUS-CURATOR.md#profiles) +
   [Mod repository](../../architecture/MODIFICUS-CURATOR.md#mod-repository) sections.
 - [mods](mods.md) -- the unified mod repository + version-policy model.
-- [enginseer-client](enginseer-client.md) -- the launch façade that consumes
+- [relay-client](relay-client.md) -- the launch façade that consumes
   `PrepareModRoot`.
