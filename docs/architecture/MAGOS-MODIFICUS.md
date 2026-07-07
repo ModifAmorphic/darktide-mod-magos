@@ -189,16 +189,25 @@ for the full contract (env-var table, logging, the hook-ready handshake).
   except global are per-profile.
 - The profile's mod root is what Magos passes to Enginseer as `--mod-path`;
   Magos writes `mods.lst` into it on each launch.
-- **DMF on profile creation:** the new-profile flow offers "add latest DMF?"
-  (default yes). If accepted, DMF is added to the profile's mod list like any
-  mod (sourced per the open DMF-sourcing decision — see
-  [Mod sources / integrations](#mod-sources--integrations); it is **not**
-  settled as GitHub Releases). DMF is a normal mod with exactly two
-  exceptions: (1) the creation-time prompt; (2) DMF is never auto-placed by an
-  Enginseer-side rule — Magos writes it first in `mods.lst` because dependency
-  resolution puts it there. Beyond those, DMF is fully user-controllable (a
-  user could remove / disable / reorder it and break dependent mods —
-  sharp-tools philosophy; Magos does not hard-lock it).
+- **DMF on profile creation:** the new-profile flow surfaces a Yes/No confirm
+  offering to add DMF (most mods depend on it, so this is the common case; DMF
+  isn't mandatory, so the prompt is an offer, not a requirement; decline is
+  respected). DMF is sourced from Nexus Mods (mod 8). Three cases: DMF already
+  in the repo but not in the profile → instant add (no download); DMF not in
+  the repo + Nexus auth configured → on confirm, premium users get the in-app
+  API download under a spinner + add, non-premium users (or unknown premium
+  state) get their browser opened at DMF's Nexus files page (the user clicks
+  Download there + the existing `nxm://` handler picks up the URL + adds DMF
+  to the active profile via the standard nxm flow; the Nexus `download_link`
+  endpoint is premium-only, so non-premium users must visit the site to mint
+  the per-file token); DMF not in the repo + auth not configured →
+  informational alert telling the user to set up Nexus auth or import DMF
+  manually. DMF is a normal mod with exactly two exceptions: (1) the
+  creation-time prompt; (2) DMF is never auto-placed by an Enginseer-side rule
+  — Magos writes it first in `mods.lst` because dependency resolution puts it
+  there. Beyond those, DMF is fully user-controllable (a user could remove /
+  disable / reorder it and break dependent mods — sharp-tools philosophy;
+  Magos does not hard-lock it).
 - Mods are stored **once, in a unified repository** keyed by `(source, identity)`
   per UUID container. Profiles reference a mod by `(containerId, policy)` and
   store no mod files of their own. See [Mod repository](#mod-repository).
@@ -322,12 +331,11 @@ detection. The Settings window's Storage section is the UI for it.
 - **Local** — manually-installed mods (the user supplies the files).
 - **DMF specifically** — the new-profile prompt offers to add it (most mods
   depend on it, so this is the common case; DMF isn't mandatory, so the prompt
-  is an offer, not a requirement). **DMF sourcing is an OPEN decision
-  (Phase 4):** the original plan (fetch from GitHub Releases, keyless) is broken
-  — DMF's GitHub repo has no releases/tags; its canonical releases are on
-  NexusMods. The lean is to require a Nexus API key be configured, or have the
-  user download DMF manually. Bundling DMF with Magos is rejected
-  (modding-community norms + Nexus rules). Resolution deferred to Phase 4. (See
+  is an offer, not a requirement). DMF is sourced from Nexus Mods (mod 8); the
+  prompt's download path branches on the user's premium state (premium: in-app
+  API download; non-premium or unknown: browser opens at DMF's Nexus files
+  page, then the existing `nxm://` handler completes the install). Bundling
+  DMF with Magos is rejected (modding-community norms + Nexus rules). (See
   [Profiles](#profiles).)
 - Per-mod: auto-update override (overrides the global setting); version pinning.
 - **Import / Export** — profile import / export.

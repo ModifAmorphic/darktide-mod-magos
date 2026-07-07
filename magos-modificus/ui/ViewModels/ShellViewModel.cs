@@ -270,11 +270,19 @@ public partial class ShellViewModel : ObservableObject
     {
         await _dialogs.ShowManageProfilesAsync();
 
-        Profiles = _profileService.ListProfiles();
-
+        // _syncing MUST be set BEFORE the Profiles swap, not after. Replacing the
+        // Profiles collection causes the ComboBox to fire spurious SelectedItem
+        // changes (first null because the old reference is gone, then a value
+        // match against the new collection for the previously-selected name).
+        // Those fire OnSelectedProfileChanged with the stale value, which would
+        // call RequestActive and revert the session to the pre-dialog selection
+        // (e.g. undoing the active change CommitCreate just made). Bracketing the
+        // entire Profiles + SelectedProfile re-sync under _syncing=true makes
+        // those spurious events no-ops.
         _syncing = true;
         try
         {
+            Profiles = _profileService.ListProfiles();
             SelectedProfile = ResolveActive();
         }
         finally

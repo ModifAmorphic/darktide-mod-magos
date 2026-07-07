@@ -719,6 +719,10 @@
     <value>Downloading DMF failed: {0}</value>
     <comment>Body of the DMF download-failure alert. {0} is the error message. The user can retry via the normal add flow.</comment>
   </data>
+  <data name="Dmf_OpenBrowserFailedMessage" xml:space="preserve">
+    <value>Could not open the DMF page in your browser. Visit this URL to download DMF: {0}</value>
+    <comment>Body of the alert shown when the OS shell-open of the DMF files URL fails (no default browser, headless, etc.). {0} is the DMF files URL. The user can copy it manually.</comment>
+  </data>
   <data name="Dmf_InfoTitle" xml:space="preserve">
     <value>DMF required</value>
     <comment>Title of the informational alert shown when DMF is not in the repository and Nexus auth is NOT configured (case 3: profile-creation trigger only).</comment>

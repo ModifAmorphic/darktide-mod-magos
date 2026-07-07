@@ -32,6 +32,13 @@ public sealed class DmfPromptServiceTests
     /// Builds a coordinator + a tuple of its fakes so each test can seed +
     /// assert on the specific dependencies it cares about.
     /// </summary>
+    /// <param name="launchExternal">Optional spy for the browser-launcher seam
+    /// (production default uses <c>Process.Start</c> with
+    /// <c>UseShellExecute=true</c>). Tests that exercise the case-2 non-premium
+    /// browser-open path pass a recorder so they can assert on the URL; when
+    /// omitted, the production default is used (which would attempt a real
+    /// shell-open, so the case-2 non-premium tests should always pass
+    /// this).</param>
     private static (DmfPromptService Service, FakeProfileService Profiles, FakeProfileSession Session,
         FakeModRepository Repo, FakeModAcquisitionService Acquisition, FakeNexusAuthService Auth,
         FakeConfigLoader Config, FakeDialogService Dialogs) Build(
@@ -41,7 +48,8 @@ public sealed class DmfPromptServiceTests
             FakeModAcquisitionService? acquisition = null,
             FakeNexusAuthService? auth = null,
             FakeConfigLoader? config = null,
-            FakeDialogService? dialogs = null)
+            FakeDialogService? dialogs = null,
+            Func<Uri, bool>? launchExternal = null)
     {
         profiles ??= TestDoubles.Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -52,7 +60,7 @@ public sealed class DmfPromptServiceTests
         dialogs ??= new FakeDialogService();
         var service = new DmfPromptService(
             profiles, session, repo, acquisition, auth, config, dialogs,
-            Localization, NullLogger<DmfPromptService>.Instance);
+            Localization, NullLogger<DmfPromptService>.Instance, launchExternal);
         return (service, profiles, session, repo, acquisition, auth, config, dialogs);
     }
 
@@ -193,6 +201,172 @@ public sealed class DmfPromptServiceTests
         Assert.Equal(1, dialogs.ConfirmCalls);
         Assert.Empty(acquisition.LatestNexusCalls);
         Assert.Empty(profiles.AddModCalls);
+    }
+
+    [Fact]
+    public async Task NewProfile_case2_non_premium_user_opens_browser_at_dmf_files_url()
+    {
+        // The Nexus download_link endpoint is premium-only. Non-premium users
+        // must visit the site to generate the per-file nxm token, so on a Yes
+        // the prompt opens the DMF files page in the browser; the existing
+        // nxm:// handler picks up the resulting download.
+        var profiles = TestDoubles.Profiles();
+        var session = new FakeProfileSession(() => profiles.ListProfiles());
+        var repo = new FakeModRepository(); // no DMF
+        var acquisition = new FakeModAcquisitionService();
+        var auth = new FakeNexusAuthService
+        {
+            State = new NexusAuthState(NexusAuthMethod.ApiKey, "free", IsPremium: false),
+        };
+        var config = new FakeConfigLoader();
+        config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
+        var dialogs = new FakeDialogService(); // ConfirmResult default = true
+
+        var launchedUris = new List<Uri>();
+        Func<Uri, bool> spy = uri =>
+        {
+            launchedUris.Add(uri);
+            return true;
+        };
+
+        var (service, _, _, _, _, _, _, _) =
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, spy);
+
+        var created = profiles.CreateProfile("New");
+        session.ActiveProfileId = created.Id;
+
+        await service.ProcessPendingAsync();
+
+        // The download confirm fired (the user accepted).
+        Assert.Equal(1, dialogs.ConfirmCalls);
+        // The browser launcher was called exactly once with DMF's files URL.
+        var launched = Assert.Single(launchedUris);
+        Assert.Equal("https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files", launched.ToString());
+        // No in-app API download, no AddMod (that happens later via the nxm
+        // handler), no progress spinner, no failure alert (launch succeeded).
+        Assert.Empty(acquisition.LatestNexusCalls);
+        Assert.Empty(profiles.AddModCalls);
+        Assert.Empty(dialogs.ProgressCalls);
+        Assert.Empty(dialogs.AlertCalls);
+    }
+
+    [Fact]
+    public async Task NewProfile_case2_premium_state_unknown_treats_as_non_premium()
+    {
+        // When the verify call failed, IsPremium is null. Safer to fall back to
+        // the browser-open path (a premium user just visits the site; a
+        // non-premium user avoids a 403).
+        var profiles = TestDoubles.Profiles();
+        var session = new FakeProfileSession(() => profiles.ListProfiles());
+        var repo = new FakeModRepository();
+        var acquisition = new FakeModAcquisitionService();
+        var auth = new FakeNexusAuthService
+        {
+            State = new NexusAuthState(NexusAuthMethod.ApiKey, "name", IsPremium: null),
+        };
+        var config = new FakeConfigLoader();
+        config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
+        var dialogs = new FakeDialogService();
+
+        var launchedUris = new List<Uri>();
+        Func<Uri, bool> spy = uri =>
+        {
+            launchedUris.Add(uri);
+            return true;
+        };
+
+        var (service, _, _, _, _, _, _, _) =
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, spy);
+
+        var created = profiles.CreateProfile("New");
+        session.ActiveProfileId = created.Id;
+
+        await service.ProcessPendingAsync();
+
+        Assert.Equal(1, dialogs.ConfirmCalls);
+        Assert.Single(launchedUris);
+        Assert.Empty(acquisition.LatestNexusCalls);
+    }
+
+    [Fact]
+    public async Task NewProfile_case2_browser_launch_failure_alerts_with_url()
+    {
+        // If the OS shell-open fails (no default browser, headless), surface the
+        // URL in an alert so the user can copy it manually instead of a silent
+        // no-op.
+        var profiles = TestDoubles.Profiles();
+        var session = new FakeProfileSession(() => profiles.ListProfiles());
+        var repo = new FakeModRepository();
+        var acquisition = new FakeModAcquisitionService();
+        var auth = new FakeNexusAuthService
+        {
+            State = new NexusAuthState(NexusAuthMethod.ApiKey, "free", IsPremium: false),
+        };
+        var config = new FakeConfigLoader();
+        config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
+        var dialogs = new FakeDialogService();
+
+        Func<Uri, bool> failingLauncher = _ => false; // shell-open failed
+
+        var (service, _, _, _, _, _, _, _) =
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, failingLauncher);
+
+        var created = profiles.CreateProfile("New");
+        session.ActiveProfileId = created.Id;
+
+        await service.ProcessPendingAsync();
+
+        Assert.Equal(1, dialogs.ConfirmCalls);
+        // One failure alert carrying the DMF URL.
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Contains(
+            "https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files",
+            alert.Message);
+        // No in-app download.
+        Assert.Empty(acquisition.LatestNexusCalls);
+    }
+
+    [Fact]
+    public async Task NewProfile_case2_premium_user_uses_in_app_download()
+    {
+        // Regression: the premium path (the API download under a spinner + add)
+        // still works and does NOT open the browser.
+        var profiles = TestDoubles.Profiles();
+        var session = new FakeProfileSession(() => profiles.ListProfiles());
+        var repo = new FakeModRepository();
+        var acquisition = new FakeModAcquisitionService();
+        var auth = new FakeNexusAuthService
+        {
+            State = new NexusAuthState(NexusAuthMethod.OAuth, "premium", IsPremium: true),
+        };
+        var config = new FakeConfigLoader();
+        config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.OAuth;
+        var dialogs = new FakeDialogService();
+
+        var launchedUris = new List<Uri>();
+        Func<Uri, bool> spy = uri =>
+        {
+            launchedUris.Add(uri);
+            return true;
+        };
+
+        var (service, _, _, _, _, _, _, _) =
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, spy);
+
+        var created = profiles.CreateProfile("New");
+        session.ActiveProfileId = created.Id;
+
+        await service.ProcessPendingAsync();
+
+        Assert.Equal(1, dialogs.ConfirmCalls);
+        // Premium -> in-app API download (not the browser-open path).
+        Assert.Empty(launchedUris);
+        var acquireCall = Assert.Single(acquisition.LatestNexusCalls);
+        Assert.Equal(DmfPromptService.DmfModId, acquireCall.ModId);
+        Assert.Single(dialogs.ProgressCalls);
+        var add = Assert.Single(profiles.AddModCalls);
+        Assert.Equal(created.Id, add.Id);
+        Assert.Equal(acquisition.NextResult.ContainerId, add.ContainerId);
     }
 
     // ---- case 3: DMF not in repo, auth NOT configured -> informational ----

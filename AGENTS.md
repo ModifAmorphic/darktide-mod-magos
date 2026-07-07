@@ -145,16 +145,35 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           every new profile that becomes active (no flag: a
                           fresh ask per profile). Three cases: DMF in the repo
                           but not the profile -> instant add (case 1); DMF not
-                          in the repo + auth configured -> download under a
-                          spinner + add (case 2); DMF not in the repo + auth
-                          not configured -> informational alert (case 3, only
-                          reachable from the new-profile trigger). Decline is
-                          respected; DMF can be added later via the normal add
-                          flow. `IDialogService.ShowProgressAsync<T>` runs the
-                          supplied work under a non-closeable spinner + closes
-                          it on completion; `DialogTitleBar.ShowClose` (a new
-                          styled property) hides the spinner's close button so
-                          the user cannot dismiss an in-flight download)
+                          in the repo + auth configured -> on confirm, premium
+                          users get the in-app API download under a spinner +
+                          add, non-premium users (or unknown premium state) get
+                          their browser opened at DMF's Nexus files page (the
+                          user clicks Download there + the existing nxm handler
+                          picks up the URL + adds DMF to the active profile via
+                          the standard nxm flow; the API download_link endpoint
+                          is premium-only, so non-premium users must visit the
+                          site to mint the per-file token) (case 2); DMF not in
+                          the repo + auth not configured -> informational alert
+                          (case 3, only reachable from the new-profile trigger).
+                          Decline is respected; DMF can be added later via the
+                          normal add flow. `IDialogService.ShowProgressAsync<T>`
+                          runs the supplied work under a non-closeable spinner +
+                          closes it on completion; `DialogTitleBar.ShowClose`
+                          (a new styled property) hides the spinner's close
+                          button so the user cannot dismiss an in-flight
+                          download). The shell's `ManageProfiles` command
+                          brackets its `Profiles = ...` swap + `SelectedProfile
+                          = ResolveActive()` re-sync under `_syncing = true`:
+                          replacing the dropdown's `ItemsSource` causes the
+                          ComboBox to fire spurious `SelectedItem` events (null
+                          then a value match against the new collection for the
+                          previously-selected name) that would otherwise land in
+                          `OnSelectedProfileChanged` with the stale value +
+                          revert the session via `RequestActive` (undoing the
+                          active change `CommitCreate` just made inside the
+                          dialog). Bracketing the swap under `_syncing` makes
+                          those events no-ops)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO),

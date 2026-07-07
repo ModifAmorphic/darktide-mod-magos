@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using Magos.Modificus.Config;
 using Magos.Modificus.General;
 using Magos.Modificus.Integrations;
@@ -34,10 +36,13 @@ namespace Magos.Modificus.UI.Session;
 /// source (<c>new NexusSource { ModId = <see cref="DmfModId"/> }</c>) and checks
 /// the active profile's mod list. (1) DMF in the repo but not in the profile:
 /// a Yes/No confirm, On Yes adds it instantly (no download). (2) DMF not in the
-/// repo + Nexus auth configured: a Yes/No confirm, On Yes downloads + adds it
-/// (the spinner is shown during the download). (3) DMF not in the repo + auth
-/// NOT configured: an informational OK-only alert (this case applies only to
-/// the new-profile trigger; the auth-configured trigger implies auth is set
+/// repo + Nexus auth configured: a Yes/No confirm, On Yes either downloads +
+/// adds it under a spinner (premium users; the Nexus <c>download_link</c>
+/// endpoint is premium-only) or opens the DMF files page in the user's browser
+/// (non-premium or unknown premium state; the user clicks Download on the page
+/// and the existing <c>nxm://</c> handler picks it up). (3) DMF not in the repo
+/// + auth NOT configured: an informational OK-only alert (this case applies only
+/// to the new-profile trigger; the auth-configured trigger implies auth is set
 /// up).</para>
 /// <para>
 /// <b>Ask-once for the auth trigger.</b> <see cref="NexusConfig.DmfAuthPromptShown"/>
@@ -68,6 +73,16 @@ public sealed class DmfPromptService
     /// </summary>
     private const string GameDomain = "warhammer40kdarktide";
 
+    /// <summary>
+    /// The Nexus files page for DMF. Used as the browser-open target for
+    /// non-premium users (the Nexus <c>download_link</c> endpoint is
+    /// premium-only, so non-premium users must visit the site to generate the
+    /// per-file nxm download token). The user clicks Download on the page; the
+    /// existing <c>nxm://</c> handler catches the URL and DMF is added to the
+    /// active profile via the standard nxm flow.
+    /// </summary>
+    private const string DmfFilesUrl = "https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files";
+
     private readonly IProfileService _profiles;
     private readonly IProfileSession _session;
     private readonly IModRepository _repo;
@@ -77,6 +92,7 @@ public sealed class DmfPromptService
     private readonly IDialogService _dialogs;
     private readonly LocalizationService _localization;
     private readonly ILogger<DmfPromptService> _logger;
+    private readonly Func<Uri, bool> _launchExternal;
 
     // Pending triggers, set by the event handlers (which fire from inside the
     // ManageProfiles / Integrations dialogs) and consumed by
@@ -100,7 +116,8 @@ public sealed class DmfPromptService
         IConfigLoader configLoader,
         IDialogService dialogs,
         LocalizationService localization,
-        ILogger<DmfPromptService> logger)
+        ILogger<DmfPromptService> logger,
+        Func<Uri, bool>? launchExternal = null)
     {
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -111,6 +128,7 @@ public sealed class DmfPromptService
         _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _localization = localization ?? throw new ArgumentNullException(nameof(localization));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _launchExternal = launchExternal ?? DefaultLaunchExternal;
 
         _profiles.ProfileCreated += OnProfileCreated;
         _auth.AuthStateChanged += OnAuthStateChanged;
@@ -340,7 +358,22 @@ public sealed class DmfPromptService
 
                 if (confirmed)
                 {
-                    await DownloadAndAddAsync(profileId);
+                    // Premium users get the in-app API download; non-premium (or
+                    // unknown) get the browser opened at DMF's files page. The
+                    // Nexus download_link endpoint is premium-only; non-premium
+                    // users must visit the site to generate the per-file nxm
+                    // token. The user clicks Download on the page -> the
+                    // existing nxm:// handler picks it up -> DMF is added to the
+                    // active profile via the standard nxm flow.
+                    var state = await _auth.GetCurrentStateAsync();
+                    if (state?.IsPremium == true)
+                    {
+                        await DownloadAndAddAsync(profileId);
+                    }
+                    else
+                    {
+                        await OpenDmfFilesPageInBrowser();
+                    }
                 }
             }
             else
@@ -363,6 +396,57 @@ public sealed class DmfPromptService
             {
                 SetAuthPromptShown();
             }
+        }
+    }
+
+    /// <summary>
+    /// Opens DMF's Nexus files page in the user's default browser. Used when the
+    /// user is non-premium (or premium state is unknown): the Nexus
+    /// <c>download_link.json</c> endpoint is premium-only, so non-premium users
+    /// must visit the site to generate the per-file nxm download token. The user
+    /// clicks Download on the page; the existing nxm:// handler catches the URL
+    /// and DMF is added to the active profile via the standard nxm flow. No
+    /// additional confirm before opening (the user already confirmed "Download
+    /// DMF?"); on a launcher failure, falls back to an alert with the URL so the
+    /// user can copy it manually (better than a silent no-op).
+    /// </summary>
+    private async Task OpenDmfFilesPageInBrowser()
+    {
+        var uri = new Uri(DmfFilesUrl);
+        if (_launchExternal(uri))
+        {
+            _logger.LogInformation(
+                "Opened DMF files page in browser (non-premium user); the nxm handler will pick up the download.");
+            return;
+        }
+
+        // Launcher failed (no default browser, headless, etc.). Surface the URL
+        // so the user can copy it; this is a failure alert, not a "safety" confirm.
+        _logger.LogWarning("Failed to open the DMF files page in the browser.");
+        await _dialogs.ShowAlertAsync(
+            _localization["Dmf_DownloadFailedTitle"],
+            _localization.Format("Dmf_OpenBrowserFailedMessage", DmfFilesUrl));
+    }
+
+    /// <summary>
+    /// Opens <paramref name="uri"/> in the user's default browser via the OS
+    /// shell-open (<c>UseShellExecute = true</c>), the same pattern the OAuth
+    /// browser launcher + the Integrations help link use. Returns <c>false</c>
+    /// on a shell-open failure (no default browser, headless test env, missing
+    /// browser binary, unusual runtime) so the caller can surface a fallback
+    /// alert with the URL; programming errors still throw. The exception filter
+    /// is intentionally narrow so a real wiring bug is not silently swallowed.
+    /// </summary>
+    private static bool DefaultLaunchExternal(Uri uri)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri.ToString()) { UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex) when (ex is Win32Exception or PlatformNotSupportedException or FileNotFoundException)
+        {
+            return false;
         }
     }
 
