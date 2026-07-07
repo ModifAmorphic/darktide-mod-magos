@@ -348,6 +348,22 @@ public partial class ModListView : UserControl
     }
 
     /// <summary>
+    /// Routes a per-row Update button click to the parent's
+    /// <c>UpdateCommand</c>. The command owns the defenses (premium, Nexus +
+    /// Latest, update flagged, one-at-a-time) + the acquire + reload + alert
+    /// flow; the view is pure mechanics (the established row-interaction
+    /// pattern). The row is passed as the command parameter.
+    /// </summary>
+    private void Update_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button b && b.DataContext is ModItemViewModel row)
+        {
+            // AsyncRelayCommand.Execute forwards to ExecuteAsync.
+            ViewModel?.UpdateCommand.Execute(row);
+        }
+    }
+
+    /// <summary>
     /// Applies the auto-sort resolver once on toggle. The command is a no-op when
     /// there is no active profile or no mods (and the identity resolver makes it a
     /// no-op regardless); <see cref="ModListViewModel.AutoSortEnabled"/> tracks the
@@ -356,5 +372,21 @@ public partial class ModListView : UserControl
     private void AutoSort_Click(object? sender, RoutedEventArgs e)
     {
         ViewModel?.AutoSortCommand.Execute(null);
+    }
+
+    /// <summary>
+    /// Routes the header "check for updates now" button to the VM's
+    /// <c>CheckForUpdatesNowCommand</c> (an AsyncRelayCommand). The command
+    /// owns the thorough check + the <c>IsCheckingNow</c> affordance + the
+    /// no-active-profile no-op; the view is pure mechanics. The button's
+    /// <c>IsEnabled</c> is bound to <c>!IsCheckingNow</c> so a second click
+    /// while a thorough check is running is disabled at the control level too.
+    /// </summary>
+    private async void RefreshUpdates_Click(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await vm.CheckForUpdatesNowCommand.ExecuteAsync(null);
+        }
     }
 }

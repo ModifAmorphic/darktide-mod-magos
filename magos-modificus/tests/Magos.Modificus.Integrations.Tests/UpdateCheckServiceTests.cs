@@ -381,6 +381,108 @@ public sealed class UpdateCheckServiceTests
         Assert.Equal(NexusLatestContainer, flagged.ContainerId);
     }
 
+    // ---- RemoteUploadedAt vs ImportedAt comparison basis ------------------
+
+    [Fact]
+    public async Task CheckAsync_uses_RemoteUploadedAt_and_flags_when_latest_file_is_newer()
+    {
+        // The operator's Power DI scenario: an older file is imported TODAY
+        // (ImportedAt = now) for a mod whose latest file was published in the
+        // past. The ImportedAt comparison would conclude "up to date" (now >
+        // any past upload); the RemoteUploadedAt comparison correctly flags
+        // the older install.
+        var publishedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var importedAt = publishedAt.AddMonths(6); // imported much later
+        var latestFileUpdate = publishedAt.AddDays(15); // a newer file exists
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, latestFileUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Power DI", importedAt, "1.1.19", publishedAt);
+
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // ImportedAt > latestFileUpdate (would not flag under the old compare),
+        // but RemoteUploadedAt < latestFileUpdate, so the mod IS flagged.
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
+        Assert.Equal(latestFileUpdate, flagged.LatestUpdateAt);
+    }
+
+    [Fact]
+    public async Task CheckAsync_does_not_flag_when_RemoteUploadedAt_is_at_or_after_latest_file()
+    {
+        // The post-update scenario: a one-click update set the imported
+        // version's RemoteUploadedAt to the latest file's publish date. The
+        // next check must NOT re-flag (latest is not strictly newer than the
+        // installed file's publish date).
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var latestFileUpdate = importedAt.AddDays(1);
+        var remoteUploadedAt = latestFileUpdate; // same publish date = up to date
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, latestFileUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.Empty(result.Updates);
+    }
+
+    [Fact]
+    public async Task CheckAsync_falls_back_to_ImportedAt_when_RemoteUploadedAt_is_null()
+    {
+        // Versions imported before RemoteUploadedAt existed (or non-Nexus, though
+        // those are filtered out earlier) fall back to the ImportedAt comparison.
+        // A mod whose ImportedAt is older than the latest file IS flagged; one
+        // whose ImportedAt is newer is NOT. This preserves the prior behavior.
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var latestFileUpdate = importedAt.AddDays(1);
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, latestFileUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        // RemoteUploadedAt omitted -> null.
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", importedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // ImportedAt < latestFileUpdate -> flagged under the fallback compare.
+        Assert.Single(result.Updates);
+    }
+
     // ---- publishing + best-effort failure ---------------------------------
 
     [Fact]
@@ -448,6 +550,392 @@ public sealed class UpdateCheckServiceTests
         Assert.Same(result, single);
     }
 
+    // ---- thorough vs month-only result flag --------------------------------
+
+    [Fact]
+    public async Task CheckAsync_returns_thorough_false()
+    {
+        // The Month-only path stamps Thorough: false on every result branch
+        // (here the empty Month response short-circuits the intersect to empty,
+        // but Thorough is still false).
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.False(result.Thorough);
+    }
+
+    [Fact]
+    public async Task CheckThoroughAsync_returns_thorough_true()
+    {
+        // The thorough path stamps Thorough: true on every result branch (here
+        // the Month response is empty + no per-mod lookups are needed, but
+        // Thorough is still true).
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        Assert.True(result.Thorough);
+    }
+
+    // ---- CheckThoroughAsync: the Numeric UI scenario ----------------------
+    //
+    // A Nexus+Latest mod whose latest MAIN file is OLDER than the Month window
+    // (so the Month response never lists it) but NEWER than the user's imported
+    // version. The Month-only check misses it; the thorough per-mod pass catches
+    // it via ListModFilesAsync.
+
+    [Fact]
+    public async Task CheckThoroughAsync_flags_mod_outside_month_window_when_latest_main_file_is_newer_than_imported()
+    {
+        // The Numeric UI scenario: the mod was last updated on Nexus ~5 months
+        // ago, so it never appears in the Month response. The user has a year-old
+        // version imported. The thorough per-mod lookup resolves the latest MAIN
+        // file + compares its upload time against the imported version's
+        // RemoteUploadedAt, then flags it.
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var importedRemoteUploadedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var latestMainUploaded = importedRemoteUploadedAt.AddMonths(1); // newer than imported
+
+        // Empty Month response: the mod is outside the window.
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+        };
+        // The per-mod lookup returns one MAIN file uploaded a month after the
+        // imported version.
+        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
+            },
+            NexusRateLimits.Unknown);
+
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Numeric UI", importedAt, "1.0", importedRemoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
+        Assert.Equal(UpdatedModId, flagged.ModId);
+        Assert.Equal(latestMainUploaded, flagged.LatestUpdateAt);
+        Assert.True(result.Thorough);
+        Assert.False(result.RateLimited);
+        // The per-mod lookup was made exactly once for the one checkable mod
+        // NOT in the Month response.
+        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
+    }
+
+    [Fact]
+    public async Task CheckThoroughAsync_does_not_flag_when_latest_main_file_is_older_than_imported()
+    {
+        // The thorough pass's negative case: the latest MAIN file is older than
+        // (or equal to) the imported version's publish date. Nothing flags.
+        var importedAt = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        var importedRemoteUploadedAt = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        var latestMainUploaded = importedRemoteUploadedAt.AddMonths(-1); // older than imported
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+        };
+        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
+            },
+            NexusRateLimits.Unknown);
+
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Numeric UI", importedAt, "1.0", importedRemoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        Assert.Empty(result.Updates);
+        Assert.True(result.Thorough);
+        Assert.False(result.RateLimited);
+        // The lookup still ran (the mod was not in the Month response).
+        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
+    }
+
+    [Fact]
+    public async Task CheckThoroughAsync_skips_per_mod_lookup_for_mods_already_in_month_response()
+    {
+        // A mod the Month response already covered is NOT re-queried: the Month
+        // intersect handled it, so ListModFilesAsync is not called for it. A
+        // second mod (not in Month) IS queried. Proves the thorough pass
+        // complements the Month pass rather than duplicating it.
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var monthUpdate = importedAt.AddDays(1); // would flag the in-Month mod
+
+        var inMonthModId = UpdatedModId; // 100
+        var outOfMonthModId = UnlistedModId; // 200
+        var outOfMonthLatestMain = importedAt.AddMonths(2); // newer than imported
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(inMonthModId, monthUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        // Only the out-of-Month mod stages a files response; the in-Month mod
+        // would throw if it were queried (proving it isn't).
+        nexus.ModFilesResponses[outOfMonthModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 60, categoryId: NexusModFiles.MainFileCategory, uploaded: outOfMonthLatestMain),
+            },
+            NexusRateLimits.Unknown);
+
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, inMonthModId, "InMonth Mod", importedAt);
+        var outOfMonthContainer = Guid.NewGuid();
+        repository.Containers[outOfMonthContainer] =
+            NexusContainer(outOfMonthContainer, outOfMonthModId, "OutOfMonth Mod", importedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(NexusLatestContainer, new LatestPolicy()),
+                Entry(outOfMonthContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        // Both flag (in-Month via the intersect, out-of-Month via the lookup).
+        Assert.Equal(2, result.Updates.Count);
+        // Only the out-of-Month mod's files were queried.
+        Assert.Equal(new[] { outOfMonthModId }, nexus.ListModFilesModIds);
+    }
+
+    [Fact]
+    public async Task CheckThoroughAsync_skips_archived_and_non_main_files_in_latest_resolution()
+    {
+        // The latest-MAIN filter (NexusModFiles.LatestMain) excludes archived
+        // + non-MAIN entries. A mod whose newest file is archived, with an older
+        // non-archived MAIN file, resolves to the older MAIN file. If THAT file
+        // is older than the imported version, nothing flags.
+        var importedAt = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        var importedRemoteUploadedAt = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var archivedMainUploaded = importedRemoteUploadedAt.AddMonths(1); // newer, but archived
+        var currentMainUploaded = importedRemoteUploadedAt.AddMonths(-1);  // older, not archived
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+        };
+        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 70, categoryId: NexusModFiles.MainFileCategory, archived: true, uploaded: archivedMainUploaded),
+                File(fileId: 71, categoryId: NexusModFiles.MainFileCategory, archived: false, uploaded: currentMainUploaded),
+                File(fileId: 72, categoryId: 3, archived: false, uploaded: archivedMainUploaded.AddDays(1)), // miscellaneous, not MAIN
+            },
+            NexusRateLimits.Unknown);
+
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", importedRemoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        // The archived MAIN (newer) is excluded; the current MAIN (older than
+        // imported) doesn't flag. The miscellaneous file is excluded too.
+        Assert.Empty(result.Updates);
+    }
+
+    [Fact]
+    public async Task CheckThoroughAsync_rate_limit_mid_pass_stops_and_returns_partial_results()
+    {
+        // Two mods, both outside the Month window. The first mod's
+        // ListModFilesAsync returns a newer MAIN file (flags); the second
+        // throws NexusRateLimitException. The pass stops + the result carries
+        // the first mod's flag + RateLimited: true. A third mod (which would
+        // also be queried) is never reached.
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var importedRemoteUploadedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var newerMain = importedRemoteUploadedAt.AddMonths(1);
+
+        var firstModId = UpdatedModId;   // 100 - flagged before the rate-limit
+        var secondModId = UnlistedModId; // 200 - throws NexusRateLimitException
+        var thirdModId = PinnedModId;    // 300 - never reached
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+        };
+        nexus.ModFilesResponses[firstModId] = new Response<ModFile[]>(
+            new[] { File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: newerMain) },
+            NexusRateLimits.Unknown);
+        nexus.ModFilesThrows[secondModId] = new NexusRateLimitException(
+            429, NexusRateLimits.Unknown);
+
+        var firstContainer = NexusLatestContainer;
+        var secondContainer = Guid.NewGuid();
+        var thirdContainer = Guid.NewGuid();
+
+        var repository = new FakeModRepository();
+        repository.Containers[firstContainer] = NexusContainer(
+            firstContainer, firstModId, "First Mod", importedAt, "1.0", importedRemoteUploadedAt);
+        repository.Containers[secondContainer] = NexusContainer(
+            secondContainer, secondModId, "Second Mod", importedAt, "1.0", importedRemoteUploadedAt);
+        repository.Containers[thirdContainer] = NexusContainer(
+            thirdContainer, thirdModId, "Third Mod", importedAt, "1.0", importedRemoteUploadedAt);
+
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(firstContainer, new LatestPolicy()),
+                Entry(secondContainer, new LatestPolicy()),
+                Entry(thirdContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        // Partial: only the first mod flagged before the rate-limit aborted.
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(firstContainer, flagged.ContainerId);
+        Assert.True(result.RateLimited);
+        Assert.True(result.Thorough);
+        // The third mod was never queried (the walk stopped at the second).
+        Assert.Equal(2, nexus.ListModFilesModIds.Count);
+        Assert.DoesNotContain(thirdModId, nexus.ListModFilesModIds);
+    }
+
+    [Fact]
+    public async Task CheckThoroughAsync_other_per_mod_failures_are_logged_and_skipped()
+    {
+        // A non-rate-limit, non-cancellation per-mod failure (e.g. a 500) is
+        // logged + skipped; the walk continues. The failing mod is NOT flagged;
+        // a later mod in the walk still is.
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var importedRemoteUploadedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var newerMain = importedRemoteUploadedAt.AddMonths(1);
+
+        var failingModId = UpdatedModId;   // 100 - throws NexusApiException (not rate-limit)
+        var okModId = UnlistedModId;       // 200 - returns a newer MAIN file
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+        };
+        nexus.ModFilesThrows[failingModId] = new NexusApiException(500, "server error");
+        nexus.ModFilesResponses[okModId] = new Response<ModFile[]>(
+            new[] { File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: newerMain) },
+            NexusRateLimits.Unknown);
+
+        var failingContainer = NexusLatestContainer;
+        var okContainer = Guid.NewGuid();
+
+        var repository = new FakeModRepository();
+        repository.Containers[failingContainer] = NexusContainer(
+            failingContainer, failingModId, "Failing Mod", importedAt, "1.0", importedRemoteUploadedAt);
+        repository.Containers[okContainer] = NexusContainer(
+            okContainer, okModId, "OK Mod", importedAt, "1.0", importedRemoteUploadedAt);
+
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(failingContainer, new LatestPolicy()),
+                Entry(okContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        // The failing mod was skipped; the OK mod flagged. No rate-limit.
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(okContainer, flagged.ContainerId);
+        Assert.False(result.RateLimited);
+        Assert.True(result.Thorough);
+        // Both mods were queried (the walk continued past the failure).
+        Assert.Equal(2, nexus.ListModFilesModIds.Count);
+    }
+
+    [Fact]
+    public async Task CheckThoroughAsync_no_auth_short_circuits_with_thorough_true()
+    {
+        // The Month-call short-circuit (no auth) propagates to the thorough
+        // result too: the per-mod pass can't run without the byModId index, so
+        // the result is empty + Thorough: true (the thorough method was the
+        // entry point even though it short-circuited at the auth gate).
+        var nexus = new FakeNexusClient(); // never called
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", DateTimeOffset.UtcNow);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository, authMethod: NexusAuthMethod.None);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        Assert.Empty(result.Updates);
+        Assert.True(result.Thorough);
+        Assert.False(result.RateLimited);
+        Assert.Equal(0, nexus.ModUpdatesCallCount);
+        Assert.Empty(nexus.ListModFilesModIds);
+    }
+
     // ---- helpers + fakes ---------------------------------------------------
 
     /// <summary>
@@ -455,7 +943,8 @@ public sealed class UpdateCheckServiceTests
     /// IsLatest version imported at <paramref name="importedAt"/>.
     /// </summary>
     private static ModContainer NexusContainer(
-        Guid id, int modId, string name, DateTimeOffset importedAt, string version = "1.0") =>
+        Guid id, int modId, string name, DateTimeOffset importedAt, string version = "1.0",
+        DateTimeOffset? remoteUploadedAt = null) =>
         new()
         {
             Id = id,
@@ -469,6 +958,7 @@ public sealed class UpdateCheckServiceTests
                     VersionString = version,
                     IsLatest = true,
                     ImportedAt = importedAt,
+                    RemoteUploadedAt = remoteUploadedAt,
                 },
             },
         };
@@ -514,6 +1004,24 @@ public sealed class UpdateCheckServiceTests
         };
 
     /// <summary>
+    /// Builds a <see cref="ModFile"/> with the given category / archive flag /
+    /// upload time (Unix seconds derived from <paramref name="uploaded"/>).
+    /// Used to stage per-mod <c>files.json</c> responses for the thorough pass.
+    /// </summary>
+    private static ModFile File(
+        int fileId, int categoryId, DateTimeOffset uploaded, bool archived = false, string version = "1.0") =>
+        new()
+        {
+            FileId = fileId,
+            CategoryId = categoryId,
+            IsArchived = archived,
+            UploadedTimestamp = uploaded.ToUnixTimeSeconds(),
+            Version = version,
+            FileName = fileId + ".zip",
+            Name = "file " + fileId,
+        };
+
+    /// <summary>
     /// Constructs the service with the given fakes + a <see cref="FakeConfigLoader"/>
     /// whose Nexus auth method is <paramref name="authMethod"/> (ApiKey by
     /// default, so the auth gate passes and the API is reached).
@@ -532,10 +1040,10 @@ public sealed class UpdateCheckServiceTests
     }
 
     /// <summary>
-    /// A configurable <see cref="INexusClient"/> stub. Only
-    /// <see cref="ModUpdatesAsync"/> is exercised by the service; the other
-    /// members throw. Tracks the call count + the args for the 1-call contract
-    /// + domain/window assertions.
+    /// A configurable <see cref="INexusClient"/> stub. <see cref="ModUpdatesAsync"/>
+    /// is exercised by both check shapes; <see cref="ListModFilesAsync"/> is
+    /// exercised by the thorough pass. Other members throw. Tracks the call
+    /// counts + the args for the 1-call contract + domain/window assertions.
     /// </summary>
     private sealed class FakeNexusClient : INexusClient
     {
@@ -544,6 +1052,14 @@ public sealed class UpdateCheckServiceTests
         public int ModUpdatesCallCount { get; private set; }
         public string? LastGameDomain { get; private set; }
         public NexusPeriod? LastPeriod { get; private set; }
+
+        // Per-mod files responses (keyed by mod id). A mod not in the
+        // dictionary returns an empty files list (no MAIN file -> nothing to
+        // flag). A mod in ModFilesThrows throws instead (used for the
+        // mid-pass rate-limit + the per-mod failure tests).
+        public Dictionary<int, Response<ModFile[]>> ModFilesResponses { get; } = new();
+        public Dictionary<int, Exception> ModFilesThrows { get; } = new();
+        public List<int> ListModFilesModIds { get; } = new();
 
         public Task<Response<ModUpdate[]>> ModUpdatesAsync(
             string gameDomain, NexusPeriod period, CancellationToken ct = default)
@@ -560,6 +1076,21 @@ public sealed class UpdateCheckServiceTests
                     ?? new Response<ModUpdate[]>(Array.Empty<ModUpdate>(), NexusRateLimits.Unknown));
         }
 
+        public Task<Response<ModFile[]>> ListModFilesAsync(
+            string gameDomain, int modId, CancellationToken ct = default)
+        {
+            ListModFilesModIds.Add(modId);
+            if (ModFilesThrows.TryGetValue(modId, out var ex))
+            {
+                return Task.FromException<Response<ModFile[]>>(ex);
+            }
+            if (ModFilesResponses.TryGetValue(modId, out var response))
+            {
+                return Task.FromResult(response);
+            }
+            return Task.FromResult(new Response<ModFile[]>(Array.Empty<ModFile>(), NexusRateLimits.Unknown));
+        }
+
         public Task<Response<ValidateInfo>> ValidateAsync(CancellationToken ct = default)
             => throw new NotImplementedException();
         public Task<Response<OAuthUserInfo>> GetOAuthUserInfoAsync(CancellationToken ct = default)
@@ -572,9 +1103,6 @@ public sealed class UpdateCheckServiceTests
             string nxmKey, long expiresEpoch, CancellationToken ct = default)
             => throw new NotImplementedException();
         public Task<Response<ModInfo>> GetModInfoAsync(
-            string gameDomain, int modId, CancellationToken ct = default)
-            => throw new NotImplementedException();
-        public Task<Response<ModFile[]>> ListModFilesAsync(
             string gameDomain, int modId, CancellationToken ct = default)
             => throw new NotImplementedException();
     }
@@ -629,7 +1157,8 @@ public sealed class UpdateCheckServiceTests
         public ModContainer? FindUntrackedByName(string name) => throw new NotImplementedException();
         public ModContainer CreateContainer(ModSource source, string name)
             => throw new NotImplementedException();
-        public ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder)
+        public ModContainer AddVersion(
+            Guid containerId, string versionString, Action<string> populateFolder, DateTimeOffset? remoteUploadedAt = null)
             => throw new NotImplementedException();
         public void RemoveVersion(Guid containerId, string versionFolder)
             => throw new NotImplementedException();

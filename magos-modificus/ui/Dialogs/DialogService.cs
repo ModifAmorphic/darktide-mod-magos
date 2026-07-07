@@ -213,13 +213,16 @@ public sealed class DialogService : IDialogService
     /// <inheritdoc />
     public async Task ShowIntegrationsAsync()
     {
-        // The VM resolves its initial state server-side on open (Window.OnOpened
-        // calls vm.RefreshAsync). Each auth action applies + persists through
-        // the NexusAuthService; on close there is nothing else to do.
+        // The VM resolves its initial auth state server-side on open
+        // (Window.OnOpened calls vm.RefreshAsync) and its update-check toggle +
+        // interval from the persisted config. Each auth action applies +
+        // persists through the NexusAuthService; the toggle + interval persist
+        // on each change via the VM's read-modify-save over the same loader.
         var viewModel = new IntegrationsViewModel(
             _nexusAuth,
             _localization,
             _session,
+            _configLoader,
             _loggerFactory.CreateLogger<IntegrationsViewModel>());
         var window = new IntegrationsWindow
         {

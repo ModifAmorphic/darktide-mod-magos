@@ -28,15 +28,17 @@ game-binary constraints now live with the runtime, in
 - **`main`** — production. Magos Modificus is built through Phase 3 (all four
   tracks merged: Track A the app shell + profile management, Track D global
   Preferences + i18n, Track B the mod-list UI + local import, Track C the Launch
-  flow + Settings window + discovery escape-hatch) + Phase 4 Stages 1-4 (the
-  nxm:// scheme handler, Nexus auth + Integrations dialog, mod acquisition, and
-  the update-check service). The app is user-usable: create profiles, import
-  mods (folder/`.zip`, Nexus/GitHub/Untracked), manage the mod list
-  (enable/disable/reorder/policy/remove), configure Settings (discovery paths +
-  mod-repo location), and launch modded Darktide. The Launcher is a stub
-  (Phase 5). Backend libraries: Profiles, Mods (the unified mod repository),
-  Steam, Integrations, Enginseer-client, General. The Enginseer runtime is a
-  separate repo
+  flow + Settings window + discovery escape-hatch) + Phase 4 Stages 1-5 (the
+  nxm:// scheme handler, Nexus auth + Integrations dialog, mod acquisition, the
+  update-check service, and the mod-list update UI). The app is user-usable:
+  create profiles, import mods (folder/`.zip`, Nexus/GitHub/Untracked), manage
+  the mod list (enable/disable/reorder/policy/remove), configure Settings
+  (discovery paths + mod-repo location), and launch modded Darktide. Premium
+  users additionally get per-mod one-click update on the mod list; non-premium
+  users see the source-badge link + the update marker + the existing nxm
+  download flow. The Launcher is a stub (Phase 5). Backend libraries: Profiles,
+  Mods (the unified mod repository), Steam, Integrations, Enginseer-client,
+  General. The Enginseer runtime is a separate repo
   ([darktide-enginseer](https://github.com/ModifAmorphic/darktide-enginseer));
   this repo holds Magos Modificus only.
 - **`poc`** — historical proof-of-concept, reference only. Not built upon.
@@ -80,7 +82,44 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                           fire-and-forget on profile load (startup-with-restored-id
                           + active-profile switch via IProfileSession.PropertyChanged
                           filtered to ActiveProfileId), registered + started
-                          best-effort from MagosComposition)
+                          best-effort from MagosComposition);
+                          Phase 4 Stage 5: the mod-list update UI per-row update
+                          signal + per-mod update button. `ModListViewModel` subscribes
+                          to `IUpdateCheckService.CheckCompleted` (per-row
+                          `UpdateAvailable` from `LastResult.Updates` matched by
+                          ContainerId, list-level `IsRateLimited` notice + a
+                          companion `IsRecentOnly`/"showing recent updates"
+                          notice that fires after a Month-only check and clears
+                          after a thorough one), reads
+                          `INexusAuthService.GetCurrentStateAsync` once at construction
+                          for the premium gate (`IsPremiumUser`, no mid-session refresh),
+                          and exposes an async `UpdateCommand(row)` that calls
+                          `IModAcquisitionService.AcquireLatestNexusAsync` (premium-only,
+                          one-at-a-time via `AnyRowUpdating`) + an async
+                          `CheckForUpdatesNowCommand` that awaits the runner's
+                          thorough check (driving an `IsCheckingNow` spinner on
+                          the header refresh button). The view's source badge
+                          is a `HyperlinkButton` to the mod's remote page, a drawn
+                          `<Ellipse>` + a `HyperlinkButton` to the mod's Nexus
+                          files tab (`?tab=files`) marks flagged rows, a drawn
+                          download-arrow Update button + indeterminate
+                          `ProgressBar` (toggled by `IsUpdating`) live in a new
+                          row column, and the rate-limit + recent-only notices
+                          sit in the header. `ModItemViewModel` carries the
+                          new INPC state + derived `SourceUrl`/`UpdatePageUrl`/
+                          `IsNexusLatest`/`CanShowUpdateButton`/`NexusModId`; a
+                          `BoolAllConverter` (ui/Converters/) ANDs the row's
+                          `CanShowUpdateButton` with the list VM's
+                          `IsPremiumUser` for the button's `IsVisible`
+                          MultiBinding. The check is split by trigger:
+                          `IUpdateCheckService.CheckAsync` (Month-only, 1 API
+                          call) fires on profile load + the periodic timer;
+                          `IUpdateCheckService.CheckThoroughAsync` (adds a
+                          per-mod `ListModFilesAsync` pass for mods the Month
+                          response missed, catching mods whose latest release
+                          predates the Month window) fires on the manual "check
+                          now" button; both share `LastResult`/`CheckCompleted`,
+                          distinguished by the result's `Thorough` flag)
   general/              Magos.Modificus.General — cross-cutting infra (logging bootstrap,
                           config loader, app-state store, AddGeneral() DI ext)
   config/               Magos.Modificus.Config — the MagosConfig schema + defaults (POCO),
@@ -139,14 +178,22 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                         download; AcquireFromNexusAsync resolves the download
                         links, fetches name + version metadata, downloads to
                         temp, then imports via IModImportService.Import;
+                        AcquireLatestNexusAsync (Stage 5) resolves the newest
+                        non-archived MAIN file via ListModFilesAsync then forwards
+                        to AcquireFromNexusAsync with null nxm tokens (premium
+                        path); ModFile gains an `archived` bool for the filter;
                         Phase 4 Stage 4: IUpdateCheckService the Nexus-only
                         update-check service (1 ModUpdatesAsync call per check,
                         intersected with the profile's LatestPolicy+NexusSource
                         mods; compares LatestFileUpdateUtc against the imported
-                        version's ImportedAt; rate-limit-aware with the all-zero
+                        version's RemoteUploadedAt (with an ImportedAt fallback
+                        for versions imported before that field existed); the
+                        publish-date basis, not ImportedAt, is what catches an
+                        outdated install re-acquired today (ImportedAt = now
+                        would mask it); rate-limit-aware with the all-zero
                         Unknown guard; LastResult + CheckCompleted event for
-                        Stage 5 badges; Integrations now references Profiles,
-                        acyclic, for IProfileService.GetModList)
+                        the Stage 5 mod-list badges; Integrations now references
+                        Profiles, acyclic, for IProfileService.GetModList)
   steam/                Magos.Modificus.Steam — Steam + Darktide + Proton discovery
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup
                         via process comm on Windows; LinuxProcessLookup via /proc
@@ -203,7 +250,10 @@ magos-modificus/        Magos Modificus — the mod manager app (.NET 10 + Avalo
                                             persist, switch-blocked-while-running; dialog via
                                             an injectable IDialogService seam; + the
                                             NxmModDownloadHandler auth/profile gates + error
-                                            wiring against in-memory fakes)
+                                            wiring + the mod-list update flow: CheckCompleted
+                                            per-row state, UpdateCommand success/failure +
+                                            one-at-a-time + premium gating + SourceUrl resolution,
+                                            against in-memory fakes)
     Magos.Modificus.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
                                             IPC server resilience, SingleInstanceGuard, router,
                                             relay helper, Linux registrar, AddNxm wiring;

@@ -61,12 +61,26 @@ public interface IModAcquisitionService
         string gameDomain, int modId, int fileId,
         string? nxmKey = null, long? nxmExpires = null,
         IProgress<long>? progress = null, CancellationToken ct = default);
+
+    Task<(Guid ContainerId, string VersionId)> AcquireLatestNexusAsync(
+        string gameDomain, int modId,
+        IProgress<long>? progress = null, CancellationToken ct = default);
 }
 ```
 
-The `IProgress<long>` parameter is Stage 5's per-row progress hook (Stage 3's
-nxm handler passes `null`). The caller handles profile registration; the
-service does download plus Import and returns the `(containerId, versionId)`.
+The `IProgress<long>` parameter is the per-row progress hook (the nxm handler
+passes `null`; the mod-list update path passes `null` for its indeterminate
+affordance). The caller handles profile registration; the service does download
+plus Import and returns the `(containerId, versionId)`.
+
+`AcquireLatestNexusAsync` is the per-mod Update button's entry point: it knows
+the mod id (not the file id) and lets the service pick the current release. It
+lists the mod's files via `ListModFilesAsync`, filters to non-archived MAIN
+files (Nexus `category_id` 1, universal across games), picks the newest by
+`uploaded_timestamp`, then forwards to `AcquireFromNexusAsync` with `null` nxm
+key/expires (the premium / auth-only download path). `InvalidOperationException`
+surfaces when no MAIN file is available (the caller shows a user-facing alert).
+`ModFile` carries an `archived` bool for the filter.
 
 The service is a singleton (no per-call state; a thin orchestrator over the
 client and import service). It resolves `INexusClient`, `IModImportService`,
@@ -84,11 +98,15 @@ and `IHttpClientFactory` (for the raw CDN download) from the container.
    (`result.Data[0].Uri`); Nexus returns them in priority order (this is what
    every client does).
 2. **Resolve metadata** for the Import: `GetModInfoAsync` for the mod name,
-   `ListModFilesAsync` and match by `fileId` for the version string. These are
-   2 API calls (3 total per acquisition, within rate limits). **No degraded
-   fallback:** if the metadata fetch fails, the acquisition fails with a clear
-   error (a mod stored under its numeric id as a name is worse than a clean
-   failure message) and nothing partial lands.
+   `ListModFilesAsync` and match by `fileId` for the version string + the
+   matched file's `UploadedTimestamp` (Unix seconds). These are 2 API calls (3
+   total per acquisition, within rate limits). **No degraded fallback:** if the
+   metadata fetch fails, the acquisition fails with a clear error (a mod stored
+   under its numeric id as a name is worse than a clean failure message) and
+   nothing partial lands. The publish timestamp is converted to a
+   `DateTimeOffset?` (null when the wire value is `0` / absent) and forwarded
+   as the imported version's `RemoteUploadedAt`, the basis for the update-check
+   publish-date comparison.
 3. **Download** from the CDN URI to a `.zip`-named temp file
    (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip")`)
    using a plain `HttpClient` from `IHttpClientFactory` plus the 81920-byte
@@ -98,10 +116,11 @@ and `IHttpClientFactory` (for the raw CDN download) from the container.
    extension; a `.tmp` would be treated as a folder path). The temp file is
    deleted once Import returns, always, success or failure (no partial state).
 4. **Import** via `IModImportService.Import(tempPath, modName, new NexusSource
-   { ModId = modId }, version)`. The import service validates the `.zip`
-   structure (single base folder plus matching `<base>.mod` descriptor),
-   handles find-or-create-container (dedup by `NexusSource.ModId`) plus
-   add-version plus the `IsLatest` flip, and extracts into
+   { ModId = modId }, version, remoteUploadedAt)`. The import service validates
+   the `.zip` structure (single base folder plus matching `<base>.mod`
+   descriptor), handles find-or-create-container (dedup by `NexusSource.ModId`)
+   plus add-version plus the `IsLatest` flip, records the publish date on the
+   new entry as `RemoteUploadedAt`, and extracts into
    `<ModsFolder>/<containerUUID>/<versionFolder>/<baseFolder>/`.
 5. **Return** `(containerId, versionId)`.
 

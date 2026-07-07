@@ -177,7 +177,11 @@ internal sealed class ModRepository : IModRepository
     }
 
     /// <inheritdoc />
-    public ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder)
+    public ModContainer AddVersion(
+        Guid containerId,
+        string versionString,
+        Action<string> populateFolder,
+        DateTimeOffset? remoteUploadedAt = null)
     {
         ArgumentNullException.ThrowIfNull(versionString);
         ArgumentNullException.ThrowIfNull(populateFolder);
@@ -202,10 +206,15 @@ internal sealed class ModRepository : IModRepository
             // old contents survive any populateFolder failure); the version
             // entry (Folder, VersionString, IsLatest, ImportedAt) is left
             // unchanged so the manifest ordering stays stable. (Re-importing a
-            // version is a file refresh, not a re-order.)
+            // version is a file refresh, not a re-order.) RemoteUploadedAt is
+            // the one entry field refreshed on re-import: a re-acquired version
+            // carries the current remote-publish timestamp (callers pass null
+            // for manual re-imports, which clears it; non-remote sources aren't
+            // update-checked anyway).
             var versionDir = VersionDir(baseFolder, containerId, existing.Folder);
             PopulateAtomically(versionDir, populateFolder);
-            versions = container.Versions.ToList();
+            var refreshed = existing with { RemoteUploadedAt = remoteUploadedAt };
+            versions = container.Versions.Select(v => ReferenceEquals(v, existing) ? refreshed : v).ToList();
             _logger.LogInformation(
                 "Re-imported version '{Version}' on container {Id} (folder reused: {Folder})",
                 versionString, containerId, existing.Folder);
@@ -228,6 +237,7 @@ internal sealed class ModRepository : IModRepository
                 VersionString = versionString,
                 IsLatest = true,
                 ImportedAt = DateTimeOffset.UtcNow,
+                RemoteUploadedAt = remoteUploadedAt,
             };
             versions = container.Versions
                 .Select(v => v with { IsLatest = false })

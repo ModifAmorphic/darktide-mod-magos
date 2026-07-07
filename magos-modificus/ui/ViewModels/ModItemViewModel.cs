@@ -107,6 +107,32 @@ public partial class ModItemViewModel : ObservableObject
     public bool Found { get; }
 
     /// <summary>
+    /// Whether the update check flagged this container as having a newer release
+    /// on Nexus than the imported version. Set by the parent
+    /// <see cref="ModListViewModel"/> from
+    /// <c>IUpdateCheckService.LastResult.Updates</c> (matched by
+    /// <see cref="ContainerId"/>) on reload + on the
+    /// <c>CheckCompleted</c> event. Drives the drawn update-available marker on
+    /// the source badge + (combined with premium + Nexus + Latest) the per-row
+    /// Update button's visibility. Always <c>false</c> for Pinned / Untracked /
+    /// GitHub rows (the update check skips them).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanShowUpdateButton))]
+    private bool _updateAvailable;
+
+    /// <summary>
+    /// Whether the row is currently running a one-click update (the parent's
+    /// <c>UpdateCommand</c> set it + <c>AnyRowUpdating</c> on the parent). While
+    /// true, the row shows an indeterminate progress affordance in place of the
+    /// Update button + every other row's Update button is disabled (one update
+    /// at a time). Cleared in the command's finally block on success or failure.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanShowUpdateButton))]
+    private bool _isUpdating;
+
+    /// <summary>
     /// The ComboBox selection for the policy editor (0 = Latest, 1 = Pinned),
     /// two-way bound. Initialized from <see cref="Policy"/> on construction; a user
     /// change routes through the view to the parent's <c>SetModPolicy</c> command.
@@ -191,6 +217,64 @@ public partial class ModItemViewModel : ObservableObject
     }
 
     /// <summary>
+    /// The Nexus mod id when the row's source is <see cref="NexusSource"/>, else
+    /// <c>null</c>. The parent's update command reads this to call
+    /// <c>IModAcquisitionService.AcquireLatestNexusAsync</c> (which takes the mod
+    /// id, not the file id). Null for Untracked / GitHub / not-found rows.
+    /// </summary>
+    public int? NexusModId => Source is NexusSource n ? n.ModId : null;
+
+    /// <summary>
+    /// Whether the row is both Nexus-sourced AND on the <see cref="LatestPolicy"/>
+    /// (the conjunction the update check requires). The Update button's effective
+    /// visibility binds to this AND <see cref="UpdateAvailable"/> AND the list
+    /// VM's <c>IsPremiumUser</c>. Pinned / Untracked / GitHub rows are always
+    /// <c>false</c>, so the Update button never shows for them.
+    /// </summary>
+    public bool IsNexusLatest => Source is NexusSource && Policy is LatestPolicy;
+
+    /// <summary>
+    /// The row-local half of the Update button's visibility conjunction:
+    /// <see cref="IsNexusLatest"/> AND <see cref="UpdateAvailable"/> AND NOT
+    /// <see cref="IsUpdating"/>. The list VM's <c>IsPremiumUser</c> (the
+    /// premium gate) ANDs with this in the view via a MultiBinding. Splitting
+    /// the conjunction this way avoids a 4-way MultiBinding + lets each source
+    /// re-fire <see cref="CanShowUpdateButton"/> via
+    /// <c>[NotifyPropertyChangedFor]</c>.
+    /// </summary>
+    public bool CanShowUpdateButton => IsNexusLatest && UpdateAvailable && !IsUpdating;
+
+    /// <summary>
+    /// The mod's remote page URL for the source-badge link (the badge is a
+    /// hyperlink). Nexus -> the mod page; GitHub -> the repo; Untracked /
+    /// not-found -> <c>null</c> (the link is a no-op + the badge reads as plain
+    /// metadata). The URL is not localized, so it does not re-resolve on a
+    /// culture change; <see cref="Refresh"/> re-fires it only for binding
+    /// consistency if the source ever changes (it does not today, but the hook
+    /// keeps the contract uniform with the other derived members).
+    /// </summary>
+    public string? SourceUrl => Source switch
+    {
+        NexusSource n => $"https://www.nexusmods.com/warhammer40kdarktide/mods/{n.ModId}",
+        GitHubSource g => $"https://github.com/{g.Owner}/{g.Repo}",
+        _ => null,
+    };
+
+    /// <summary>
+    /// The mod's Nexus <c>files</c> tab URL (the update-available marker is a
+    /// hyperlink to it, so the user's instinct to click the marker lands on the
+    /// files page where the new release lives). Nexus -> the mod page with
+    /// <c>?tab=files</c>; GitHub / Untracked / not-found -> <c>null</c> (the
+    /// marker's <c>NavigateUri</c> is null, so the <c>HyperlinkButton</c>
+    /// no-ops; those rows never show the marker anyway). Reuses
+    /// <see cref="SourceUrl"/> for the base, so any future change to the page
+    /// URL shape lands in one place.
+    /// </summary>
+    public string? UpdatePageUrl => Source is NexusSource
+        ? SourceUrl + "?tab=files"
+        : null;
+
+    /// <summary>
     /// Creates a row. The parent (<see cref="ModListViewModel"/>) builds rows on
     /// reload, joining source + version + the version list from the repository.
     /// </summary>
@@ -258,12 +342,19 @@ public partial class ModItemViewModel : ObservableObject
     /// <summary>
     /// Re-fires the property-changed events for the localized derived strings so
     /// their bindings re-resolve after a UI culture switch. Called by the parent
-    /// when the LocalizationService raises its culture-changed event.
+    /// when the LocalizationService raises its culture-changed event. The
+    /// non-localized derived members (<see cref="SourceUrl"/>,
+    /// <see cref="UpdatePageUrl"/>, <see cref="NexusModId"/>,
+    /// <see cref="IsNexusLatest"/>) do not change with the culture, but
+    /// re-firing <see cref="SourceUrl"/> + <see cref="UpdatePageUrl"/> keeps the
+    /// refresh contract uniform across derived members.
     /// </summary>
     public void Refresh()
     {
         OnPropertyChanged(nameof(SourceBadgeText));
         OnPropertyChanged(nameof(PolicyDisplayText));
+        OnPropertyChanged(nameof(SourceUrl));
+        OnPropertyChanged(nameof(UpdatePageUrl));
     }
 }
 

@@ -55,4 +55,26 @@ public sealed record ModVersion
     /// newest <see cref="ImportedAt"/> carries <see cref="IsLatest"/>.
     /// </summary>
     public DateTimeOffset ImportedAt { get; init; }
+
+    /// <summary>
+    /// When the underlying remote file was published (UTC), captured at
+    /// acquisition time for remote-source mods (Nexus). <c>null</c> for
+    /// non-remote / manual imports (folder/archive via the picker or
+    /// drag-and-drop), which aren't update-checked anyway. Used by
+    /// <c>UpdateCheckService</c> as the primary comparison basis against
+    /// <see cref="Integrations.ModUpdate.LatestFileUpdateUtc"/>; falls back to
+    /// <see cref="ImportedAt"/> when null (versions imported before this field
+    /// existed, or non-Nexus sources).
+    /// </summary>
+    /// <remarks>
+    /// Backward-compatible on disk: a <c>container.json</c> from before this
+    /// field existed deserializes it to <c>null</c> (System.Text.Json default
+    /// for a missing nullable property), and the update check falls back to
+    /// <see cref="ImportedAt"/>. No migration. Owned by the acquisition layer
+    /// (Integrations), which passes it through
+    /// <see cref="IModImportService.Import"/> / <see cref="IModRepository.AddVersion"/>;
+    /// those seams stay source-agnostic (the param is nullable + unused for
+    /// non-Nexus).
+    /// </remarks>
+    public DateTimeOffset? RemoteUploadedAt { get; init; }
 }

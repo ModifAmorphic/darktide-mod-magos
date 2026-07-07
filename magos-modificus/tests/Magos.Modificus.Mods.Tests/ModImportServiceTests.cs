@@ -127,6 +127,104 @@ public sealed class ModImportServiceTests
         Assert.Equal("2.0", latest.VersionString);
     }
 
+    // ---- remote publish-date propagation (Nexus update-check basis) --------
+
+    [Fact]
+    public void Import_records_RemoteUploadedAt_on_a_new_Nexus_version()
+    {
+        // The Nexus update-check compares the imported file's publish date
+        // (RemoteUploadedAt), not Magos's import time, against the latest file.
+        // The acquisition layer captures the publish date and forwards it
+        // through Import; Import forwards it to AddVersion; AddVersion stamps
+        // it on the new ModVersion entry. This test pins the new-version path.
+        using var fx = new ImportFixture();
+        var dir = fx.MakeSourceModFolder("Src");
+        var nexus = new NexusSource { ModId = 4242 };
+        var publishedAt = new DateTimeOffset(2024, 3, 15, 12, 0, 0, TimeSpan.Zero);
+
+        var (containerId, _) = fx.Service.Import(dir, "WT", nexus, "1.0", publishedAt);
+
+        var version = Assert.Single(fx.Repo.Get(containerId)!.Versions);
+        Assert.Equal(publishedAt, version.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public void Import_default_remoteUploadedAt_is_null_for_manual_imports()
+    {
+        // Manual imports (folder/archive via the picker, drag-and-drop) call
+        // Import without the param -> null. Non-Nexus aren't update-checked
+        // anyway; the null is the correct value (and the check's fallback to
+        // ImportedAt preserves the prior behavior).
+        using var fx = new ImportFixture();
+        var dir = fx.MakeSourceModFolder("Src");
+
+        var (containerId, _) = fx.Service.Import(dir, "DMF", new UntrackedSource(), "1.0");
+
+        var version = Assert.Single(fx.Repo.Get(containerId)!.Versions);
+        Assert.Null(version.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public void Import_dedup_refreshes_RemoteUploadedAt_on_re_import()
+    {
+        // Re-importing the same VersionString refreshes the files AND
+        // RemoteUploadedAt (mirroring how dedup refreshes files): a
+        // re-acquired version carries the current remote-publish timestamp,
+        // not the stale one from the first import. This is what makes a
+        // Stage 5 one-click update land the new file's publish date on the
+        // reused entry, so the next check does not re-flag it.
+        using var fx = new ImportFixture();
+        var dir = fx.MakeSourceModFolder("Src");
+        var nexus = new NexusSource { ModId = 4242 };
+        var firstPublished = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var refreshedPublished = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
+
+        fx.Service.Import(dir, "WT", nexus, "1.0", firstPublished);
+        var (containerId, _) = fx.Service.Import(dir, "WT", nexus, "1.0", refreshedPublished);
+
+        var version = Assert.Single(fx.Repo.Get(containerId)!.Versions);
+        Assert.Equal(refreshedPublished, version.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public void Import_persists_RemoteUploadedAt_through_a_new_repository_instance()
+    {
+        // The field round-trips through container.json (no migration; STJ
+        // default for a missing nullable is null). A fresh repo reading the
+        // manifest from disk must observe the captured publish date.
+        using var fx = new ImportFixture();
+        var dir = fx.MakeSourceModFolder("Src");
+        var nexus = new NexusSource { ModId = 4242 };
+        var publishedAt = new DateTimeOffset(2024, 3, 15, 12, 0, 0, TimeSpan.Zero);
+
+        var (containerId, _) = fx.Service.Import(dir, "WT", nexus, "1.0", publishedAt);
+
+        var reloaded = fx.ReloadRepo();
+        var version = Assert.Single(reloaded.Get(containerId)!.Versions);
+        Assert.Equal(publishedAt, version.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public void Import_with_null_RemoteUploadedAt_clears_a_previously_recorded_one_on_dedup()
+    {
+        // Edge case: a Nexus version is imported with a publish date, then the
+        // SAME VersionString is re-imported manually (no param). Dedup
+        // overwrites RemoteUploadedAt to null (matching how it refreshes
+        // files). Non-Nexus aren't update-checked anyway, so the null is
+        // benign; pinning the behavior keeps it consistent with the
+        // "dedup refreshes everything from the new call" semantic.
+        using var fx = new ImportFixture();
+        var dir = fx.MakeSourceModFolder("Src");
+        var nexus = new NexusSource { ModId = 4242 };
+        var publishedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        fx.Service.Import(dir, "WT", nexus, "1.0", publishedAt);
+        var (containerId, _) = fx.Service.Import(dir, "WT", nexus, "1.0"); // no param -> null
+
+        var version = Assert.Single(fx.Repo.Get(containerId)!.Versions);
+        Assert.Null(version.RemoteUploadedAt);
+    }
+
     // ---- folder + zip placement (base folder preserved) -------------------
 
     [Fact]

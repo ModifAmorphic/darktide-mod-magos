@@ -77,4 +77,35 @@ public interface IModAcquisitionService
         long? nxmExpires = null,
         IProgress<long>? progress = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Acquires the latest MAIN release of a Nexus mod: resolves the newest
+    /// non-archived MAIN file via <see cref="INexusClient.ListModFilesAsync"/>,
+    /// then delegates to <see cref="AcquireFromNexusAsync"/> with the resolved
+    /// <paramref name="fileId"/> + <c>null</c> nxm key/expires (the premium /
+    /// auth-only download path). Used by the per-mod update button on the mod
+    /// list, which knows the mod id (not the file id) and lets the service pick
+    /// the current release.
+    /// </summary>
+    /// <param name="gameDomain">The Nexus game domain (e.g.
+    /// <c>warhammer40kdarktide</c>).</param>
+    /// <param name="modId">The Nexus mod id.</param>
+    /// <param name="progress">Optional cumulative-bytes progress receiver.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The <c>(containerId, versionId)</c> of the imported mod (the same
+    /// shape <see cref="AcquireFromNexusAsync"/> returns).</returns>
+    /// <exception cref="InvalidOperationException">The mod has no MAIN files (or
+    /// none that are non-archived), so no "latest release" exists to acquire.
+    /// The caller surfaces this as a user-facing alert.</exception>
+    /// <exception cref="NexusApiException">The Nexus API returned a non-success
+    /// response (propagated from <see cref="INexusClient"/>).</exception>
+    /// <exception cref="System.IO.IOException">The archive download or the temp
+    /// file could not be completed.</exception>
+    /// <exception cref="System.IO.InvalidDataException">The downloaded archive is
+    /// malformed (propagated from <see cref="IModImportService.Import"/>).</exception>
+    Task<(Guid ContainerId, string VersionId)> AcquireLatestNexusAsync(
+        string gameDomain,
+        int modId,
+        IProgress<long>? progress = null,
+        CancellationToken ct = default);
 }

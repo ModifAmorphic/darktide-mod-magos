@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Magos.Modificus.Integrations;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.Mods;
 using Magos.Modificus.UI.Dialogs;
@@ -66,6 +67,13 @@ public enum ModAddMode
 /// </remarks>
 public partial class ModListViewModel : ObservableObject
 {
+    /// <summary>
+    /// The Darktide Nexus game domain. Fixed: Magos supports only Darktide, so
+    /// there is no config key for it (mirrors <c>UpdateCheckService</c> +
+    /// <c>ModAcquisitionService</c>).
+    /// </summary>
+    private const string GameDomain = "warhammer40kdarktide";
+
     private readonly IProfileService _profiles;
     private readonly IProfileSession _session;
     private readonly IModRepository _repo;
@@ -73,12 +81,20 @@ public partial class ModListViewModel : ObservableObject
     private readonly IModOrderResolver _orderResolver;
     private readonly IDialogService _dialogs;
     private readonly LocalizationService _localization;
+    private readonly IUpdateCheckService _updateCheck;
+    private readonly IModAcquisitionService _acquisition;
+    private readonly INexusAuthService _auth;
+    private readonly UpdateCheckRunner _updateCheckRunner;
     private readonly ILogger<ModListViewModel> _logger;
+    private readonly Action<Action> _invokeOnUi;
 
     /// <summary>
     /// Creates the list VM, subscribes to the session (reload on active-profile
-    /// change) + localization (culture refresh), and loads the current profile's
-    /// mods.
+    /// change), the update-check service (badge refresh on
+    /// <see cref="IUpdateCheckService.CheckCompleted"/>), and localization
+    /// (culture refresh), loads the current profile's mods, and reads the Nexus
+    /// premium state once (fire-and-forget; flips <see cref="IsPremiumUser"/>
+    /// when it lands).
     /// </summary>
     public ModListViewModel(
         IProfileService profiles,
@@ -88,6 +104,11 @@ public partial class ModListViewModel : ObservableObject
         IModOrderResolver orderResolver,
         IDialogService dialogs,
         LocalizationService localization,
+        IUpdateCheckService updateCheck,
+        IModAcquisitionService acquisition,
+        INexusAuthService auth,
+        UpdateCheckRunner updateCheckRunner,
+        Action<Action> invokeOnUi,
         ILogger<ModListViewModel> logger)
     {
         _profiles = profiles;
@@ -97,10 +118,26 @@ public partial class ModListViewModel : ObservableObject
         _orderResolver = orderResolver;
         _dialogs = dialogs;
         _localization = localization;
+        _updateCheck = updateCheck;
+        _acquisition = acquisition;
+        _auth = auth;
+        _updateCheckRunner = updateCheckRunner;
         _logger = logger;
+        _invokeOnUi = invokeOnUi ?? throw new ArgumentNullException(nameof(invokeOnUi));
 
         _session.PropertyChanged += OnSessionPropertyChanged;
         _localization.PropertyChanged += OnCultureChanged;
+        _updateCheck.CheckCompleted += OnUpdateCheckCompleted;
+
+        // Read the Nexus premium state once at construction. Fire-and-forget:
+        // GetCurrentStateAsync hits the network, so blocking the (UI-thread)
+        // constructor on it would stall app startup. The result lands quickly
+        // (sub-second typically) and flips IsPremiumUser; until then the Update
+        // buttons stay hidden (also gated on an update-check result, which takes
+        // longer). No mid-session refresh by design (re-checking on Integrations
+        // dialog close would burn an API call each time; a user signing in
+        // mid-session needing a restart for the buttons to appear is acceptable).
+        _ = LoadPremiumStateAsync();
 
         Reload();
     }
@@ -113,14 +150,12 @@ public partial class ModListViewModel : ObservableObject
     /// state (owned here, not the shell).
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HeaderCountText))]
     [NotifyPropertyChangedFor(nameof(IsEmptyNoMods))]
     private bool _hasActiveProfile;
 
     /// <summary>Whether the active profile has at least one mod (drives the
     /// "no mods yet" empty state).</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HeaderCountText))]
     [NotifyPropertyChangedFor(nameof(IsEmptyNoMods))]
     private bool _hasMods;
 
@@ -152,6 +187,71 @@ public partial class ModListViewModel : ObservableObject
     private ModAddMode _addMode = ModAddMode.Zip;
 
     /// <summary>
+    /// Whether the Nexus account is premium. Read once at construction (see the
+    /// constructor's premium-read note); no mid-session refresh. Drives the
+    /// per-row Update button's visibility (premium-only, hidden not nagged for
+    /// non-premium). False until the read lands (or on a read failure; a
+    /// restart re-reads).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsUpdateEnabled))]
+    private bool _isPremiumUser;
+
+    /// <summary>
+    /// Whether the last update check was rate-limited. Drives the header
+    /// rate-limit notice (the "check incomplete" indicator). Set from
+    /// <see cref="IUpdateCheckService.LastResult"/> on reload + on
+    /// <see cref="IUpdateCheckService.CheckCompleted"/>. Takes precedence over
+    /// <see cref="IsRecentOnly"/> in the derived <see cref="ShowRecentOnlyNotice"/>.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowRecentOnlyNotice))]
+    private bool _isRateLimited;
+
+    /// <summary>
+    /// Whether the last update check was Month-only (NOT thorough). Drives the
+    /// "showing recent updates" notice: a Month-only check completed but did
+    /// not do the per-mod pass, so the badges may not reflect every available
+    /// update. Set from <see cref="IUpdateCheckService.LastResult"/> on reload +
+    /// on <see cref="IUpdateCheckService.CheckCompleted"/>: true when the result
+    /// is non-null, not rate-limited, and not thorough. Cleared after a
+    /// thorough check. Suppressed while <see cref="IsRateLimited"/> is set (the
+    /// rate-limit notice takes precedence via <see cref="ShowRecentOnlyNotice"/>).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowRecentOnlyNotice))]
+    private bool _isRecentOnly;
+
+    /// <summary>
+    /// Whether any row is currently running a one-click update. True while the
+    /// async <see cref="UpdateCommand"/> is in flight; disables every row's
+    /// Update button (one update at a time). Re-enabled in the command's finally
+    /// block on success or failure (no stuck state).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsUpdateEnabled))]
+    private bool _anyRowUpdating;
+
+    /// <summary>
+    /// Whether the manual "check now" affordance is running a thorough check.
+    /// True while <see cref="CheckForUpdatesNowCommand"/> awaits the runner's
+    /// thorough check (multiple API calls, a few seconds); drives the header
+    /// refresh button's enabled + spinner state. Cleared in the command's
+    /// finally block on success or failure (no stuck state).
+    /// </summary>
+    [ObservableProperty]
+    private bool _isCheckingNow;
+
+    /// <summary>
+    /// Whether the per-row Update buttons are enabled: the user is premium AND
+    /// no other update is in flight. The row's IsVisible gating already hides
+    /// the button for non-premium; this is the IsEnabled half (one update at a
+    /// time). A single computed property so the view binds IsEnabled without
+    /// negating a deep path across a parent walk (compiled-binding limitation).
+    /// </summary>
+    public bool IsUpdateEnabled => IsPremiumUser && !AnyRowUpdating;
+
+    /// <summary>
     /// The localized split-button label for the current <see cref="AddMode"/>
     /// (mirrors the operator's mock: "Add Mod (zip)" / "Add Mod (folder)").
     /// Re-fires on a culture change (live-refresh with the rest of the UI).
@@ -162,19 +262,38 @@ public partial class ModListViewModel : ObservableObject
             : _localization["ModList_AddZip"];
 
     /// <summary>
-    /// The localized header count text: "Mods ({n})" with the current mod count,
-    /// or the neutral header when no profile is active.
+    /// The localized header label: "Mods". Shown for both the active-profile +
+    /// no-profile states (the per-profile mod count was removed; the row list
+    /// itself is the count). Re-fires on a culture change.
     /// </summary>
-    public string HeaderCountText =>
-        HasActiveProfile
-            ? _localization.Format("ModList_Count", Mods.Count)
-            : _localization["ModList_Header"];
+    public string HeaderCountText => _localization["ModList_Header"];
 
     /// <summary>The localized empty-state message for the no-profile case.</summary>
     public string EmptyNoProfileText => _localization["ModList_EmptyNoProfile"];
 
     /// <summary>The localized empty-state message for the no-mods case.</summary>
     public string EmptyNoModsText => _localization["ModList_EmptyNoMods"];
+
+    /// <summary>
+    /// The localized rate-limit notice text shown in the header when
+    /// <see cref="IsRateLimited"/> is true. Re-fires on a culture change.
+    /// </summary>
+    public string RateLimitedNoticeText => _localization["ModList_RateLimited"];
+
+    /// <summary>
+    /// The localized "recent updates only" notice text shown in the header when
+    /// <see cref="ShowRecentOnlyNotice"/> is true (a Month-only check landed
+    /// without a thorough pass). Re-fires on a culture change.
+    /// </summary>
+    public string RecentOnlyNoticeText => _localization["ModList_RecentOnly"];
+
+    /// <summary>
+    /// Whether the "recent updates only" notice should show: the last check was
+    /// Month-only (NOT thorough) AND not rate-limited (the rate-limit notice
+    /// takes precedence). The view binds the notice's <c>IsVisible</c> here so
+    /// the precedence rule stays in the VM (one source of truth).
+    /// </summary>
+    public bool ShowRecentOnlyNotice => !IsRateLimited && IsRecentOnly;
 
     /// <summary>
     /// Session-driven reload: the active id changed (dropdown switch, create,
@@ -206,9 +325,90 @@ public partial class ModListViewModel : ObservableObject
         OnPropertyChanged(nameof(EmptyNoProfileText));
         OnPropertyChanged(nameof(EmptyNoModsText));
         OnPropertyChanged(nameof(AddModeLabel));
+        OnPropertyChanged(nameof(RateLimitedNoticeText));
+        OnPropertyChanged(nameof(RecentOnlyNoticeText));
         foreach (var row in Mods)
         {
             row.Refresh();
+        }
+    }
+
+    /// <summary>
+    /// The update check finished (background task fires the event on its
+    /// completing thread). Re-apply <see cref="IUpdateCheckService.LastResult"/>
+    /// to the rows + the list-level rate-limit flag. Idempotent: safe to call on
+    /// every completion, including the no-auth / no-checkable-mods / failure
+    /// short-circuits.
+    /// </summary>
+    private void OnUpdateCheckCompleted(object? sender, UpdateCheckResult? result)
+    {
+        // The event fires on the check's completing thread (a threadpool thread
+        // via UpdateCheckRunner's Task.Run). Marshal to the UI thread so
+        // ApplyUpdateCheckResult's iteration of the UI-bound Mods collection
+        // doesn't race with a UI-thread Reload (ObservableCollection's
+        // enumerator is not thread-safe vs concurrent mutation).
+        _invokeOnUi(ApplyUpdateCheckResult);
+    }
+
+    /// <summary>
+    /// Reads <see cref="IUpdateCheckService.LastResult"/> and applies it to the
+    /// list: sets <see cref="IsRateLimited"/> + <see cref="IsRecentOnly"/> +
+    /// per-row <see cref="ModItemViewModel.UpdateAvailable"/> (matched by
+    /// container id). Called on <see cref="IUpdateCheckService.CheckCompleted"/>
+    /// + at the end of <see cref="Reload"/> (so a freshly rebuilt list picks up
+    /// the last result without waiting for the next check).
+    /// </summary>
+    private void ApplyUpdateCheckResult()
+    {
+        var result = _updateCheck.LastResult;
+        IsRateLimited = result?.RateLimited == true;
+        // The "recent updates only" notice fires when a Month-only (non-thorough)
+        // check landed without being rate-limited. Suppressed before the first
+        // check (null result) + after a thorough check (the operator's "click
+        // refresh for a complete check" affordance clears it).
+        IsRecentOnly = result is not null && !result.RateLimited && !result.Thorough;
+
+        if (Mods.Count == 0)
+        {
+            return;
+        }
+
+        // Index the flagged container ids once for an O(1) per-row lookup (the
+        // result is shared across every row; a LINQ Any per row would re-scan).
+        var flagged = result?.Updates;
+        if (flagged is null || flagged.Count == 0)
+        {
+            foreach (var row in Mods)
+            {
+                row.UpdateAvailable = false;
+            }
+            return;
+        }
+
+        var flaggedIds = flagged.Select(u => u.ContainerId).ToHashSet();
+        foreach (var row in Mods)
+        {
+            row.UpdateAvailable = flaggedIds.Contains(row.ContainerId);
+        }
+    }
+
+    /// <summary>
+    /// Reads the Nexus premium state once (called fire-and-forget from the
+    /// constructor). On success flips <see cref="IsPremiumUser"/>; on failure
+    /// logs + leaves it false (a restart re-reads; the operator accepted this
+    /// edge case over burning API calls on every Integrations-dialog close).
+    /// </summary>
+    private async Task LoadPremiumStateAsync()
+    {
+        try
+        {
+            var state = await _auth.GetCurrentStateAsync();
+            IsPremiumUser = state?.IsPremium == true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Nexus premium state read failed; per-mod Update buttons stay hidden until restart.");
         }
     }
 
@@ -265,6 +465,11 @@ public partial class ModListViewModel : ObservableObject
         }
 
         HasMods = Mods.Count > 0;
+
+        // The freshly built rows default UpdateAvailable=false; re-apply the
+        // last check result so a profile switch (or a post-edit reload) reflects
+        // the most recent check without waiting for the next one.
+        ApplyUpdateCheckResult();
     }
 
     /// <summary>
@@ -418,6 +623,155 @@ public partial class ModListViewModel : ObservableObject
         _profiles.RemoveMod(id, row.ContainerId);
         Reload();
         _logger.LogInformation("Removed container {Container} from profile {Id}", row.ContainerId, id);
+    }
+
+    // ---- per-mod update (one at a time, premium-only) ----------------------
+
+    /// <summary>
+    /// The manual "check for updates now" trigger (the mod-list header refresh
+    /// button). Routes through <see cref="Session.UpdateCheckRunner.CheckNowAsync"/>
+    /// so the runner stays the single owner of "fire a check" logic + uses the
+    /// thorough path (<see cref="IUpdateCheckService.CheckThoroughAsync"/>) that
+    /// also catches mods outside the Month window. Awaits the runner's task so
+    /// <see cref="IsCheckingNow"/> can drive the button's spinner + disable for
+    /// the duration (a few seconds for the per-mod pass). <see cref="IsCheckingNow"/>
+    /// is set before the await + cleared in the finally block on success or
+    /// failure (no stuck state). The existing
+    /// <see cref="IUpdateCheckService.CheckCompleted"/> subscription re-applies
+    /// the result to the rows when it lands. The command is a no-op (via the
+    /// runner) when no profile is active; a second click while one is in flight
+    /// is a no-op (the <see cref="IsCheckingNow"/> guard).
+    /// </summary>
+    [RelayCommand]
+    private async Task CheckForUpdatesNow()
+    {
+        // Re-entrancy guard: a second click while a thorough check is running is
+        // a no-op (the button's IsEnabled is also bound to !IsCheckingNow, but
+        // the guard makes a programmatic call safe too).
+        if (IsCheckingNow)
+        {
+            return;
+        }
+
+        IsCheckingNow = true;
+        try
+        {
+            // No ConfigureAwait(false): the finally (clearing IsCheckingNow)
+            // should run on the UI thread so the bound control re-enables
+            // synchronously. The runner's Task.Run dispatches the actual check
+            // to a thread-pool task; we only await its completion here.
+            await _updateCheckRunner.CheckNowAsync();
+        }
+        finally
+        {
+            IsCheckingNow = false;
+        }
+    }
+
+    /// <summary>
+    /// Runs the one-click per-mod update: re-downloads the mod's latest MAIN
+    /// release via <see cref="IModAcquisitionService.AcquireLatestNexusAsync"/>
+    /// (the auth-only / premium path), then reloads so the new version shows +
+    /// the marker clears (the new ImportedAt is now, so the next check will not
+    /// re-flag it). Premium-only (hidden, not nagged, for non-premium). One at a
+    /// time: a second invocation while <see cref="AnyRowUpdating"/> is a no-op.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Defense.</b> No-op when: there is no active profile; another
+    /// update is in flight (<see cref="AnyRowUpdating"/>); the row is not
+    /// Nexus+Latest (<see cref="ModItemViewModel.IsNexusLatest"/>); no update is
+    /// flagged (<see cref="ModItemViewModel.UpdateAvailable"/>); the user is not
+    /// premium (<see cref="IsPremiumUser"/>); or the row has no
+    /// <see cref="ModItemViewModel.NexusModId"/>.</para>
+    /// <para><b>Transactional extraction.</b> The mod repository's
+    /// <c>AddVersion</c> extracts into a sibling temp + atomically swaps on
+    /// success, so a mid-update failure leaves the existing version intact (the
+    /// user keeps the version they had). On failure the command surfaces a
+    /// user-facing alert; on success (or failure) the finally block clears
+    /// <see cref="ModItemViewModel.IsUpdating"/> + <see cref="AnyRowUpdating"/>
+    /// so the row's other controls re-enable.</para>
+    /// </remarks>
+    [RelayCommand]
+    private async Task Update(ModItemViewModel? row)
+    {
+        if (row is null || _session.ActiveProfileId is not Guid)
+        {
+            return;
+        }
+
+        // One at a time: a second click while another update is in flight is a
+        // no-op. Checked here (not via the button's IsEnabled) so a programmatic
+        // call is also gated.
+        if (AnyRowUpdating)
+        {
+            return;
+        }
+
+        // Defense: the button is only visible+enabled under these conditions,
+        // but the command is the source of truth (a programmatic caller, a test,
+        // or a future keystroke could bypass the view's gating).
+        if (!IsPremiumUser || !row.IsNexusLatest || !row.UpdateAvailable || row.NexusModId is not int modId)
+        {
+            return;
+        }
+
+        AnyRowUpdating = true;
+        row.IsUpdating = true;
+        try
+        {
+            // No ConfigureAwait(false): the continuation must stay on the UI
+            // thread so Reload (mutates the UI-bound Mods collection) + the
+            // failure-path ShowAlertAsync below run on the UI thread. Matches
+            // Remove + AddMods in this file; the NxmModDownloadHandler marshals
+            // explicitly via an _invokeOnUi seam instead, but this file's
+            // convention is to stay on the captured UI context.
+            await _acquisition.AcquireLatestNexusAsync(GameDomain, modId);
+
+            // Reload so the new version (its IsLatest flip + the fresh
+            // ImportedAt) shows. Then clear the marker for this row immediately:
+            // the stale LastResult (from before the update) still flags this
+            // container, so ApplyUpdateCheckResult (called inside Reload)
+            // re-set UpdateAvailable=true. Override it here for instant UX, then
+            // fire a fresh check so the stale LastResult is replaced (otherwise
+            // the next edit's Reload would re-apply the stale result + flicker
+            // the marker back). The fresh check won't re-flag this mod: its
+            // RemoteUploadedAt is now the latest file's upload date, so
+            // LatestFileUpdateUtc > RemoteUploadedAt is false.
+            Reload();
+            var updated = Mods.FirstOrDefault(m => m.ContainerId == row.ContainerId);
+            if (updated is not null)
+            {
+                updated.UpdateAvailable = false;
+            }
+
+            if (_session.ActiveProfileId is Guid checkId)
+            {
+                _ = _updateCheck.CheckAsync(checkId).ContinueWith(
+                    t => _logger.LogError(t.Exception, "Post-update check failed for profile {Profile}.", checkId),
+                    TaskContinuationOptions.OnlyOnFaulted);
+            }
+
+            _logger.LogInformation("Updated mod {Container} to the latest Nexus release.", row.ContainerId);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is not a failure: the user (or shutdown) cancelled;
+            // no alert. Re-throwing would surface as an unobserved exception on
+            // the fire-and-forget AsyncRelayCommand, so swallow instead.
+            _logger.LogInformation("Update of mod {Container} was cancelled.", row.ContainerId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Update of mod {Container} failed.", row.ContainerId);
+            await _dialogs.ShowAlertAsync(
+                _localization["Update_FailedTitle"],
+                _localization.Format("Update_FailedMessage", row.Name) + " " + ex.Message);
+        }
+        finally
+        {
+            row.IsUpdating = false;
+            AnyRowUpdating = false;
+        }
     }
 
     // ---- auto-sort (identity stub) -----------------------------------------

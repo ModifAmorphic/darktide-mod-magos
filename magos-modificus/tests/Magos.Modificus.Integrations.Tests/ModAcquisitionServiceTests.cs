@@ -227,6 +227,117 @@ public sealed class ModAcquisitionServiceTests
         Assert.False(File.Exists(single.SourcePath));
     }
 
+    // ---- publish-date capture (forwarded to Import as RemoteUploadedAt) ----
+
+    [Fact]
+    public async Task AcquireFromNexusAsync_records_matched_file_UploadedTimestamp_as_RemoteUploadedAt()
+    {
+        // The fix for the update-check comparison bug: the imported version's
+        // RemoteUploadedAt must be the matched file's Nexus publish date (not
+        // Magos's import time), so the check compares publish dates rather than
+        // ImportedAt (which would mask an outdated install). Here the matched
+        // ModFile carries UploadedTimestamp = a known Unix-seconds value, and
+        // the import call must receive that exact instant.
+        var uploadedTimestamp = new DateTimeOffset(2024, 3, 15, 12, 0, 0, TimeSpan.Zero);
+        var uploadedUnix = uploadedTimestamp.ToUnixTimeSeconds();
+
+        var nexus = new FakeNexusClient
+        {
+            DownloadLinks = ParseLinks(DownloadLinksJson),
+            ModInfoResponse = () => Ok(ParseInfo(ModInfoJson)),
+            ModFilesResponse = new[]
+            {
+                // Decoy file (different id) to prove the matched file's
+                // timestamp is the one selected, not just the only one.
+                FileEntry(id: 100, category: 1, uploaded: 1_000_000),
+                FileEntry(id: FileId, category: 1, uploaded: uploadedUnix),
+            },
+        };
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 0xAA }),
+        });
+        var http = new HttpClient(handler);
+        var import = new RecordingImportService();
+        var service = new ModAcquisitionService(
+            nexus, import, new SingleClientFactory(http),
+            NullLogger<ModAcquisitionService>.Instance);
+
+        await service.AcquireFromNexusAsync(GameDomain, ModId, FileId);
+
+        var single = Assert.Single(import.Calls);
+        Assert.Equal(uploadedTimestamp, single.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public async Task AcquireFromNexusAsync_passes_null_RemoteUploadedAt_when_timestamp_is_zero()
+    {
+        // A wire default of 0 (the field is absent on a stub/partial payload)
+        // is treated as "unknown" -> null, so the update check falls back to
+        // ImportedAt rather than comparing against epoch. Defends against a
+        // false "every mod is up to date" reading if the field is missing.
+        var nexus = new FakeNexusClient
+        {
+            DownloadLinks = ParseLinks(DownloadLinksJson),
+            ModInfoResponse = () => Ok(ParseInfo(ModInfoJson)),
+            ModFilesResponse = new[]
+            {
+                FileEntry(id: FileId, category: 1, uploaded: 0),
+            },
+        };
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 0xAA }),
+        });
+        var http = new HttpClient(handler);
+        var import = new RecordingImportService();
+        var service = new ModAcquisitionService(
+            nexus, import, new SingleClientFactory(http),
+            NullLogger<ModAcquisitionService>.Instance);
+
+        await service.AcquireFromNexusAsync(GameDomain, ModId, FileId);
+
+        var single = Assert.Single(import.Calls);
+        Assert.Null(single.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public async Task AcquireLatestNexusAsync_forwards_resolved_files_RemoteUploadedAt_to_import()
+    {
+        // Both acquisition entry points route through AcquireFromNexusAsync, so
+        // both record the publish date. This pins the Stage 5 update path
+        // (AcquireLatestNexusAsync): after a one-click update, the new
+        // version's RemoteUploadedAt equals the latest file's publish date, so
+        // the next check does not re-flag it.
+        var newestMainId = 5820;
+        var newestUploadedUnix = new DateTimeOffset(2024, 5, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+        var nexus = new FakeNexusClient
+        {
+            DownloadLinks = ParseLinks(DownloadLinksJson),
+            ModInfoResponse = () => Ok(ParseInfo(ModInfoJson)),
+            ModFilesResponse = new[]
+            {
+                FileEntry(id: 200, category: 1, uploaded: 1000),
+                FileEntry(id: newestMainId, category: 1, uploaded: newestUploadedUnix),
+            },
+        };
+        var handler = new StubHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri == CdnUrl
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[] { 1, 2, 3 }) }
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        var http = new HttpClient(handler);
+        var import = new RecordingImportService();
+        var service = new ModAcquisitionService(
+            nexus, import, new SingleClientFactory(http), NullLogger<ModAcquisitionService>.Instance);
+
+        await service.AcquireLatestNexusAsync(GameDomain, ModId);
+
+        var single = Assert.Single(import.Calls);
+        Assert.Equal(
+            DateTimeOffset.FromUnixTimeSeconds(newestUploadedUnix).UtcDateTime,
+            single.RemoteUploadedAt!.Value.UtcDateTime);
+    }
+
     // ---- no degraded fallback ---------------------------------------------
 
     [Fact]
@@ -383,6 +494,117 @@ public sealed class ModAcquisitionServiceTests
             () => service.AcquireFromNexusAsync("", ModId, FileId));
     }
 
+    // ---- AcquireLatestNexusAsync (Stage 5 per-mod update path) --------------
+
+    /// <summary>
+    /// Builds a <see cref="ModFile"/> with the fields the latest-file resolution
+    /// cares about (category, archived flag, upload timestamp, file id). The
+    /// other fields are defaults the resolution does not read.
+    /// </summary>
+    private static ModFile FileEntry(long id, int category, long uploaded, bool archived = false, string version = "1.0") =>
+        new()
+        {
+            FileId = id,
+            CategoryId = category,
+            UploadedTimestamp = uploaded,
+            IsArchived = archived,
+            Version = version,
+            FileName = $"mod_{id}.zip",
+        };
+
+    [Fact]
+    public async Task AcquireLatestNexusAsync_picks_newest_non_archived_main_file_and_forwards_to_acquire_premium_path()
+    {
+        // Files: an optional (category 2), an older MAIN, a newer MAIN (the
+        // winner), and an archived MAIN (newer timestamp but excluded). The
+        // resolution must pick the newest non-archived MAIN by timestamp, then
+        // forward to AcquireFromNexusAsync with null nxm key/expires (the
+        // premium / auth-only download path).
+        var newestMainId = 5820;
+        var nexus = new FakeNexusClient
+        {
+            DownloadLinks = ParseLinks(DownloadLinksJson),
+            ModInfoResponse = () => Ok(ParseInfo(ModInfoJson)),
+            ModFilesResponse = new[]
+            {
+                FileEntry(id: 100, category: 2, uploaded: 5000),                     // optional
+                FileEntry(id: 200, category: 1, uploaded: 1000),                     // older MAIN
+                FileEntry(id: newestMainId, category: 1, uploaded: 2000),             // newer MAIN (winner)
+                FileEntry(id: 300, category: 1, uploaded: 9000, archived: true),     // archived MAIN (excluded)
+            },
+        };
+        var payload = new byte[] { 1, 2, 3, 4 };
+        var handler = new StubHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri == CdnUrl
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) }
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        var http = new HttpClient(handler);
+        var import = new RecordingImportService { NextResult = (Guid.NewGuid(), "v2") };
+        var service = new ModAcquisitionService(
+            nexus, import, new SingleClientFactory(http), NullLogger<ModAcquisitionService>.Instance);
+
+        var result = await service.AcquireLatestNexusAsync(GameDomain, ModId);
+
+        Assert.Equal(import.NextResult, result);
+        // The premium overload was used (no nxm key/expires forwarded).
+        Assert.True(nexus.PremiumDownloadLinksCalled);
+        Assert.Null(nexus.FreeUserDownloadLinksKey);
+        // Import received the resolved file's version, and the source is Nexus.
+        var single = Assert.Single(import.Calls);
+        Assert.Equal(ModId, ((NexusSource)single.Source).ModId);
+    }
+
+    [Fact]
+    public async Task AcquireLatestNexusAsync_throws_when_no_main_file_exists()
+    {
+        // Only optional + archived MAIN files: nothing to acquire. The plain
+        // InvalidOperationException surfaces to the caller (the per-mod update
+        // button shows a user-facing alert).
+        var nexus = new FakeNexusClient
+        {
+            ModFilesResponse = new[]
+            {
+                FileEntry(id: 100, category: 2, uploaded: 1000),                  // optional
+                FileEntry(id: 200, category: 1, uploaded: 2000, archived: true),  // archived MAIN
+            },
+        };
+        var service = new ModAcquisitionService(
+            nexus, new RecordingImportService(), new SingleClientFactory(new HttpClient()),
+            NullLogger<ModAcquisitionService>.Instance);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AcquireLatestNexusAsync(GameDomain, ModId));
+
+        Assert.Contains($"mod {ModId}", ex.Message);
+        Assert.DoesNotContain("Stage", ex.Message); // plain message, no project-phase label
+    }
+
+    [Fact]
+    public async Task AcquireLatestNexusAsync_throws_when_files_list_is_empty()
+    {
+        // No files at all (a brand-new mod or a stale listing): same plain
+        // error. Guards the empty-files path alongside the no-MAIN path.
+        var nexus = new FakeNexusClient { ModFilesResponse = Array.Empty<ModFile>() };
+        var service = new ModAcquisitionService(
+            nexus, new RecordingImportService(), new SingleClientFactory(new HttpClient()),
+            NullLogger<ModAcquisitionService>.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AcquireLatestNexusAsync(GameDomain, ModId));
+    }
+
+    [Fact]
+    public async Task AcquireLatestNexusAsync_null_game_domain_throws()
+    {
+        var service = new ModAcquisitionService(
+            new FakeNexusClient(), new RecordingImportService(),
+            new SingleClientFactory(new HttpClient()),
+            NullLogger<ModAcquisitionService>.Instance);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => service.AcquireLatestNexusAsync("", ModId));
+    }
+
     // ---- JSON parse helpers ------------------------------------------------
 
     private static Response<ModInfo> Ok(ModInfo info) => new(info, NexusRateLimits.Unknown);
@@ -500,18 +722,20 @@ public sealed class ModAcquisitionServiceTests
 
     /// <summary>
     /// A recording <see cref="IModImportService"/>. Each Import call captures
-    /// the args; an optional <see cref="Throw"/> simulates a failed import.
+    /// the args (including the optional remote-publish timestamp); an optional
+    /// <see cref="Throw"/> simulates a failed import.
     /// </summary>
     private sealed class RecordingImportService : IModImportService
     {
         public (Guid ContainerId, string VersionId) NextResult { get; set; } =
             (Guid.NewGuid(), Guid.NewGuid().ToString("N"));
         public Exception? Throw { get; set; }
-        public List<(string SourcePath, string ModName, ModSource Source, string Version)> Calls { get; } = new();
+        public List<(string SourcePath, string ModName, ModSource Source, string Version, DateTimeOffset? RemoteUploadedAt)> Calls { get; } = new();
 
-        public (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version)
+        public (Guid ContainerId, string VersionId) Import(
+            string sourcePath, string modName, ModSource source, string version, DateTimeOffset? remoteUploadedAt = null)
         {
-            Calls.Add((sourcePath, modName, source, version));
+            Calls.Add((sourcePath, modName, source, version, remoteUploadedAt));
             if (Throw is not null)
             {
                 throw Throw;

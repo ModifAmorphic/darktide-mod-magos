@@ -61,6 +61,25 @@ public sealed class NexusConfig
     /// to API key. <c>null</c> is treated as "not authenticated".
     /// </summary>
     public NexusOAuthTokens? OAuth { get; set; }
+
+    /// <summary>
+    /// Whether the periodic background update check runs while a profile is
+    /// active. <c>true</c> by default. This gates ONLY the periodic timer; the
+    /// profile-load check (startup + active-profile switch) and the manual
+    /// "check now" button always run regardless of this toggle. Read live by
+    /// <c>UpdateCheckRunner</c> on each timer tick, so a dialog change takes
+    /// effect without a restart.
+    /// </summary>
+    public bool AutoUpdateCheckEnabled { get; set; } = true;
+
+    /// <summary>
+    /// The periodic update-check interval, in minutes. <c>10</c> by default. The
+    /// runner ticks at a fixed fine granularity (1 minute) and fires a check
+    /// when this much time has elapsed since the last check (startup, switch,
+    /// periodic, or manual), so a runtime change here takes effect on the next
+    /// tick. Honored to a 1-minute granularity; values below 1 are clamped.
+    /// </summary>
+    public int AutoUpdateCheckIntervalMinutes { get; set; } = 10;
 }
 
 /// <summary>

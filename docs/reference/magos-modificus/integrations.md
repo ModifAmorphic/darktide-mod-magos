@@ -186,7 +186,7 @@ public sealed class DownloadLink           // CDN link from download_link.json
 }
 
 public sealed class ModInfo { /* mod_id, name, summary, version, domain_name, ... */ }
-public sealed class ModFile { /* file_id, file_name, name, version, size, ... */ }
+public sealed class ModFile { /* file_id, file_name, name, version, size, category_id, uploaded_timestamp, archived, ... */ }
 
 public enum NexusPeriod { Day, Week, Month }  // period=1d|1w|1m
 ```
@@ -292,6 +292,10 @@ public interface IModAcquisitionService
         string gameDomain, int modId, int fileId,
         string? nxmKey = null, long? nxmExpires = null,
         IProgress<long>? progress = null, CancellationToken ct = default);
+
+    Task<(Guid ContainerId, string VersionId)> AcquireLatestNexusAsync(
+        string gameDomain, int modId,
+        IProgress<long>? progress = null, CancellationToken ct = default);
 }
 ```
 
@@ -300,9 +304,17 @@ public interface IModAcquisitionService
   `(containerId, versionId)`. The caller handles profile registration. The
   interface accommodates GitHub later; only the Nexus method is implemented in
   Stage 3.
+- `AcquireLatestNexusAsync`: resolves the mod's newest non-archived MAIN file
+  (category_id 1) via `ListModFilesAsync`, then delegates to
+  `AcquireFromNexusAsync` with the resolved `fileId` + null nxm key/expires (the
+  premium / auth-only download path). Throws `InvalidOperationException` when no
+  MAIN file is available. Used by the per-mod Update button on the mod list,
+  which knows the mod id (not the file id) and lets the service pick the current
+  release.
 
-The `IProgress<long>` parameter is Stage 5's per-row progress hook (Stage 3's
-nxm handler passes `null`).
+The `IProgress<long>` parameter is the per-row progress hook (the nxm handler
+passes `null`; the mod-list update path passes `null` for the indeterminate
+affordance).
 
 ### Acquisition flow (`ModAcquisitionService`)
 
@@ -314,21 +326,31 @@ nxm handler passes `null`).
    returns them in priority order.
 2. **Resolve metadata** for the Import: `GetModInfoAsync` for the mod name +
    `ListModFilesAsync` + find the file with matching `fileId` for the version
-   string. These are 2 API calls (3 total per acquisition, within rate limits).
-   **No degraded fallback:** if the metadata fetch fails, the acquisition fails
-   with a clear error (a mod stored under its numeric id as a name is worse than
-   a clean failure message).
-3. **Download** from the CDN URI to a `.zip`-named temp file
-   (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip")`)
-   using a plain `HttpClient` from `IHttpClientFactory` + the 81920-byte
-   buffered copy + `IProgress<long>` pattern from
-   `GitHubClient.DownloadAssetAsync`. The `.zip` extension is required so
-   `IModImportService` recognizes the file as an archive (detects by extension).
-   The temp file is deleted once Import returns (always, success or failure; no
-   partial state).
+   string + file name + the file's `UploadedTimestamp` (Unix seconds). These
+   are 2 API calls (3 total per acquisition, within rate limits). **No degraded
+   fallback:** if the metadata fetch fails, the acquisition fails with a clear
+   error (a mod stored under its numeric id as a name is worse than a clean
+   failure message). The matched file's `UploadedTimestamp` is converted to a
+   `DateTimeOffset?` (null when the wire value is 0 / absent) and forwarded as
+   the imported version's `RemoteUploadedAt`, the basis for the update-check
+   publish-date comparison. A `0` is treated as "unknown" so the check falls
+   back to `ImportedAt` rather than comparing against epoch.
+3. **Download** from the CDN URI to a temp file
+   (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() +
+   Path.GetExtension(fileName))`) using a plain `HttpClient` from
+   `IHttpClientFactory` + the 81920-byte buffered copy + `IProgress<long>`
+   pattern from `GitHubClient.DownloadAssetAsync`. The real file extension (from
+   the matched `ModFile.FileName`) is preserved on the temp file for log
+   clarity; archive detection is content-based (magic bytes), so the extension
+   is cosmetic. The temp file is deleted once Import returns (always, success or
+   failure; no partial state).
 4. **Import** via `IModImportService.Import(tempPath, modName, new NexusSource
-   { ModId = modId }, version)`. The import service handles find-or-create-
-   container (dedup by `NexusSource.ModId`) + add-version + `IsLatest` flip.
+   { ModId = modId }, version, remoteUploadedAt)`. The import service handles
+   find-or-create-container (dedup by `NexusSource.ModId`) + add-version +
+   `IsLatest` flip + records `RemoteUploadedAt` on the new entry. Both
+   acquisition entry points (`AcquireFromNexusAsync` for nxm downloads +
+   `AcquireLatestNexusAsync` for the per-mod update button) route through this
+   call, so both record the publish date.
 5. **Return** `(containerId, versionId)`.
 
 The CDN download uses a plain `HttpClient` (not the typed `INexusClient`)
@@ -379,18 +401,23 @@ headers: `Application-Name: Magos-Modificus`, `Application-Version: <asm>`,
 
 ## Update check service (Phase 4 Stage 4)
 
-A Nexus-only service that, on profile load, checks the active profile's Nexus
-mods for available updates and produces a result Stage 5's mod-list badges
-consume. One API call per check (`ModUpdatesAsync`); per-mod work is pure
-intersection + timestamp comparison against that single response. GitHub is
-descoped from Phase 4 (no GitHub code paths anywhere); `PinnedPolicy`,
-`UntrackedSource`, and `GitHubSource` mods are skipped (only `LatestPolicy` +
-`NexusSource` are checked).
+A Nexus-only service that checks the active profile's Nexus mods for available
+updates and produces a result the mod-list badges consume. Two check shapes
+share the same `LastResult` / `CheckCompleted` surface: a Month-only check (one
+API call, the cheap path fired on profile load + the periodic timer) and a
+thorough check (the per-mod pass the manual "check now" affordance fires, which
+also catches mods whose latest release predates the Month window). Per-mod work
+in the Month path is pure intersection + timestamp comparison against the single
+response; the thorough path adds one `ListModFilesAsync` call per profile mod
+the Month response missed. GitHub is descoped (no GitHub code paths anywhere);
+`PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods are skipped (only
+`LatestPolicy` + `NexusSource` are checked).
 
 ```csharp
 public interface IUpdateCheckService
 {
-    Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);
+    Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);             // Month-only
+    Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default);      // per-mod pass
     UpdateCheckResult? LastResult { get; }
     event EventHandler<UpdateCheckResult?>? CheckCompleted;
 }
@@ -398,7 +425,8 @@ public interface IUpdateCheckService
 public sealed record UpdateCheckResult(
     IReadOnlyList<ModUpdateInfo> Updates,
     DateTimeOffset CheckedAt,
-    bool RateLimited);
+    bool RateLimited,
+    bool Thorough);
 
 public sealed record ModUpdateInfo(
     Guid ContainerId,
@@ -408,25 +436,46 @@ public sealed record ModUpdateInfo(
     DateTimeOffset? LatestUpdateAt);
 ```
 
-- `CheckAsync(profileId)` — the one-call check (see flow below). Best-effort,
-  never throws for non-cancellation failures: a transient API failure, missing
-  auth, or exhausted rate limit all surface as an empty result. Cancellation
-  (`OperationCanceledException`) propagates, and a `KeyNotFoundException` from
-  `IProfileService.GetModList` (an unknown profile id) propagates; the caller
-  owns passing a valid id.
-- `LastResult` — the last check result, or null before the first check. Stage 5
-  reads this to render badges without awaiting. Written under a lock alongside
-  the `CheckCompleted` invocation so an event subscriber observes the result
-  that was just published; reads are lock-free (reference assignment is atomic).
-- `CheckCompleted` — raised (on the completing thread) exactly once per
-  `CheckAsync` call (including the no-auth / rate-limited / failure short
-  circuits) with the same result that was just set on `LastResult`.
+- `CheckAsync(profileId)`: the cheap Month-only check (see flow below). The
+  result has `Thorough = false`. Best-effort, never throws for non-cancellation
+  failures: a transient API failure, missing auth, or exhausted rate limit all
+  surface as an empty result. Cancellation (`OperationCanceledException`)
+  propagates, and a `KeyNotFoundException` from `IProfileService.GetModList`
+  (an unknown profile id) propagates; the caller owns passing a valid id.
+- `CheckThoroughAsync(profileId)`: the thorough check. Does everything
+  `CheckAsync` does, AND for each profile Nexus+Latest mod NOT in the Month
+  response calls `ListModFilesAsync` to resolve the latest MAIN / non-archived
+  file (category_id 1, newest by `UploadedTimestamp`), then compares that file's
+  upload time against `resolved.RemoteUploadedAt ?? resolved.ImportedAt`. Catches
+  mods whose latest release predates the Month window. The result has
+  `Thorough = true`. Rate-limit-aware: a mid-pass `NexusRateLimitException` from
+  `ListModFilesAsync` stops the walk + returns what's flagged so far with
+  `RateLimited = true` (partial results, not empty); other per-mod failures are
+  logged + skipped.
+- `LastResult`: the last check result, or null before the first check. Holds
+  the most recent result regardless of which method produced it. The mod-list
+  UI reads this to render badges without awaiting. Written under a lock
+  alongside the `CheckCompleted` invocation so an event subscriber observes the
+  result that was just published; reads are lock-free (reference assignment is
+  atomic).
+- `CheckCompleted`: raised (on the completing thread) exactly once per
+  `CheckAsync` / `CheckThoroughAsync` call (including the no-auth / rate-limited
+  / failure short circuits) with the same result that was just set on
+  `LastResult`.
+
+The latest-MAIN filter (`NexusModFiles.LatestMain`, category_id 1 +
+non-archived, newest by `UploadedTimestamp`) is shared with
+`ModAcquisitionService.AcquireLatestNexusAsync`, so the update check + the
+per-mod update button agree on what "latest release" means.
 
 ### Check flow (`UpdateCheckService`)
 
+The two checks share the front-half; the thorough method adds the back-half.
+
 1. **Auth gate.** Read `IConfigLoader.Load().Integrations.Nexus.AuthMethod`. If
    `None` → return an empty result (no API call; the user hasn't configured
-   Nexus).
+   Nexus). For `CheckThoroughAsync` the empty result carries `Thorough = true`
+   (the thorough method was the entry point even though it short-circuited).
 2. **Profile mods.** `IProfileService.GetModList(profileId)` → the entries.
 3. **Filter to checkable mods.** For each entry, resolve the container via
    `IModRepository.Get`. Keep only `LatestPolicy` + `NexusSource` entries. Skip
@@ -442,31 +491,54 @@ public sealed record ModUpdateInfo(
    The `> 0` guard avoids a false positive on `NexusRateLimits.Unknown` (the
    all-zero fallback when headers are absent, e.g. test stubs or non-rate-limited
    gateways). If rate-limited → return an empty result with `RateLimited = true`
-   (no per-mod comparison; Stage 5 surfaces a "check incomplete" indicator).
-6. **Intersect + compare.** Index the response by `ModId`, then for each
-   checkable mod find the matching `ModUpdate` (`NexusSource.ModId` is `int`,
-   widened against `ModUpdate.ModId` `long`). Resolve the imported version via
-   `container.ResolveVersion(new LatestPolicy())`; if null (no versions / no
-   `IsLatest`), skip. Compare **`ModUpdate.LatestFileUpdateUtc`** (the
-   file-upload time) against `version.ImportedAt`. Use `LatestFileUpdate`, NOT
-   `LatestModActivity` (the latter includes page comments / endorsements / edits
-   and would flag mods that haven't gained a new file). If
-   `LatestFileUpdateUtc > version.ImportedAt` → flag it.
-7. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
+   (no per-mod comparison; the mod-list UI surfaces a "check incomplete"
+   indicator).
+6. **Intersect + compare (both checks).** Index the response by `ModId`, then
+   for each checkable mod find the matching `ModUpdate` (`NexusSource.ModId` is
+   `int`, widened against `ModUpdate.ModId` `long`). Resolve the imported
+   version via `container.ResolveVersion(new LatestPolicy())`; if null (no
+   versions / no `IsLatest`), skip. Compare **`ModUpdate.LatestFileUpdateUtc`**
+   (the file-upload time) against the imported file's publish date:
+   `version.RemoteUploadedAt ?? version.ImportedAt`. The publish-date basis is
+   what makes the check correct: `ImportedAt` is whenever Magos happened to
+   download the file (no relationship to when it was published on Nexus), so
+   reinstalling an older file today would set `ImportedAt = now`, newer than
+   any past upload, and mask an outdated install. `RemoteUploadedAt` is
+   captured at acquisition (Integrations records it from the matched `ModFile`'s
+   `UploadedTimestamp`); the `?? ImportedAt` fallback preserves the prior
+   behavior for versions imported before that field existed. Use
+   `LatestFileUpdate`, NOT `LatestModActivity` (the latter includes page
+   comments / endorsements / edits and would flag mods that haven't gained a
+   new file). If `LatestFileUpdateUtc > (RemoteUploadedAt ?? ImportedAt)` →
+   flag it. `CheckAsync` returns here with `Thorough = false`.
+7. **Per-mod thorough pass (`CheckThoroughAsync` only).** For each checkable
+   mod NOT in the Month response, `INexusClient.ListModFilesAsync` + resolve the
+   latest MAIN / non-archived file via `NexusModFiles.LatestMain`, then compare
+   its `UploadedTimestamp` against `RemoteUploadedAt ?? ImportedAt` (same
+   publish-date basis). A `NexusRateLimitException` from the per-mod call stops
+   the walk + the result carries `RateLimited = true` with the partial flags
+   collected so far; other per-mod failures are logged + skipped (the walk
+   continues; one mod's transient failure must not abort the whole check).
+8. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
    lock), return the result.
 
 ### UI wiring (`UpdateCheckRunner`)
 
-The two trigger points that fire `CheckAsync` (startup with the restored active
-id + active-profile switch) live in `UpdateCheckRunner` in `ui/Session/`, NOT in
-the Integrations library (the service itself has no knowledge of profile
+The triggers that fire the checks live in `UpdateCheckRunner` in `ui/Session/`,
+NOT in the Integrations library (the service itself has no knowledge of profile
 switches; it just takes a `profileId` + checks). The runner is a UI-layer
 singleton that subscribes to `IProfileSession.PropertyChanged` filtered to
 `ActiveProfileId` only (it ignores `IsRunning`, which the polling timer drives
-every few seconds) and fires `CheckAsync` fire-and-forget via `Task.Run`.
-Registered + started from `MagosComposition` after the provider is built
-(best-effort: a wiring failure is logged + swallowed, never blocks startup).
-Stage 5's mod-list badges subscribe to `CheckCompleted` + read `LastResult`.
+every few seconds) and fires the Month-only `CheckAsync` fire-and-forget via
+`Task.Run` on three triggers: startup (the restored active id), an active-profile
+switch, and the periodic timer (every `AutoUpdateCheckIntervalMinutes` when
+`AutoUpdateCheckEnabled` is on; the only gated trigger). A fourth trigger, the
+manual "check now" affordance on the mod list, fires the thorough
+`CheckThoroughAsync` via an awaitable `CheckNowAsync()` (the mod-list VM awaits
+it to drive an `IsCheckingNow` spinner while the per-mod pass runs). Registered
++ started from `MagosComposition` after the provider is built (best-effort: a
+wiring failure is logged + swallowed, never blocks startup). The mod-list UI
+subscribes to `CheckCompleted` + reads `LastResult`.
 
 ## DI registration
 
@@ -551,14 +623,23 @@ view. No construction-time cycle.
   free-user overload selection, first-CDN-link use, metadata resolution (name +
   version), the no-degraded-fallback error policy (metadata failure + missing
   file throw, no partial import), download failure, import-failure temp cleanup,
-  progress reporting, cancellation.
+  progress reporting, cancellation, and the latest-MAIN-file resolution +
+  null-nxm-token forward + no-MAIN-file throw for
+  `AcquireLatestNexusAsync`.
 - **`UpdateCheckService`** against a fake `INexusClient` + a fake
   `IProfileService` + a fake `IModRepository` + the `FakeConfigLoader`: correct
   flagging (file-update vs imported-at), `PinnedPolicy` / `UntrackedSource` /
   `GitHubSource` skipping, no-auth short-circuit (no API call), rate-limit guard
   (the `> 0` guard prevents a false positive on `NexusRateLimits.Unknown`), the
   symmetric daily + hourly rate-limit paths, no-checkable-mods short-circuit,
-  API-failure best-effort, and the `LastResult` + `CheckCompleted` contract.
+  API-failure best-effort, the `LastResult` + `CheckCompleted` contract, the
+  `Thorough` flag on both methods, + the `CheckThoroughAsync` per-mod pass: the
+  out-of-Month-window scenario (a mod whose latest MAIN file predates the Month
+  response but is newer than the imported version), the negative case (older
+  MAIN file), the in-Month mod NOT being re-queried, archived / non-MAIN file
+  filtering, mid-pass `NexusRateLimitException` (partial results +
+  `RateLimited`), other per-mod failures (logged + skipped), + the no-auth
+  short-circuit carrying `Thorough = true`.
 
 The internal `NexusClient`, `NexusAuthService`, `NexusOAuthTokenStore`,
 `LoopbackBrowser`, `HttpListenerLoopbackListener`, `ModAcquisitionService`,

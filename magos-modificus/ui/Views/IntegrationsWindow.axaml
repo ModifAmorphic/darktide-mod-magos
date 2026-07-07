@@ -189,6 +189,35 @@
 
           </StackPanel>
 
+          <!-- ============== Update-check settings ==============
+               A sub-section below the auth blocks: the periodic update-check
+               toggle + interval, persisted live. These are preference settings,
+               not credentials, so they live in the Integrations dialog (Nexus is
+               the only update source) and persist through the config loader the
+               dialog already uses. The NumericUpDown binds its Value (decimal?)
+               to the VM's AutoUpdateCheckIntervalMinutes; Minimum/Maximum/Increment
+               bound the input, FormatString hides the decimal tail. -->
+          <Separator Margin="0,4" />
+          <StackPanel Spacing="8" Margin="0,4">
+            <TextBlock Text="{Binding AutoUpdateHeader}"
+                       FontWeight="SemiBold" />
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <CheckBox IsChecked="{Binding AutoUpdateCheckEnabled, Mode=TwoWay}"
+                        VerticalAlignment="Center" />
+              <TextBlock Text="{Binding AutoUpdateEnabledLabel}"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <TextBlock Text="{Binding AutoUpdateIntervalLabel}"
+                         VerticalAlignment="Center" />
+              <NumericUpDown Value="{Binding AutoUpdateCheckIntervalMinutes, Mode=TwoWay}"
+                             Minimum="1" Maximum="1440" Increment="1"
+                             FormatString="0"
+                             MinWidth="100"
+                             VerticalAlignment="Center" />
+            </StackPanel>
+          </StackPanel>
+
         </StackPanel>
       </Border>
 

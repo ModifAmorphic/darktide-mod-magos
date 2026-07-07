@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Magos.Modificus.Config;
 using Magos.Modificus.EnginseerClient;
 using Magos.Modificus.General;
+using Magos.Modificus.Integrations;
 using Magos.Modificus.Profiles;
 using Magos.Modificus.Mods;
 using Magos.Modificus.Steam;
@@ -37,7 +39,12 @@ internal static class TestDoubles
         FakeModImportService? importService = null,
         IModOrderResolver? orderResolver = null,
         FakeDialogService? dialogs = null,
-        LocalizationService? localization = null)
+        LocalizationService? localization = null,
+        FakeUpdateCheckService? updateCheck = null,
+        FakeModAcquisitionService? acquisition = null,
+        FakeNexusAuthService? auth = null,
+        FakeConfigLoader? configLoader = null,
+        Action<Action>? invokeOnUi = null)
     {
         profiles ??= Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -46,6 +53,19 @@ internal static class TestDoubles
         orderResolver ??= new IdentityModOrderResolver();
         dialogs ??= new FakeDialogService();
         localization ??= new LocalizationService();
+        updateCheck ??= new FakeUpdateCheckService();
+        acquisition ??= new FakeModAcquisitionService();
+        auth ??= new FakeNexusAuthService();
+        configLoader ??= new FakeConfigLoader();
+        invokeOnUi ??= static action => action();
+        // The runner wires the manual CheckNow path; constructed with the
+        // test's fakes + no periodic timer (the manual trigger does not depend
+        // on the timer being started).
+        var runner = new UpdateCheckRunner(
+            session,
+            updateCheck,
+            configLoader,
+            NullLogger<UpdateCheckRunner>.Instance);
         return new ModListViewModel(
             profiles,
             session,
@@ -54,6 +74,11 @@ internal static class TestDoubles
             orderResolver,
             dialogs,
             localization,
+            updateCheck,
+            acquisition,
+            auth,
+            runner,
+            invokeOnUi,
             NullLogger<ModListViewModel>.Instance);
     }
 }
@@ -601,7 +626,8 @@ internal class FakeModRepository : IModRepository
         return container;
     }
 
-    public ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder)
+    public ModContainer AddVersion(
+        Guid containerId, string versionString, Action<string> populateFolder, DateTimeOffset? remoteUploadedAt = null)
     {
         if (!_byId.TryGetValue(containerId, out var container))
         {
@@ -612,7 +638,9 @@ internal class FakeModRepository : IModRepository
         List<ModVersion> versions;
         if (existing is not null)
         {
-            versions = container.Versions.ToList();
+            // Mirror the production repo: dedup refreshes RemoteUploadedAt.
+            var refreshed = existing with { RemoteUploadedAt = remoteUploadedAt };
+            versions = container.Versions.Select(v => ReferenceEquals(v, existing) ? refreshed : v).ToList();
         }
         else
         {
@@ -622,6 +650,7 @@ internal class FakeModRepository : IModRepository
                 VersionString = versionString,
                 IsLatest = true,
                 ImportedAt = DateTimeOffset.UtcNow,
+                RemoteUploadedAt = remoteUploadedAt,
             };
             versions = container.Versions
                 .Select(v => v with { IsLatest = false })
@@ -713,7 +742,8 @@ internal sealed class FakeModImportService : IModImportService
     /// </summary>
     public Queue<Exception?>? ImportExceptionQueue { get; set; }
 
-    public (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version)
+    public (Guid ContainerId, string VersionId) Import(
+        string sourcePath, string modName, ModSource source, string version, DateTimeOffset? remoteUploadedAt = null)
     {
         ((List<(string, string, ModSource, string)>)Imports).Add((sourcePath, modName, source, version));
 
@@ -746,7 +776,7 @@ internal sealed class FakeModImportService : IModImportService
         {
             container = _repo.FindBySource(source) ?? _repo.CreateContainer(source, modName);
         }
-        var updated = _repo.AddVersion(container.Id, version, _ => { });
+        var updated = _repo.AddVersion(container.Id, version, _ => { }, remoteUploadedAt);
         var versionId = updated.Versions.First(v => v.VersionString == version).Folder;
         return (container.Id, versionId);
     }
@@ -853,4 +883,164 @@ internal sealed class FakeConfigLoader : IConfigLoader
         // state (mirrors the real loader's round-trip through the disk file).
         Config = config;
     }
+}
+
+/// <summary>
+/// Configurable <see cref="IUpdateCheckService"/> shared by the runner tests
+/// (call recording) + the mod-list VM tests (settable LastResult +
+/// <see cref="RaiseCheckCompleted"/>). <see cref="CheckAsync"/> records the
+/// profile id (Month-only path), optionally throws, sets <see cref="LastResult"/>,
+/// + raises <see cref="CheckCompleted"/> (mirrors the real service's atomic
+/// publish). <see cref="CheckThoroughAsync"/> mirrors that for the thorough
+/// path. Tests that drive the badge refresh directly set
+/// <see cref="LastResult"/> + call <see cref="RaiseCheckCompleted"/> without
+/// invoking either method.
+/// </summary>
+internal sealed class FakeUpdateCheckService : IUpdateCheckService
+{
+    private readonly ConcurrentQueue<Guid> _calls = new();
+    private readonly ConcurrentQueue<Guid> _thoroughCalls = new();
+
+    /// <summary>The number of <see cref="CheckAsync"/> (Month-only) calls
+    /// recorded so far. Thread-safe; safe to poll from the test thread while
+    /// the runner fires on a thread-pool task.</summary>
+    public int CallCount => _calls.Count;
+
+    /// <summary>The profile ids passed to <see cref="CheckAsync"/>, in call
+    /// order. A snapshot (<see cref="ConcurrentQueue{T}.ToArray"/>); safe to
+    /// read after <see cref="Calls"/>/<see cref="CallCount"/> reach the expected
+    /// count.</summary>
+    public IReadOnlyList<Guid> Calls => _calls.ToArray();
+
+    /// <summary>The number of <see cref="CheckThoroughAsync"/> calls recorded
+    /// so far. Thread-safe.</summary>
+    public int ThoroughCallCount => _thoroughCalls.Count;
+
+    /// <summary>The profile ids passed to <see cref="CheckThoroughAsync"/>, in
+    /// call order.</summary>
+    public IReadOnlyList<Guid> ThoroughCalls => _thoroughCalls.ToArray();
+
+    /// <summary>
+    /// When set, thrown synchronously from every <see cref="CheckAsync"/> +
+    /// <see cref="CheckThoroughAsync"/> call, after the call is recorded. Lets
+    /// the exception-safety test assert the call was made AND that the runner
+    /// swallowed the throw.
+    /// </summary>
+    public Exception? ThrowOnCheck { get; set; }
+
+    /// <summary>
+    /// The last check result, or <c>null</c> before the first check. Public
+    /// setter so the mod-list VM tests can stage a result without invoking
+    /// <see cref="CheckAsync"/>; <see cref="CheckAsync"/> +
+    /// <see cref="CheckThoroughAsync"/> also set this on a real call (mirrors
+    /// the real service).
+    /// </summary>
+    public UpdateCheckResult? LastResult { get; set; }
+
+    public event EventHandler<UpdateCheckResult?>? CheckCompleted;
+
+    public Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default)
+    {
+        _calls.Enqueue(profileId);
+
+        if (ThrowOnCheck is not null)
+        {
+            throw ThrowOnCheck;
+        }
+
+        LastResult ??= new UpdateCheckResult(
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: false);
+
+        // Mirror the real service's contract: CheckCompleted is raised exactly
+        // once per call. Also keeps the event field used (CS0067).
+        CheckCompleted?.Invoke(this, LastResult);
+
+        return Task.FromResult(LastResult);
+    }
+
+    public Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default)
+    {
+        _thoroughCalls.Enqueue(profileId);
+
+        if (ThrowOnCheck is not null)
+        {
+            throw ThrowOnCheck;
+        }
+
+        LastResult = new UpdateCheckResult(
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: true);
+        CheckCompleted?.Invoke(this, LastResult);
+        return Task.FromResult(LastResult);
+    }
+
+    /// <summary>
+    /// Sets <see cref="LastResult"/> + raises <see cref="CheckCompleted"/> so a
+    /// test can simulate a check landing without invoking
+    /// <see cref="CheckAsync"/>/<see cref="CheckThoroughAsync"/>. The mod-list
+    /// VM's handler reads <see cref="LastResult"/> via ApplyUpdateCheckResult.
+    /// </summary>
+    public void RaiseCheckCompleted(UpdateCheckResult? result)
+    {
+        LastResult = result;
+        CheckCompleted?.Invoke(this, result);
+    }
+}
+
+/// <summary>
+/// Recording <see cref="IModAcquisitionService"/> for the mod-list VM tests.
+/// Captures each <see cref="AcquireLatestNexusAsync"/> call + optionally throws
+/// to simulate a failed update. The base <see cref="AcquireFromNexusAsync"/> is
+/// wired to the same recorder (tests assert on the unified call list).
+/// </summary>
+internal sealed class FakeModAcquisitionService : IModAcquisitionService
+{
+    public List<(string GameDomain, int ModId)> LatestNexusCalls { get; } = new();
+    public (Guid ContainerId, string VersionId) NextResult { get; set; } =
+        (Guid.NewGuid(), Guid.NewGuid().ToString("N"));
+    public Exception? ThrowNext { get; set; }
+
+    public Task<(Guid ContainerId, string VersionId)> AcquireFromNexusAsync(
+        string gameDomain, int modId, int fileId,
+        string? nxmKey = null, long? nxmExpires = null,
+        IProgress<long>? progress = null, CancellationToken ct = default) =>
+        throw new NotImplementedException("AcquireFromNexusAsync is not exercised by the mod-list VM tests");
+
+    public Task<(Guid ContainerId, string VersionId)> AcquireLatestNexusAsync(
+        string gameDomain, int modId,
+        IProgress<long>? progress = null, CancellationToken ct = default)
+    {
+        LatestNexusCalls.Add((gameDomain, modId));
+        if (ThrowNext is not null)
+        {
+            return Task.FromException<(Guid, string)>(ThrowNext);
+        }
+        return Task.FromResult(NextResult);
+    }
+}
+
+/// <summary>
+/// Configurable <see cref="INexusAuthService"/> for the mod-list VM tests. The
+/// mod-list VM reads <see cref="GetCurrentStateAsync"/> once at construction
+/// for the premium flag; this fake returns the configured
+/// <see cref="State"/> (default a premium user; set null / non-premium to test
+/// the gating). The login / sign-out methods are not exercised by the mod-list
+/// VM + throw NotImplemented.
+/// </summary>
+internal sealed class FakeNexusAuthService : INexusAuthService
+{
+    /// <summary>The state returned by the next GetCurrentStateAsync call.
+    /// Default a premium OAuth user so the Update button is visible by default;
+    /// tests that exercise non-premium gating set this to a non-premium
+    /// state.</summary>
+    public NexusAuthState? State { get; set; } = new(NexusAuthMethod.OAuth, "tester", IsPremium: true);
+
+    public Task<NexusAuthState?> GetCurrentStateAsync(CancellationToken ct = default) =>
+        Task.FromResult(State);
+
+    public Task<NexusAuthResult> LoginWithOAuthAsync(CancellationToken ct = default) =>
+        throw new NotImplementedException();
+    public Task<NexusAuthResult> LoginWithApiKeyAsync(string apiKey, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+    public Task SignOutAsync(CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }

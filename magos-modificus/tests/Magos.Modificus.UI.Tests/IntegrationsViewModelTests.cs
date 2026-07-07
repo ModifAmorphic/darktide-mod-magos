@@ -409,16 +409,101 @@ public sealed class IntegrationsViewModelTests
         Assert.False(vm.IsGameRunning);
     }
 
+    // ---- auto-update settings (toggle + interval persistence) ------------
+
+    [Fact]
+    public async Task RefreshAsync_loads_toggle_and_interval_from_config()
+    {
+        // The dialog open reflects the persisted auto-update settings: the
+        // toggle + the interval are read live so a prior session's change shows.
+        var configLoader = new FakeConfigLoader();
+        configLoader.Config.Integrations.Nexus.AutoUpdateCheckEnabled = false;
+        configLoader.Config.Integrations.Nexus.AutoUpdateCheckIntervalMinutes = 25;
+
+        var (vm, _) = await BuildAndRefresh(state: null, configLoader: configLoader);
+
+        Assert.False(vm.AutoUpdateCheckEnabled);
+        Assert.Equal(25m, vm.AutoUpdateCheckIntervalMinutes);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_does_not_persist_when_loading_from_config()
+    {
+        // Populating the fields from config on open must NOT trigger the change
+        // handlers' write-back (a redundant round-trip on every open). The
+        // loader records zero saves from a pure RefreshAsync.
+        var configLoader = new FakeConfigLoader();
+
+        var (_, _) = await BuildAndRefresh(state: null, configLoader: configLoader);
+
+        Assert.Equal(0, configLoader.SaveCalls);
+    }
+
+    [Fact]
+    public async Task Toggling_auto_check_persists_through_config_save()
+    {
+        var configLoader = new FakeConfigLoader();
+        var (vm, _) = await BuildAndRefresh(state: null, configLoader: configLoader);
+        Assert.True(vm.AutoUpdateCheckEnabled); // default
+
+        vm.AutoUpdateCheckEnabled = false;
+
+        Assert.Equal(1, configLoader.SaveCalls);
+        Assert.False(configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckEnabled);
+    }
+
+    [Fact]
+    public async Task Changing_interval_persists_clamped_to_int()
+    {
+        // The NumericUpDown bound value is decimal?; the save clamps + casts to
+        // int so the config (an int field) stays consistent.
+        var configLoader = new FakeConfigLoader();
+        var (vm, _) = await BuildAndRefresh(state: null, configLoader: configLoader);
+
+        vm.AutoUpdateCheckIntervalMinutes = 30m;
+
+        Assert.Equal(1, configLoader.SaveCalls);
+        Assert.Equal(30, configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckIntervalMinutes);
+    }
+
+    [Fact]
+    public async Task Empty_interval_persists_as_default_and_clamps_above_max()
+    {
+        // A cleared NumericUpDown (null) defaults to 10 on save; values above
+        // 1440 clamp down so the runner never gets an unreasonable interval.
+        var configLoader = new FakeConfigLoader();
+        var (vm, _) = await BuildAndRefresh(state: null, configLoader: configLoader);
+
+        vm.AutoUpdateCheckIntervalMinutes = null;
+        Assert.Equal(10, configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckIntervalMinutes);
+
+        vm.AutoUpdateCheckIntervalMinutes = 5000m;
+        Assert.Equal(1440, configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckIntervalMinutes);
+    }
+
+    [Fact]
+    public async Task Interval_below_one_clamps_to_one()
+    {
+        var configLoader = new FakeConfigLoader();
+        var (vm, _) = await BuildAndRefresh(state: null, configLoader: configLoader);
+
+        vm.AutoUpdateCheckIntervalMinutes = 0m;
+
+        Assert.Equal(1, configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckIntervalMinutes);
+    }
+
     // ---- helpers -----------------------------------------------------------
 
     private static async Task<(IntegrationsViewModel vm, FakeNexusAuthService auth)> BuildAndRefresh(
         NexusAuthState? state = null,
-        FakeProfileSession? session = null)
+        FakeProfileSession? session = null,
+        FakeConfigLoader? configLoader = null)
     {
         var auth = new FakeNexusAuthService { CurrentState = state };
         session ??= new FakeProfileSession();
+        configLoader ??= new FakeConfigLoader();
 
-        var vm = new IntegrationsViewModel(auth, Localization, session, Logger);
+        var vm = new IntegrationsViewModel(auth, Localization, session, configLoader, Logger);
         await vm.RefreshAsync(); // resolve the initial status line
         return (vm, auth);
     }

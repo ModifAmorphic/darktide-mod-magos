@@ -30,7 +30,7 @@ public interface IModRepository
     ModContainer? FindBySource(ModSource source);     // Nexus by ModId, GitHub by Owner/Repo; null for Untracked
     ModContainer? FindUntrackedByName(string name);   // Untracked identity is the container Name
     ModContainer CreateContainer(ModSource source, string name);
-    ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder);
+    ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder, DateTimeOffset? remoteUploadedAt = null);
     void RemoveVersion(Guid containerId, string versionFolder);
     void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
     string GetVersionFolderPath(Guid containerId, string versionFolder);  // derived, never stored
@@ -50,10 +50,16 @@ public interface IModRepository
 - `CreateContainer(source, name)`: new UUID container + empty `container.json`.
   Does not check for an existing same-identity container (the caller does that
   via `FindBySource` / `FindUntrackedByName` first).
-- `AddVersion(containerId, versionString, populateFolder)`: upsert by
+- `AddVersion(containerId, versionString, populateFolder, remoteUploadedAt = null)`: upsert by
   `versionString`. Re-adding the same tag reuses + refreshes its opaque folder
-  (no re-order, `IsLatest` unchanged); a new tag creates a new opaque folder + a
-  new entry that becomes `IsLatest` (the newest by `ImportedAt`).
+  (no re-order, `IsLatest` + `ImportedAt` unchanged; `RemoteUploadedAt` IS
+  overwritten from `remoteUploadedAt`, matching how dedup refreshes files); a
+  new tag creates a new opaque folder + a new entry that becomes `IsLatest`
+  (the newest by `ImportedAt`). The optional `remoteUploadedAt` (UTC) is the
+  underlying remote file's publish date, captured at acquisition for
+  remote-source mods (Nexus) and stamped on the entry as `RemoteUploadedAt`
+  (the update-check comparison basis). `null` for manual imports + non-remote
+  sources.
   **Transactional:** the repo stages `populateFolder`'s output into a sibling
   temp dir, then atomically swaps it into the version folder on success
   (same-volume `Directory.Move`); on any failure the temp is cleaned + the
@@ -109,7 +115,7 @@ UI never touches the filesystem directly.
 ```csharp
 public interface IModImportService
 {
-    (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version);
+    (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version, DateTimeOffset? remoteUploadedAt = null);
 
     // Read-only peeks used by the add flow's base-name collision hard-block:
     string GetBaseName(string sourcePath);                       // validates structure, returns the base folder name (no container/version created)
@@ -123,6 +129,14 @@ public interface IModImportService
 - Version resolution: dedup by `versionString` (`AddVersion` reuses the existing
   folder + refreshes its files); a new `versionString` creates a new version +
   flips `IsLatest`.
+- **`remoteUploadedAt`** (optional, UTC): the underlying remote file's publish
+  date, forwarded by the acquisition layer (`ModAcquisitionService`) for
+  remote-source mods (Nexus) and recorded on the version entry as
+  `RemoteUploadedAt`. The Nexus update check compares publish dates (the
+  imported file vs the latest file), not import times; this parameter is how
+  the publish date reaches the entry. `null` for manual imports (folder/archive
+  via the picker or drag-and-drop) and non-Nexus sources, which aren't
+  update-checked anyway.
 - **Return:** the imported version's opaque folder id (`ModVersion.Folder`,
   not the display tag), so the caller can construct a `PinnedPolicy(versionId)`
   pinning the profile entry to exactly the version just imported. The display
@@ -216,6 +230,7 @@ One version of a mod (immutable record):
 | `VersionString` | The raw release tag (e.g. `"1.2"`, `"v2.0.1"`). Used for display only. Arbitrary source tags, not SemVer; never parsed. |
 | `IsLatest` | Whether this is the container's current latest version. Exactly one per container (the newest by `ImportedAt`). Moving latest is a one-field manifest edit. |
 | `ImportedAt` | When first imported (UTC). Orders the versions; the newest carries `IsLatest`. |
+| `RemoteUploadedAt` | When the underlying remote file was published (UTC), captured at acquisition for remote-source mods (Nexus). `null` for manual imports + non-remote sources. The update check uses it (with an `ImportedAt` fallback) as the comparison basis against the latest file's publish date. Backward-compatible on disk: a manifest from before this field existed deserializes it to `null`. |
 
 #### `ModSource` (abstract record)
 

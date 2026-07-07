@@ -67,6 +67,13 @@ public interface IModImportService
     /// <param name="version">The raw release tag string (e.g. <c>"1.2"</c>,
     /// <c>"v2.0.1"</c>); the version's dedup key within the container. Pass
     /// <see cref="string.Empty"/> for an untracked/local import with no tag.</param>
+    /// <param name="remoteUploadedAt">Optional remote-publish timestamp (UTC)
+    /// for remote-source mods (Nexus); captured by the acquisition layer at
+    /// download time and forwarded here so <see cref="UpdateCheckService"/>
+    /// can compare publish dates rather than import dates. <c>null</c> for
+    /// manual imports (folder/archive via the picker or drag-and-drop) and
+    /// non-Nexus sources. Forwarded to <see cref="IModRepository.AddVersion"/>
+    /// as the version entry's <see cref="ModVersion.RemoteUploadedAt"/>.</param>
     /// <returns>The <c>(containerId, versionId)</c> pair the caller feeds to
     /// <c>IProfileService.AddMod(profileId, containerId, policy)</c>.
     /// <c>versionId</c> is the imported version's opaque on-disk folder id (a
@@ -87,7 +94,12 @@ public interface IModImportService
     /// delete, extract).</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown if a <c>.zip</c>
     /// archive is malformed.</exception>
-    (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version);
+    (Guid ContainerId, string VersionId) Import(
+        string sourcePath,
+        string modName,
+        ModSource source,
+        string version,
+        DateTimeOffset? remoteUploadedAt = null);
 
     /// <summary>
     /// Peeks the mod's base folder name from a source <em>without</em> creating

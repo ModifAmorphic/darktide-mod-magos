@@ -64,7 +64,8 @@ internal sealed class ModImportService : IModImportService
         string sourcePath,
         string modName,
         ModSource source,
-        string version)
+        string version,
+        DateTimeOffset? remoteUploadedAt = null)
     {
         ArgumentNullException.ThrowIfNull(sourcePath);
         if (string.IsNullOrWhiteSpace(modName))
@@ -169,7 +170,7 @@ internal sealed class ModImportService : IModImportService
             }
         }
 
-        var updated = _repo.AddVersion(container.Id, version, Populate);
+        var updated = _repo.AddVersion(container.Id, version, Populate, remoteUploadedAt);
 
         // Resolve the just-imported version's opaque folder id so the caller can
         // pin to it. AddVersion is an upsert by VersionString: a new tag creates
