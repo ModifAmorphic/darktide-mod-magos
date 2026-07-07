@@ -1,0 +1,41 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="using:Magos.Modificus.UI.Views"
+        x:Class="Magos.Modificus.UI.Views.ProgressDialog"
+        Title="{ReflectionBinding [Dmf_Downloading], Source={StaticResource Loc}}"
+        ExtendClientAreaToDecorationsHint="True"
+        WindowDecorations="None"
+        Width="420" MinWidth="320"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+
+  <!--
+    A modal spinner shown while a short async operation (the DMF download) is in
+    flight. The message is set once before the dialog is shown and does not
+    change, so SizeToContent="Height" (honored at show time in Avalonia 12.x)
+    sizes the window to its content at the current font scale. There are no
+    buttons: the DialogService closes the window from the work's continuation
+    (the user cannot cancel a DMF download mid-flight; a partial archive is
+    useless + the import would fail). The drawn title bar's close button is
+    hidden by DialogTitleBar.ShowClose="false" so the user cannot dismiss the
+    spinner while the work is running.
+  -->
+  <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+          BorderThickness="1">
+    <Grid RowDefinitions="Auto,*">
+
+      <views:DialogTitleBar Grid.Row="0" ShowClose="False" />
+
+      <Border Grid.Row="1" Padding="24">
+        <StackPanel Spacing="16">
+          <TextBlock x:Name="MessageText"
+                     TextWrapping="Wrap" />
+          <ProgressBar IsIndeterminate="True"
+                       IsHitTestVisible="False" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

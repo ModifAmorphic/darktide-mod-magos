@@ -680,4 +680,51 @@
     <value>Interval (minutes)</value>
     <comment>Label next to the periodic update-check interval input in the Integrations dialog.</comment>
   </data>
+
+  <!-- ============================================================ -->
+  <!-- DMF (Darktide Mod Framework) install prompt                  -->
+  <!-- (DmfPromptService: triggered after first Nexus auth setup    -->
+  <!--  and after new-profile creation when DMF is missing)         -->
+  <!-- ============================================================ -->
+
+  <data name="Dmf_AddTitle" xml:space="preserve">
+    <value>Add DMF?</value>
+    <comment>Title of the confirm shown when DMF is already in the repository but not in the active profile (case 1: instant add, no download).</comment>
+  </data>
+  <data name="Dmf_AddMessage" xml:space="preserve">
+    <value>DMF (Darktide Mod Framework) is installed but not in this profile. Add it?</value>
+    <comment>Body of the case-1 confirm. DMF is required for most Darktide mods.</comment>
+  </data>
+  <data name="Dmf_DownloadTitle" xml:space="preserve">
+    <value>Download DMF?</value>
+    <comment>Title of the confirm shown when DMF is not in the repository and Nexus auth is configured (case 2: download + add).</comment>
+  </data>
+  <data name="Dmf_DownloadMessage" xml:space="preserve">
+    <value>DMF (Darktide Mod Framework) is required for most Darktide mods. Download and add it to this profile?</value>
+    <comment>Body of the case-2 confirm. The download takes a few seconds.</comment>
+  </data>
+  <data name="Dmf_Downloading" xml:space="preserve">
+    <value>Downloading DMF…</value>
+    <comment>Title of the alert shown while the DMF download is in flight (a modal spinner). No em-dash.</comment>
+  </data>
+  <data name="Dmf_DownloadingMessage" xml:space="preserve">
+    <value>Downloading DMF from Nexus Mods. This takes a few seconds.</value>
+    <comment>Body of the in-flight DMF download alert.</comment>
+  </data>
+  <data name="Dmf_DownloadFailedTitle" xml:space="preserve">
+    <value>Could not download DMF</value>
+    <comment>Title of the alert shown when the DMF download fails.</comment>
+  </data>
+  <data name="Dmf_DownloadFailedMessage" xml:space="preserve">
+    <value>Downloading DMF failed: {0}</value>
+    <comment>Body of the DMF download-failure alert. {0} is the error message. The user can retry via the normal add flow.</comment>
+  </data>
+  <data name="Dmf_InfoTitle" xml:space="preserve">
+    <value>DMF required</value>
+    <comment>Title of the informational alert shown when DMF is not in the repository and Nexus auth is NOT configured (case 3: profile-creation trigger only).</comment>
+  </data>
+  <data name="Dmf_InfoMessage" xml:space="preserve">
+    <value>DMF (Darktide Mod Framework) is required for most Darktide mods. Set up the Nexus integration to auto-install it, or import it manually.</value>
+    <comment>Body of the case-3 informational alert. Single OK button (no Yes/No). Tells the user the two paths to get DMF.</comment>
+  </data>
 </root>

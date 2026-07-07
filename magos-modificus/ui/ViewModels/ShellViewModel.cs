@@ -40,6 +40,13 @@ namespace Magos.Modificus.UI.ViewModels;
 /// overrides + mod-repository relocation). After Settings closes, the bound
 /// <see cref="ModList"/> reloads so a relocate's rescan is reflected in the
 /// mod rows.</para>
+/// <para><b>DMF prompt fires after the ManageProfiles + Integrations dialogs
+/// close:</b> <see cref="DmfPromptService"/> subscribes to backend signals
+/// (profile-created, auth-state-changed) that fire FROM inside those dialogs;
+/// it records them as pending + processes them here (after the dialog closes)
+/// so the DMF prompt is the topmost modal. The shell calls
+/// <see cref="DmfPromptService.ProcessPendingAsync"/> after ManageProfiles +
+/// Integrations; safe to call when nothing is pending (a no-op).</para>
 /// </remarks>
 public partial class ShellViewModel : ObservableObject
 {
@@ -47,6 +54,7 @@ public partial class ShellViewModel : ObservableObject
     private readonly IProfileSession _session;
     private readonly IEnginseerLaunchService _launchService;
     private readonly IDialogService _dialogs;
+    private readonly DmfPromptService _dmfPrompts;
     private readonly LocalizationService _localization;
     private readonly ILogger<ShellViewModel> _logger;
 
@@ -64,6 +72,7 @@ public partial class ShellViewModel : ObservableObject
         IProfileSession session,
         IEnginseerLaunchService launchService,
         IDialogService dialogs,
+        DmfPromptService dmfPrompts,
         LocalizationService localization,
         ModListViewModel modList,
         ILogger<ShellViewModel> logger)
@@ -72,6 +81,7 @@ public partial class ShellViewModel : ObservableObject
         _session = session;
         _launchService = launchService;
         _dialogs = dialogs;
+        _dmfPrompts = dmfPrompts;
         _localization = localization;
         ModList = modList;
         _logger = logger;
@@ -251,6 +261,9 @@ public partial class ShellViewModel : ObservableObject
     /// active changes live through the session during its session, so by the time
     /// it closes the session already reflects whatever the gate allowed; the shell
     /// just refreshes its list snapshot and follows the authoritative active id.
+    /// After the dialog closes, also processes any pending DMF new-profile prompt
+    /// the dialog's create may have triggered (the prompt fires here, on the main
+    /// window, not dialog-on-dialog).
     /// </summary>
     [RelayCommand]
     private async Task ManageProfiles()
@@ -268,6 +281,16 @@ public partial class ShellViewModel : ObservableObject
         {
             _syncing = false;
         }
+
+        // Surface any DMF prompt the dialog's create may have triggered. Fires
+        // after the ManageProfiles dialog is gone so the prompt is the topmost
+        // modal. Safe no-op when no create happened during the dialog.
+        await _dmfPrompts.ProcessPendingAsync();
+
+        // The DMF prompt (if it fired + the user accepted) added a mod to the
+        // active profile. Reload so the new row shows without a profile switch.
+        // Cheap no-op when nothing changed.
+        ModList.Reload();
     }
 
     /// <summary>
@@ -284,12 +307,26 @@ public partial class ShellViewModel : ObservableObject
 
     /// <summary>
     /// Opens the Integrations dialog (Nexus auth: OAuth login + API-key validate
-    /// + sign-out). Nexus-only in v1; GitHub stays config-file-only.
+    /// + sign-out). Nexus-only in v1; GitHub stays config-file-only. After the
+    /// dialog closes, processes any pending DMF auth-trigger prompt the dialog's
+    /// auth action may have triggered (the prompt fires here, on the main window,
+    /// not dialog-on-dialog).
     /// </summary>
     [RelayCommand]
     private async Task OpenIntegrations()
     {
         await _dialogs.ShowIntegrationsAsync();
+
+        // Surface any DMF prompt the dialog's auth action may have triggered.
+        // Fires after the Integrations dialog is gone so the prompt is the
+        // topmost modal. Safe no-op when no auth state change happened (or the
+        // ask-once flag is already set).
+        await _dmfPrompts.ProcessPendingAsync();
+
+        // The DMF prompt (if it fired + the user accepted) added a mod to the
+        // active profile. Reload so the new row shows without a profile switch.
+        // Cheap no-op when nothing changed.
+        ModList.Reload();
     }
 
     /// <summary>

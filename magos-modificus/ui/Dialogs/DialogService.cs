@@ -272,4 +272,69 @@ public sealed class DialogService : IDialogService
         using var _ = DisableOwnerForModal();
         await dialog.ShowDialog(_owner);
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// <b>Spinner lifecycle:</b> the <see cref="ProgressDialog"/> is shown with
+    /// <c>ShowDialog</c> (nested event loop on the UI thread, owner disabled via
+    /// <see cref="DisableOwnerForModal"/>), then the work is started. When the
+    /// work completes (success or fault), the spinner is closed on the UI thread
+    /// via <c>Dispatcher.Post</c> (the work may run on a thread-pool task; the
+    /// close must marshal back). After the close, <see cref="ShowDialog"/>'s
+    /// task completes + the owner is re-enabled.</para>
+    /// <para>
+    /// <b>Exception safety:</b> the close is in a <c>finally</c> so an
+    /// exception (from <paramref name="work"/> or anywhere else) still dismisses
+    /// the spinner. The exception propagates to the caller after the spinner is
+    /// gone, so the caller's error-handling alert is the only dialog visible at
+    /// that point.</para>
+    /// <para>
+    /// <b>The user cannot dismiss the spinner:</b> the title bar's close button
+    /// is hidden (<see cref="DialogTitleBar.ShowCloseProperty"/> = false). There
+    /// are no buttons in the content. The work runs to completion + this method
+    /// closes the spinner.</para>
+    /// </remarks>
+    public async Task<T> ShowProgressAsync<T>(string title, string message, Func<Task<T>> work)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+
+        var dialog = new ProgressDialog
+        {
+            Title = title,
+        };
+        dialog.SetMessage(message);
+
+        using var ownerGuard = DisableOwnerForModal();
+        var showDialogTask = dialog.ShowDialog(_owner);
+
+        // Start the work AFTER the spinner is up; capture the task so the
+        // continuation can close the dialog on either outcome. The continuation
+        // is intentionally fire-and-forget (we await workTask itself below; the
+        // continuation just dismisses the spinner), so assign to discard to
+        // silence the CS4014.
+        var workTask = work();
+        _ = workTask.ContinueWith(
+            _ => dialog.Close(),
+            TaskScheduler.FromCurrentSynchronizationContext());
+
+        try
+        {
+            // Await the work first so its exception (if any) propagates after
+            // the spinner is closed (the close-continuation runs as part of the
+            // await's continuation). If we awaited showDialogTask first, an
+            // exception in work would never close the spinner.
+            var result = await workTask;
+            await showDialogTask;
+            return result;
+        }
+        finally
+        {
+            // Belt-and-suspenders: if the continuation has not run yet (an
+            // early-await on showDialogTask racing the close), make sure the
+            // dialog is closed before this method returns.
+            try { dialog.Close(); }
+            catch { /* already closed; harmless */ }
+        }
+    }
 }

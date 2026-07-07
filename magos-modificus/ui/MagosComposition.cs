@@ -143,6 +143,15 @@ public static class MagosComposition
             sp.GetRequiredService<ILogger<UpdateCheckRunner>>(),
             StartUpdateCheckPolling));
 
+        // The DMF (Darktide Mod Framework) install-prompt coordinator.
+        // Subscribes to IProfileService.ProfileCreated +
+        // INexusAuthService.AuthStateChanged (both fire from inside the
+        // ManageProfiles / Integrations dialogs), records them as pending, and
+        // the shell calls ProcessPendingAsync after those dialogs close so the
+        // DMF prompt is the topmost modal at that point (no dialog-on-dialog).
+        // Singleton: owns the event subscriptions for the app lifetime.
+        services.AddSingleton<DmfPromptService>();
+
         var provider = services.BuildServiceProvider();
 
         // Startup prune: drop repository versions no profile references + empty
