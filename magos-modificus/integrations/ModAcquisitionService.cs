@@ -68,12 +68,17 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
         var cdnUri = await ResolveDownloadUriAsync(gameDomain, modId, fileId, nxmKey, nxmExpires, ct)
             .ConfigureAwait(false);
 
-        // 2. Resolve metadata (name + version + file name). No degraded fallback:
-        //    a failure here surfaces as a clear error and nothing partial lands.
-        //    The file name (from the already-fetched files.json entry) is preserved
-        //    on the temp file for log clarity; detection is content-based now so
-        //    the extension is cosmetic, but keeping the real one is good hygiene.
-        var (modName, version, fileName) = await ResolveMetadataAsync(gameDomain, modId, fileId, ct)
+        // 2. Resolve metadata (name + version + file name + the file's
+        //    remote-publish timestamp). No degraded fallback: a failure here
+        //    surfaces as a clear error and nothing partial lands. The file name
+        //    (from the already-fetched files.json entry) is preserved on the
+        //    temp file for log clarity; detection is content-based now so the
+        //    extension is cosmetic, but keeping the real one is good hygiene.
+        //    The publish timestamp is recorded on the imported version so the
+        //    update check compares publish dates (the imported file vs the
+        //    latest file), NOT Magos's import date (which would always be newer
+        //    than any past upload and so mask an outdated install).
+        var (modName, version, fileName, remoteUploadedAt) = await ResolveMetadataAsync(gameDomain, modId, fileId, ct)
             .ConfigureAwait(false);
 
         // 3. Download the archive to a temp file, then hand it to the import
@@ -94,13 +99,51 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
                 "Acquired Nexus mod {Mod} file {File} ({Version}); importing.",
                 modId, fileId, version);
 
-            return _import.Import(tempPath, modName, new NexusSource { ModId = modId }, version);
+            return _import.Import(
+                tempPath, modName, new NexusSource { ModId = modId }, version, remoteUploadedAt);
         }
         finally
         {
             http?.Dispose();
             TryDelete(tempPath);
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<(Guid ContainerId, string VersionId)> AcquireLatestNexusAsync(
+        string gameDomain,
+        int modId,
+        IProgress<long>? progress = null,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(gameDomain);
+
+        // List the mod's files, filter to MAIN / non-archived, and pick the
+        // newest by upload timestamp. The category_id == 1 convention is
+        // universal across Nexus games (MAIN); archived files are excluded so
+        // the update targets a current release, not a historical one the author
+        // has superseded. The acquisition's own ListModFilesAsync call below
+        // re-fetches the same list (for the version string + file name); this
+        // call is the price of resolving the fileId from the mod id alone.
+        // NexusModFiles.LatestMain is shared with the update-check thorough pass
+        // so both call sites agree on "latest MAIN release".
+        var files = await _nexus.ListModFilesAsync(gameDomain, modId, ct).ConfigureAwait(false);
+        var latest = NexusModFiles.LatestMain(files.Data);
+
+        if (latest is null)
+        {
+            throw new InvalidOperationException(
+                $"Nexus mod {modId} has no MAIN file available (all files are optional, archived, or absent).");
+        }
+
+        // Auth-only / premium download path: no nxm key or expiry. The caller
+        // (the per-mod update button) gates on premium before invoking. The
+        // ModFile.FileId is long in the v1 response shape; Nexus file ids fit
+        // comfortably in int (every other call site treats them as int), so the
+        // narrowing cast is safe + matches the established assumption.
+        return await AcquireFromNexusAsync(
+            gameDomain, modId, (int)latest.FileId, nxmKey: null, nxmExpires: null, progress, ct)
+            .ConfigureAwait(false);
     }
 
     // ---- step 1: resolve the CDN download URI ------------------------------
@@ -133,7 +176,7 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
 
     // ---- step 2: resolve name + version ------------------------------------
 
-    private async Task<(string Name, string Version, string FileName)> ResolveMetadataAsync(
+    private async Task<(string Name, string Version, string FileName, DateTimeOffset? RemoteUploadedAt)> ResolveMetadataAsync(
         string gameDomain, int modId, int fileId, CancellationToken ct)
     {
         var info = await _nexus.GetModInfoAsync(gameDomain, modId, ct).ConfigureAwait(false);
@@ -147,6 +190,7 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
         var files = await _nexus.ListModFilesAsync(gameDomain, modId, ct).ConfigureAwait(false);
         string? version = null;
         string? fileName = null;
+        long? uploadedTimestamp = null;
         if (files.Data is not null)
         {
             foreach (var f in files.Data)
@@ -155,6 +199,7 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
                 {
                     version = f.Version;
                     fileName = f.FileName;
+                    uploadedTimestamp = f.UploadedTimestamp;
                     break;
                 }
             }
@@ -172,7 +217,16 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
         // still looks like an archive.
         var resolvedFileName = !string.IsNullOrWhiteSpace(fileName) ? fileName! : modId + ".zip";
 
-        return (modName, version, resolvedFileName);
+        // The publish timestamp (Unix seconds on ModFile) becomes the imported
+        // version's RemoteUploadedAt, the basis for the update-check comparison.
+        // A zero timestamp (the wire default when the field is absent on every
+        // entry, e.g. a stub payload) is treated as "unknown" -> null, so the
+        // check falls back to ImportedAt rather than comparing against epoch.
+        DateTimeOffset? remoteUploadedAt = (uploadedTimestamp is null or 0)
+            ? null
+            : DateTimeOffset.FromUnixTimeSeconds(uploadedTimestamp.Value);
+
+        return (modName, version, resolvedFileName, remoteUploadedAt);
     }
 
     // ---- step 3: stream the archive to disk --------------------------------

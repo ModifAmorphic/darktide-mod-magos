@@ -2,6 +2,7 @@ using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Magos.Modificus.Config;
+using Magos.Modificus.General;
 using Magos.Modificus.Integrations;
 using Magos.Modificus.UI.Localization;
 using Magos.Modificus.UI.Session;
@@ -20,7 +21,9 @@ namespace Magos.Modificus.UI.ViewModels;
 /// sees one is configured), revealed on a Show eye toggle, + re-validatable
 /// without re-entering. Disabled (with a tooltip) while the game is running,
 /// mirroring the profile-switch gate. GitHub stays config-file-only (no UI
-/// section).
+/// section). Below the auth blocks, an "Update checks" sub-section holds the
+/// periodic update-check toggle + interval, persisted live through
+/// <see cref="IConfigLoader"/> (read-modify-save on each change).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -56,17 +59,20 @@ public partial class IntegrationsViewModel : ObservableObject
     private readonly INexusAuthService _auth;
     private readonly LocalizationService _localization;
     private readonly IProfileSession _session;
+    private readonly IConfigLoader _configLoader;
     private readonly ILogger<IntegrationsViewModel> _logger;
 
     public IntegrationsViewModel(
         INexusAuthService auth,
         LocalizationService localization,
         IProfileSession session,
+        IConfigLoader configLoader,
         ILogger<IntegrationsViewModel> logger)
     {
         _auth = auth ?? throw new ArgumentNullException(nameof(auth));
         _localization = localization ?? throw new ArgumentNullException(nameof(localization));
         _session = session ?? throw new ArgumentNullException(nameof(session));
+        _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         _isGameRunning = _session.IsRunning;
@@ -179,6 +185,95 @@ public partial class IntegrationsViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ToggleApiKeyRevealCommand))]
     private bool _isBusy;
 
+    // ---- update-check settings -------------------------------------------
+
+    /// <summary>
+    /// Set while <see cref="LoadAutoUpdateSettings"/> populates the toggle +
+    /// interval from the live config so the resulting property-change handlers
+    /// do not write back (which would be a no-op round-trip on every dialog
+    /// open). Cleared after the load completes; user-driven changes then persist
+    /// through <see cref="OnAutoUpdateCheckEnabledChanged"/> /
+    /// <see cref="OnAutoUpdateCheckIntervalMinutesChanged"/>.
+    /// </summary>
+    private bool _isLoadingAutoUpdate;
+
+    /// <summary>
+    /// Whether the periodic background update check runs while a profile is
+    /// active. Loaded live from <c>NexusConfig.AutoUpdateCheckEnabled</c> on
+    /// dialog open; persisted on each user change via read-modify-save. The
+    /// toggle gates ONLY the periodic timer (profile-load + manual checks still
+    /// run); the runner reads it live, so a change here takes effect without a
+    /// restart.
+    /// </summary>
+    [ObservableProperty]
+    private bool _autoUpdateCheckEnabled;
+
+    /// <summary>
+    /// The periodic update-check interval, in minutes, as the
+    /// <c>NumericUpDown</c> sees it (decimal to match the control's Value type).
+    /// Two-way bound; persisted on each user change via read-modify-save,
+    /// clamped to [1, 1440] on write. Loaded from
+    /// <c>NexusConfig.AutoUpdateCheckIntervalMinutes</c> on dialog open.
+    /// </summary>
+    [ObservableProperty]
+    private decimal? _autoUpdateCheckIntervalMinutes;
+
+    /// <summary>
+    /// Persisted when the user flips <see cref="AutoUpdateCheckEnabled"/>.
+    /// Skipped during the dialog-open load (guarded by
+    /// <c>_isLoadingAutoUpdate</c>) so populating the field from config does not
+    /// trigger a redundant write-back round-trip.
+    /// </summary>
+    partial void OnAutoUpdateCheckEnabledChanged(bool value) => SaveAutoUpdateSettings();
+
+    /// <summary>
+    /// Persisted when the user edits <see cref="AutoUpdateCheckIntervalMinutes"/>.
+    /// Skipped during the dialog-open load (guarded by
+    /// <c>_isLoadingAutoUpdate</c>).
+    /// </summary>
+    partial void OnAutoUpdateCheckIntervalMinutesChanged(decimal? value) => SaveAutoUpdateSettings();
+
+    /// <summary>
+    /// Read-modify-saves the toggle + interval into the live config so the
+    /// runner picks them up on its next tick. Best-effort (the ConfigLoader
+    /// swallows write failures); clamps the interval to [1, 1440] minutes + null
+    /// defaults to 10. No-op while <c>_isLoadingAutoUpdate</c> is set.
+    /// </summary>
+    private void SaveAutoUpdateSettings()
+    {
+        if (_isLoadingAutoUpdate)
+        {
+            return;
+        }
+
+        var config = _configLoader.Load();
+        config.Integrations.Nexus.AutoUpdateCheckEnabled = AutoUpdateCheckEnabled;
+        config.Integrations.Nexus.AutoUpdateCheckIntervalMinutes =
+            (int)Math.Clamp(AutoUpdateCheckIntervalMinutes ?? 10, 1, 1440);
+        _configLoader.Save(config);
+    }
+
+    /// <summary>
+    /// Loads the toggle + interval from the live config into the bound
+    /// properties, suppressing the change-triggered save while populating.
+    /// Called from <see cref="RefreshAsync"/> so the dialog reflects the
+    /// persisted state on every open (a prior session may have changed it).
+    /// </summary>
+    private void LoadAutoUpdateSettings()
+    {
+        var nexus = _configLoader.Load().Integrations.Nexus;
+        _isLoadingAutoUpdate = true;
+        try
+        {
+            AutoUpdateCheckEnabled = nexus.AutoUpdateCheckEnabled;
+            AutoUpdateCheckIntervalMinutes = nexus.AutoUpdateCheckIntervalMinutes;
+        }
+        finally
+        {
+            _isLoadingAutoUpdate = false;
+        }
+    }
+
     // ---- localized labels -------------------------------------------------
 
     public string WindowTitle => _localization["Integrations_Title"];
@@ -190,6 +285,9 @@ public partial class IntegrationsViewModel : ObservableObject
     public string ApiKeyHelpLabel => _localization["Integrations_ApiKeyHelp"];
     public string SignOutLabel => _localization["Integrations_SignOutButton"];
     public string DoneLabel => _localization["Integrations_DoneButton"];
+    public string AutoUpdateHeader => _localization["Integrations_AutoUpdateHeader"];
+    public string AutoUpdateEnabledLabel => _localization["Integrations_AutoUpdateEnabled"];
+    public string AutoUpdateIntervalLabel => _localization["Integrations_AutoUpdateInterval"];
     // Null when the game isn't running so no tooltip is shown on the enabled
     // panel; the running-message appears only when the panel is actually
     // disabled by IsGameRunning (avoids a misleading "is running" tooltip on
@@ -313,7 +411,8 @@ public partial class IntegrationsViewModel : ObservableObject
 
     /// <summary>
     /// Refreshes the status line + active-method indicator + masked-key field
-    /// from the persisted auth state. Called on dialog open (after construction)
+    /// from the persisted auth state, and the update-check toggle + interval
+    /// from the persisted config. Called on dialog open (after construction)
     /// + after each auth command. Hits the v1 API to resolve the display name +
     /// premium state.
     /// </summary>
@@ -321,6 +420,7 @@ public partial class IntegrationsViewModel : ObservableObject
     {
         var state = await _auth.GetCurrentStateAsync();
         ApplyState(state);
+        LoadAutoUpdateSettings();
     }
 
     /// <summary>
@@ -412,6 +512,9 @@ public partial class IntegrationsViewModel : ObservableObject
         OnPropertyChanged(nameof(ApiKeyHelpLabel));
         OnPropertyChanged(nameof(SignOutLabel));
         OnPropertyChanged(nameof(DoneLabel));
+        OnPropertyChanged(nameof(AutoUpdateHeader));
+        OnPropertyChanged(nameof(AutoUpdateEnabledLabel));
+        OnPropertyChanged(nameof(AutoUpdateIntervalLabel));
         OnPropertyChanged(nameof(TooltipRunning));
         OnPropertyChanged(nameof(ShowApiKeyTooltip));
         OnPropertyChanged(nameof(HideApiKeyTooltip));

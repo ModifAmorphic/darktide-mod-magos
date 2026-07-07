@@ -281,6 +281,14 @@ public sealed class ModFile
     [JsonPropertyName("uploaded_timestamp")]
     public long UploadedTimestamp { get; set; }
 
+    // Whether the file has been archived by the mod author. The Nexus v1
+    // files.json endpoint includes archived entries (marked true); the
+    // latest-file resolution excludes them so an update targets a current
+    // release, not a historical one the author has superseded. Defaults to
+    // false when the field is absent (older API responses / partial payloads).
+    [JsonPropertyName("archived")]
+    public bool IsArchived { get; set; }
+
     [JsonPropertyName("description")]
     public string Description { get; set; } = string.Empty;
 }
@@ -294,4 +302,53 @@ internal sealed class ModFilesResponse
 {
     [JsonPropertyName("files")]
     public ModFile[] Files { get; set; } = Array.Empty<ModFile>();
+}
+
+/// <summary>
+/// Shared helpers over a mod's <see cref="ModFile"/> list. Internal: the only
+/// callers are the acquisition service (resolves the latest release to download)
+/// + the update-check service's thorough pass (resolves the latest release to
+/// compare against the imported version). Keeping the filter in one place
+/// ensures both call sites agree on what "latest MAIN release" means.
+/// </summary>
+internal static class NexusModFiles
+{
+    /// <summary>
+    /// The Nexus <c>category_id</c> for a mod's MAIN file. Universal across
+    /// every game on Nexus (the category tree is per-game, but id 1 is always
+    /// the primary/main bucket); mirrors how MO2, NMA, and Vortex pick the
+    /// default download. Optional / miscellaneous / archived files are excluded
+    /// by <see cref="LatestMain"/>.
+    /// </summary>
+    public const int MainFileCategory = 1;
+
+    /// <summary>
+    /// Picks the newest non-archived MAIN file (<see cref="MainFileCategory"/>)
+    /// from <paramref name="files"/> by <see cref="ModFile.UploadedTimestamp"/>.
+    /// Returns <c>null</c> when <paramref name="files"/> is null/empty or no
+    /// entry qualifies (every file is optional, archived, or in another
+    /// category). The filter both call sites use to resolve "the current
+    /// release" of a mod.
+    /// </summary>
+    public static ModFile? LatestMain(IReadOnlyList<ModFile>? files)
+    {
+        if (files is null || files.Count == 0)
+        {
+            return null;
+        }
+
+        ModFile? best = null;
+        foreach (var f in files)
+        {
+            if (f.CategoryId != MainFileCategory || f.IsArchived)
+            {
+                continue;
+            }
+            if (best is null || f.UploadedTimestamp > best.UploadedTimestamp)
+            {
+                best = f;
+            }
+        }
+        return best;
+    }
 }

@@ -220,11 +220,7 @@
 
   <data name="ModList_Header" xml:space="preserve">
     <value>Mods</value>
-    <comment>Neutral header for the mod list (shown when no profile is active).</comment>
-  </data>
-  <data name="ModList_Count" xml:space="preserve">
-    <value>Mods ({0})</value>
-    <comment>Header for the mod list with the current count. {0} is the mod count.</comment>
+    <comment>The mod-list header title (shown with or without an active profile; the row list itself is the count).</comment>
   </data>
   <data name="ModList_EmptyNoProfile" xml:space="preserve">
     <value>Select or create a profile to manage its mods.</value>
@@ -306,6 +302,50 @@
   <data name="ModRow_NotFound" xml:space="preserve">
     <value>Not found</value>
     <comment>Source badge text when a mod has no mod-store entry (stale profile reference).</comment>
+  </data>
+  <data name="ModRow_SourceBadgeLinkTooltip" xml:space="preserve">
+    <value>Open this mod's source page</value>
+    <comment>Tooltip on the source badge when it doubles as a link to the mod's remote page (Nexus mod page or GitHub repo).</comment>
+  </data>
+  <data name="ModRow_UpdateAvailableTooltip" xml:space="preserve">
+    <value>An update is available for this mod</value>
+    <comment>Tooltip on the drawn marker next to the source badge when the update check flagged this container.</comment>
+  </data>
+  <data name="ModRow_UpdateAvailable" xml:space="preserve">
+    <value>Update available</value>
+    <comment>Readable text label next to the drawn dot on a flagged row's source badge, so the marker is discoverable without hovering the tooltip.</comment>
+  </data>
+  <data name="ModRow_UpdateTooltip" xml:space="preserve">
+    <value>Update this mod to the latest release</value>
+    <comment>Tooltip on the per-row Update button (premium-only; re-downloads + re-extracts the latest MAIN file).</comment>
+  </data>
+  <data name="ModList_RateLimited" xml:space="preserve">
+    <value>Update check limited</value>
+    <comment>Short banner shown in the mod-list header when the last update check was rate-limited (the badges may not reflect every available update).</comment>
+  </data>
+  <data name="ModList_RateLimitedTooltip" xml:space="preserve">
+    <value>The Nexus update check was rate-limited, so some available updates may not be shown. Try again later.</value>
+    <comment>Tooltip on the rate-limit banner in the mod-list header.</comment>
+  </data>
+  <data name="ModList_RecentOnly" xml:space="preserve">
+    <value>Showing recent updates</value>
+    <comment>Short banner shown in the mod-list header when the last update check was Month-only (not thorough). Hints the badges reflect only the past month; clicking refresh runs a complete check.</comment>
+  </data>
+  <data name="ModList_RecentOnlyTooltip" xml:space="preserve">
+    <value>The last check only looked at mods updated in the past month. Click the refresh button for a complete check that also catches older updates.</value>
+    <comment>Tooltip on the "Showing recent updates" banner in the mod-list header. No em-dash; explains what Month-only means + how to run the complete (thorough) check.</comment>
+  </data>
+  <data name="ModList_CheckNowTooltip" xml:space="preserve">
+    <value>Check for updates now</value>
+    <comment>Tooltip on the refresh button in the mod-list header; clicking it fires an immediate update check for the active profile.</comment>
+  </data>
+  <data name="Update_FailedTitle" xml:space="preserve">
+    <value>Update failed</value>
+    <comment>Title of the modal alert shown when a per-mod one-click update fails.</comment>
+  </data>
+  <data name="Update_FailedMessage" xml:space="preserve">
+    <value>Could not update '{0}'.</value>
+    <comment>Prefix of the per-mod update-failure alert body. {0} is the mod's display name. The error detail follows.</comment>
   </data>
 
   <!-- ============================================================ -->
@@ -627,5 +667,17 @@
   <data name="Integrations_ApiKeyEmpty" xml:space="preserve">
     <value>Paste an API key first.</value>
     <comment>Status line shown when the user clicks Validate with an empty API-key TextBox.</comment>
+  </data>
+  <data name="Integrations_AutoUpdateHeader" xml:space="preserve">
+    <value>Update checks</value>
+    <comment>Header over the update-check settings sub-section in the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_AutoUpdateEnabled" xml:space="preserve">
+    <value>Check for updates automatically</value>
+    <comment>Label next to the periodic update-check toggle in the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_AutoUpdateInterval" xml:space="preserve">
+    <value>Interval (minutes)</value>
+    <comment>Label next to the periodic update-check interval input in the Integrations dialog.</comment>
   </data>
 </root>

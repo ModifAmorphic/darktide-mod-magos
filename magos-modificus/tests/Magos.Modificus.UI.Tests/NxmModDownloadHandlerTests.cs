@@ -315,4 +315,12 @@ internal sealed class FakeAcquisitionService : IModAcquisitionService
         }
         return Task.FromResult(NextResult);
     }
+
+    // Not exercised by the nxm download handler (it routes the per-file id from
+    // the nxm URL through AcquireFromNexusAsync). The mod-list VM's UpdateCommand
+    // uses AcquireLatestNexusAsync; its tests use a separate fake.
+    public Task<(Guid ContainerId, string VersionId)> AcquireLatestNexusAsync(
+        string gameDomain, int modId,
+        IProgress<long>? progress = null, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }

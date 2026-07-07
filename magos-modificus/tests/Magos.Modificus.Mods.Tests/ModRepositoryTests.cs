@@ -413,6 +413,74 @@ public sealed class ModRepositoryTests
             fx.Repo.AddVersion(Guid.NewGuid(), "1.0", EmptyPopulate));
     }
 
+    // ---- AddVersion + RemoteUploadedAt (Nexus update-check basis) ---------
+
+    [Fact]
+    public void AddVersion_records_RemoteUploadedAt_on_a_new_version()
+    {
+        // The publish date forwarded by the acquisition layer is stamped on the
+        // new entry (the basis for the update-check publish-date comparison).
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "Mod");
+        var publishedAt = new DateTimeOffset(2024, 3, 15, 12, 0, 0, TimeSpan.Zero);
+
+        var updated = fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate, publishedAt);
+
+        var version = Assert.Single(updated.Versions);
+        Assert.Equal(publishedAt, version.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public void AddVersion_default_remoteUploadedAt_is_null()
+    {
+        // Existing callers (manual imports, profile fixture helpers) omit the
+        // param; the entry's RemoteUploadedAt is null (the update check then
+        // falls back to ImportedAt).
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "Mod");
+
+        var updated = fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate);
+
+        var version = Assert.Single(updated.Versions);
+        Assert.Null(version.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public void AddVersion_dedup_refreshes_RemoteUploadedAt_on_re_import()
+    {
+        // Re-importing the same VersionString refreshes the files AND
+        // RemoteUploadedAt (matching how dedup refreshes files). A
+        // re-acquired version carries the current publish date, not the stale
+        // one from the first import, so a post-update check does not re-flag.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "Mod");
+        var first = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var refresh = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
+
+        fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate, first);
+        var updated = fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate, refresh);
+
+        var version = Assert.Single(updated.Versions);
+        Assert.Equal(refresh, version.RemoteUploadedAt);
+    }
+
+    [Fact]
+    public void AddVersion_persists_RemoteUploadedAt_through_a_new_repository_instance()
+    {
+        // Backward-compatible on disk: a nullable init-only property round-
+        // trips through container.json. A pre-existing manifest (without the
+        // field) deserializes the field to null; a manifest written with the
+        // field preserves the value on reload.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "Mod");
+        var publishedAt = new DateTimeOffset(2024, 3, 15, 12, 0, 0, TimeSpan.Zero);
+        fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate, publishedAt);
+
+        var reloaded = fx.Reload();
+        var version = Assert.Single(reloaded.Get(container.Id)!.Versions);
+        Assert.Equal(publishedAt, version.RemoteUploadedAt);
+    }
+
     // ---- RemoveVersion -----------------------------------------------------
 
     [Fact]

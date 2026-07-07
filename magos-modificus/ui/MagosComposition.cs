@@ -107,6 +107,10 @@ public static class MagosComposition
         // The active profile's mod-list VM: a singleton (one list, the dominant
         // content area). Resolves IModImportService (via AddMods) +
         // IModOrderResolver (via AddProfiles), both already registered above.
+        // The UI-thread marshal seam for ModListViewModel's CheckCompleted handler
+        // (the event fires on a threadpool thread; the handler iterates the
+        // UI-bound Mods collection). Production wires Dispatcher.UIThread.Post.
+        services.AddSingleton<Action<Action>>(_ => action => Dispatcher.UIThread.Post(action));
         services.AddSingleton<ModListViewModel>();
         services.AddSingleton<ShellViewModel>();
         services.AddSingleton<IDialogService>(sp =>
@@ -123,12 +127,21 @@ public static class MagosComposition
 
         // Phase 4 Stage 4: the UI-layer glue that fires an update check
         // (IUpdateCheckService, registered above via AddIntegrations) whenever a
-        // profile becomes active. Subscribes to IProfileSession.PropertyChanged
+        // profile becomes active (startup + active-profile switch), and a
+        // periodic check while a profile stays active (the toggle + interval
+        // are read live from config). Subscribes to IProfileSession.PropertyChanged
         // for switches + fires the opening check for the restored active id.
         // Started after the provider is built (see StartUpdateCheck); best-effort,
         // never blocks startup. Singleton: owns the session subscription for the
-        // app lifetime.
-        services.AddSingleton<UpdateCheckRunner>();
+        // app lifetime. The periodic timer is wired to a DispatcherTimer (the
+        // established ProfileSession pattern); the runner takes the timer-start
+        // delegate as a seam so it stays unit-testable.
+        services.AddSingleton(sp => new UpdateCheckRunner(
+            sp.GetRequiredService<IProfileSession>(),
+            sp.GetRequiredService<IUpdateCheckService>(),
+            sp.GetRequiredService<IConfigLoader>(),
+            sp.GetRequiredService<ILogger<UpdateCheckRunner>>(),
+            StartUpdateCheckPolling));
 
         var provider = services.BuildServiceProvider();
 
@@ -312,6 +325,25 @@ public static class MagosComposition
         var timer = new DispatcherTimer
         {
             Interval = ProfileSession.PollInterval,
+        };
+        timer.Tick += (_, _) => onTick();
+        timer.Start();
+    }
+
+    /// <summary>
+    /// The periodic update-check poll: a <see cref="DispatcherTimer"/> that ticks
+    /// at <see cref="UpdateCheckRunner.TickInterval"/> (1 minute) so the runner
+    /// can fire a check when the user-configured interval (read live from config)
+    /// has elapsed. The runner owns the interval math + the toggle gate; this
+    /// just drives the tick on the UI thread (mirrors
+    /// <see cref="StartRunningStatePolling"/>). Composition happens on the UI
+    /// thread during app startup.
+    /// </summary>
+    private static void StartUpdateCheckPolling(Action onTick)
+    {
+        var timer = new DispatcherTimer
+        {
+            Interval = UpdateCheckRunner.TickInterval,
         };
         timer.Tick += (_, _) => onTick();
         timer.Start();

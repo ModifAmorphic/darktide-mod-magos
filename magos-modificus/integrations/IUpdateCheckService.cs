@@ -3,12 +3,15 @@ using Magos.Modificus.Mods;
 namespace Magos.Modificus.Integrations;
 
 /// <summary>
-/// Checks a profile's Nexus-sourced mods for available updates. On
-/// <see cref="CheckAsync"/>, queries the Nexus "recently updated" endpoint once
-/// (one API call, regardless of how many mods the profile has), intersects the
-/// result with the profile's <see cref="LatestPolicy"/> +
-/// <see cref="NexusSource"/> mods, and flags the ones whose imported version
-/// predates the Nexus-reported latest file update.
+/// Checks a profile's Nexus-sourced mods for available updates. Two check
+/// shapes share the same <see cref="LastResult"/> / <see cref="CheckCompleted"/>
+/// surface: <see cref="CheckAsync"/> (the cheap Month-only pass, fired on
+/// profile load + the periodic timer) and <see cref="CheckThoroughAsync"/> (the
+/// per-mod pass the manual "check now" affordance fires, which also catches
+/// mods whose latest release predates the Month window). Both intersect the
+/// Nexus "recently updated" response with the profile's
+/// <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods and flag the ones
+/// whose imported version predates the Nexus-reported latest file update.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -18,12 +21,14 @@ namespace Magos.Modificus.Integrations;
 /// too. Only <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods are
 /// checked.</para>
 /// <para>
-/// <b>One API call per check.</b> The Nexus v1
-/// <c>GET /v1/games/{domain}/mods/updated.json?period=1m</c> endpoint lists
-/// every mod for the game updated in the past month, so the check scales with
-/// the response size, not the profile size. Stage 5 binds badges to
-/// <see cref="LastResult"/> + <see cref="CheckCompleted"/> without re-running
-/// the check.</para>
+/// <b>Two check shapes, one result surface.</b> The Month-only check makes
+/// exactly one API call regardless of how many mods the profile has; the
+/// thorough check adds one <c>ListModFilesAsync</c> call per profile mod NOT in
+/// the Month response (so a mod whose latest release predates the Month window,
+/// like one last updated several months ago, is still caught). The result's
+/// <see cref="UpdateCheckResult.Thorough"/> flag tells the UI which shape
+/// produced it, so the mod-list header can hint "recent updates only, click
+/// refresh for a complete check" after a Month-only pass.</para>
 /// <para>
 /// <b>Best-effort, never throws to the caller.</b> The check is fire-and-forget;
 /// the UI layer fires it on profile load. A transient API failure, a missing
@@ -35,10 +40,14 @@ namespace Magos.Modificus.Integrations;
 public interface IUpdateCheckService
 {
     /// <summary>
-    /// Checks <paramref name="profileId"/>'s Nexus mods (LatestPolicy +
-    /// NexusSource) for available updates. Background, non-blocking: the caller
-    /// fires-and-forgets this on profile load. Returns the result (empty if no
-    /// updates, rate-limited, no checkable mods, or no Nexus auth configured).
+    /// The cheap Month-only check: queries the Nexus "recently updated"
+    /// endpoint once (one API call), intersects with the profile's
+    /// <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods, and flags
+    /// the ones whose imported version predates the reported latest file update.
+    /// Used by the periodic timer + the profile-load trigger. The result has
+    /// <see cref="UpdateCheckResult.Thorough"/> = <c>false</c>: mods whose
+    /// latest release predates the Month window are NOT caught here (use
+    /// <see cref="CheckThoroughAsync"/> for those).
     /// </summary>
     /// <param name="profileId">The profile whose mods to check.</param>
     /// <param name="ct">Cancellation token. Honored during the Nexus API call;
@@ -53,52 +62,90 @@ public interface IUpdateCheckService
     Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);
 
     /// <summary>
+    /// The thorough check: does everything <see cref="CheckAsync"/> does, AND
+    /// for each profile Nexus+Latest mod NOT in the Month response calls
+    /// <c>ListModFilesAsync</c> to resolve the latest MAIN / non-archived file
+    /// (category_id 1, newest by <see cref="ModFile.UploadedTimestamp"/>), then
+    /// compares that file's upload date against
+    /// <c>resolved.RemoteUploadedAt ?? resolved.ImportedAt</c>. Catches mods
+    /// whose latest release predates the Month window (a Month-only check
+    /// misses them). Used by the manual "check now" affordance. The result has
+    /// <see cref="UpdateCheckResult.Thorough"/> = <c>true</c>.
+    /// <para>
+    /// Rate-limit-aware: if the Month call is rate-limited, the per-mod pass is
+    /// skipped + the result has <see cref="UpdateCheckResult.RateLimited"/> =
+    /// <c>true</c>. If a <c>ListModFilesAsync</c> call throws
+    /// <see cref="NexusRateLimitException"/> mid-pass, the pass stops + returns
+    /// what's flagged so far with <see cref="UpdateCheckResult.RateLimited"/> =
+    /// <c>true</c> (partial results, not an empty result). Other per-mod
+    /// failures are logged + skipped (the pass continues; one mod's transient
+    /// failure must not abort the whole check).</para>
+    /// </summary>
+    /// <param name="profileId">The profile whose mods to check.</param>
+    /// <param name="ct">Cancellation token. <see cref="OperationCanceledException"/>
+    /// propagates; other exceptions are caught + surfaced as an empty / partial
+    /// result.</param>
+    /// <returns>The check result (partial if a mid-pass rate-limit was hit).
+    /// Never throws for non-cancellation failures.</returns>
+    Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default);
+
+    /// <summary>
     /// The last check result, or <c>null</c> before the first check completes.
-    /// Stage 5 reads this to render badges without awaiting
-    /// <see cref="CheckAsync"/>.
+    /// Stage 5 reads this to render badges without awaiting a check. Holds the
+    /// most recent result regardless of which method (<see cref="CheckAsync"/>
+    /// or <see cref="CheckThoroughAsync"/>) produced it.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Written from a background task (the fire-and-forget
-    /// <see cref="CheckAsync"/> invocation) and read by the UI thread. The write
-    /// is taken under an internal lock together with the
-    /// <see cref="CheckCompleted"/> invocation so an event subscriber observes
-    /// the result that was just published; reads are lock-free. Reference
-    /// assignment is atomic on every target runtime, so the lock-free read can
-    /// at worst observe a one-check-stale value (corrected on the next
-    /// <see cref="CheckCompleted"/>).</para>
+    /// Written from a background task (the fire-and-forget check invocation)
+    /// and read by the UI thread. The write is taken under an internal lock
+    /// together with the <see cref="CheckCompleted"/> invocation so an event
+    /// subscriber observes the result that was just published; reads are
+    /// lock-free. Reference assignment is atomic on every target runtime, so
+    /// the lock-free read can at worst observe a one-check-stale value
+    /// (corrected on the next <see cref="CheckCompleted"/>).</para>
     /// </remarks>
     UpdateCheckResult? LastResult { get; }
 
     /// <summary>
     /// Raised (on the completing thread) when a check finishes, successful or
-    /// not. Stage 5 subscribes to refresh badges without awaiting
-    /// <see cref="CheckAsync"/>. Always raised exactly once per
-    /// <see cref="CheckAsync"/> call (including the no-auth short-circuit and
-    /// the rate-limited / failure paths), with the same result that was just
-    /// set on <see cref="LastResult"/>.
+    /// not. Stage 5 subscribes to refresh badges without awaiting a check.
+    /// Always raised exactly once per <see cref="CheckAsync"/> /
+    /// <see cref="CheckThoroughAsync"/> call (including the no-auth
+    /// short-circuit and the rate-limited / failure paths), with the same
+    /// result that was just set on <see cref="LastResult"/>.
     /// </summary>
     event EventHandler<UpdateCheckResult?>? CheckCompleted;
 }
 
 /// <summary>
 /// The result of an update check: the mods with a potential update available,
-/// the check timestamp, and whether the check was rate-limited.
+/// the check timestamp, whether the check was rate-limited, and whether it was
+/// the thorough per-mod pass.
 /// </summary>
 /// <param name="Updates">The mods with a potential update available (the
-/// API's latest file-update timestamp is newer than the imported version's
-/// date). May be empty (no updates, or the check was short-circuited by no
-/// auth / no checkable mods / a rate limit / an API failure).</param>
+/// API's latest file-update timestamp, or the latest MAIN file's upload time
+/// for the thorough pass's per-mod lookups, is newer than the imported
+/// version's date). May be empty (no updates, or the check was short-circuited
+/// by no auth / no checkable mods / a rate limit / an API failure).</param>
 /// <param name="CheckedAt">When the check ran (UTC).</param>
-/// <param name="RateLimited"><c>true</c> if the check was skipped because the
-/// Nexus daily or hourly quota was reported exhausted. Stage 5 surfaces a
-/// "check incomplete" indicator rather than "all up to date" in this case, so
-/// the user understands the badges may not reflect the latest
+/// <param name="RateLimited"><c>true</c> if the check was skipped (or aborted
+/// mid-pass) because the Nexus daily or hourly quota was reported exhausted.
+/// Stage 5 surfaces a "check incomplete" indicator rather than "all up to date"
+/// in this case, so the user understands the badges may not reflect the latest
 /// state.</param>
+/// <param name="Thorough"><c>true</c> if this result came from
+/// <see cref="IUpdateCheckService.CheckThoroughAsync"/> (the manual "check now"
+/// path that also catches mods outside the Month window); <c>false</c> if it
+/// came from the Month-only <see cref="IUpdateCheckService.CheckAsync"/>. Stage
+/// 5 uses this to hint "recent updates only, click refresh for a complete
+/// check" after a Month-only pass, so the user understands the badges may not
+/// reflect every available update.</param>
 public sealed record UpdateCheckResult(
     IReadOnlyList<ModUpdateInfo> Updates,
     DateTimeOffset CheckedAt,
-    bool RateLimited);
+    bool RateLimited,
+    bool Thorough);
 
 /// <summary>
 /// One mod flagged by an update check. Mirrors the identifying fields Stage 5

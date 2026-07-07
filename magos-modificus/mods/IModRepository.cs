@@ -91,9 +91,13 @@ public interface IModRepository
     /// folder name); the existing version entry's
     /// <see cref="ModVersion.IsLatest"/> + <see cref="ModVersion.ImportedAt"/>
     /// are left unchanged (a re-import refreshes the files, not the manifest
-    /// ordering). A new <paramref name="versionString"/> creates a new opaque
-    /// folder + a new version entry stamped with the current time, and that new
-    /// entry becomes <see cref="ModVersion.IsLatest"/> (it is the newest).</para>
+    /// ordering), but <see cref="ModVersion.RemoteUploadedAt"/> IS overwritten
+    /// from <paramref name="remoteUploadedAt"/> (matching how dedup refreshes
+    /// files: a re-acquired version carries the current remote-publish
+    /// timestamp, not the stale one from the first import). A new
+    /// <paramref name="versionString"/> creates a new opaque folder + a new
+    /// version entry stamped with the current time, and that new entry becomes
+    /// <see cref="ModVersion.IsLatest"/> (it is the newest).</para>
     /// </remarks>
     /// <param name="containerId">The target container.</param>
     /// <param name="versionString">The raw release tag (e.g. <c>"1.2"</c>,
@@ -104,11 +108,23 @@ public interface IModRepository
     /// copy a folder, etc. On success the repo atomically swaps the temp into
     /// the version folder; on a thrown exception the temp is deleted and the
     /// existing version folder is left untouched.</param>
+    /// <param name="remoteUploadedAt">Optional remote-publish timestamp (UTC)
+    /// captured at acquisition for remote-source mods (Nexus). Recorded on the
+    /// version entry in BOTH branches: a new version creates the entry with it,
+    /// a dedup re-import overwrites the reused entry's value (matching how dedup
+    /// refreshes files). <c>null</c> for manual imports (folder/archive) + non-
+    /// remote sources, which aren't update-checked anyway. Source-agnostic:
+    /// Integrations (the acquisition layer) owns Nexus metadata + passes it
+    /// through; this seam does not know about Nexus.</param>
     /// <returns>The updated container (with the new/reused version entry
     /// recorded).</returns>
     /// <exception cref="KeyNotFoundException"><paramref name="containerId"/> is
     /// unknown.</exception>
-    ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder);
+    ModContainer AddVersion(
+        Guid containerId,
+        string versionString,
+        Action<string> populateFolder,
+        DateTimeOffset? remoteUploadedAt = null);
 
     /// <summary>
     /// Removes a version from the container's manifest + deletes its folder
