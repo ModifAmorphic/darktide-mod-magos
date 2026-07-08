@@ -133,31 +133,45 @@ release workflow, and also runs on manual `workflow_dispatch` (which takes
 The job downloads the published Windows asset and scans those exact bytes
 (not a fresh build), so it scans what users receive:
 
-- **Microsoft Defender**: locates `MpCmdRun.exe` and runs
-  `MpCmdRun -Scan -ScanType 3 -File <asset> -DisableRemediation` against the
-  downloaded zip. The runner is Windows Server with Defender sometimes
-  cloud-delivery-off, so this is a coarse signal, not a guarantee of what a
-  consumer Windows 11 box sees.
-- **VirusTotal**: optional, gated on the `VIRUSTOTAL_API_KEY` repo secret
-  (skipped if unset). Submits the zip via the v3 API
-  (`POST /api/v3/files`, or the large-upload URL for files over 32MB), polls
-  `GET /api/v3/analyses/{id}` until `status: completed`, then reads the
-  multi-engine report. The VT permalink is always posted to the workflow run
-  summary regardless of verdict.
-- **Issue creation**: opens a GitHub issue when Defender is missing or flags
-  the asset, when VirusTotal submission or polling fails, or when the VT
-  detection count meets or exceeds the threshold (`VT_THRESHOLD_ENGINES`, set
-  to 3). The issue body carries the release tag, the Defender output, the VT
-  permalink, and a small playbook with the Microsoft Security Intelligence
-  submission portal link
-  (https://www.microsoft.com/en-us/wdsi/filesubmission) and a note that
-  non-Microsoft engines have their own developer portals. The issue
-  deduplicates against an existing open issue for the same tag.
+- **Microsoft Defender**: runs `Start-MpScan -ScanType CustomScan -ScanPath
+  <full asset path>` against the downloaded zip. The scan is performed
+  using PowerShell cmdlets designed for programmatic use, which work on the
+  Windows Server runner. The result is explicitly classified as `clean`,
+  `detection`, or `tool_error`. A `tool_error` indicates the scan command
+  failed or Defender is unavailable. The runner is Windows Server with Defender
+  sometimes cloud-delivery-off, so this is a coarse signal, not a guarantee of
+  what a consumer Windows 11 box sees.
+- **VirusTotal**: required, gated on the `VIRUSTOTAL_API_KEY` repo secret.
+  The workflow fails if the secret is not configured. Submits the zip via the
+  pinned Marketplace action `crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2`
+  with `request_rate: 4` to respect the VirusTotal public API quota (4 requests/minute).
+  The action handles large uploads automatically by using the `/files/upload_url`
+  endpoint for files 32MB or larger. It returns analysis links in the `analysis` output.
+  The workflow does not poll the VirusTotal API for final results or verdicts.
+- **Issue creation**: opens a GitHub issue with the title "AV manual review
+  for release <tag>" when VirusTotal upload succeeds and returns analysis links.
+  The issue is created regardless of VirusTotal detection results, since CI does not
+  poll the API to determine them. The issue body carries the release tag, the asset
+  name, the Defender output, the VirusTotal analysis links, and a note that the
+  operator should open the links and review the results manually. The issue deduplicates
+  against an existing open issue for the same title. No issue is created if VirusTotal
+  upload fails or returns no analysis links.
 
-The workflow is signal-only, not a release gate. It runs after the release is
-already live; nothing blocks the release. The operator reads the issue (if
-any) and decides whether to file a manual submission before announcing the
-release elsewhere.
+The workflow fails (red) when:
+- Defender status is `tool_error` (scan command failed or Defender unavailable)
+- Defender status is `detection` (threat detected)
+- Defender status is empty (scan did not run)
+- `VIRUSTOTAL_API_KEY` is not configured
+- VirusTotal action upload fails
+- VirusTotal analysis output is missing
+- A required GitHub issue for manual review could not be created, and no
+  existing open issue matched
+
+The workflow passes (green) when both scanners run successfully with no Defender
+detections and VirusTotal returns analysis links. Note that the workflow does not
+fail on VirusTotal detections, since CI does not poll the API to know them. The
+workflow is still post-release and non-gating for publication, but red means the
+scan signal is invalid or VirusTotal upload failed.
 
 ### Why AV scanning exists
 
@@ -183,7 +197,7 @@ not automatable:
 
 The only thing close to "automated Defender trust" is EV code signing plus
 accumulated download reputation. Everything else is either a CI signal
-(MpCmdRun, VirusTotal) or a manual portal submission.
+(Defender PowerShell scan, VirusTotal) or a manual portal submission.
 
 ## PR gate
 

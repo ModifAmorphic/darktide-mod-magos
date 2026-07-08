@@ -338,8 +338,16 @@ scripts/            install.sh: the Linux installer served from raw/main (instal
                     (prereleases included), upload a GitHub Artifact Attestation per asset via
                     actions/attest@v4, then repository_dispatch the post-release workflow), and
                     curator-post-release-av (repository_dispatch event_type curator-release-assets-published,
-                    or manual workflow_dispatch; scans the published bytes with MpCmdRun + VirusTotal
-                    and opens a tracking issue on a hit; operator signal only, never a release gate)
+                    or manual workflow_dispatch; scans the published bytes with PowerShell
+                    Start-MpScan Defender scan and VirusTotal, classifies Defender results
+                    explicitly as clean/detection/tool_error, submits to VirusTotal via the
+                    pinned crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2
+                    action with request_rate 4, requires VIRUSTOTAL_API_KEY,
+                    fails on Defender tool errors, missing Defender, VT errors, or missing VT key,
+                    creates a GitHub issue with title "AV manual review for release <tag>" when VT
+                    upload succeeds and returns analysis links; deduplicates against existing open
+                    issues with the same title; still post-release and non-gating for publication,
+                    but red means scan signal invalid or VT upload failed)
 .release-please-config.json   release-please config (release-type simple, include-component-in-tag false, prerelease true)
 .release-please-manifest.json release-please version manifest (the source-of-truth version; no csproj Version metadata)
 .gitignore          ignores .NET bin/obj, build artifacts, _local/
