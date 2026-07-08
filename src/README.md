@@ -78,6 +78,47 @@ console and to the configured log file.
 dotnet test src/modificus-curator.sln --configuration Release
 ```
 
+## CI and releases
+
+The PR gate (`.github/workflows/curator-build.yml`) runs an Ubuntu-only
+format job, then `dotnet build` and `dotnet test` on a Windows + Ubuntu
+matrix that depends on the format job. For same-repo PRs the format job
+runs `dotnet format` and commits any changes as
+`style: dotnet format [skip ci]`; for fork PRs and pushes to `main` it
+runs `dotnet format --verify-no-changes`. No build artifact is uploaded;
+release assets are produced by the release workflow instead.
+
+Releases are cut by `release-please` (`.release-please-config.json` +
+`.release-please-manifest.json` at the repo root; tag style `v0.1.0`, no
+component prefix). When release-please creates a release, the release workflow
+publishes each target as a framework-dependent, unsigned bundle, fetches the
+latest Modificus Relay release (prereleases included), and uploads a GitHub
+Artifact Attestation against each asset. Verify an asset's provenance with:
+
+```
+gh attestation verify <file> --repo ModifAmorphic/darktide-mod-magos
+```
+
+The release archive layout is two top-level folders, extracted into the default
+app-data root (`%LOCALAPPDATA%\Modificus Curator` on Windows,
+`~/.local/share/Modificus Curator` on Linux):
+
+- `app/` - the Curator UI + the `nxm://` handler (+ the launcher stub, pending
+  later cleanup).
+- `relay/` - the bundled Relay runtime, which seeds the default `RelayDir`.
+
+A separate post-release workflow (triggered by `repository_dispatch` from the
+release workflow, also runnable on manual `workflow_dispatch`) scans the
+published bytes (Windows Defender `MpCmdRun` + a VirusTotal submission) and
+opens a tracking issue on a hit. It is operator signal only; nothing it finds
+gates a release. Releases created with `GITHUB_TOKEN` do not fire
+`release: published`, which is why the AV/VT workflow runs on
+`repository_dispatch` instead.
+
+The Linux install script (`scripts/install.sh`, served from `raw/main`) installs
+the latest release into `${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`.
+See the root [`README.md`](../README.md) for the user-facing install steps.
+
 ## Storage model (unified repository)
 
 Mods are stored **once, in a unified repository** keyed by one UUID container per

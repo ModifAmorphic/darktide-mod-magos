@@ -15,18 +15,18 @@ namespace Modificus.Curator.UI.ViewModels;
 /// The view model behind the Settings modal (<see cref="Views.SettingsWindow"/>).
 /// Two sections:
 /// <list type="bullet">
-    /// <item><description><b>Discovery:</b> the user-override paths
-    /// (<c>UserSteamInstallPath</c>, <c>UserDarktideGameBinaryPath</c>,
-    /// <c>UserCompatdataPath</c>, <c>UserProtonBinaryPath</c>), platform-gated
-    /// so Windows renders only the Steam install + Darktide binary rows (the
-    /// compatdata + Proton rows are Linux-only: <c>WindowsLaunchStrategy</c>
-    /// ignores them, so they would be silently ineffective on Windows). Each
-    /// row's TextBox is pre-filled with the current override (or empty when the
-    /// field is set to auto-discover). Editing writes the override immediately
-    /// via a read-modify-save through <see cref="IConfigLoader"/> (the Track D
-    /// Preferences pattern: apply + persist per change). An empty TextBox
-    /// clears the override (writes <c>null</c>, so the field falls back to
-    /// auto-discovery).</description></item>
+/// <item><description><b>Discovery:</b> the user-override paths
+/// (<c>UserSteamInstallPath</c>, <c>UserDarktideGameBinaryPath</c>,
+/// <c>UserCompatdataPath</c>, <c>UserProtonBinaryPath</c>), platform-gated
+/// so Windows renders only the Steam install + Darktide binary rows (the
+/// compatdata + Proton rows are Linux-only: <c>WindowsLaunchStrategy</c>
+/// ignores them, so they would be silently ineffective on Windows). Each
+/// row's TextBox is pre-filled with the current override (or empty when the
+/// field is set to auto-discover). Editing writes the override immediately
+/// via a read-modify-save through <see cref="IConfigLoader"/> (the Track D
+/// Preferences pattern: apply + persist per change). An empty TextBox
+/// clears the override (writes <c>null</c>, so the field falls back to
+/// auto-discovery).</description></item>
 /// <item><description><b>Storage:</b> the mod-repository location
 /// (<c>ModsFolder</c>). Read-only on open (pre-filled from config); Browse opens
 /// a folder picker, and a change runs the relocate flow as a single atomic call:

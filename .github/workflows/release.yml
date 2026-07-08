@@ -1,0 +1,202 @@
+# Modificus Curator: release-please automation + release asset build/attestation.
+#
+# Triggered on push to main and via workflow_dispatch. Cuts release PRs,
+# publishes releases, builds Windows and Linux x64 archives (app/ + relay/),
+# attaches assets to the release, attests them with Sigstore, and dispatches
+# to the post-release AV/VT workflow.
+#
+# Uses in-workflow chaining (build/attest after release-please) rather than
+# on:release because events created with GITHUB_TOKEN do not trigger other workflows.
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build-windows:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+      - name: Restore
+        run: dotnet restore modificus-curator.sln
+      - name: Build (Release)
+        run: dotnet build modificus-curator.sln --configuration Release --no-restore
+      - name: Publish Curator UI (framework-dependent)
+        shell: bash
+        run: |
+          version="${{ needs.release-please.outputs.version }}"
+          version="${version#v}"
+          dotnet publish ui --configuration Release --output stage/app \
+            -p:Version="$version" -p:InformationalVersion="$version"
+      - name: Publish NXM handler (AOT win-x64)
+        run: dotnet publish nxm-handler --configuration Release --runtime win-x64 --output stage/app
+      - name: Fetch latest Relay release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-modificus-relay \
+            --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')
+          echo "RELAY_TAG=$RELAY_TAG" >> "$GITHUB_ENV"
+          echo "Relay tag: $RELAY_TAG"
+          gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \
+            --pattern "*-windows-x64.zip" --dir stage
+      - name: Extract Relay to relay/ directory
+        shell: bash
+        run: |
+          mkdir -p stage/relay
+          unzip -q stage/*-windows-x64.zip -d stage/relay
+          rm stage/*-windows-x64.zip
+      - name: Create release archive
+        shell: bash
+        run: |
+          cd stage && 7z a "../${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" app relay
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            "${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" --clobber
+      - name: Attest release asset
+        uses: actions/attest@v4
+        with:
+          subject-path: src/${{ needs.release-please.outputs.tag_name }}-windows-x64.zip
+
+  build-linux:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install native AOT prerequisites (clang, zlib)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+      - name: Restore
+        run: dotnet restore modificus-curator.sln
+      - name: Build (Release)
+        run: dotnet build modificus-curator.sln --configuration Release --no-restore
+      - name: Publish Curator UI (framework-dependent)
+        run: |
+          VERSION="${{ needs.release-please.outputs.version }}"
+          VERSION="${VERSION#v}"
+          dotnet publish ui --configuration Release --output stage/app \
+            -p:Version="$VERSION" -p:InformationalVersion="$VERSION"
+      - name: Publish NXM handler (AOT linux-x64)
+        run: dotnet publish nxm-handler --configuration Release --runtime linux-x64 --output stage/app
+      - name: Fetch latest Relay release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-modificus-relay \
+            --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')
+          echo "RELAY_TAG=$RELAY_TAG" >> "$GITHUB_ENV"
+          echo "Relay tag: $RELAY_TAG"
+          gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \
+            --pattern "*-windows-x64.zip" --dir stage
+      - name: Extract Relay to relay/ directory
+        run: |
+          mkdir -p stage/relay
+          unzip -q stage/*-windows-x64.zip -d stage/relay
+          rm stage/*-windows-x64.zip
+      - name: Create release archive
+        run: |
+          tar czf "${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz" -C stage app relay
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            "${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz" --clobber
+      - name: Attest release asset
+        uses: actions/attest@v4
+        with:
+          subject-path: src/${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz
+
+  dispatch-av-vt:
+    needs: [build-windows, build-linux]
+    if: ${{ always() && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Dispatch repository event for AV/VT scan
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              event_type: 'curator-release-assets-published',
+              client_payload: {
+                tag_name: '${{ needs.release-please.outputs.tag_name }}',
+                windows_asset: '${{ needs.release-please.outputs.tag_name }}-windows-x64.zip'
+              }
+            })
