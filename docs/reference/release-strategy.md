@@ -193,7 +193,7 @@ workflow handles push-to-main.
 
 - **Format job** (Ubuntu only): same-repo PRs run `dotnet format` and
   auto-commit any changes as `style: dotnet format [skip ci]`. Fork PRs and
-  `workflow_dispatch` runs run `dotnet format --verify-no-changes` (no commit).
+  `workflow_dispatch` invocations run `dotnet format --verify-no-changes` (no commit).
 - **Build + test matrix** (Windows + Ubuntu), depends on the format job.
 - **paths-ignore** skips release-please's bot-authored release PRs (they only
   touch `CHANGELOG.md` and `.release-please-manifest.json`), so those do not
