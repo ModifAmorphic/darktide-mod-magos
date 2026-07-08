@@ -346,7 +346,8 @@ scripts/            install.sh: the Linux installer served from raw/main (instal
                     with a top-level app/ + relay/ layout, bundle the latest Relay release
                     (prereleases included), upload a GitHub Artifact Attestation per asset via
                     actions/attest@v4, then repository_dispatch the post-release workflow; the UI publish
-                    targets win-x64 and linux-x64 RIDs with --self-contained false to filter native libs), and
+                    targets win-x64 and linux-x64 RIDs with --self-contained false to filter native libs, and an
+                    AfterTargets=Publish target strips all .pdb files so the bundles carry no debug symbols), and
                     curator-post-release-av (repository_dispatch event_type curator-release-assets-published,
                     or manual workflow_dispatch; scans the published bytes with PowerShell
                     Start-MpScan Defender scan and VirusTotal, classifies Defender results
