@@ -1,9 +1,9 @@
-# Post-release AV/VT scan: non-blocking, notification-only workflow.
+# Post-release AV/VT scan: post-release workflow, non-gating for publication,
+# but fails on scan errors or detections.
 #
 # Triggered by repository_dispatch from the release workflow after assets
 # are uploaded and attested. Scans the Windows release asset with Microsoft
-# Defender and optionally VirusTotal, then creates a GitHub issue if threats
-# are detected or the scan fails.
+# Defender and VirusTotal, then creates a GitHub issue if threats are detected.
 #
 # Uses repository_dispatch instead of on:release because events created with
 # GITHUB_TOKEN do not trigger other workflows.
@@ -78,63 +78,173 @@ jobs:
             --pattern "$INPUT_WINDOWS_ASSET" \
             --dir .
 
-      - name: Locate Microsoft Defender
-        id: locate_defender
-        run: |
-          $mpcmdrun = $null
-
-          # Try ProgramFiles first
-          $path = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
-          if (Test-Path $path) {
-            $mpcmdrun = $path
-          } else {
-            # Find latest version under ProgramData
-            $basePath = "$env:ProgramData\Microsoft\Windows Defender\Platform"
-            if (Test-Path $basePath) {
-              $latest = Get-ChildItem $basePath | Sort-Object Name -Descending | Select-Object -First 1
-              if ($latest) {
-                $path = Join-Path $latest.FullName "MpCmdRun.exe"
-                if (Test-Path $path) {
-                  $mpcmdrun = $path
-                }
-              }
-            }
-          }
-
-          if (-not $mpcmdrun) {
-            echo "found=false" >> $env:GITHUB_OUTPUT
-            echo "path=" >> $env:GITHUB_OUTPUT
-            "Microsoft Defender MpCmdRun.exe not found on this runner" | Out-File -FilePath "defender_output.txt"
-            Write-Host "Microsoft Defender MpCmdRun.exe not found, will skip scan"
-          } else {
-            echo "found=true" >> $env:GITHUB_OUTPUT
-            echo "path=$mpcmdrun" >> $env:GITHUB_OUTPUT
-            "Found MpCmdRun.exe at: $mpcmdrun" | Out-File -FilePath "defender_output.txt"
-            Write-Host "Found MpCmdRun.exe at: $mpcmdrun"
-          }
-
       - name: Scan with Microsoft Defender
         id: defender_scan
         continue-on-error: true
         env:
           INPUT_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
-          LOCATE_DEFENDER_FOUND: ${{ steps.locate_defender.outputs.found }}
-          LOCATE_DEFENDER_PATH: ${{ steps.locate_defender.outputs.path }}
         run: |
           $asset = $env:INPUT_WINDOWS_ASSET
           $outputFile = "defender_output.txt"
+          $fullPath = (Resolve-Path $asset).Path
 
-          if ($env:LOCATE_DEFENDER_FOUND -eq 'true') {
-            $mpcmdrun = $env:LOCATE_DEFENDER_PATH
-            & $mpcmdrun -Scan -ScanType 3 -File $asset -DisableRemediation > $outputFile 2>&1
-            $exitCode = $LASTEXITCODE
-            echo "exit_code=$exitCode" >> $env:GITHUB_OUTPUT
-            Write-Host "Defender exit code: $exitCode"
-            Write-Host "Defender output:"
-            Get-Content $outputFile
-          } else {
-            echo "exit_code=missing" >> $env:GITHUB_OUTPUT
-            Write-Host "Skipping Defender scan (MpCmdRun.exe not found)"
+          Write-Host "Starting Defender scan for: $fullPath"
+
+          try {
+            # Verify Defender is operational before scanning
+            $defenderStatus = Get-MpComputerStatus -ErrorAction Stop
+
+            # Check if Defender is in an operational scanning state
+            $isOperational = $false
+            $statusDetails = @()
+
+            if ($null -eq $defenderStatus) {
+              $statusDetails += "Defender status is null"
+            } else {
+              if ($defenderStatus.AMRunningMode -ne "Normal") {
+                $statusDetails += "AMRunningMode is $($defenderStatus.AMRunningMode), expected Normal"
+              } else {
+                $isOperational = $true
+              }
+
+              if (-not $defenderStatus.AMServiceEnabled) {
+                $isOperational = $false
+                $statusDetails += "AMServiceEnabled is False"
+              }
+
+              if (-not $defenderStatus.AntivirusEnabled) {
+                $isOperational = $false
+                $statusDetails += "AntivirusEnabled is False"
+              }
+
+              if (-not $defenderStatus.RealTimeProtectionEnabled) {
+                # RealTimeProtectionEnabled can be false without being a tool error
+                # so we note it but do not treat it as non-operational
+                $statusDetails += "RealTimeProtectionEnabled is False (noted but not blocking)"
+              }
+            }
+
+            if (-not $isOperational) {
+              "Defender is not in an operational scanning state:" | Out-File -FilePath $outputFile -Encoding utf8
+              foreach ($detail in $statusDetails) {
+                "  $detail" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              }
+              "" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "Defender status details:" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  AMRunningMode: $($defenderStatus.AMRunningMode)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  AMServiceEnabled: $($defenderStatus.AMServiceEnabled)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  AntivirusEnabled: $($defenderStatus.AntivirusEnabled)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  RealTimeProtectionEnabled: $($defenderStatus.RealTimeProtectionEnabled)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+
+              $errorMsg = "Defender is not operational: " + ($statusDetails -join "; ")
+              echo "status=tool_error" >> $env:GITHUB_OUTPUT
+              echo "error_message=$errorMsg" >> $env:GITHUB_OUTPUT
+              Write-Error $errorMsg
+              exit 1
+            }
+
+            # Record detection history before scan
+            $detectionsBefore = Get-MpThreatDetection -ErrorAction SilentlyContinue
+            $detectionsBeforeCount = if ($detectionsBefore) { $detectionsBefore.Count } else { 0 }
+
+            # Record threat history before scan
+            $threatsBefore = Get-MpThreat -ErrorAction SilentlyContinue
+            $threatsBeforeCount = if ($threatsBefore) { $threatsBefore.Count } else { 0 }
+
+            # Log pre-scan status
+            if ($defenderStatus) {
+              "Pre-scan Defender status:" | Out-File -FilePath $outputFile -Encoding utf8
+              "  QuickScanOffset: $($defenderStatus.QuickScanOffset)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  FullScanOffset: $($defenderStatus.FullScanOffset)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Threats detected before scan: $threatsBeforeCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Detection count before scan: $detectionsBeforeCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "" | Out-File -FilePath $outputFile -Append -Encoding utf8
+            }
+
+            # Run the custom scan
+            Start-MpScan -ScanType CustomScan -ScanPath $fullPath -ErrorAction Stop
+
+            # Wait briefly for scan to complete and threat history to update
+            Start-Sleep -Seconds 10
+
+            # Record detection history after scan
+            $detectionsAfter = Get-MpThreatDetection -ErrorAction SilentlyContinue
+            $detectionsAfterCount = if ($detectionsAfter) { $detectionsAfter.Count } else { 0 }
+
+            # Record threat history after scan
+            $threatsAfter = Get-MpThreat -ErrorAction SilentlyContinue
+            $threatsAfterCount = if ($threatsAfter) { $threatsAfter.Count } else { 0 }
+
+            # Log post-scan status
+            $statusAfter = Get-MpComputerStatus -ErrorAction SilentlyContinue
+            if ($statusAfter) {
+              "Post-scan Defender status:" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  QuickScanOffset: $($statusAfter.QuickScanOffset)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  FullScanOffset: $($statusAfter.FullScanOffset)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Threats detected after scan: $threatsAfterCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Detection count after scan: $detectionsAfterCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "" | Out-File -FilePath $outputFile -Append -Encoding utf8
+            }
+
+            # Determine status - on a fresh hosted runner, count increase after scanning the specific asset is acceptable as a detection signal
+            if ($detectionsAfterCount -gt $detectionsBeforeCount) {
+              # Detection count increased - treat as detection
+              echo "status=detection" >> $env:GITHUB_OUTPUT
+              "Scan completed with detection:" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Detection count increased from $detectionsBeforeCount to $detectionsAfterCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              if ($threatsAfterCount -gt $threatsBeforeCount) {
+                "  Threat count also increased from $threatsBeforeCount to $threatsAfterCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              }
+              # Log new detection details if available
+              if ($detectionsAfter -and $detectionsBefore) {
+                $newDetections = @($detectionsAfter | Where-Object { $_.ThreatID -notin $detectionsBefore.ThreatID })
+                foreach ($det in $newDetections) {
+                  "  Detection: $($det.ThreatName)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+                  "  ID: $($det.ThreatID)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+                  "" | Out-File -FilePath $outputFile -Append -Encoding utf8
+                }
+              }
+              Write-Error "Defender detected threats"
+              exit 1
+            } elseif ($threatsAfterCount -gt $threatsBeforeCount) {
+              # Threat history increased but detection count did not - still a detection signal
+              echo "status=detection" >> $env:GITHUB_OUTPUT
+              "Scan completed with detection (threat history increased):" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Threats before: $threatsBeforeCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Threats after: $threatsAfterCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              # Log new threat details if available
+              if ($threatsAfter -and $threatsBefore) {
+                $newThreats = @($threatsAfter | Where-Object { $_.ThreatID -notin $threatsBefore.ThreatID })
+                foreach ($threat in $newThreats) {
+                  "  Threat: $($threat.ThreatName)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+                  "  ID: $($threat.ThreatID)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+                  "  Severity: $($threat.SeverityID)" | Out-File -FilePath $outputFile -Append -Encoding utf8
+                  "" | Out-File -FilePath $outputFile -Append -Encoding utf8
+                }
+              }
+              Write-Error "Defender threat history indicates new detection"
+              exit 1
+            } else {
+              # Scan completed with no detection
+              echo "status=clean" >> $env:GITHUB_OUTPUT
+              "Scan completed successfully with no detection" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Threats before: $threatsBeforeCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Threats after: $threatsAfterCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Detections before: $detectionsBeforeCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              "  Detections after: $detectionsAfterCount" | Out-File -FilePath $outputFile -Append -Encoding utf8
+              Write-Host "Defender scan completed successfully with no detection"
+              exit 0
+            }
+          } catch {
+            # Scan command failed
+            $errorMsg = $_.Exception.Message
+            echo "status=tool_error" >> $env:GITHUB_OUTPUT
+            echo "error_message=$errorMsg" >> $env:GITHUB_OUTPUT
+            "Defender scan tool error:" | Out-File -FilePath $outputFile -Encoding utf8
+            "  Error: $errorMsg" | Out-File -FilePath $outputFile -Append -Encoding utf8
+            "  Full error: $_" | Out-File -FilePath $outputFile -Append -Encoding utf8
+            Write-Error "Defender scan tool error: $errorMsg"
+            exit 1
           }
 
       - name: Check VirusTotal API key
@@ -146,7 +256,8 @@ jobs:
             echo "enabled=true" >> $env:GITHUB_OUTPUT
           } else {
             echo "enabled=false" >> $env:GITHUB_OUTPUT
-            Write-Host "VIRUSTOTAL_API_KEY not set, skipping VirusTotal scan"
+            Write-Error "VIRUSTOTAL_API_KEY not configured - this workflow requires it"
+            exit 1
           }
 
       - name: Submit to VirusTotal
@@ -184,7 +295,7 @@ jobs:
             }
 
             $analysisId = $uploadResp.data.id
-            "analysis_id=$analysisId" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "analysis_id=$analysisId" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             echo "error=false" >> $env:GITHUB_OUTPUT
             echo "error_message=" >> $env:GITHUB_OUTPUT
             echo "Submitted to VirusTotal, analysis ID: $analysisId"
@@ -215,10 +326,17 @@ jobs:
           $analysisId = $env:analysis_id
           $apiKey = $env:VT_API_KEY
           $maxWait = 1800 # 30 minutes
-          $interval = 10
+          # 20 seconds to respect VirusTotal public API quota: 4 requests/minute.
+          # Large uploads require an upload-url lookup (1 request) plus upload (1 request),
+          # so we delay the first poll by 20 seconds to stay within quota.
+          $interval = 20
           $elapsed = 0
 
           try {
+            # Delay first poll to avoid exceeding quota immediately after upload-url lookup + upload
+            Start-Sleep -Seconds $interval
+            $elapsed += $interval
+
             while ($elapsed -lt $maxWait) {
               $resp = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/analyses/$analysisId" `
                 -Headers @{ "x-apikey" = $apiKey }
@@ -268,7 +386,8 @@ jobs:
         env:
           RESOLVE_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
           RESOLVE_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
-          DEFENDER_EXIT: ${{ steps.defender_scan.outputs.exit_code }}
+          DEFENDER_STATUS: ${{ steps.defender_scan.outputs.status }}
+          DEFENDER_ERROR_MESSAGE: ${{ steps.defender_scan.outputs.error_message }}
           VT_ENABLED: ${{ steps.vt_check.outputs.enabled }}
           VT_ERROR: ${{ steps.vt_submit.outputs.error }}
           VT_POLL_ERROR: ${{ steps.vt_poll.outputs.error }}
@@ -280,7 +399,8 @@ jobs:
         run: |
           TAG="$RESOLVE_TAG_NAME"
           ASSET="$RESOLVE_WINDOWS_ASSET"
-          DEFENDER_EXIT="$DEFENDER_EXIT"
+          DEFENDER_STATUS="$DEFENDER_STATUS"
+          DEFENDER_ERROR_MESSAGE="$DEFENDER_ERROR_MESSAGE"
           VT_ENABLED="$VT_ENABLED"
           VT_ERROR="$VT_ERROR"
           VT_POLL_ERROR="$VT_POLL_ERROR"
@@ -297,7 +417,21 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "## Microsoft Defender" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Exit Code:** $DEFENDER_EXIT" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$DEFENDER_STATUS" ]; then
+            echo "**Status:** $DEFENDER_STATUS" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$DEFENDER_STATUS" = "clean" ]; then
+              echo "**Result:** No threats detected" >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$DEFENDER_STATUS" = "detection" ]; then
+              echo "**Result:** Threat detected" >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$DEFENDER_STATUS" = "tool_error" ]; then
+              echo "**Result:** Scan tool error" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "**Status:** unknown (scan did not run)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$DEFENDER_ERROR_MESSAGE" ]; then
+            echo "**Error:** $DEFENDER_ERROR_MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           if [ -f defender_output.txt ]; then
@@ -308,29 +442,40 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$VT_ENABLED" = "true" ]; then
-            echo "## VirusTotal" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
-              echo "**Status:** Error occurred during scan" >> "$GITHUB_STEP_SUMMARY"
-              if [ -n "$VT_SUBMIT_ERROR_MESSAGE" ]; then
-                echo "**Submission Error:** $VT_SUBMIT_ERROR_MESSAGE" >> "$GITHUB_STEP_SUMMARY"
-              fi
-              if [ -n "$VT_POLL_ERROR_MESSAGE" ]; then
-                echo "**Poll Error:** $VT_POLL_ERROR_MESSAGE" >> "$GITHUB_STEP_SUMMARY"
-              fi
-            elif [ -n "$VT_PERMALINK" ]; then
-              echo "**Permalink:** $VT_PERMALINK" >> "$GITHUB_STEP_SUMMARY"
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "**Malicious Engines:** $VT_MALICIOUS" >> "$GITHUB_STEP_SUMMARY"
-              echo "**Suspicious Engines:** $VT_SUSPICIOUS" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "**Status:** Scan still in progress or results not available" >> "$GITHUB_STEP_SUMMARY"
+          echo "## VirusTotal" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$VT_ENABLED" != "true" ]; then
+            echo "**Status:** configuration_error" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Result:** VIRUSTOTAL_API_KEY not configured" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
+            echo "**Status:** tool_error" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Result:** VirusTotal scan failed" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$VT_SUBMIT_ERROR_MESSAGE" ]; then
+              echo "**Submission Error:** $VT_SUBMIT_ERROR_MESSAGE" >> "$GITHUB_STEP_SUMMARY"
             fi
-          else
-            echo "## VirusTotal" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$VT_POLL_ERROR_MESSAGE" ]; then
+              echo "**Poll Error:** $VT_POLL_ERROR_MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          elif [ -n "$VT_PERMALINK" ]; then
+            TOTAL=$((VT_MALICIOUS + VT_SUSPICIOUS))
+            THRESHOLD="$VT_THRESHOLD_ENGINES"
+            if [ "$TOTAL" -ge "$THRESHOLD" ]; then
+              echo "**Status:** detection" >> "$GITHUB_STEP_SUMMARY"
+              echo "**Result:** Detections found (meets threshold)" >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$TOTAL" -gt 0 ]; then
+              echo "**Status:** below_threshold" >> "$GITHUB_STEP_SUMMARY"
+              echo "**Result:** Detections found but below threshold ($TOTAL < $THRESHOLD)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "**Status:** clean" >> "$GITHUB_STEP_SUMMARY"
+              echo "**Result:** No detections" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "**Permalink:** $VT_PERMALINK" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "Skipped (VIRUSTOTAL_API_KEY not set)" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Malicious Engines:** $VT_MALICIOUS" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Suspicious Engines:** $VT_SUSPICIOUS" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "**Status:** unknown" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Result:** Results not available" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Determine if issue is needed
@@ -338,10 +483,7 @@ jobs:
         if: always() && steps.resolve_inputs.outcome == 'success'
         shell: bash
         env:
-          DEFENDER_EXIT: ${{ steps.defender_scan.outputs.exit_code }}
-          VT_ENABLED: ${{ steps.vt_check.outputs.enabled }}
-          VT_ERROR: ${{ steps.vt_submit.outputs.error }}
-          VT_POLL_ERROR: ${{ steps.vt_poll.outputs.error }}
+          DEFENDER_STATUS: ${{ steps.defender_scan.outputs.status }}
           VT_MALICIOUS: ${{ steps.vt_poll.outputs.malicious }}
           VT_SUSPICIOUS: ${{ steps.vt_poll.outputs.suspicious }}
           VT_THRESHOLD_ENGINES: ${{ env.VT_THRESHOLD_ENGINES }}
@@ -349,45 +491,26 @@ jobs:
           NEEDS_ISSUE="false"
           REASON=""
 
-          # Check if Defender scan failed or was not performed
-          DEFENDER_EXIT="$DEFENDER_EXIT"
-          if [ -z "$DEFENDER_EXIT" ] || [ "$DEFENDER_EXIT" != "0" ]; then
+          # Check Defender status - only create issue for detection
+          DEFENDER_STATUS="$DEFENDER_STATUS"
+          if [ "$DEFENDER_STATUS" = "detection" ]; then
             NEEDS_ISSUE="true"
-            if [ "$DEFENDER_EXIT" = "missing" ]; then
-              REASON="Microsoft Defender MpCmdRun.exe not found on this runner"
-            else
-              REASON="Microsoft Defender scan failed or was not performed"
-            fi
+            REASON="Microsoft Defender detected a threat"
           fi
 
-          # Check VT errors
-          VT_ENABLED="$VT_ENABLED"
-          if [ "$VT_ENABLED" = "true" ]; then
-            VT_ERROR="$VT_ERROR"
-            VT_POLL_ERROR="$VT_POLL_ERROR"
-            if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
+          # Check VT threshold - only create issue if threshold met
+          MALICIOUS="$VT_MALICIOUS"
+          SUSPICIOUS="$VT_SUSPICIOUS"
+          THRESHOLD="$VT_THRESHOLD_ENGINES"
+
+          if [ -n "$MALICIOUS" ] && [ -n "$SUSPICIOUS" ]; then
+            TOTAL=$((MALICIOUS + SUSPICIOUS))
+            if [ "$TOTAL" -ge "$THRESHOLD" ]; then
               NEEDS_ISSUE="true"
               if [ -n "$REASON" ]; then
-                REASON="$REASON; VirusTotal scan failed"
+                REASON="$REASON; VirusTotal detection count ($TOTAL) meets or exceeds threshold ($THRESHOLD)"
               else
-                REASON="VirusTotal scan failed"
-              fi
-            fi
-
-            # Check VT threshold
-            MALICIOUS="$VT_MALICIOUS"
-            SUSPICIOUS="$VT_SUSPICIOUS"
-            THRESHOLD="$VT_THRESHOLD_ENGINES"
-
-            if [ -n "$MALICIOUS" ] && [ -n "$SUSPICIOUS" ]; then
-              TOTAL=$((MALICIOUS + SUSPICIOUS))
-              if [ "$TOTAL" -ge "$THRESHOLD" ]; then
-                NEEDS_ISSUE="true"
-                if [ -n "$REASON" ]; then
-                  REASON="$REASON; VirusTotal detection count ($TOTAL) meets or exceeds threshold ($THRESHOLD)"
-                else
-                  REASON="VirusTotal detection count ($TOTAL) meets or exceeds threshold ($THRESHOLD)"
-                fi
+                REASON="VirusTotal detection count ($TOTAL) meets or exceeds threshold ($THRESHOLD)"
               fi
             fi
           fi
@@ -405,7 +528,7 @@ jobs:
         shell: bash
         run: |
           TAG="$RESOLVE_TAG_NAME"
-          TITLE="AV/VT scan alert for release $TAG"
+          TITLE="AV detection alert for release $TAG"
 
           # Search for existing open issues with this title using gh --jq with env.TITLE
           ISSUES=$(TITLE="$TITLE" gh issue list --repo "$GH_REPO" --search "$TITLE" --state open --json number,title --jq '.[] | select(.title == env.TITLE) | .number')
@@ -425,30 +548,22 @@ jobs:
           RESOLVE_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
           RESOLVE_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
           CHECK_REASON: ${{ steps.check.outputs.reason }}
-          DEFENDER_EXIT: ${{ steps.defender_scan.outputs.exit_code }}
+          DEFENDER_STATUS: ${{ steps.defender_scan.outputs.status }}
           VT_ENABLED: ${{ steps.vt_check.outputs.enabled }}
-          VT_ERROR: ${{ steps.vt_submit.outputs.error }}
-          VT_POLL_ERROR: ${{ steps.vt_poll.outputs.error }}
           VT_POLL_PERMALINK: ${{ steps.vt_poll.outputs.permalink }}
           VT_POLL_MALICIOUS: ${{ steps.vt_poll.outputs.malicious }}
           VT_POLL_SUSPICIOUS: ${{ steps.vt_poll.outputs.suspicious }}
-          VT_SUBMIT_ERROR_MESSAGE: ${{ steps.vt_submit.outputs.error_message }}
-          VT_POLL_ERROR_MESSAGE: ${{ steps.vt_poll.outputs.error_message }}
         shell: bash
         run: |
           TAG="$RESOLVE_TAG_NAME"
           ASSET="$RESOLVE_WINDOWS_ASSET"
-          TITLE="AV/VT scan alert for release $TAG"
+          TITLE="AV detection alert for release $TAG"
           REASON="$CHECK_REASON"
-          DEFENDER_EXIT="$DEFENDER_EXIT"
+          DEFENDER_STATUS="$DEFENDER_STATUS"
           VT_ENABLED="$VT_ENABLED"
-          VT_ERROR="$VT_ERROR"
-          VT_POLL_ERROR="$VT_POLL_ERROR"
           VT_POLL_PERMALINK="$VT_POLL_PERMALINK"
           VT_POLL_MALICIOUS="$VT_POLL_MALICIOUS"
           VT_POLL_SUSPICIOUS="$VT_POLL_SUSPICIOUS"
-          VT_SUBMIT_ERROR_MESSAGE="$VT_SUBMIT_ERROR_MESSAGE"
-          VT_POLL_ERROR_MESSAGE="$VT_POLL_ERROR_MESSAGE"
 
           # Create issue body file
           cat > issue.md <<'EOF'
@@ -459,7 +574,7 @@ jobs:
 
           ## Microsoft Defender
 
-          **Exit Code:** `DEFENDER_EXIT_PLACEHOLDER`
+          **Status:** `DEFENDER_STATUS_PLACEHOLDER`
 
           ```
           DEFENDER_OUTPUT_PLACEHOLDER
@@ -473,7 +588,7 @@ jobs:
           sed -i "s/TAG_PLACEHOLDER/$TAG/" issue.md
           sed -i "s/ASSET_PLACEHOLDER/$ASSET/" issue.md
           sed -i "s/REASON_PLACEHOLDER/$REASON/" issue.md
-          sed -i "s/DEFENDER_EXIT_PLACEHOLDER/$DEFENDER_EXIT/" issue.md
+          sed -i "s/DEFENDER_STATUS_PLACEHOLDER/$DEFENDER_STATUS/" issue.md
 
           # Append Defender output from file using sed
           if [ -f defender_output.txt ]; then
@@ -483,24 +598,9 @@ jobs:
           fi
           sed -i '/DEFENDER_OUTPUT_PLACEHOLDER/d' issue.md
 
-          # Append VirusTotal section if enabled
-          if [ "$VT_ENABLED" = "true" ]; then
-            if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
-              cat >> issue.md <<'EOF'
-
-          **Status:** Error occurred during scan
-
-          EOF
-              if [ -n "$VT_SUBMIT_ERROR_MESSAGE" ]; then
-                echo "**Submission Error:** $VT_SUBMIT_ERROR_MESSAGE" >> issue.md
-                echo "" >> issue.md
-              fi
-              if [ -n "$VT_POLL_ERROR_MESSAGE" ]; then
-                echo "**Poll Error:** $VT_POLL_ERROR_MESSAGE" >> issue.md
-                echo "" >> issue.md
-              fi
-            elif [ -n "$VT_POLL_PERMALINK" ]; then
-              cat >> issue.md <<'EOF'
+          # Append VirusTotal section (always present if issue is created, since VT key is required)
+          if [ -n "$VT_POLL_PERMALINK" ]; then
+            cat >> issue.md <<'EOF'
 
           **Permalink:** VT_PERMALINK_PLACEHOLDER
 
@@ -509,20 +609,13 @@ jobs:
 
           EOF
 
-              sed -i "s|VT_PERMALINK_PLACEHOLDER|$VT_POLL_PERMALINK|" issue.md
-              sed -i "s/VT_MALICIOUS_PLACEHOLDER/$VT_POLL_MALICIOUS/" issue.md
-              sed -i "s/VT_SUSPICIOUS_PLACEHOLDER/$VT_POLL_SUSPICIOUS/" issue.md
-            else
-              cat >> issue.md <<'EOF'
-
-          **Status:** Scan still in progress or results not available
-
-          EOF
-            fi
+            sed -i "s|VT_PERMALINK_PLACEHOLDER|$VT_POLL_PERMALINK|" issue.md
+            sed -i "s/VT_MALICIOUS_PLACEHOLDER/$VT_POLL_MALICIOUS/" issue.md
+            sed -i "s/VT_SUSPICIOUS_PLACEHOLDER/$VT_POLL_SUSPICIOUS/" issue.md
           else
             cat >> issue.md <<'EOF'
 
-          Skipped (VIRUSTOTAL_API_KEY not set)
+          Scan completed (see workflow run summary for details)
 
           EOF
           fi
@@ -539,4 +632,79 @@ jobs:
           EOF
 
           gh issue create --repo "$GH_REPO" --title "$TITLE" --body-file issue.md
-          echo "Created GitHub issue for AV/VT scan alert"
+          echo "Created GitHub issue for AV detection alert"
+
+      - name: Fail workflow on errors or detections
+        if: always() && steps.resolve_inputs.outcome == 'success'
+        shell: bash
+        env:
+          DEFENDER_STATUS: ${{ steps.defender_scan.outputs.status }}
+          VT_ENABLED: ${{ steps.vt_check.outputs.enabled }}
+          VT_ERROR: ${{ steps.vt_submit.outputs.error }}
+          VT_POLL_ERROR: ${{ steps.vt_poll.outputs.error }}
+          VT_MALICIOUS: ${{ steps.vt_poll.outputs.malicious }}
+          VT_SUSPICIOUS: ${{ steps.vt_poll.outputs.suspicious }}
+          VT_THRESHOLD_ENGINES: ${{ env.VT_THRESHOLD_ENGINES }}
+        run: |
+          DEFENDER_STATUS="$DEFENDER_STATUS"
+          VT_ENABLED="$VT_ENABLED"
+          VT_ERROR="$VT_ERROR"
+          VT_POLL_ERROR="$VT_POLL_ERROR"
+          VT_MALICIOUS="$VT_MALICIOUS"
+          VT_SUSPICIOUS="$VT_SUSPICIOUS"
+          THRESHOLD="$VT_THRESHOLD_ENGINES"
+
+          SHOULD_FAIL="false"
+          FAIL_REASON=""
+
+          # Fail on Defender tool error or detection
+          if [ "$DEFENDER_STATUS" = "tool_error" ]; then
+            SHOULD_FAIL="true"
+            FAIL_REASON="Microsoft Defender scan tool error"
+          elif [ "$DEFENDER_STATUS" = "detection" ]; then
+            SHOULD_FAIL="true"
+            FAIL_REASON="Microsoft Defender detected a threat"
+          elif [ -z "$DEFENDER_STATUS" ]; then
+            SHOULD_FAIL="true"
+            FAIL_REASON="Microsoft Defender scan did not run"
+          fi
+
+          # Fail on missing VT key
+          if [ "$VT_ENABLED" != "true" ]; then
+            SHOULD_FAIL="true"
+            if [ -n "$FAIL_REASON" ]; then
+              FAIL_REASON="$FAIL_REASON; VIRUSTOTAL_API_KEY is required but not configured"
+            else
+              FAIL_REASON="VIRUSTOTAL_API_KEY is required but not configured"
+            fi
+          fi
+
+          # Fail on VT errors
+          if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
+            SHOULD_FAIL="true"
+            if [ -n "$FAIL_REASON" ]; then
+              FAIL_REASON="$FAIL_REASON; VirusTotal scan failed (submission or polling error)"
+            else
+              FAIL_REASON="VirusTotal scan failed (submission or polling error)"
+            fi
+          fi
+
+          # Fail on VT detection threshold
+          if [ -n "$VT_MALICIOUS" ] && [ -n "$VT_SUSPICIOUS" ]; then
+            TOTAL=$((VT_MALICIOUS + VT_SUSPICIOUS))
+            if [ "$TOTAL" -ge "$THRESHOLD" ]; then
+              SHOULD_FAIL="true"
+              if [ -n "$FAIL_REASON" ]; then
+                FAIL_REASON="$FAIL_REASON; VirusTotal detection count ($TOTAL) meets or exceeds threshold ($THRESHOLD)"
+              else
+                FAIL_REASON="VirusTotal detection count ($TOTAL) meets or exceeds threshold ($THRESHOLD)"
+              fi
+            fi
+          fi
+
+          if [ "$SHOULD_FAIL" = "true" ]; then
+            echo "Workflow failed: $FAIL_REASON"
+            exit 1
+          fi
+
+          echo "All scanners completed successfully with no detections"

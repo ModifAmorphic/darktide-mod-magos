@@ -112,11 +112,19 @@ app-data root (`%LOCALAPPDATA%\Modificus Curator` on Windows,
 
 A separate post-release workflow (triggered by `repository_dispatch` from the
 release workflow, also runnable on manual `workflow_dispatch`) scans the
-published bytes (Windows Defender `MpCmdRun` + a VirusTotal submission) and
-opens a tracking issue on a hit. It is operator signal only; nothing it finds
-gates a release. Releases created with `GITHUB_TOKEN` do not fire
-`release: published`, which is why the AV/VT workflow runs on
-`repository_dispatch` instead.
+published bytes (Microsoft Defender PowerShell scan and VirusTotal). Defender
+scans are performed using `Start-MpScan -ScanType CustomScan` and explicitly
+classified as clean, detection, or tool_error. VirusTotal scanning requires
+the `VIRUSTOTAL_API_KEY` repo secret to be configured. The workflow opens a
+tracking issue with title "AV detection alert for release <tag>" only when
+actual detections occur. No issues are created for tool errors, missing scanner
+tools, Defender failures, VirusTotal API errors, or missing secrets. The
+workflow fails when Defender scan tool errors occur, when Defender detects
+threats, when VirusTotal errors or detections exceed threshold, or when the
+VirusTotal key is missing. It is still post-release and non-gating for
+publication, but red means the scan signal is invalid or a detection occurred.
+Releases created with `GITHUB_TOKEN` do not fire `release: published`, which is
+why the AV/VT workflow runs on `repository_dispatch` instead.
 
 The Linux install script (`scripts/install.sh`, served from `raw/main`) installs
 the latest release into `${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`.
