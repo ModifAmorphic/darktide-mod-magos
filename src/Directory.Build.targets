@@ -1,0 +1,15 @@
+<Project>
+
+  <!-- Strip every .pdb from the publish output. NuGet native assets such as
+       libSkiaSharp.pdb / libHarfBuzzSharp.pdb (NativeAssets.Win32) are copied
+       into RID publishes regardless of DebugType, so DebugType cannot remove
+       them; this target is the only mechanism that does. Local builds keep
+       their PDBs because this target only fires on Publish. -->
+  <Target Name="StripPdbsFromPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_PublishedPdbs Include="$(PublishDir)**/*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(_PublishedPdbs)" />
+  </Target>
+
+</Project>
