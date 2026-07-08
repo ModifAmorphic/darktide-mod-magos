@@ -129,7 +129,8 @@
          shell's ModList VM so the view's x:DataType resolves. -->
     <views:ModListView Grid.Row="1" DataContext="{Binding ModList}" />
 
-    <!-- Status strip: game-running indicator + the transient launch-status note -->
+    <!-- Status strip: game-running indicator + the transient launch-status note
+         + the nxm handler status (Curator / not Curator / unavailable). -->
     <Border Grid.Row="2"
             BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
             BorderThickness="0,1,0,0"
@@ -149,6 +150,11 @@
                    VerticalAlignment="Center"
                    Margin="12,0,0,0"
                    IsVisible="{Binding LaunchStatusNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        <TextBlock Text="{Binding NxmHandlerStatusText}"
+                   FontSize="{DynamicResource AppStatusFontSize}" Opacity="0.8"
+                   VerticalAlignment="Center"
+                   Margin="12,0,0,0"
+                   ToolTip.Tip="{Binding NxmHandlerStatusTooltip}" />
       </StackPanel>
     </Border>
   </Grid>

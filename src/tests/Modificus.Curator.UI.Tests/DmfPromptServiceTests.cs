@@ -49,6 +49,7 @@ public sealed class DmfPromptServiceTests
             FakeNexusAuthService? auth = null,
             FakeConfigLoader? config = null,
             FakeDialogService? dialogs = null,
+            FakeNxmHandlerRegistrar? nxmRegistrar = null,
             Func<Uri, bool>? launchExternal = null)
     {
         profiles ??= TestDoubles.Profiles();
@@ -60,7 +61,7 @@ public sealed class DmfPromptServiceTests
         dialogs ??= new FakeDialogService();
         var service = new DmfPromptService(
             profiles, session, repo, acquisition, auth, config, dialogs,
-            Localization, NullLogger<DmfPromptService>.Instance, launchExternal);
+            Localization, NullLogger<DmfPromptService>.Instance, nxmRegistrar, launchExternal);
         return (service, profiles, session, repo, acquisition, auth, config, dialogs);
     }
 
@@ -209,7 +210,9 @@ public sealed class DmfPromptServiceTests
         // The Nexus download_link endpoint is premium-only. Non-premium users
         // must visit the site to generate the per-file nxm token, so on a Yes
         // the prompt opens the DMF files page in the browser; the existing
-        // nxm:// handler picks up the resulting download.
+        // nxm:// handler picks up the resulting download. The browser-open path
+        // runs only when Curator is registered as the nxm handler, so this test
+        // wires a registered registrar.
         var profiles = TestDoubles.Profiles();
         var session = new FakeProfileSession(() => profiles.ListProfiles());
         var repo = new FakeModRepository(); // no DMF
@@ -221,6 +224,7 @@ public sealed class DmfPromptServiceTests
         var config = new FakeConfigLoader();
         config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
         var dialogs = new FakeDialogService(); // ConfirmResult default = true
+        var registrar = new FakeNxmHandlerRegistrar { Registered = true };
 
         var launchedUris = new List<Uri>();
         Func<Uri, bool> spy = uri =>
@@ -230,7 +234,7 @@ public sealed class DmfPromptServiceTests
         };
 
         var (service, _, _, _, _, _, _, _) =
-            Build(profiles, session, repo, acquisition, auth, config, dialogs, spy);
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, registrar, spy);
 
         var created = profiles.CreateProfile("New");
         session.ActiveProfileId = created.Id;
@@ -255,7 +259,8 @@ public sealed class DmfPromptServiceTests
     {
         // When the verify call failed, IsPremium is null. Safer to fall back to
         // the browser-open path (a premium user just visits the site; a
-        // non-premium user avoids a 403).
+        // non-premium user avoids a 403). Wires a registered registrar so the
+        // browser-open path runs.
         var profiles = TestDoubles.Profiles();
         var session = new FakeProfileSession(() => profiles.ListProfiles());
         var repo = new FakeModRepository();
@@ -267,6 +272,7 @@ public sealed class DmfPromptServiceTests
         var config = new FakeConfigLoader();
         config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
         var dialogs = new FakeDialogService();
+        var registrar = new FakeNxmHandlerRegistrar { Registered = true };
 
         var launchedUris = new List<Uri>();
         Func<Uri, bool> spy = uri =>
@@ -276,7 +282,7 @@ public sealed class DmfPromptServiceTests
         };
 
         var (service, _, _, _, _, _, _, _) =
-            Build(profiles, session, repo, acquisition, auth, config, dialogs, spy);
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, registrar, spy);
 
         var created = profiles.CreateProfile("New");
         session.ActiveProfileId = created.Id;
@@ -289,11 +295,59 @@ public sealed class DmfPromptServiceTests
     }
 
     [Fact]
-    public async Task NewProfile_case2_browser_launch_failure_alerts_with_url()
+    public async Task NewProfile_case2_non_premium_and_not_registered_shows_enable_nxm_alert()
     {
-        // If the OS shell-open fails (no default browser, headless), surface the
-        // URL in an alert so the user can copy it manually instead of a silent
-        // no-op.
+        // When Curator is NOT the nxm handler, opening the DMF files page would
+        // be a dead end (the download click would route to another manager). The
+        // prompt instead shows an informational alert that tells the user to
+        // enable nxm links in Integrations (or download manually) and carries
+        // the DMF URL.
+        var profiles = TestDoubles.Profiles();
+        var session = new FakeProfileSession(() => profiles.ListProfiles());
+        var repo = new FakeModRepository();
+        var acquisition = new FakeModAcquisitionService();
+        var auth = new FakeNexusAuthService
+        {
+            State = new NexusAuthState(NexusAuthMethod.ApiKey, "free", IsPremium: false),
+        };
+        var config = new FakeConfigLoader();
+        config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
+        var dialogs = new FakeDialogService();
+        var registrar = new FakeNxmHandlerRegistrar { Registered = false };
+
+        var launchedUris = new List<Uri>();
+        Func<Uri, bool> spy = uri =>
+        {
+            launchedUris.Add(uri);
+            return true;
+        };
+
+        var (service, _, _, _, _, _, _, _) =
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, registrar, spy);
+
+        var created = profiles.CreateProfile("New");
+        session.ActiveProfileId = created.Id;
+
+        await service.ProcessPendingAsync();
+
+        // The download confirm fired (the user accepted) but no browser open.
+        Assert.Equal(1, dialogs.ConfirmCalls);
+        Assert.Empty(launchedUris);
+        // An informational alert carries the DMF URL so the user can navigate
+        // manually.
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Contains(
+            "https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files",
+            alert.Message);
+        Assert.Empty(acquisition.LatestNexusCalls);
+        Assert.Empty(profiles.AddModCalls);
+    }
+
+    [Fact]
+    public async Task NewProfile_case2_non_premium_no_registrar_shows_enable_nxm_alert()
+    {
+        // Same as above but with no registrar at all (unsupported platform): the
+        // informational alert runs because there is nothing to probe / open.
         var profiles = TestDoubles.Profiles();
         var session = new FakeProfileSession(() => profiles.ListProfiles());
         var repo = new FakeModRepository();
@@ -306,10 +360,44 @@ public sealed class DmfPromptServiceTests
         config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
         var dialogs = new FakeDialogService();
 
+        var (service, _, _, _, _, _, _, _) =
+            Build(profiles, session, repo, acquisition, auth, config, dialogs);
+
+        var created = profiles.CreateProfile("New");
+        session.ActiveProfileId = created.Id;
+
+        await service.ProcessPendingAsync();
+
+        Assert.Equal(1, dialogs.ConfirmCalls);
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Contains(
+            "https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files",
+            alert.Message);
+    }
+
+    [Fact]
+    public async Task NewProfile_case2_browser_launch_failure_alerts_with_url()
+    {
+        // If the OS shell-open fails (no default browser, headless), surface the
+        // URL in an alert so the user can copy it manually instead of a silent
+        // no-op. Wires a registered registrar so the browser-open path runs.
+        var profiles = TestDoubles.Profiles();
+        var session = new FakeProfileSession(() => profiles.ListProfiles());
+        var repo = new FakeModRepository();
+        var acquisition = new FakeModAcquisitionService();
+        var auth = new FakeNexusAuthService
+        {
+            State = new NexusAuthState(NexusAuthMethod.ApiKey, "free", IsPremium: false),
+        };
+        var config = new FakeConfigLoader();
+        config.Config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
+        var dialogs = new FakeDialogService();
+        var registrar = new FakeNxmHandlerRegistrar { Registered = true };
+
         Func<Uri, bool> failingLauncher = _ => false; // shell-open failed
 
         var (service, _, _, _, _, _, _, _) =
-            Build(profiles, session, repo, acquisition, auth, config, dialogs, failingLauncher);
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, registrar, failingLauncher);
 
         var created = profiles.CreateProfile("New");
         session.ActiveProfileId = created.Id;
@@ -351,7 +439,7 @@ public sealed class DmfPromptServiceTests
         };
 
         var (service, _, _, _, _, _, _, _) =
-            Build(profiles, session, repo, acquisition, auth, config, dialogs, spy);
+            Build(profiles, session, repo, acquisition, auth, config, dialogs, null, spy);
 
         var created = profiles.CreateProfile("New");
         session.ActiveProfileId = created.Id;

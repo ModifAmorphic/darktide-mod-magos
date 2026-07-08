@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Modificus.Curator.Nxm;
 using Modificus.Curator.RelayClient;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.UI.Dialogs;
@@ -56,6 +57,7 @@ public partial class ShellViewModel : ObservableObject
     private readonly IDialogService _dialogs;
     private readonly DmfPromptService _dmfPrompts;
     private readonly LocalizationService _localization;
+    private readonly INxmHandlerRegistrar? _nxmRegistrar;
     private readonly ILogger<ShellViewModel> _logger;
 
     // Guards selection updates while the shell mirrors the session's authoritative
@@ -65,7 +67,8 @@ public partial class ShellViewModel : ObservableObject
 
     /// <summary>
     /// Creates the shell VM, loads the profile list, mirrors the session's current
-    /// active id + running-state, and subscribes to live running-state changes.
+    /// active id + running-state, queries the nxm handler registration status, and
+    /// subscribes to live running-state changes.
     /// </summary>
     public ShellViewModel(
         IProfileService profiles,
@@ -75,7 +78,8 @@ public partial class ShellViewModel : ObservableObject
         DmfPromptService dmfPrompts,
         LocalizationService localization,
         ModListViewModel modList,
-        ILogger<ShellViewModel> logger)
+        ILogger<ShellViewModel> logger,
+        INxmHandlerRegistrar? nxmRegistrar = null)
     {
         _profileService = profiles;
         _session = session;
@@ -85,6 +89,7 @@ public partial class ShellViewModel : ObservableObject
         _localization = localization;
         ModList = modList;
         _logger = logger;
+        _nxmRegistrar = nxmRegistrar;
 
         // Set the backing fields directly: no subscribers yet, and setting
         // SelectedProfile through the property would route through the selection
@@ -92,6 +97,10 @@ public partial class ShellViewModel : ObservableObject
         _profiles = _profileService.ListProfiles();
         _isGameRunning = _session.IsRunning;
         _selectedProfile = ResolveActive();
+
+        // Resolve the initial nxm handler status so the status strip paints the
+        // right label on startup (Curator / not Curator / unavailable).
+        RefreshNxmHandlerStatus();
 
         _session.PropertyChanged += OnSessionPropertyChanged;
         // Re-resolve the localized strings when the UI culture flips so the
@@ -175,6 +184,46 @@ public partial class ShellViewModel : ObservableObject
     private string? _launchStatusNote;
 
     /// <summary>
+    /// Whether Curator is currently the OS <c>nxm://</c> handler (per the
+    /// registrar's <see cref="INxmHandlerRegistrar.IsRegistered"/>), or
+    /// <c>null</c> when no platform registrar is available. Drives
+    /// <see cref="NxmHandlerStatusText"/> + <see cref="NxmHandlerStatusTooltip"/>
+    /// in the status strip. Refreshed at startup + after the Integrations dialog
+    /// closes (the only place the registration can change). No polling: the OS
+    /// registration rarely changes out-of-band.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NxmHandlerStatusText))]
+    [NotifyPropertyChangedFor(nameof(NxmHandlerStatusTooltip))]
+    private bool? _isNxmRegistered;
+
+    /// <summary>
+    /// The status-strip label for the nxm handler state: "NXM: Curator" when
+    /// registered, "NXM: not Curator" when another program owns it, or "NXM:
+    /// unavailable" when there is no platform registrar. Localized; re-resolves
+    /// on a culture change.
+    /// </summary>
+    public string NxmHandlerStatusText =>
+        IsNxmRegistered switch
+        {
+            null => _localization["Status_NxmUnavailable"],
+            true => _localization["Status_NxmRegistered"],
+            false => _localization["Status_NxmNotRegistered"],
+        };
+
+    /// <summary>
+    /// The status-strip tooltip explaining the current nxm handler state.
+    /// Localized; re-resolves on a culture change.
+    /// </summary>
+    public string NxmHandlerStatusTooltip =>
+        IsNxmRegistered switch
+        {
+            null => _localization["Status_NxmUnavailableTooltip"],
+            true => _localization["Status_NxmRegisteredTooltip"],
+            false => _localization["Status_NxmNotRegisteredTooltip"],
+        };
+
+    /// <summary>
     /// Whether the profile dropdown is interactive: a profile must exist and the
     /// game must not be running. The gate itself lives in the session; this just
     /// exposes the running-state so the dropdown can disable while Darktide runs.
@@ -250,9 +299,38 @@ public partial class ShellViewModel : ObservableObject
 
         OnPropertyChanged(nameof(GameRunningText));
         OnPropertyChanged(nameof(ProfileSwitchTooltip));
+        OnPropertyChanged(nameof(NxmHandlerStatusText));
+        OnPropertyChanged(nameof(NxmHandlerStatusTooltip));
         // LaunchStatusNote is a transient formatted string (not a key), so a
         // culture flip while it happens to be visible is not re-translated. The
         // next launch overwrites it; the durable signal is GameRunningText.
+    }
+
+    /// <summary>
+    /// Re-reads the OS <c>nxm://</c> handler registration into
+    /// <see cref="IsNxmRegistered"/>. Null when no platform registrar is
+    /// available (the status strip shows "unavailable"). Called at startup +
+    /// after the Integrations dialog closes (the only place the registration can
+    /// change in-app). A probe throw is treated as "not registered" (defensive;
+    /// the platform registrars catch their own probe exceptions).
+    /// </summary>
+    private void RefreshNxmHandlerStatus()
+    {
+        if (_nxmRegistrar is null)
+        {
+            IsNxmRegistered = null;
+            return;
+        }
+
+        try
+        {
+            IsNxmRegistered = _nxmRegistrar.IsRegistered();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "IsRegistered probe threw; treating as not registered.");
+            IsNxmRegistered = false;
+        }
     }
 
     /// <summary>
@@ -315,15 +393,21 @@ public partial class ShellViewModel : ObservableObject
 
     /// <summary>
     /// Opens the Integrations dialog (Nexus auth: OAuth login + API-key validate
-    /// + sign-out). Nexus-only in v1; GitHub stays config-file-only. After the
-    /// dialog closes, processes any pending DMF auth-trigger prompt the dialog's
-    /// auth action may have triggered (the prompt fires here, on the main window,
-    /// not dialog-on-dialog).
+    /// + sign-out, plus the explicit nxm:// handler registration toggle).
+    /// Nexus-only in v1; GitHub stays config-file-only. After the dialog closes,
+    /// processes any pending DMF auth-trigger prompt the dialog's auth action may
+    /// have triggered (the prompt fires here, on the main window, not
+    /// dialog-on-dialog), and re-reads the nxm handler status so the status strip
+    /// reflects any register/unregister the user did inside the dialog.
     /// </summary>
     [RelayCommand]
     private async Task OpenIntegrations()
     {
         await _dialogs.ShowIntegrationsAsync();
+
+        // The user may have toggled the nxm handler inside the dialog; re-read
+        // the OS state so the status strip label stays accurate.
+        RefreshNxmHandlerStatus();
 
         // Surface any DMF prompt the dialog's auth action may have triggered.
         // Fires after the Integrations dialog is gone so the prompt is the

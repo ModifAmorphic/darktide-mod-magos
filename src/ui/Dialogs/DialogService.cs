@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Modificus.Curator.General;
 using Modificus.Curator.Integrations;
 using Modificus.Curator.Mods;
+using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Preferences;
@@ -46,6 +47,7 @@ public sealed class DialogService : IDialogService
     private readonly IConfigLoader _configLoader;
     private readonly IModRepository _mods;
     private readonly INexusAuthService _nexusAuth;
+    private readonly INxmHandlerRegistrar? _nxmRegistrar;
     private readonly ILoggerFactory _loggerFactory;
 
     /// <param name="owner">The window dialog parents are shown over (the main window).</param>
@@ -66,6 +68,9 @@ public sealed class DialogService : IDialogService
     /// atomic relocate flow (move + save + rescan) on a ModsFolder change.</param>
     /// <param name="nexusAuth">The Nexus auth service; handed to the Integrations VM
     /// for OAuth login + API-key validate + sign-out + current-state reads.</param>
+    /// <param name="nxmRegistrar">The platform nxm:// handler registrar (null on
+    /// unsupported platforms); handed to the Integrations VM so its "Nexus download
+    /// links" section can query + toggle the OS handler registration.</param>
     /// <param name="loggerFactory">The logger factory; the Settings VM + the
     /// Integrations VM get typed loggers from it so their log lines reach the
     /// configured sinks (the other dialog VMs take no logger).</param>
@@ -78,6 +83,7 @@ public sealed class DialogService : IDialogService
         IConfigLoader configLoader,
         IModRepository mods,
         INexusAuthService nexusAuth,
+        INxmHandlerRegistrar? nxmRegistrar,
         ILoggerFactory loggerFactory)
     {
         _owner = owner;
@@ -88,6 +94,7 @@ public sealed class DialogService : IDialogService
         _configLoader = configLoader;
         _mods = mods;
         _nexusAuth = nexusAuth;
+        _nxmRegistrar = nxmRegistrar;
         _loggerFactory = loggerFactory;
     }
 
@@ -221,8 +228,9 @@ public sealed class DialogService : IDialogService
         var viewModel = new IntegrationsViewModel(
             _nexusAuth,
             _localization,
-            _session,
             _configLoader,
+            this,
+            _nxmRegistrar,
             _loggerFactory.CreateLogger<IntegrationsViewModel>());
         var window = new IntegrationsWindow
         {

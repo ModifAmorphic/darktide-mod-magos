@@ -8,9 +8,12 @@ namespace Modificus.Curator.Nxm;
 /// runtime OS at DI registration time.
 /// </summary>
 /// <remarks>
-/// The service is shipped. The user-facing registration behavior (auto
-/// on first run vs. Settings toggle vs. manual) is out of v1 (the app
-/// registers on first run; no toggle yet).
+/// The service is shipped. Registration is an explicit user action surfaced in
+/// the Integrations dialog (a "Nexus download links" section): the register
+/// path confirms first (it is a system-wide change that can affect other mod
+/// managers), and the unregister path only releases Curator's own registration
+/// by re-checking <see cref="IsRegistered"/> before <see cref="Unregister"/>.
+/// The composition root does not auto-register on startup.
 /// </remarks>
 public interface INxmHandlerRegistrar
 {

@@ -180,18 +180,20 @@ for the full contract (env-var table, logging, the hook-ready handshake).
   in the repo but not in the profile → instant add (no download); DMF not in
   the repo + Nexus auth configured → on confirm, premium users get the in-app
   API download under a spinner + add, non-premium users (or unknown premium
-  state) get their browser opened at DMF's Nexus files page (the user clicks
-  Download there + the existing `nxm://` handler picks up the URL + adds DMF
-  to the active profile via the standard nxm flow; the Nexus `download_link`
-  endpoint is premium-only, so non-premium users must visit the site to mint
-  the per-file token); DMF not in the repo + auth not configured →
-  informational alert telling the user to set up Nexus auth or import DMF
-  manually. DMF is a normal mod with exactly two exceptions: (1) the
-  creation-time prompt; (2) DMF is never auto-placed by a Relay-side rule
-  -- Curator writes it first in `mods.lst` because dependency resolution puts it
-  there. Beyond those, DMF is fully user-controllable (a user could remove /
-  disable / reorder it and break dependent mods -- sharp-tools philosophy;
-  Curator does not hard-lock it).
+  state) get their browser opened at DMF's Nexus files page only if Curator is
+  registered as the `nxm://` handler (the user clicks Download there + the
+  handler picks up the URL + adds DMF to the active profile via the standard
+  nxm flow); if Curator is not the handler, an informational alert tells the
+  user to enable nxm links in Integrations (or download the archive manually)
+  and carries the DMF files URL (the Nexus `download_link` endpoint is
+  premium-only, so non-premium users must visit the site to mint the per-file
+  token); DMF not in the repo + auth not configured → informational alert
+  telling the user to set up Nexus auth or import DMF manually. DMF is a normal
+  mod with exactly two exceptions: (1) the creation-time prompt; (2) DMF is
+  never auto-placed by a Relay-side rule -- Curator writes it first in
+  `mods.lst` because dependency resolution puts it there. Beyond those, DMF is
+  fully user-controllable (a user could remove / disable / reorder it and break
+  dependent mods -- sharp-tools philosophy; Curator does not hard-lock it).
 - Mods are stored **once, in a unified repository** keyed by `(source, identity)`
   per UUID container. Profiles reference a mod by `(containerId, policy)` and
   store no mod files of their own. See [Mod repository](#mod-repository).
@@ -317,9 +319,11 @@ detection. The Settings window's Storage section is the UI for it.
   depend on it, so this is the common case; DMF isn't mandatory, so the prompt
   is an offer, not a requirement). DMF is sourced from Nexus Mods (mod 8); the
   prompt's download path branches on the user's premium state (premium: in-app
-  API download; non-premium or unknown: browser opens at DMF's Nexus files
-  page, then the existing `nxm://` handler completes the install). Bundling
-  DMF with Curator is rejected (modding-community norms + Nexus rules). (See
+  API download; non-premium or unknown: if Curator is the `nxm://` handler, the
+  browser opens at DMF's Nexus files page and the handler completes the
+  install; otherwise an informational alert tells the user to enable nxm links
+  in Integrations or download DMF manually). Bundling DMF with Curator is
+  rejected (modding-community norms + Nexus rules). (See
   [Profiles](#profiles).)
 - Per-mod: auto-update override (overrides the global setting); version pinning.
 - **Import / Export** -- profile import / export.
@@ -332,8 +336,9 @@ that the OS invokes on each `nxm://` click; it forwards the raw URL over a
 named pipe to the running app (or cold-starts Curator and retries), where the URL
 is parsed, classified, and dispatched to a pluggable handler. Single-instance is
 enforced by process enumeration before the pipe bind, and the pipe bind is a
-separate, non-fatal check that degrades gracefully; the OS registration is
-auto-applied on startup. Full detail (the two-process model, the cold-start
+separate, non-fatal check that degrades gracefully; the OS handler registration
+is an explicit user action from the Integrations dialog (Curator only handles
+Darktide `nxm://` downloads). Full detail (the two-process model, the cold-start
 path, single-instance enforcement, pipe-bind behavior, OS registration, and URL
 routing) is in [nxm:// scheme handler architecture](nxm-scheme-handler.md); the
 public surface is in [nxm reference](../reference/src/nxm.md).
@@ -362,12 +367,12 @@ profile. The reusable core is `IModAcquisitionService` (Integrations): it
 resolves the CDN download links, fetches mod metadata, downloads to a
 `.zip`-named temp file, and imports via `IModImportService`. The handler (in the
 UI assembly, not Integrations, because it coordinates UI-only services) checks
-auth and an active profile, calls the service, registers the mod with
-`LatestPolicy`, refreshes the mod list, and surfaces errors via
-`ShowAlertAsync`. The per-mod update button calls the same service. Full
-detail (the acquisition flow, the handler checks, the UI-assembly placement, and
-startup OS registration) is in [mod acquisition architecture](mod-acquisition.md);
-the public surface is in
+the link is for Darktide, checks auth and an active profile, calls the service,
+registers the mod with `LatestPolicy`, refreshes the mod list, and surfaces
+errors via `ShowAlertAsync`. The per-mod update button calls the same service.
+Full detail (the acquisition flow, the handler checks, the UI-assembly
+placement, and OS registration) is in
+[mod acquisition architecture](mod-acquisition.md); the public surface is in
 [integrations reference](../reference/src/integrations.md).
 
 ## Update check

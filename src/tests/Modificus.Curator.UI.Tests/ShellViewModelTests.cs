@@ -27,7 +27,8 @@ public sealed class ShellViewModelTests
         FakeProfileSession? session = null,
         FakeDialogService? dialogs = null,
         FakeLaunchService? launch = null,
-        DmfPromptService? dmfPrompts = null)
+        DmfPromptService? dmfPrompts = null,
+        FakeNxmHandlerRegistrar? nxmRegistrar = null)
     {
         profiles ??= TestDoubles.Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -43,7 +44,8 @@ public sealed class ShellViewModelTests
             dmfPrompts,
             Localization,
             TestDoubles.BuildModList(profiles, session),
-            Logger);
+            Logger,
+            nxmRegistrar);
     }
 
     // ---- active-profile restore on construction ----------------------------
@@ -491,5 +493,61 @@ public sealed class ShellViewModelTests
 
         // The shell reloaded the mod list after Settings closed.
         Assert.Single(modList.Mods);
+    }
+
+    // ---- nxm handler status -----------------------------------------------
+
+    [Fact]
+    public void Constructor_reads_nxm_status_when_registrar_reports_registered()
+    {
+        var registrar = new FakeNxmHandlerRegistrar { Registered = true };
+        var vm = Build(nxmRegistrar: registrar);
+
+        Assert.True(vm.IsNxmRegistered);
+        Assert.Equal(Localization["Status_NxmRegistered"], vm.NxmHandlerStatusText);
+        Assert.Equal(Localization["Status_NxmRegisteredTooltip"], vm.NxmHandlerStatusTooltip);
+        Assert.Equal(1, registrar.IsRegisteredCalls);
+    }
+
+    [Fact]
+    public void Constructor_reads_nxm_status_when_registrar_reports_not_registered()
+    {
+        var registrar = new FakeNxmHandlerRegistrar { Registered = false };
+        var vm = Build(nxmRegistrar: registrar);
+
+        Assert.False(vm.IsNxmRegistered);
+        Assert.Equal(Localization["Status_NxmNotRegistered"], vm.NxmHandlerStatusText);
+    }
+
+    [Fact]
+    public void Constructor_shows_unavailable_when_no_registrar()
+    {
+        // No registrar (unsupported platform): the status is unavailable.
+        var vm = Build(nxmRegistrar: null);
+
+        Assert.Null(vm.IsNxmRegistered);
+        Assert.Equal(Localization["Status_NxmUnavailable"], vm.NxmHandlerStatusText);
+    }
+
+    [Fact]
+    public async Task OpenIntegrations_refreshes_nxm_status_after_close()
+    {
+        // The user may toggle the nxm handler inside the Integrations dialog;
+        // the shell re-reads the OS state on close so the status strip stays
+        // accurate. The registrar's state flips during the dialog (simulated via
+        // OnIntegrations) and the shell picks it up.
+        var registrar = new FakeNxmHandlerRegistrar { Registered = false };
+        var dialogs = new FakeDialogService
+        {
+            OnIntegrations = () => registrar.Registered = true,
+        };
+        var vm = Build(dialogs: dialogs, nxmRegistrar: registrar);
+        Assert.False(vm.IsNxmRegistered!.Value);
+
+        await vm.OpenIntegrationsCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, dialogs.IntegrationsCalls);
+        Assert.True(vm.IsNxmRegistered);
+        Assert.Equal(Localization["Status_NxmRegistered"], vm.NxmHandlerStatusText);
     }
 }

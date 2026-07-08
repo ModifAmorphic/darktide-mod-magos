@@ -152,13 +152,19 @@ selected by runtime OS at DI time (mirroring `IPlatformLaunchStrategy`,
   invocation. The `.desktop` file is still the registration if `xdg-mime` is
   absent; the failure is logged, not thrown.
 
-**Startup auto-registration.** On startup, `CuratorComposition.Build()` calls
-`RegisterNxmHandler` after the IPC server starts, which calls `Register()` if
-`IsRegistered()` is false. This is the expected behavior for a mod manager
-(MO2, NMA, and Vortex all auto-register on startup). Best-effort: a
-registration failure is logged and swallowed so a registration problem never
-blocks startup (the app still runs; the user just cannot click-download from
-Nexus until it is resolved).
+**Explicit registration, not startup auto-registration.** Registration is a
+user action from the Integrations dialog (a "Nexus download links" section with
+a status line + a toggle button), not something the app does on startup. The
+register path shows a confirmation dialog first: it is a system-wide change
+that can take `nxm://` clicks away from Vortex, Mod Organizer 2, Nexus Mod
+Manager, or other mod managers, so the user must opt in knowingly. The
+unregister path only releases Curator's own registration (it re-checks
+`IsRegistered()` before `Unregister()` so it never deletes another program's
+handler). The composition root never registers; `INxmHandlerRegistrar` is
+resolved lazily by the Integrations view model + the shell status strip. The
+main-window status strip surfaces the current state ("NXM: Curator" / "NXM: not
+Curator" / "NXM: unavailable") and refreshes after the Integrations dialog
+closes. No polling: the OS registration rarely changes out-of-band.
 
 The handler-exe path is derived from `AppContext.BaseDirectory` plus the fixed
 handler assembly name. The handler ships as a sibling of the main Curator exe.

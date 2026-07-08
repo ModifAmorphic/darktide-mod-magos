@@ -29,9 +29,10 @@
 
     The shared status line above the blocks carries the active-method
     indicator ("Signed in as X (Premium) via Nexus login" / "...via API key"),
-    so the user always knows WHICH method is configured. All controls gate on
-    IsEnabled (game not running); the eye-toggle is excluded because revealing a
-    masked key is a read-only op that changes no credentials.
+    so the user always knows WHICH method is configured. Auth controls stay
+    usable while Darktide runs (only launch + active-profile changes are
+    blocked); the eye-toggle is excluded from the in-flight IsBusy gate because
+    revealing a masked key is a read-only op that changes no credentials.
   -->
   <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
           BorderThickness="1">
@@ -40,8 +41,7 @@
       <views:DialogTitleBar Grid.Row="0" />
 
       <Border Grid.Row="1" Padding="24">
-        <StackPanel Spacing="16" IsEnabled="{Binding IsEnabled}"
-                    ToolTip.Tip="{Binding TooltipRunning}">
+        <StackPanel Spacing="16">
 
           <!-- ============== Nexus section ============== -->
           <StackPanel Spacing="8">
@@ -216,6 +216,29 @@
                              MinWidth="100"
                              VerticalAlignment="Center" />
             </StackPanel>
+          </StackPanel>
+
+          <!-- ============== NXM download links ==============
+               Explicit OS nxm:// handler registration. Registration is a
+               system-wide change (it can take over links from Vortex / MO2 /
+               NMM), so the toggle's register path shows a confirmation dialog
+               first (the VM drives that); unregister only releases Curator's
+               own registration. The button label + status line flip with the
+               IsNxmRegistered state; when no registrar is available for this
+               platform the button is disabled (CanToggleNxmHandler) and the
+               status line shows "unavailable". Usable while Darktide runs. -->
+          <Separator Margin="0,4" />
+          <StackPanel Spacing="8" Margin="0,4">
+            <TextBlock Text="{Binding NxmSectionHeader}"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="{Binding NxmStatusText}"
+                       TextWrapping="Wrap"
+                       Opacity="0.85" />
+            <Button Content="{Binding NxmActionLabel}"
+                    Command="{Binding ToggleNxmHandlerCommand}"
+                    HorizontalAlignment="Left"
+                    MinWidth="220"
+                    ToolTip.Tip="{Binding NxmActionTooltip}" />
           </StackPanel>
 
         </StackPanel>
