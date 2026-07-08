@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.1.1...v0.1.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **ci:** submit AV scans for manual review ([#56](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/56)) ([f0b8f25](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/f0b8f25d2a4334c2fe265ee144673da25084771a))
+
 ## [0.1.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.1.0...v0.1.1) (2026-07-08)
 
 
