@@ -24,11 +24,64 @@ unmodified).
 
 ## Status
 
-Modificus Curator is **pre-release**. The app is not distributed yet; to try it,
-build it from source (see
-[`src/README.md`](src/README.md)). Runtime artifacts
-(launcher, shell DLL, mod loader) come from the
-[darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay) repo.
+Initial releases are published on the
+[releases page](https://github.com/ModifAmorphic/darktide-mod-magos/releases) and
+are marked as prereleases while the release pipeline settles. To build from
+source instead, see [`src/README.md`](src/README.md). The bundled runtime
+artifacts (launcher, shell DLL, mod loader) come from
+[Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay).
+
+## Installation
+
+Releases are **framework-dependent**: Curator needs the **.NET 10 Runtime**. If
+Windows prompts for a runtime on first launch, install it from
+<https://dotnet.microsoft.com/download/dotnet/10.0>.
+
+Each release archive contains two top-level folders:
+
+- `app/` - the Curator UI, the `nxm://` handler, and the launcher stub.
+- `relay/` - the bundled Modificus Relay runtime.
+
+Extracting the archive into Curator's default data folder seeds both the app
+and the default Relay location, so no extra configuration is needed. On first
+launch Curator registers the `nxm://` handler itself, so Nexus "Download with
+manager" links work without any extra setup.
+
+### Windows
+
+1. Download `<tag>-windows-x64.zip` from the
+   [latest release](https://github.com/ModifAmorphic/darktide-mod-magos/releases).
+2. Install the [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
+   if you do not already have it.
+3. Extract the zip into `%LOCALAPPDATA%\Modificus Curator\` (create the folder
+   if it does not exist).
+4. Run `app\Modificus.Curator.exe`.
+
+### Linux
+
+One line, installs the latest release (prereleases included):
+
+```sh
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-mod-magos/main/scripts/install.sh | sh
+```
+
+The script installs into `~/.local/share/Modificus Curator/`, replaces only the
+`app/` and `relay/` folders (your profiles, mods, logs, and `config.json` are
+left alone), marks the binaries executable, and adds a `modificus-curator`
+symlink in `~/.local/bin/`. If the symlink cannot be created, it prints the
+executable path to run instead.
+
+Manual install:
+
+1. Download `<tag>-linux-x64.tar.gz` from the
+   [latest release](https://github.com/ModifAmorphic/darktide-mod-magos/releases).
+2. Extract it into `~/.local/share/Modificus Curator/` (create the folder if it
+   does not exist), for example:
+   `tar -xzf <tag>-linux-x64.tar.gz -C "$HOME/.local/share/Modificus Curator/"`.
+3. Make the UI executable:
+   `chmod +x "$HOME/.local/share/Modificus Curator/app/Modificus.Curator"`.
+4. Optionally symlink it onto your PATH:
+   `ln -sf "$HOME/.local/share/Modificus Curator/app/Modificus.Curator" "$HOME/.local/bin/modificus-curator"`.
 
 ## License
 

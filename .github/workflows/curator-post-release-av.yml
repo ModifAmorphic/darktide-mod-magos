@@ -1,0 +1,465 @@
+# Post-release AV/VT scan: non-blocking, notification-only workflow.
+#
+# Triggered by repository_dispatch from the release workflow after assets
+# are uploaded and attested. Scans the Windows release asset with Microsoft
+# Defender and optionally VirusTotal, then creates a GitHub issue if threats
+# are detected or the scan fails.
+#
+# Uses repository_dispatch instead of on:release because events created with
+# GITHUB_TOKEN do not trigger other workflows.
+name: curator-post-release-av
+
+on:
+  repository_dispatch:
+    types: [curator-release-assets-published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Release tag to scan
+        required: true
+        type: string
+      windows_asset:
+        description: Windows asset name
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  VT_THRESHOLD_ENGINES: 3
+
+jobs:
+  scan-and-report:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Resolve inputs
+        id: resolve_inputs
+        run: |
+          if ('${{ github.event_name }}' -eq 'repository_dispatch') {
+            echo "tag_name=${{ github.event.client_payload.tag_name }}" >> $env:GITHUB_OUTPUT
+            echo "windows_asset=${{ github.event.client_payload.windows_asset }}" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "tag_name=${{ inputs.tag_name }}" >> $env:GITHUB_OUTPUT
+            echo "windows_asset=${{ inputs.windows_asset }}" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Download Windows release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ steps.resolve_inputs.outputs.tag_name }}" \
+            --pattern "${{ steps.resolve_inputs.outputs.windows_asset }}" \
+            --dir .
+
+      - name: Locate Microsoft Defender
+        id: locate_defender
+        run: |
+          $mpcmdrun = $null
+
+          # Try ProgramFiles first
+          $path = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
+          if (Test-Path $path) {
+            $mpcmdrun = $path
+          } else {
+            # Find latest version under ProgramData
+            $basePath = "$env:ProgramData\Microsoft\Windows Defender\Platform"
+            if (Test-Path $basePath) {
+              $latest = Get-ChildItem $basePath | Sort-Object Name -Descending | Select-Object -First 1
+              if ($latest) {
+                $path = Join-Path $latest.FullName "MpCmdRun.exe"
+                if (Test-Path $path) {
+                  $mpcmdrun = $path
+                }
+              }
+            }
+          }
+
+          if (-not $mpcmdrun) {
+            echo "found=false" >> $env:GITHUB_OUTPUT
+            echo "path=" >> $env:GITHUB_OUTPUT
+            "Microsoft Defender MpCmdRun.exe not found on this runner" | Out-File -FilePath "defender_output.txt"
+            Write-Host "Microsoft Defender MpCmdRun.exe not found, will skip scan"
+          } else {
+            echo "found=true" >> $env:GITHUB_OUTPUT
+            echo "path=$mpcmdrun" >> $env:GITHUB_OUTPUT
+            "Found MpCmdRun.exe at: $mpcmdrun" | Out-File -FilePath "defender_output.txt"
+            Write-Host "Found MpCmdRun.exe at: $mpcmdrun"
+          }
+
+      - name: Scan with Microsoft Defender
+        id: defender_scan
+        continue-on-error: true
+        run: |
+          $asset = "${{ steps.resolve_inputs.outputs.windows_asset }}"
+          $outputFile = "defender_output.txt"
+
+          if ('${{ steps.locate_defender.outputs.found }}' -eq 'true') {
+            $mpcmdrun = "${{ steps.locate_defender.outputs.path }}"
+            & $mpcmdrun -Scan -ScanType 3 -File $asset -DisableRemediation > $outputFile 2>&1
+            $exitCode = $LASTEXITCODE
+            echo "exit_code=$exitCode" >> $env:GITHUB_OUTPUT
+            Write-Host "Defender exit code: $exitCode"
+            Write-Host "Defender output:"
+            Get-Content $outputFile
+          } else {
+            echo "exit_code=missing" >> $env:GITHUB_OUTPUT
+            Write-Host "Skipping Defender scan (MpCmdRun.exe not found)"
+          }
+
+      - name: Check VirusTotal API key
+        id: vt_check
+        env:
+          VT_API_KEY_TEST: ${{ secrets.VIRUSTOTAL_API_KEY }}
+        run: |
+          if (-not [string]::IsNullOrEmpty($env:VT_API_KEY_TEST)) {
+            echo "enabled=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "enabled=false" >> $env:GITHUB_OUTPUT
+            Write-Host "VIRUSTOTAL_API_KEY not set, skipping VirusTotal scan"
+          }
+
+      - name: Submit to VirusTotal
+        id: vt_submit
+        if: steps.vt_check.outputs.enabled == 'true'
+        continue-on-error: true
+        env:
+          VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+        run: |
+          $asset = "${{ steps.resolve_inputs.outputs.windows_asset }}"
+          $assetSize = (Get-Item $asset).Length
+          $apiKey = $env:VT_API_KEY
+
+          try {
+            if ($assetSize -gt 32MB) {
+              Write-Host "Asset larger than 32MB, using upload URL endpoint"
+              $uploadUrlResp = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files/upload_url" `
+                -Headers @{ "x-apikey" = $apiKey } -Method Get
+              $uploadUrl = $uploadUrlResp.data
+              $uploadResp = Invoke-RestMethod -Uri $uploadUrl `
+                -Headers @{ "x-apikey" = $apiKey } -Method Post -Form @{ file = Get-Item $asset }
+            } else {
+              Write-Host "Asset smaller than 32MB, using direct upload endpoint"
+              $uploadResp = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
+                -Headers @{ "x-apikey" = $apiKey } -Method Post -Form @{ file = Get-Item $asset }
+            }
+
+            $analysisId = $uploadResp.data.id
+            "analysis_id=$analysisId" | Out-File -FilePath $env:GITHUB_ENV -Append
+            echo "error=false" >> $env:GITHUB_OUTPUT
+            echo "error_message=" >> $env:GITHUB_OUTPUT
+            echo "Submitted to VirusTotal, analysis ID: $analysisId"
+          } catch {
+            $errorMsg = $_.Exception.Message
+            echo "error=true" >> $env:GITHUB_OUTPUT
+            echo "error_message=$errorMsg" >> $env:GITHUB_OUTPUT
+            Write-Error "VirusTotal submission failed: $errorMsg"
+            throw
+          }
+
+      - name: Poll VirusTotal analysis
+        id: vt_poll
+        if: steps.vt_check.outputs.enabled == 'true' && steps.vt_submit.outputs.error != 'true'
+        continue-on-error: true
+        env:
+          VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+        run: |
+          $analysisId = $env:analysis_id
+          $apiKey = $env:VT_API_KEY
+          $maxWait = 300 # 5 minutes
+          $interval = 10
+          $elapsed = 0
+
+          try {
+            while ($elapsed -lt $maxWait) {
+              $resp = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/analyses/$analysisId" `
+                -Headers @{ "x-apikey" = $apiKey }
+              $status = $resp.data.attributes.status
+
+              if ($status -eq "completed") {
+                $stats = $resp.data.attributes.stats
+                $malicious = $stats.malicious
+                $suspicious = $stats.suspicious
+
+                echo "malicious=$malicious" >> $env:GITHUB_OUTPUT
+                echo "suspicious=$suspicious" >> $env:GITHUB_OUTPUT
+
+                # Compute SHA256 and construct permalink
+                $asset = "${{ steps.resolve_inputs.outputs.windows_asset }}"
+                $sha256 = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
+                $permalink = "https://www.virustotal.com/gui/file/$sha256"
+                echo "permalink=$permalink" >> $env:GITHUB_OUTPUT
+
+                Write-Host "VirusTotal analysis completed: $malicious malicious, $suspicious suspicious"
+                if ($permalink) { Write-Host "Permalink: $permalink" }
+                echo "error=false" >> $env:GITHUB_OUTPUT
+                echo "error_message=" >> $env:GITHUB_OUTPUT
+                exit 0
+              }
+
+              Write-Host "Analysis status: $status, waiting..."
+              Start-Sleep -Seconds $interval
+              $elapsed += $interval
+            }
+
+            Write-Error "VirusTotal analysis timed out after $maxWait seconds"
+            echo "error=true" >> $env:GITHUB_OUTPUT
+            echo "error_message=Analysis timed out after $maxWait seconds" >> $env:GITHUB_OUTPUT
+            exit 1
+          } catch {
+            $errorMsg = $_.Exception.Message
+            echo "error=true" >> $env:GITHUB_OUTPUT
+            echo "error_message=$errorMsg" >> $env:GITHUB_OUTPUT
+            Write-Error "VirusTotal polling failed: $errorMsg"
+            throw
+          }
+
+      - name: Write workflow summary
+        if: always()
+        shell: bash
+        env:
+          VT_SUBMIT_ERROR_MESSAGE: ${{ steps.vt_submit.outputs.error_message }}
+          VT_POLL_ERROR_MESSAGE: ${{ steps.vt_poll.outputs.error_message }}
+        run: |
+          TAG="${{ steps.resolve_inputs.outputs.tag_name }}"
+          ASSET="${{ steps.resolve_inputs.outputs.windows_asset }}"
+          DEFENDER_EXIT="${{ steps.defender_scan.outputs.exit_code }}"
+          VT_ENABLED="${{ steps.vt_check.outputs.enabled }}"
+          VT_ERROR="${{ steps.vt_submit.outputs.error }}"
+          VT_POLL_ERROR="${{ steps.vt_poll.outputs.error }}"
+          VT_PERMALINK="${{ steps.vt_poll.outputs.permalink }}"
+          VT_MALICIOUS="${{ steps.vt_poll.outputs.malicious }}"
+          VT_SUSPICIOUS="${{ steps.vt_poll.outputs.suspicious }}"
+
+          echo "# Post-Release AV/VT Scan Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Release Tag:** $TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Asset Scanned:** $ASSET" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Microsoft Defender" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Exit Code:** $DEFENDER_EXIT" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f defender_output.txt ]; then
+            cat defender_output.txt >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Defender output file not found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$VT_ENABLED" = "true" ]; then
+            echo "## VirusTotal" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
+              echo "**Status:** Error occurred during scan" >> "$GITHUB_STEP_SUMMARY"
+              if [ -n "$VT_SUBMIT_ERROR_MESSAGE" ]; then
+                echo "**Submission Error:** $VT_SUBMIT_ERROR_MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              if [ -n "$VT_POLL_ERROR_MESSAGE" ]; then
+                echo "**Poll Error:** $VT_POLL_ERROR_MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            elif [ -n "$VT_PERMALINK" ]; then
+              echo "**Permalink:** $VT_PERMALINK" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "**Malicious Engines:** $VT_MALICIOUS" >> "$GITHUB_STEP_SUMMARY"
+              echo "**Suspicious Engines:** $VT_SUSPICIOUS" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "**Status:** Scan still in progress or results not available" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "## VirusTotal" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Skipped (VIRUSTOTAL_API_KEY not set)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Determine if issue is needed
+        id: check
+        if: always()
+        shell: bash
+        run: |
+          NEEDS_ISSUE="false"
+          REASON=""
+
+          # Check if Defender scan failed or was not performed
+          DEFENDER_EXIT="${{ steps.defender_scan.outputs.exit_code }}"
+          if [ -z "$DEFENDER_EXIT" ] || [ "$DEFENDER_EXIT" != "0" ]; then
+            NEEDS_ISSUE="true"
+            if [ "$DEFENDER_EXIT" = "missing" ]; then
+              REASON="Microsoft Defender MpCmdRun.exe not found on this runner"
+            else
+              REASON="Microsoft Defender scan failed or was not performed"
+            fi
+          fi
+
+          # Check VT errors
+          VT_ENABLED="${{ steps.vt_check.outputs.enabled }}"
+          if [ "$VT_ENABLED" = "true" ]; then
+            VT_ERROR="${{ steps.vt_submit.outputs.error }}"
+            VT_POLL_ERROR="${{ steps.vt_poll.outputs.error }}"
+            if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
+              NEEDS_ISSUE="true"
+              if [ -n "$REASON" ]; then
+                REASON="$REASON; VirusTotal scan failed"
+              else
+                REASON="VirusTotal scan failed"
+              fi
+            fi
+
+            # Check VT threshold
+            MALICIOUS="${{ steps.vt_poll.outputs.malicious }}"
+            SUSPICIOUS="${{ steps.vt_poll.outputs.suspicious }}"
+            THRESHOLD="${{ env.VT_THRESHOLD_ENGINES }}"
+
+            if [ -n "$MALICIOUS" ] && [ -n "$SUSPICIOUS" ]; then
+              TOTAL=$((MALICIOUS + SUSPICIOUS))
+              if [ "$TOTAL" -ge "$THRESHOLD" ]; then
+                NEEDS_ISSUE="true"
+                if [ -n "$REASON" ]; then
+                  REASON="$REASON; VirusTotal detection count ($TOTAL) meets or exceeds threshold ($THRESHOLD)"
+                else
+                  REASON="VirusTotal detection count ($TOTAL) meets or exceeds threshold ($THRESHOLD)"
+                fi
+              fi
+            fi
+          fi
+
+          echo "needs_issue=$NEEDS_ISSUE" >> $GITHUB_OUTPUT
+          echo "reason=$REASON" >> $GITHUB_OUTPUT
+
+      - name: Check for existing open issue
+        id: check_existing
+        if: always() && steps.check.outputs.needs_issue == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${{ steps.resolve_inputs.outputs.tag_name }}"
+          TITLE="AV/VT scan alert for release $TAG"
+
+          # Search for existing open issues with this title
+          ISSUES=$(gh issue list --search "$TITLE" --state open --json number,title --jq '.[] | select(.title == "'"$TITLE"'") | .number')
+
+          if [ -n "$ISSUES" ]; then
+            echo "existing_issue=$ISSUES" >> $GITHUB_OUTPUT
+            echo "Found existing open issue #$ISSUES, will not create duplicate"
+          else
+            echo "existing_issue=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub issue
+        if: always() && steps.check.outputs.needs_issue == 'true' && steps.check_existing.outputs.existing_issue == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VT_SUBMIT_ERROR_MESSAGE: ${{ steps.vt_submit.outputs.error_message }}
+          VT_POLL_ERROR_MESSAGE: ${{ steps.vt_poll.outputs.error_message }}
+          VT_POLL_PERMALINK: ${{ steps.vt_poll.outputs.permalink }}
+          VT_POLL_MALICIOUS: ${{ steps.vt_poll.outputs.malicious }}
+          VT_POLL_SUSPICIOUS: ${{ steps.vt_poll.outputs.suspicious }}
+        shell: bash
+        run: |
+          TAG="${{ steps.resolve_inputs.outputs.tag_name }}"
+          ASSET="${{ steps.resolve_inputs.outputs.windows_asset }}"
+          TITLE="AV/VT scan alert for release $TAG"
+          REASON="${{ steps.check.outputs.reason }}"
+          DEFENDER_EXIT="${{ steps.defender_scan.outputs.exit_code }}"
+
+          # Create issue body file
+          cat > issue.md <<'EOF'
+          **Release Tag:** `TAG_PLACEHOLDER`
+          **Asset:** `ASSET_PLACEHOLDER`
+
+          **Reason:** REASON_PLACEHOLDER
+
+          ## Microsoft Defender
+
+          **Exit Code:** `DEFENDER_EXIT_PLACEHOLDER`
+
+          ```
+          DEFENDER_OUTPUT_PLACEHOLDER
+          ```
+
+          ## VirusTotal
+
+          EOF
+
+          # Replace placeholders
+          sed -i "s/TAG_PLACEHOLDER/$TAG/" issue.md
+          sed -i "s/ASSET_PLACEHOLDER/$ASSET/" issue.md
+          sed -i "s/REASON_PLACEHOLDER/$REASON/" issue.md
+          sed -i "s/DEFENDER_EXIT_PLACEHOLDER/$DEFENDER_EXIT/" issue.md
+
+          # Append Defender output from file using sed
+          if [ -f defender_output.txt ]; then
+            sed -i '/DEFENDER_OUTPUT_PLACEHOLDER/r defender_output.txt' issue.md
+          else
+            sed -i 's/DEFENDER_OUTPUT_PLACEHOLDER/Defender output file not found/' issue.md
+          fi
+          sed -i '/DEFENDER_OUTPUT_PLACEHOLDER/d' issue.md
+
+          # Append VirusTotal section if enabled
+          VT_ENABLED="${{ steps.vt_check.outputs.enabled }}"
+          if [ "$VT_ENABLED" = "true" ]; then
+            VT_ERROR="${{ steps.vt_submit.outputs.error }}"
+            VT_POLL_ERROR="${{ steps.vt_poll.outputs.error }}"
+            if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
+              cat >> issue.md <<'EOF'
+
+          **Status:** Error occurred during scan
+
+          EOF
+              if [ -n "$VT_SUBMIT_ERROR_MESSAGE" ]; then
+                echo "**Submission Error:** $VT_SUBMIT_ERROR_MESSAGE" >> issue.md
+                echo "" >> issue.md
+              fi
+              if [ -n "$VT_POLL_ERROR_MESSAGE" ]; then
+                echo "**Poll Error:** $VT_POLL_ERROR_MESSAGE" >> issue.md
+                echo "" >> issue.md
+              fi
+            elif [ -n "$VT_POLL_PERMALINK" ]; then
+              cat >> issue.md <<'EOF'
+
+          **Permalink:** VT_PERMALINK_PLACEHOLDER
+
+          **Malicious Engines:** VT_MALICIOUS_PLACEHOLDER
+          **Suspicious Engines:** VT_SUSPICIOUS_PLACEHOLDER
+
+          EOF
+
+              sed -i "s|VT_PERMALINK_PLACEHOLDER|$VT_POLL_PERMALINK|" issue.md
+              sed -i "s/VT_MALICIOUS_PLACEHOLDER/$VT_POLL_MALICIOUS/" issue.md
+              sed -i "s/VT_SUSPICIOUS_PLACEHOLDER/$VT_POLL_SUSPICIOUS/" issue.md
+            else
+              cat >> issue.md <<'EOF'
+
+          **Status:** Scan still in progress or results not available
+
+          EOF
+            fi
+          else
+            cat >> issue.md <<'EOF'
+
+          Skipped (VIRUSTOTAL_API_KEY not set)
+
+          EOF
+          fi
+
+          cat >> issue.md <<'EOF'
+
+          ## Recommended Actions
+
+          1. Review the scan results above
+          2. If this is a false positive, submit the file to the affected vendor:
+             - Microsoft: https://www.microsoft.com/en-us/wdsi/filesubmission
+             - For other vendors, visit their respective false-positive submission portals
+          3. Update this issue with the submission status and any responses received
+          EOF
+
+          gh issue create --title "$TITLE" --body-file issue.md
+          echo "Created GitHub issue for AV/VT scan alert"

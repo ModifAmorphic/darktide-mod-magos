@@ -1,25 +1,76 @@
-# Modificus Curator: builds the .NET 10 + Avalonia 12 mod-manager app.
-# Scoped to src/** (Modificus Relay lives in a separate
-# repo: https://github.com/ModifAmorphic/darktide-modificus-relay).
+# Modificus Curator: PR build gate: auto-format (same-repo PRs only), build, test.
+#
+# Runs on push/PR to main. Does not publish or upload artifacts;
+# those are handled by the release workflow.
+#
+# Format behavior:
+# - On pull_request from same repo: checkout PR head, run dotnet format, commit/push if changes
+# - On pull_request from fork: run format in no-commit mode, skip push (forks cannot be auto-formatted)
+# - On push to main: no auto-commit (format verification only if desired)
 name: curator-build
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - '.github/workflows/curator-build.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'src/**'
-      - '.github/workflows/curator-build.yml'
   workflow_dispatch:
 
 jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          ref: ${{ github.head_ref }}
+
+      - uses: actions/checkout@v7
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Format and commit (same-repo PR)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          dotnet format modificus-curator.sln
+
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "style: dotnet format [skip ci]"
+            git push
+            echo "Formatting changes committed"
+          else
+            echo "No formatting changes needed"
+          fi
+        id: format_commit
+
+      - name: Format check only (fork PR or push to main)
+        if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Fork PR detected - running format in no-commit mode only"
+          else
+            echo "Push to main detected - running format verification"
+          fi
+          dotnet format modificus-curator.sln --verify-no-changes
+
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: format
     strategy:
       fail-fast: false
       matrix:
@@ -45,12 +96,3 @@ jobs:
 
       - name: Test (Release)
         run: dotnet test modificus-curator.sln --configuration Release --no-build --logger trx
-
-      - name: Publish (framework-dependent)
-        run: dotnet publish ui --configuration Release --output app-publish
-
-      - name: Upload app
-        uses: actions/upload-artifact@v7
-        with:
-          name: curator-app-${{ matrix.os }}
-          path: src/app-publish/

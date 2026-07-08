@@ -318,8 +318,29 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             relay helper, Linux registrar, AddNxm wiring;
                                             serialized via DisableTestParallelization since
                                             real named pipes are an OS-level shared resource)
-docs/               architecture/ + reference/ (src/ per-library API refs)
-.github/workflows/  CI: curator-build (Modificus Curator)
+docs/               architecture/ + reference/ (src/ per-library API refs + the release strategy reference)
+scripts/            install.sh: the Linux installer served from raw/main (installs
+                    the latest release, prereleases included, into
+                    ${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/;
+                    replaces only app/ + relay/, never the user-data root; symlinks the
+                    UI into ~/.local/bin/modificus-curator). Testing overrides:
+                    INSTALL_ROOT / BIN_LINK / CURATOR_REPO / CURATOR_ARCHIVE (local tar.gz
+                    in place of the download, for offline extraction tests).
+.github/workflows/  curator-build (the PR gate: an Ubuntu-only format job
+                    auto-commits `dotnet format` as `style: dotnet format [skip ci]`
+                    for same-repo PRs, verify-only for fork PRs and push to main;
+                    build + test on a Windows/Ubuntu matrix depends on the format
+                    job; no artifact upload),
+                    release (release-please cuts the release, then per-target jobs publish
+                    framework-dependent unsigned bundles as <tag>-<platform>-x64.{zip,tar.gz}
+                    with a top-level app/ + relay/ layout, bundle the latest Relay release
+                    (prereleases included), upload a GitHub Artifact Attestation per asset via
+                    actions/attest@v4, then repository_dispatch the post-release workflow), and
+                    curator-post-release-av (repository_dispatch event_type curator-release-assets-published,
+                    or manual workflow_dispatch; scans the published bytes with MpCmdRun + VirusTotal
+                    and opens a tracking issue on a hit; operator signal only, never a release gate)
+.release-please-config.json   release-please config (release-type simple, include-component-in-tag false, prerelease true)
+.release-please-manifest.json release-please version manifest (the source-of-truth version; no csproj Version metadata)
 .gitignore          ignores .NET bin/obj, build artifacts, _local/
 ```
 ## Modificus Curator ops
