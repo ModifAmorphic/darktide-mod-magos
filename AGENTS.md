@@ -333,10 +333,11 @@ scripts/            install.sh: the Linux installer served from raw/main (instal
                     job; no artifact upload; release-please-only PRs are ignored via
                     paths-ignore; there is intentionally no push trigger),
                     release (release-please cuts the release, then per-target jobs publish
-                    framework-dependent unsigned bundles as <tag>-<platform>-x64.{zip,tar.gz}
+                    framework-dependent unsigned bundles as curator-<tag>-<platform>-x64.{zip,tar.gz}
                     with a top-level app/ + relay/ layout, bundle the latest Relay release
                     (prereleases included), upload a GitHub Artifact Attestation per asset via
-                    actions/attest@v4, then repository_dispatch the post-release workflow), and
+                    actions/attest@v4, then repository_dispatch the post-release workflow; the UI publish
+                    targets win-x64 and linux-x64 RIDs with --self-contained false to filter native libs), and
                     curator-post-release-av (repository_dispatch event_type curator-release-assets-published,
                     or manual workflow_dispatch; scans the published bytes with PowerShell
                     Start-MpScan Defender scan and VirusTotal, classifies Defender results

@@ -71,7 +71,7 @@ jobs:
         run: |
           version="${{ needs.release-please.outputs.version }}"
           version="${version#v}"
-          dotnet publish ui --configuration Release --output stage/app \
+          dotnet publish ui --configuration Release --runtime win-x64 --self-contained false --output stage/app \
             -p:Version="$version" -p:InformationalVersion="$version"
       - name: Publish NXM handler (AOT win-x64)
         run: dotnet publish nxm-handler --configuration Release --runtime win-x64 --output stage/app
@@ -95,18 +95,18 @@ jobs:
       - name: Create release archive
         shell: bash
         run: |
-          cd stage && 7z a "../${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" app relay
+          cd stage && 7z a "../curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" app relay
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           gh release upload "${{ needs.release-please.outputs.tag_name }}" \
-            "${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" --clobber
+            "curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" --clobber
       - name: Attest release asset
         uses: actions/attest@v4
         with:
-          subject-path: src/${{ needs.release-please.outputs.tag_name }}-windows-x64.zip
+          subject-path: src/curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip
 
   build-linux:
     needs: release-please
@@ -146,7 +146,7 @@ jobs:
         run: |
           VERSION="${{ needs.release-please.outputs.version }}"
           VERSION="${VERSION#v}"
-          dotnet publish ui --configuration Release --output stage/app \
+          dotnet publish ui --configuration Release --runtime linux-x64 --self-contained false --output stage/app \
             -p:Version="$VERSION" -p:InformationalVersion="$VERSION"
       - name: Publish NXM handler (AOT linux-x64)
         run: dotnet publish nxm-handler --configuration Release --runtime linux-x64 --output stage/app
@@ -167,17 +167,17 @@ jobs:
           rm stage/*-windows-x64.zip
       - name: Create release archive
         run: |
-          tar czf "${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz" -C stage app relay
+          tar czf "curator-${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz" -C stage app relay
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ needs.release-please.outputs.tag_name }}" \
-            "${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz" --clobber
+            "curator-${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz" --clobber
       - name: Attest release asset
         uses: actions/attest@v4
         with:
-          subject-path: src/${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz
+          subject-path: src/curator-${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz
 
   dispatch-av-vt:
     needs: [release-please, build-windows, build-linux]
@@ -197,6 +197,6 @@ jobs:
               event_type: 'curator-release-assets-published',
               client_payload: {
                 tag_name: '${{ needs.release-please.outputs.tag_name }}',
-                windows_asset: '${{ needs.release-please.outputs.tag_name }}-windows-x64.zip'
+                windows_asset: 'curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip'
               }
             })

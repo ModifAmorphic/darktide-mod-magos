@@ -49,7 +49,7 @@ manager" links work without any extra setup.
 
 ### Windows
 
-1. Download `<tag>-windows-x64.zip` from the
+1. Download `curator-<tag>-windows-x64.zip` from the
    [latest release](https://github.com/ModifAmorphic/darktide-modificus-curator/releases).
 2. Install the [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
    if you do not already have it.
@@ -73,11 +73,11 @@ executable path to run instead.
 
 Manual install:
 
-1. Download `<tag>-linux-x64.tar.gz` from the
+1. Download `curator-<tag>-linux-x64.tar.gz` from the
    [latest release](https://github.com/ModifAmorphic/darktide-modificus-curator/releases).
 2. Extract it into `~/.local/share/Modificus Curator/` (create the folder if it
    does not exist), for example:
-   `tar -xzf <tag>-linux-x64.tar.gz -C "$HOME/.local/share/Modificus Curator/"`.
+   `tar -xzf curator-<tag>-linux-x64.tar.gz -C "$HOME/.local/share/Modificus Curator/"`.
 3. Make the UI executable:
    `chmod +x "$HOME/.local/share/Modificus Curator/app/Modificus.Curator"`.
 4. Optionally symlink it onto your PATH:
