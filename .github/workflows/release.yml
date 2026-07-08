@@ -1,5 +1,6 @@
 # Modificus Curator: release-please automation + release asset build/attestation.
 #
+# SANDBOX ONLY: temporarily triggered on release-pipeline-target for release rehearsal.
 # Triggered on push to main and via workflow_dispatch. Cuts release PRs,
 # publishes releases, builds Windows and Linux x64 archives (app/ + relay/),
 # attaches assets to the release, attests them with Sigstore, and dispatches
@@ -11,7 +12,7 @@ name: release
 
 on:
   push:
-    branches: [main]
+    branches: [release-pipeline-target]
   workflow_dispatch:
 
 permissions:

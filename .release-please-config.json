@@ -1,6 +1,7 @@
 {
   "release-type": "simple",
   "include-component-in-tag": false,
+  "target-branch": "release-pipeline-target",
   "prerelease": true,
   "packages": {
     ".": {}
