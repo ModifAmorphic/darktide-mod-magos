@@ -4,6 +4,7 @@ using Modificus.Curator.Config;
 using Modificus.Curator.General;
 using Modificus.Curator.Integrations;
 using Modificus.Curator.Mods;
+using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.UI.Dialogs;
 using Modificus.Curator.UI.Localization;
@@ -91,6 +92,7 @@ public sealed class DmfPromptService
     private readonly IConfigLoader _configLoader;
     private readonly IDialogService _dialogs;
     private readonly LocalizationService _localization;
+    private readonly INxmHandlerRegistrar? _nxmRegistrar;
     private readonly ILogger<DmfPromptService> _logger;
     private readonly Func<Uri, bool> _launchExternal;
 
@@ -117,6 +119,7 @@ public sealed class DmfPromptService
         IDialogService dialogs,
         LocalizationService localization,
         ILogger<DmfPromptService> logger,
+        INxmHandlerRegistrar? nxmRegistrar = null,
         Func<Uri, bool>? launchExternal = null)
     {
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
@@ -128,6 +131,7 @@ public sealed class DmfPromptService
         _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _localization = localization ?? throw new ArgumentNullException(nameof(localization));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _nxmRegistrar = nxmRegistrar;
         _launchExternal = launchExternal ?? DefaultLaunchExternal;
 
         _profiles.ProfileCreated += OnProfileCreated;
@@ -364,7 +368,9 @@ public sealed class DmfPromptService
                     // users must visit the site to generate the per-file nxm
                     // token. The user clicks Download on the page -> the
                     // existing nxm:// handler picks it up -> DMF is added to the
-                    // active profile via the standard nxm flow.
+                    // active profile via the standard nxm flow. Opening the
+                    // browser only helps when Curator owns the nxm handler, so
+                    // the non-premium path checks the registrar first.
                     var state = await _auth.GetCurrentStateAsync();
                     if (state?.IsPremium == true)
                     {
@@ -372,7 +378,7 @@ public sealed class DmfPromptService
                     }
                     else
                     {
-                        await OpenDmfFilesPageInBrowser();
+                        await OfferDmfDownloadForNonPremiumAsync();
                     }
                 }
             }
@@ -397,6 +403,44 @@ public sealed class DmfPromptService
                 SetAuthPromptShown();
             }
         }
+    }
+
+    /// <summary>
+    /// The non-premium (or unknown-premium) DMF download path. Opening the DMF
+    /// files page only helps when Curator owns the <c>nxm://</c> handler (the
+    /// user clicks Download on the page and the handler picks up the URL); if
+    /// Curator is not registered (or there is no registrar for this platform),
+    /// the browser-open would be a dead end, so an informational alert tells
+    /// the user to enable nxm links in Integrations (or download the archive
+    /// manually) and carries the DMF URL.
+    /// </summary>
+    private async Task OfferDmfDownloadForNonPremiumAsync()
+    {
+        var registered = false;
+        try
+        {
+            registered = _nxmRegistrar?.IsRegistered() ?? false;
+        }
+        catch (Exception ex)
+        {
+            // Defensive: the platform registrars catch their own probe
+            // exceptions. Treat a throw as "not registered" so the informational
+            // path runs (which carries the URL either way).
+            _logger.LogWarning(ex, "IsRegistered probe threw during the DMF prompt; treating as not registered.");
+            registered = false;
+        }
+
+        if (registered)
+        {
+            await OpenDmfFilesPageInBrowser();
+            return;
+        }
+
+        _logger.LogInformation(
+            "DMF non-premium path: Curator is not the nxm handler; showing the enable-nxm informational alert.");
+        await _dialogs.ShowAlertAsync(
+            _localization["Dmf_NotConfiguredTitle"],
+            _localization.Format("Dmf_NotConfiguredMessage", DmfFilesUrl));
     }
 
     /// <summary>

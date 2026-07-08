@@ -355,9 +355,12 @@ list:
    premium users get the in-app API download under a modal spinner (the
    Nexus `download_link` endpoint is premium-only) plus the add. Non-premium
    users (or unknown premium state) get their browser opened at DMF's Nexus
-   files page; the user clicks Download there and the existing `nxm://`
-   handler picks up the URL, so DMF is added to the active profile via the
-   standard nxm flow.
+   files page only when Curator is registered as the `nxm://` handler (the user
+   clicks Download there and the handler picks up the URL, so DMF is added to
+   the active profile via the standard nxm flow); when Curator is not the
+   handler, an informational alert tells the user to enable nxm links in
+   Integrations (or download the archive manually) and carries the DMF files
+   URL.
 3. **DMF not in the repo plus auth not configured**: an informational
    OK-only alert. This case is only reachable from the new-profile trigger
    (the auth-configured trigger implies auth is set up).

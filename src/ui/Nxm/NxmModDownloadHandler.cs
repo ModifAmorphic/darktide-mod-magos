@@ -6,6 +6,7 @@ using Modificus.Curator.Mods;
 using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.UI.Dialogs;
+using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Session;
 using Microsoft.Extensions.Logging;
 
@@ -71,8 +72,16 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
     private readonly IProfileService _profileService;
     private readonly IConfigLoader _configLoader;
     private readonly IDialogService _dialogs;
+    private readonly LocalizationService _localization;
     private readonly Action? _refreshModList;
     private readonly ILogger<NxmModDownloadHandler> _logger;
+
+    /// <summary>
+    /// The Darktide Nexus game domain. Curator supports only Darktide; any
+    /// <c>nxm://</c> link for another game is rejected before auth / profile /
+    /// acquisition with a localized alert.
+    /// </summary>
+    private const string GameDomain = "warhammer40kdarktide";
 
     public NxmModDownloadHandler(
         Func<Func<Task>, Task> invokeOnUi,
@@ -81,6 +90,7 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
         IProfileService profileService,
         IConfigLoader configLoader,
         IDialogService dialogs,
+        LocalizationService localization,
         ILogger<NxmModDownloadHandler> logger,
         Action? refreshModList = null)
     {
@@ -90,6 +100,7 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
         _profileService = profileService ?? throw new ArgumentNullException(nameof(profileService));
         _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
         _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
+        _localization = localization ?? throw new ArgumentNullException(nameof(localization));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _refreshModList = refreshModList;
     }
@@ -105,15 +116,29 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
     {
         ArgumentNullException.ThrowIfNull(url);
 
+        // 0. Darktide-only: Curator supports only Warhammer 40,000: Darktide
+        //    Nexus downloads. Reject any other game before auth / profile /
+        //    acquisition so the user gets a clear reason and we do not attempt
+        //    a download that cannot land. Case-insensitive domain match.
+        if (!string.Equals(url.Game, GameDomain, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "nxm download refused: link is for game '{Game}'; Curator only handles Darktide.",
+                url.Game);
+            await ShowAlertAsync(
+                _localization["Nxm_NonDarktideTitle"],
+                _localization.Format("Nxm_NonDarktideMessage", url.Game));
+            return;
+        }
+
         // 1. Auth check (live config read so a mid-session sign-in takes effect).
         var nexus = _configLoader.Load().Integrations.Nexus;
         if (nexus.AuthMethod == NexusAuthMethod.None)
         {
             _logger.LogWarning("nxm download refused: Nexus auth not configured.");
             await ShowAlertAsync(
-                "Nexus not configured",
-                "Configure the Nexus integration (OAuth or API key) before downloading mods.")
-                .ConfigureAwait(false);
+                _localization["Nxm_NotConfiguredTitle"],
+                _localization["Nxm_NotConfiguredMessage"]);
             return;
         }
 
@@ -123,9 +148,8 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
         {
             _logger.LogWarning("nxm download refused: no active profile.");
             await ShowAlertAsync(
-                "No active profile",
-                "Select or create a profile before downloading mods.")
-                .ConfigureAwait(false);
+                _localization["Nxm_NoActiveProfileTitle"],
+                _localization["Nxm_NoActiveProfileMessage"]);
             return;
         }
 
@@ -134,8 +158,7 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
         try
         {
             var (containerId, versionId) = await _acquisition.AcquireFromNexusAsync(
-                url.Game, url.ModId, url.FileId, url.Key, url.Expires, ct: ct)
-                .ConfigureAwait(false);
+                url.Game, url.ModId, url.FileId, url.Key, url.Expires, ct: ct);
 
             _profileService.AddMod(profileId.Value, containerId, ModVersionPolicy.Latest);
 
@@ -143,8 +166,7 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
             // appears immediately without a profile switch.
             if (_refreshModList is not null)
             {
-                await _invokeOnUi(() => { _refreshModList(); return Task.CompletedTask; })
-                    .ConfigureAwait(false);
+                await _invokeOnUi(() => { _refreshModList(); return Task.CompletedTask; });
             }
 
             _logger.LogInformation(
@@ -161,7 +183,8 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
         {
             _logger.LogError(ex,
                 "Failed to acquire Nexus mod {Mod} file {File}.", url.ModId, url.FileId);
-            await ShowAlertAsync("Download failed", ex.Message).ConfigureAwait(false);
+            await ShowAlertAsync(
+                _localization["Nxm_DownloadFailedTitle"], ex.Message);
         }
     }
 
@@ -171,6 +194,6 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
     /// </summary>
     private async Task ShowAlertAsync(string title, string message)
     {
-        await _invokeOnUi(() => _dialogs.ShowAlertAsync(title, message)).ConfigureAwait(false);
+        await _invokeOnUi(() => _dialogs.ShowAlertAsync(title, message));
     }
 }

@@ -5,6 +5,7 @@ using Modificus.Curator.Mods;
 using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.UI.Dialogs;
+using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Nxm;
 using Modificus.Curator.UI.Session;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,9 +14,10 @@ namespace Modificus.Curator.UI.Tests;
 
 /// <summary>
 /// Exercises <see cref="NxmModDownloadHandler"/> against in-memory fakes for its
-/// dependencies. Covers the two pre-flight gates (auth configured, active
-/// profile), the happy path (acquire + AddMod with LatestPolicy), the error path
-/// (acquisition failure surfaces an alert), and cancellation.
+/// dependencies. Covers the Darktide-only gate, the two pre-flight gates (auth
+/// configured, active profile), the happy path (acquire + AddMod with
+/// LatestPolicy), the error path (acquisition failure surfaces an alert), and
+/// cancellation.
 /// </summary>
 /// <remarks>
 /// The handler's UI-thread marshaling seam (<c>invokeOnUi</c>) is injected as a
@@ -26,10 +28,62 @@ namespace Modificus.Curator.UI.Tests;
 public sealed class NxmModDownloadHandlerTests
 {
     private static readonly Guid ProfileId = Guid.NewGuid();
+    private static readonly LocalizationService Localization = new();
     private static readonly NxmModDownloadUrl SampleUrl = new(
         "nxm://warhammer40kdarktide/mods/8/files/5820",
         "warhammer40kdarktide", ModId: 8, FileId: 5820,
         Key: "ABC", Expires: 12345L, UserId: null);
+
+    // ---- Darktide-only gate ----------------------------------------------
+
+    [Fact]
+    public async Task HandleAsync_non_darktide_link_rejected_before_auth_profile_acquisition()
+    {
+        // Curator supports only Darktide. A link for another game is rejected
+        // before the auth/profile/acquisition gates so nothing is attempted.
+        var acquisition = new FakeAcquisitionService
+        {
+            Config = AuthConfig(NexusAuthMethod.ApiKey),
+            Session = { ActiveProfileId = ProfileId },
+        };
+        var handler = Build(acquisition);
+
+        var skyrimUrl = new NxmModDownloadUrl(
+            "nxm://skyrim/mods/1/files/2",
+            "skyrim", ModId: 1, FileId: 2, Key: "k", Expires: 1L, UserId: null);
+
+        await handler.HandleAsync(skyrimUrl);
+
+        var alert = Assert.Single(acquisition.Dialogs.AlertCalls);
+        Assert.Equal(Localization["Nxm_NonDarktideTitle"], alert.Title);
+        // The message names the game domain from the link.
+        Assert.Contains("skyrim", alert.Message, StringComparison.Ordinal);
+        Assert.Empty(acquisition.AcquireCalls);
+        Assert.Empty(acquisition.Profiles.AddModCalls);
+    }
+
+    [Theory]
+    [InlineData("WARHAMMER40KDARKTIDE")] // case-insensitive match still accepted
+    [InlineData("warhammer40kdarktide")]
+    public async Task HandleAsync_darktide_link_case_insensitive_proceeds_past_game_gate(
+        string gameDomain)
+    {
+        var acquisition = new FakeAcquisitionService
+        {
+            Config = AuthConfig(NexusAuthMethod.ApiKey),
+            Session = { ActiveProfileId = ProfileId },
+        };
+        var handler = Build(acquisition);
+
+        var url = new NxmModDownloadUrl(
+            $"nxm://{gameDomain}/mods/8/files/5820",
+            gameDomain, ModId: 8, FileId: 5820, Key: "ABC", Expires: 1L, UserId: null);
+
+        await handler.HandleAsync(url);
+
+        Assert.Single(acquisition.AcquireCalls);
+        Assert.Empty(acquisition.Dialogs.AlertCalls);
+    }
 
     // ---- auth gate ---------------------------------------------------------
 
@@ -43,7 +97,7 @@ public sealed class NxmModDownloadHandlerTests
         await handler.HandleAsync(SampleUrl);
 
         var alert = Assert.Single(acquisition.Dialogs.AlertCalls);
-        Assert.Equal("Nexus not configured", alert.Title);
+        Assert.Equal(Localization["Nxm_NotConfiguredTitle"], alert.Title);
         Assert.Empty(acquisition.AcquireCalls);
         Assert.Empty(acquisition.Profiles.AddModCalls);
     }
@@ -84,7 +138,7 @@ public sealed class NxmModDownloadHandlerTests
         await handler.HandleAsync(SampleUrl);
 
         var alert = Assert.Single(acquisition.Dialogs.AlertCalls);
-        Assert.Equal("No active profile", alert.Title);
+        Assert.Equal(Localization["Nxm_NoActiveProfileTitle"], alert.Title);
         Assert.Empty(acquisition.AcquireCalls);
         Assert.Empty(acquisition.Profiles.AddModCalls);
     }
@@ -143,7 +197,7 @@ public sealed class NxmModDownloadHandlerTests
         // AddMod was NOT called (the acquisition threw before registration).
         Assert.Empty(acquisition.Profiles.AddModCalls);
         var alert = Assert.Single(acquisition.Dialogs.AlertCalls);
-        Assert.Equal("Download failed", alert.Title);
+        Assert.Equal(Localization["Nxm_DownloadFailedTitle"], alert.Title);
         Assert.Contains("rate limited", alert.Message);
     }
 
@@ -163,7 +217,7 @@ public sealed class NxmModDownloadHandlerTests
         await handler.HandleAsync(SampleUrl);
 
         var alert = Assert.Single(acquisition.Dialogs.AlertCalls);
-        Assert.Equal("Download failed", alert.Title);
+        Assert.Equal(Localization["Nxm_DownloadFailedTitle"], alert.Title);
         Assert.Contains("profile gone", alert.Message);
     }
 
@@ -211,6 +265,7 @@ public sealed class NxmModDownloadHandlerTests
             acquisition.Profiles,
             acquisition.Loader,
             acquisition.Dialogs,
+            Localization,
             NullLogger<NxmModDownloadHandler>.Instance);
 
         await handler.HandleAsync(SampleUrl);
@@ -246,6 +301,7 @@ public sealed class NxmModDownloadHandlerTests
             bundle.Profiles,
             bundle.Loader,
             bundle.Dialogs,
+            Localization,
             NullLogger<NxmModDownloadHandler>.Instance);
     }
 

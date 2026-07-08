@@ -86,6 +86,7 @@ public static class CuratorComposition
             sp.GetRequiredService<IProfileService>(),
             sp.GetRequiredService<IConfigLoader>(),
             sp.GetRequiredService<IDialogService>(),
+            sp.GetRequiredService<LocalizationService>(),
             sp.GetRequiredService<ILogger<NxmModDownloadHandler>>(),
             refreshModList: () => sp.GetRequiredService<ModListViewModel>().Reload()));
 
@@ -112,7 +113,19 @@ public static class CuratorComposition
         // UI-bound Mods collection). Production wires Dispatcher.UIThread.Post.
         services.AddSingleton<Action<Action>>(_ => action => Dispatcher.UIThread.Post(action));
         services.AddSingleton<ModListViewModel>();
-        services.AddSingleton<ShellViewModel>();
+        services.AddSingleton(sp => new ShellViewModel(
+            sp.GetRequiredService<IProfileService>(),
+            sp.GetRequiredService<IProfileSession>(),
+            sp.GetRequiredService<IRelayLaunchService>(),
+            sp.GetRequiredService<IDialogService>(),
+            sp.GetRequiredService<DmfPromptService>(),
+            sp.GetRequiredService<LocalizationService>(),
+            sp.GetRequiredService<ModListViewModel>(),
+            sp.GetRequiredService<ILogger<ShellViewModel>>(),
+            // Optional: null on platforms with no registrar (not Windows or
+            // Linux). Resolved via GetService so unsupported platforms do not
+            // throw on activation; the shell shows an "unavailable" status.
+            sp.GetService<INxmHandlerRegistrar>()));
         services.AddSingleton<IDialogService>(sp =>
             new DialogService(
                 sp.GetRequiredService<MainWindow>(),
@@ -123,6 +136,7 @@ public static class CuratorComposition
                 sp.GetRequiredService<IConfigLoader>(),
                 sp.GetRequiredService<IModRepository>(),
                 sp.GetRequiredService<INexusAuthService>(),
+                sp.GetService<INxmHandlerRegistrar>(),
                 sp.GetRequiredService<ILoggerFactory>()));
 
         // The UI-layer glue that fires an update check
@@ -149,8 +163,20 @@ public static class CuratorComposition
         // ManageProfiles / Integrations dialogs), records them as pending, and
         // the shell calls ProcessPendingAsync after those dialogs close so the
         // DMF prompt is the topmost modal at that point (no dialog-on-dialog).
-        // Singleton: owns the event subscriptions for the app lifetime.
-        services.AddSingleton<DmfPromptService>();
+        // Singleton: owns the event subscriptions for the app lifetime. Takes
+        // the optional nxm registrar so the non-premium browser-open path can
+        // tell the user to enable nxm links when Curator is not the handler.
+        services.AddSingleton(sp => new DmfPromptService(
+            sp.GetRequiredService<IProfileService>(),
+            sp.GetRequiredService<IProfileSession>(),
+            sp.GetRequiredService<IModRepository>(),
+            sp.GetRequiredService<IModAcquisitionService>(),
+            sp.GetRequiredService<INexusAuthService>(),
+            sp.GetRequiredService<IConfigLoader>(),
+            sp.GetRequiredService<IDialogService>(),
+            sp.GetRequiredService<LocalizationService>(),
+            sp.GetRequiredService<ILogger<DmfPromptService>>(),
+            sp.GetService<INxmHandlerRegistrar>()));
 
         var provider = services.BuildServiceProvider();
 
@@ -178,13 +204,6 @@ public static class CuratorComposition
         // + discovery above): a single-instance violation is fatal-by-design for
         // this process. The pipe-bind degradation is handled inside Bind itself.
         StartNxmServer(provider, loggerFactory.CreateLogger(nameof(CuratorComposition)));
-
-        // Register Curator as the OS nxm:// scheme handler if not already
-        // registered. Best-effort: a failure is logged + swallowed so a
-        // registration problem never blocks startup (the user can still use
-        // the app; they just can't click "Mod manager download" on Nexus until
-        // it's resolved). This is what MO2, NMA, and Vortex all do on startup.
-        RegisterNxmHandler(provider, loggerFactory);
 
         // Start the update-check runner so a check fires on profile load
         // (startup with the restored id + active-profile switches).
@@ -262,40 +281,6 @@ public static class CuratorComposition
             // launch-time Discover re-runs and surfaces real failures.
             loggerFactory.CreateLogger(nameof(CuratorComposition))
                 .LogWarning(ex, "Startup discovery failed (best-effort; launch will re-try).");
-        }
-    }
-
-    /// <summary>
-    /// Registers Curator as the OS nxm:// scheme handler if not already
-    /// registered, so clicking "Mod manager download" on Nexus invokes the
-    /// handler exe. Best-effort: a failure is logged + swallowed so a
-    /// registration problem never blocks startup.
-    /// </summary>
-    private static void RegisterNxmHandler(IServiceProvider provider, ILoggerFactory loggerFactory)
-    {
-        try
-        {
-            var logger = loggerFactory.CreateLogger(nameof(CuratorComposition));
-            var registrar = provider.GetService<INxmHandlerRegistrar>();
-            if (registrar is null)
-            {
-                // No registrar for this platform (not Windows or Linux).
-                logger.LogWarning("No nxm handler registrar available for this platform; skipping registration.");
-                return;
-            }
-            if (!registrar.IsRegistered())
-            {
-                registrar.Register();
-                logger.LogInformation("Registered Curator as the nxm:// scheme handler.");
-            }
-        }
-        catch (Exception ex)
-        {
-            // Swallow: registration is best-effort. Log + continue; the user
-            // can still use the app (they just can't click "Mod manager
-            // download" on Nexus until it's resolved).
-            loggerFactory.CreateLogger(nameof(CuratorComposition))
-                .LogWarning(ex, "Failed to register the nxm:// scheme handler (best-effort).");
         }
     }
 

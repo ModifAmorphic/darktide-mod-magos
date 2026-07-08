@@ -179,14 +179,16 @@ The handler is registered **after** `AddNxm()` so DI "last registration wins"
 supersedes the no-op default (the no-op default is registered with plain
 `AddSingleton`, and MS DI resolves the last registration).
 
-## Startup OS registration
+## OS registration
 
-On startup, `CuratorComposition.Build()` calls `RegisterNxmHandler` after the
-IPC server starts, which resolves `INxmHandlerRegistrar` and calls `Register()`
-if `IsRegistered()` is false. This is the expected behavior for a mod manager
-(MO2, NMA, and Vortex all auto-register on startup) so the OS knows to invoke
-the handler exe when an `nxm://` URL arrives (the "Mod manager download"
-button on Nexus).
+Registration as the OS `nxm://` handler is an explicit user action from the
+Integrations dialog ("Nexus download links" section), not a startup
+auto-registration. The register path confirms first because it is a
+system-wide change that can take `nxm://` clicks from Vortex, Mod Organizer 2,
+Nexus Mod Manager, or other mod managers; the unregister path only releases
+Curator's own registration. See
+[nxm:// scheme handler](nxm-scheme-handler.md) for the registrar interface and
+the platform implementations.
 
 - **Linux** writes a `.desktop` file to `~/.local/share/applications/`
   (`modificus-curator-nxm-handler.desktop`, under the `applications/` subdirectory of the
@@ -196,9 +198,14 @@ button on Nexus).
 - **Windows** writes `HKCU\Software\Classes\nxm` (per-user, no elevation) with
   the handler exe as the `shell\open\command`.
 
-Best-effort: a registration failure is logged and swallowed so a registration
-problem never blocks startup (the app still runs; the user just cannot
-click-download from Nexus until it is resolved).
+## Darktide-only downloads
+
+Curator supports only Warhammer 40,000: Darktide Nexus downloads. The handler
+rejects any `NxmModDownloadUrl` whose game domain is not
+`warhammer40kdarktide` (case-insensitive) before the auth, active-profile, and
+acquisition gates, surfacing a localized alert that names the link's game. No
+auth read, acquisition call, or profile registration happens for a non-Darktide
+link.
 
 ## See also
 

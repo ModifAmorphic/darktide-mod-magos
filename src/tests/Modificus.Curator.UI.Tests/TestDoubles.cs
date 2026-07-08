@@ -4,6 +4,7 @@ using Modificus.Curator.Config;
 using Modificus.Curator.RelayClient;
 using Modificus.Curator.General;
 using Modificus.Curator.Integrations;
+using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.Mods;
 using Modificus.Curator.Steam;
@@ -40,7 +41,8 @@ internal static class TestDoubles
         FakeNexusAuthService? auth = null,
         FakeConfigLoader? configLoader = null,
         FakeDialogService? dialogs = null,
-        LocalizationService? localization = null)
+        LocalizationService? localization = null,
+        FakeNxmHandlerRegistrar? nxmRegistrar = null)
     {
         profiles ??= Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -59,7 +61,8 @@ internal static class TestDoubles
             configLoader,
             dialogs,
             localization,
-            NullLogger<DmfPromptService>.Instance);
+            NullLogger<DmfPromptService>.Instance,
+            nxmRegistrar);
     }
 
     /// <summary>
@@ -1117,4 +1120,54 @@ internal sealed class FakeNexusAuthService : INexusAuthService
         throw new NotImplementedException();
     public Task SignOutAsync(CancellationToken ct = default) =>
         throw new NotImplementedException();
+}
+
+/// <summary>
+/// Recording <see cref="INxmHandlerRegistrar"/> for the Integrations + DMF +
+/// shell tests. The real registrar probes the OS; this one returns a settable
+/// <see cref="Registered"/> flag and records Register/Unregister calls. Can be
+/// configured to throw on Register to exercise the failure path.
+/// </summary>
+internal sealed class FakeNxmHandlerRegistrar : INxmHandlerRegistrar
+{
+    /// <summary>The value returned by <see cref="IsRegistered"/>.</summary>
+    public bool Registered { get; set; }
+
+    /// <summary>When set, thrown from <see cref="Register"/> (after the call is
+    /// recorded) so tests can exercise the register-failure path.</summary>
+    public Exception? ThrowOnRegister { get; set; }
+
+    /// <summary>When set, thrown from <see cref="Unregister"/> (after the call is
+    /// recorded) so tests can exercise the unregister-failure path.</summary>
+    public Exception? ThrowOnUnregister { get; set; }
+
+    public int IsRegisteredCalls { get; private set; }
+    public int RegisterCalls { get; private set; }
+    public int UnregisterCalls { get; private set; }
+
+    public bool IsRegistered()
+    {
+        IsRegisteredCalls++;
+        return Registered;
+    }
+
+    public void Register()
+    {
+        RegisterCalls++;
+        if (ThrowOnRegister is not null)
+        {
+            throw ThrowOnRegister;
+        }
+        Registered = true;
+    }
+
+    public void Unregister()
+    {
+        UnregisterCalls++;
+        if (ThrowOnUnregister is not null)
+        {
+            throw ThrowOnUnregister;
+        }
+        Registered = false;
+    }
 }

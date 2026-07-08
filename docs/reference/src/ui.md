@@ -343,8 +343,11 @@ Three cases on a trigger:
    `IModAcquisitionService.AcquireLatestNexusAsync`); non-premium users (or
    unknown premium state) get their browser opened at DMF's Nexus files page
    (`https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files`) via
-   the OS shell-open (`UseShellExecute = true`). The user clicks Download on
-   the page and the existing `nxm://` handler picks up the URL.
+   the OS shell-open (`UseShellExecute = true`) only when Curator is
+   registered as the `nxm://` handler. The user clicks Download on the page
+   and the handler picks up the URL. When Curator is not the handler, an
+   informational alert tells the user to enable nxm links in Integrations (or
+   download the archive manually) and carries the DMF files URL.
 3. DMF not in the repo plus auth not configured: an informational OK-only
    alert. Only reachable from the new-profile trigger.
 
@@ -484,10 +487,10 @@ services.AddSingleton<IPreferencesService, PreferencesService>();
 services.AddSingleton<MainWindow>();
 services.AddSingleton<Action<Action>>(_ => action => Dispatcher.UIThread.Post(action));
 services.AddSingleton<ModListViewModel>();
-services.AddSingleton<ShellViewModel>();
-services.AddSingleton<IDialogService>(sp => new DialogService(/* … */));
+services.AddSingleton(sp => new ShellViewModel(/* … */, sp.GetService<INxmHandlerRegistrar>()));
+services.AddSingleton<IDialogService>(sp => new DialogService(/* … incl. sp.GetService<INxmHandlerRegistrar>() */));
 services.AddSingleton(sp => new UpdateCheckRunner(/* … */, StartUpdateCheckPolling));
-services.AddSingleton<DmfPromptService>();
+services.AddSingleton(sp => new DmfPromptService(/* … */, sp.GetService<INxmHandlerRegistrar>()));
 ```
 
 Key wiring notes:
@@ -497,6 +500,12 @@ Key wiring notes:
   `ProfileSession.PollInterval`). The session is shared by the shell, the
   Manage-profiles dialog, the update-check runner, and the DMF prompt
   coordinator.
+- `ShellViewModel`, `DialogService`, and `DmfPromptService` resolve the
+  `INxmHandlerRegistrar` via `GetService` (null on platforms without a
+  registrar) so the shell status strip, the Integrations "Nexus download
+  links" section, and the DMF non-premium path can query/toggle the OS
+  `nxm://` handler without forcing activation to fail on unsupported
+  platforms. The composition root no longer auto-registers the handler.
 - `MainWindow` is a singleton: the desktop lifetime installs the resolved
   instance as `desktop.MainWindow`, and `DialogService` resolves the same
   instance as the owner for modal dialogs.
@@ -557,7 +566,9 @@ No backend library references the UI (the dependency direction is one-way).
 - **`ShellViewModelTests`**: profile CRUD and switch, active-profile
   persist, switch-blocked-while-running, the launch result branches
   (Launched / DiscoveryIncomplete / Error), the `_syncing` guard against
-  spurious dropdown events, and the post-dialog DMF prompt path.
+  spurious dropdown events, the post-dialog DMF prompt path, and the nxm
+  handler status (startup read + refresh after Integrations closes +
+  unavailable when no registrar).
 - **`ProfileSessionTests`**: the gate (RequestActive applies only when not
   running), persistence, `CanDeleteProfile`, `ReconcileActive` (delete of
   active clears to null; never auto-selects), `Refresh`.
@@ -582,19 +593,23 @@ No backend library references the UI (the dependency direction is one-way).
 - **`DiscoveryEscapeHatchViewModelTests`**: the focused escape-hatch form
   (only the missing fields shown).
 - **`IntegrationsViewModelTests`**: the Integrations dialog (OAuth login,
-  API-key validate, sign-out) + the running-state gate (auth controls
-  disable while Darktide runs).
+  API-key validate, sign-out), auth controls staying usable while Darktide
+  runs, and the "Nexus download links" section (status display, register
+  confirm / success / failure, unregister only when Curator owns the
+  handler, unavailable when no registrar).
 - **`UpdateCheckRunnerTests`**: the four triggers (startup restore,
   active-switch, periodic timer with the live toggle + interval, manual
   CheckNowAsync), the periodic-clock reset, the unobserved-exception safety,
   the thorough vs Month-only check selection.
 - **`DmfPromptServiceTests`**: the three DMF cases, the new-profile and
-  auth-configured triggers, the ask-once auth flag, the decline path, and
-  the dialog-on-dialog avoidance (the prompt fires from the shell after the
-  triggering dialog closes).
-- **`NxmModDownloadHandlerTests`**: the auth + active-profile gates, the
-  acquire / register / refresh flow, the error wiring (alert on failure),
-  the UI-thread marshaling seam.
+  auth-configured triggers, the ask-once auth flag, the decline path, the
+  dialog-on-dialog avoidance (the prompt fires from the shell after the
+  triggering dialog closes), and the non-premium browser-open path gated on
+  the nxm registrar (registered vs not registered vs no registrar).
+- **`NxmModDownloadHandlerTests`**: the Darktide-only gate (rejects other
+  games before auth / profile / acquisition), the auth + active-profile
+  gates, the acquire / register / refresh flow, the error wiring (alert on
+  failure), the UI-thread marshaling seam.
 
 The internal `NxmModDownloadHandler` implementation is visible to the test
 assembly via `InternalsVisibleTo` (the handler is constructed by the

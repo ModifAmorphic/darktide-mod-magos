@@ -73,8 +73,13 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           the Integrations dialog (Nexus-only) + its
                           `OpenIntegrationsCommand` on the shell (left of the profiles button),
                           wired through `IDialogService.ShowIntegrationsAsync` -> `IntegrationsViewModel`
-                          -> `INexusAuthService` (OAuth loopback + API-key validate + sign-out) +
-                          the running-state gate (auth controls disable while Darktide runs);
+                          -> `INexusAuthService` (OAuth loopback + API-key validate + sign-out); auth
+                          controls stay usable while Darktide runs (only launch + active-profile
+                          changes are blocked); the Integrations dialog also owns the explicit
+                          `nxm://` handler registration (a "Nexus download links" section over
+                          `INxmHandlerRegistrar`: register confirms first since it is a system-wide
+                          change that can affect other mod managers; unregister only releases
+                          Curator's own registration);
                           `IModAcquisitionService` (download + extract + place
                           orchestrator in Integrations) + the real `NxmModDownloadHandler` (in UI,
                           coordinating IDialogService + IProfileSession + Dispatcher.UIThread) that
@@ -146,12 +151,16 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           but not the profile -> instant add (case 1); DMF not
                           in the repo + auth configured -> on confirm, premium
                           users get the in-app API download under a spinner +
-                          add, non-premium users (or unknown premium state) get
-                          their browser opened at DMF's Nexus files page (the
-                          user clicks Download there + the existing nxm handler
-                          picks up the URL + adds DMF to the active profile via
-                          the standard nxm flow; the API download_link endpoint
-                          is premium-only, so non-premium users must visit the
+                          add, non-premium users (or unknown premium state):
+                          if Curator is registered as the `nxm://` handler,
+                          their browser opens at DMF's Nexus files page (the
+                          user clicks Download there + the handler picks up the
+                          URL + adds DMF to the active profile via the standard
+                          nxm flow); if Curator is not the handler, an
+                          informational alert tells the user to enable nxm
+                          links in Integrations or download the archive
+                          manually (the API download_link endpoint is
+                          premium-only, so non-premium users must visit the
                           site to mint the per-file token) (case 2); DMF not in
                           the repo + auth not configured -> informational alert
                           (case 3, only reachable from the new-profile trigger).

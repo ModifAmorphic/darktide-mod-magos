@@ -97,6 +97,30 @@
     <value>Darktide: not running</value>
     <comment>Status-strip label when Darktide is not running.</comment>
   </data>
+  <data name="Status_NxmRegistered" xml:space="preserve">
+    <value>NXM: Curator</value>
+    <comment>Status-strip label when Curator is the registered OS handler for nxm:// links.</comment>
+  </data>
+  <data name="Status_NxmNotRegistered" xml:space="preserve">
+    <value>NXM: not Curator</value>
+    <comment>Status-strip label when another program (or nothing) is the registered OS handler for nxm:// links.</comment>
+  </data>
+  <data name="Status_NxmUnavailable" xml:space="preserve">
+    <value>NXM: unavailable</value>
+    <comment>Status-strip label when there is no platform registrar (not Windows or Linux).</comment>
+  </data>
+  <data name="Status_NxmRegisteredTooltip" xml:space="preserve">
+    <value>Curator handles Nexus Mod Manager download links (nxm://). Manage this in Integrations.</value>
+    <comment>Tooltip on the NXM status-strip label when Curator is registered.</comment>
+  </data>
+  <data name="Status_NxmNotRegisteredTooltip" xml:space="preserve">
+    <value>Another program handles Nexus Mod Manager download links (nxm://). Enable it in Integrations to download mods from Nexus.</value>
+    <comment>Tooltip on the NXM status-strip label when Curator is not registered.</comment>
+  </data>
+  <data name="Status_NxmUnavailableTooltip" xml:space="preserve">
+    <value>Curator cannot register as the nxm:// handler on this platform.</value>
+    <comment>Tooltip on the NXM status-strip label when there is no platform registrar.</comment>
+  </data>
   <data name="ProfileSwitch_RunningTooltip" xml:space="preserve">
     <value>Darktide is running; stop it before switching profiles</value>
     <comment>Tooltip on the profile dropdown explaining why switching is blocked.</comment>
@@ -608,10 +632,6 @@
     <value>Done</value>
     <comment>The Done button at the bottom of the Integrations dialog.</comment>
   </data>
-  <data name="Integrations_RunningTooltip" xml:space="preserve">
-    <value>Darktide is running; close it before changing Nexus credentials.</value>
-    <comment>Tooltip shown over the disabled Integrations controls while Darktide runs.</comment>
-  </data>
   <data name="Integrations_StatusNotSignedIn" xml:space="preserve">
     <value>Not signed in.</value>
     <comment>Status line when no Nexus auth method is configured.</comment>
@@ -680,6 +700,66 @@
     <value>Interval (minutes)</value>
     <comment>Label next to the periodic update-check interval input in the Integrations dialog.</comment>
   </data>
+  <data name="Integrations_NxmHeader" xml:space="preserve">
+    <value>Nexus download links</value>
+    <comment>Header over the nxm:// handler section of the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_NxmStatusRegistered" xml:space="preserve">
+    <value>Curator handles Nexus download links (nxm://).</value>
+    <comment>Status line in the nxm section when Curator is the registered OS handler.</comment>
+  </data>
+  <data name="Integrations_NxmStatusNotRegistered" xml:space="preserve">
+    <value>Another program handles Nexus download links (nxm://).</value>
+    <comment>Status line in the nxm section when Curator is not the registered OS handler.</comment>
+  </data>
+  <data name="Integrations_NxmStatusUnavailable" xml:space="preserve">
+    <value>Not available on this platform.</value>
+    <comment>Status line in the nxm section when there is no platform registrar.</comment>
+  </data>
+  <data name="Integrations_NxmRegisterLabel" xml:space="preserve">
+    <value>Enable Darktide download links</value>
+    <comment>The toggle button label when Curator is not registered (click to register).</comment>
+  </data>
+  <data name="Integrations_NxmUnregisterLabel" xml:space="preserve">
+    <value>Disable Darktide download links</value>
+    <comment>The toggle button label when Curator is registered (click to unregister, releasing the handler so other managers can use it).</comment>
+  </data>
+  <data name="Integrations_NxmActionTooltipRegistered" xml:space="preserve">
+    <value>Stop Curator from handling nxm:// links (releases the handler so other mod managers can use it).</value>
+    <comment>Tooltip on the toggle button when Curator is registered.</comment>
+  </data>
+  <data name="Integrations_NxmActionTooltipNotRegistered" xml:space="preserve">
+    <value>Make Curator the handler for nxm:// Nexus download links.</value>
+    <comment>Tooltip on the toggle button when Curator is not registered.</comment>
+  </data>
+  <data name="Integrations_NxmActionTooltipUnavailable" xml:space="preserve">
+    <value>Curator cannot register as the nxm:// handler on this platform.</value>
+    <comment>Tooltip on the toggle button when there is no platform registrar.</comment>
+  </data>
+  <data name="Integrations_NxmConfirmTitle" xml:space="preserve">
+    <value>Change the nxm handler?</value>
+    <comment>Title of the confirmation prompt shown before registering Curator as the nxm:// handler.</comment>
+  </data>
+  <data name="Integrations_NxmConfirmMessage" xml:space="preserve">
+    <value>This changes the system-wide handler for Nexus Mod Manager download links (nxm://). It may affect Vortex, Mod Organizer 2, Nexus Mod Manager, or other mod managers. Curator only supports Darktide downloads. Continue?</value>
+    <comment>Body of the nxm registration confirmation prompt. Warns it is a system-wide change that can affect other mod managers.</comment>
+  </data>
+  <data name="Integrations_NxmRegisterFailedTitle" xml:space="preserve">
+    <value>Could not enable nxm links</value>
+    <comment>Title of the alert shown when registering the nxm:// handler fails.</comment>
+  </data>
+  <data name="Integrations_NxmRegisterFailedMessage" xml:space="preserve">
+    <value>Enabling the nxm handler failed: {0}</value>
+    <comment>Body of the nxm register-failure alert. {0} is the error message.</comment>
+  </data>
+  <data name="Integrations_NxmUnregisterFailedTitle" xml:space="preserve">
+    <value>Could not release the nxm handler</value>
+    <comment>Title of the alert shown when unregistering the nxm:// handler fails.</comment>
+  </data>
+  <data name="Integrations_NxmUnregisterFailedMessage" xml:space="preserve">
+    <value>Releasing the nxm handler failed: {0}</value>
+    <comment>Body of the nxm unregister-failure alert. {0} is the error message.</comment>
+  </data>
 
   <!-- ============================================================ -->
   <!-- DMF (Darktide Mod Framework) install prompt                  -->
@@ -730,5 +810,48 @@
   <data name="Dmf_InfoMessage" xml:space="preserve">
     <value>DMF (Darktide Mod Framework) is required for most Darktide mods. Set up the Nexus integration to auto-install it, or import it manually.</value>
     <comment>Body of the case-3 informational alert. Single OK button (no Yes/No). Tells the user the two paths to get DMF.</comment>
+  </data>
+  <data name="Dmf_NotConfiguredTitle" xml:space="preserve">
+    <value>Curator is not the nxm handler</value>
+    <comment>Title of the informational alert shown when a non-premium user accepts the DMF download but Curator is not registered as the nxm:// handler.</comment>
+  </data>
+  <data name="Dmf_NotConfiguredMessage" xml:space="preserve">
+    <value>Curator is not set up to handle Nexus download links. Enable Nexus download links in Integrations, then click Download on the DMF Nexus page, or download the archive manually and import it: {0}</value>
+    <comment>Body of the DMF not-configured alert for non-premium users. {0} is the DMF files URL.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- NXM download handler (NxmModDownloadHandler)                 -->
+  <!-- (the real INxmModDownloadHandler in the UI assembly;         -->
+  <!--  gates a clicked nxm:// download before acquisition)        -->
+  <!-- ============================================================ -->
+
+  <data name="Nxm_NonDarktideTitle" xml:space="preserve">
+    <value>Unsupported game</value>
+    <comment>Title of the alert shown when an nxm:// download link is for a game other than Darktide.</comment>
+  </data>
+  <data name="Nxm_NonDarktideMessage" xml:space="preserve">
+    <value>Curator only handles Darktide Nexus downloads. This link is for {0}.</value>
+    <comment>Body of the non-Darktide alert. {0} is the Nexus game domain from the link.</comment>
+  </data>
+  <data name="Nxm_NotConfiguredTitle" xml:space="preserve">
+    <value>Nexus not configured</value>
+    <comment>Title of the alert shown when an nxm:// download arrives but Nexus auth is not configured.</comment>
+  </data>
+  <data name="Nxm_NotConfiguredMessage" xml:space="preserve">
+    <value>Configure the Nexus integration (OAuth or API key) before downloading mods.</value>
+    <comment>Body of the not-configured alert.</comment>
+  </data>
+  <data name="Nxm_NoActiveProfileTitle" xml:space="preserve">
+    <value>No active profile</value>
+    <comment>Title of the alert shown when an nxm:// download arrives but no profile is active.</comment>
+  </data>
+  <data name="Nxm_NoActiveProfileMessage" xml:space="preserve">
+    <value>Select or create a profile before downloading mods.</value>
+    <comment>Body of the no-active-profile alert.</comment>
+  </data>
+  <data name="Nxm_DownloadFailedTitle" xml:space="preserve">
+    <value>Download failed</value>
+    <comment>Title of the alert shown when an nxm:// download or its profile registration fails.</comment>
   </data>
 </root>

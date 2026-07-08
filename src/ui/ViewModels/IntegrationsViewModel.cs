@@ -4,8 +4,9 @@ using CommunityToolkit.Mvvm.Input;
 using Modificus.Curator.Config;
 using Modificus.Curator.General;
 using Modificus.Curator.Integrations;
+using Modificus.Curator.Nxm;
+using Modificus.Curator.UI.Dialogs;
 using Modificus.Curator.UI.Localization;
-using Modificus.Curator.UI.Session;
 using Microsoft.Extensions.Logging;
 
 namespace Modificus.Curator.UI.ViewModels;
@@ -19,11 +20,15 @@ namespace Modificus.Curator.UI.ViewModels;
 /// ("Signed in as X (Premium) via Nexus login" vs "...via API key"). The
 /// API-key field is masked by default, persisted across reopens (so the user
 /// sees one is configured), revealed on a Show eye toggle, + re-validatable
-/// without re-entering. Disabled (with a tooltip) while the game is running,
-/// mirroring the profile-switch gate. GitHub stays config-file-only (no UI
-/// section). Below the auth blocks, an "Update checks" sub-section holds the
-/// periodic update-check toggle + interval, persisted live through
-/// <see cref="IConfigLoader"/> (read-modify-save on each change).
+/// without re-entering. Auth controls stay usable while Darktide runs (only
+/// launch + active-profile changes are blocked while the game runs); GitHub
+/// stays config-file-only (no UI section). Below the auth blocks, an
+/// "Update checks" sub-section holds the periodic update-check toggle +
+/// interval, persisted live through <see cref="IConfigLoader"/>
+/// (read-modify-save on each change). A final "Nexus download links" section
+/// exposes the explicit OS <c>nxm://</c> handler registration: register is a
+/// confirm-first action (it is a system-wide change that can affect other mod
+/// managers); unregister only releases Curator's own registration.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -58,48 +63,30 @@ public partial class IntegrationsViewModel : ObservableObject
 {
     private readonly INexusAuthService _auth;
     private readonly LocalizationService _localization;
-    private readonly IProfileSession _session;
     private readonly IConfigLoader _configLoader;
+    private readonly IDialogService _dialogs;
+    private readonly INxmHandlerRegistrar? _nxmRegistrar;
     private readonly ILogger<IntegrationsViewModel> _logger;
 
     public IntegrationsViewModel(
         INexusAuthService auth,
         LocalizationService localization,
-        IProfileSession session,
         IConfigLoader configLoader,
+        IDialogService dialogs,
+        INxmHandlerRegistrar? nxmRegistrar,
         ILogger<IntegrationsViewModel> logger)
     {
         _auth = auth ?? throw new ArgumentNullException(nameof(auth));
         _localization = localization ?? throw new ArgumentNullException(nameof(localization));
-        _session = session ?? throw new ArgumentNullException(nameof(session));
         _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
+        _nxmRegistrar = nxmRegistrar;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-        _isGameRunning = _session.IsRunning;
-        _session.PropertyChanged += OnSessionPropertyChanged;
         _localization.PropertyChanged += OnCultureChanged;
     }
 
     // ---- state -----------------------------------------------------------
-
-    /// <summary>
-    /// Whether Darktide is currently running, mirrored LIVE from
-    /// <see cref="IProfileSession.IsRunning"/>. Gates the auth controls (avoids
-    /// credential changes mid-session).
-    /// </summary>
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsEnabled))]
-    [NotifyCanExecuteChangedFor(nameof(LoginWithOAuthCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ValidateApiKeyCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SignOutCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ToggleApiKeyRevealCommand))]
-    private bool _isGameRunning;
-
-    /// <summary>
-    /// Whether the auth controls are interactive (game not running). The Integrations
-    /// dialog mirrors the profile-switch gate: no credential changes mid-session.
-    /// </summary>
-    public bool IsEnabled => !IsGameRunning;
 
     /// <summary>
     /// The currently configured Nexus auth method (None / OAuth / ApiKey),
@@ -288,11 +275,6 @@ public partial class IntegrationsViewModel : ObservableObject
     public string AutoUpdateHeader => _localization["Integrations_AutoUpdateHeader"];
     public string AutoUpdateEnabledLabel => _localization["Integrations_AutoUpdateEnabled"];
     public string AutoUpdateIntervalLabel => _localization["Integrations_AutoUpdateInterval"];
-    // Null when the game isn't running so no tooltip is shown on the enabled
-    // panel; the running-message appears only when the panel is actually
-    // disabled by IsGameRunning (avoids a misleading "is running" tooltip on
-    // hover when the game is not running).
-    public string? TooltipRunning => IsGameRunning ? _localization["Integrations_RunningTooltip"] : null;
     public string ShowApiKeyTooltip => _localization["Integrations_ShowApiKeyTooltip"];
     public string HideApiKeyTooltip => _localization["Integrations_HideApiKeyTooltip"];
 
@@ -403,24 +385,28 @@ public partial class IntegrationsViewModel : ObservableObject
         }
     }
 
-    private bool CanStartAuth() => !IsGameRunning && !IsBusy;
-    private bool CanSignOut() => !IsGameRunning && !IsBusy && IsAuthenticated;
+    // Auth controls stay usable while Darktide runs (only launch + active-
+    // profile changes are blocked). The IsBusy + IsAuthenticated gates remain.
+    private bool CanStartAuth() => !IsBusy;
+    private bool CanSignOut() => !IsBusy && IsAuthenticated;
     private bool CanToggleReveal() => !IsBusy;
 
     // ---- live state -------------------------------------------------------
 
     /// <summary>
     /// Refreshes the status line + active-method indicator + masked-key field
-    /// from the persisted auth state, and the update-check toggle + interval
-    /// from the persisted config. Called on dialog open (after construction)
-    /// + after each auth command. Hits the v1 API to resolve the display name +
-    /// premium state.
+    /// from the persisted auth state, the update-check toggle + interval from
+    /// the persisted config, and the nxm handler registration state from the OS
+    /// registrar. Called on dialog open (after construction) + after each auth
+    /// command + after a register/unregister. Hits the v1 API to resolve the
+    /// display name + premium state.
     /// </summary>
     public async Task RefreshAsync()
     {
         var state = await _auth.GetCurrentStateAsync();
         ApplyState(state);
         LoadAutoUpdateSettings();
+        RefreshNxmState();
     }
 
     /// <summary>
@@ -483,13 +469,168 @@ public partial class IntegrationsViewModel : ObservableObject
         };
     }
 
-    private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    // ---- nxm handler registration ----------------------------------------
+
+    /// <summary>
+    /// Whether a platform <see cref="INxmHandlerRegistrar"/> is available. Null
+    /// (no registrar) on platforms other than Windows + Linux; the NXM controls
+    /// show an unavailable state + the toggle is disabled. Drives
+    /// <see cref="CanToggleNxmHandler"/>.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleNxmHandlerCommand))]
+    private bool _isNxmAvailable = true;
+
+    /// <summary>
+    /// Whether Curator is currently the OS <c>nxm://</c> handler, per the
+    /// registrar's <see cref="INxmHandlerRegistrar.IsRegistered"/>. Drives the
+    /// status line, the toggle button label, and which branch the toggle
+    /// command takes (register vs unregister). Refreshed on dialog open + after
+    /// each toggle.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isNxmRegistered;
+
+    /// <summary>Header over the nxm section.</summary>
+    public string NxmSectionHeader => _localization["Integrations_NxmHeader"];
+
+    /// <summary>
+    /// The nxm status line: registered / not registered / unavailable, resolved
+    /// through <see cref="LocalizationService"/>. Re-resolves on a culture flip.
+    /// </summary>
+    public string NxmStatusText =>
+        !IsNxmAvailable
+            ? _localization["Integrations_NxmStatusUnavailable"]
+            : IsNxmRegistered
+                ? _localization["Integrations_NxmStatusRegistered"]
+                : _localization["Integrations_NxmStatusNotRegistered"];
+
+    /// <summary>
+    /// The toggle button label: "Enable Darktide download links" when not
+    /// registered, "Disable Darktide download links" when registered.
+    /// Re-resolves on a culture flip.
+    /// </summary>
+    public string NxmActionLabel =>
+        IsNxmRegistered
+            ? _localization["Integrations_NxmUnregisterLabel"]
+            : _localization["Integrations_NxmRegisterLabel"];
+
+    /// <summary>
+    /// The toggle button tooltip, resolved through <see cref="LocalizationService"/>
+    /// for the current state. Re-resolves on a culture flip.
+    /// </summary>
+    public string NxmActionTooltip =>
+        !IsNxmAvailable
+            ? _localization["Integrations_NxmActionTooltipUnavailable"]
+            : IsNxmRegistered
+                ? _localization["Integrations_NxmActionTooltipRegistered"]
+                : _localization["Integrations_NxmActionTooltipNotRegistered"];
+
+    /// <summary>
+    /// Toggles the OS <c>nxm://</c> handler registration. The register path
+    /// first shows a confirmation dialog (it is a system-wide change that can
+    /// affect Vortex / Mod Organizer 2 / Nexus Mod Manager / other managers),
+    /// then calls <see cref="INxmHandlerRegistrar.Register"/>. The unregister
+    /// path only releases Curator's own registration: it re-checks
+    /// <see cref="INxmHandlerRegistrar.IsRegistered"/> before
+    /// <see cref="INxmHandlerRegistrar.Unregister"/> so it never deletes
+    /// another program's handler. A failure surfaces a localized alert; the
+    /// state is refreshed after either branch. Unavailable (no registrar) is a
+    /// no-op (the command is also disabled). Usable while Darktide runs (only
+    /// launch + active-profile changes are blocked).
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanToggleNxmHandler))]
+    private async Task ToggleNxmHandler()
     {
-        if (e.PropertyName == nameof(IProfileSession.IsRunning))
+        if (_nxmRegistrar is null)
         {
-            IsGameRunning = _session.IsRunning;
+            return;
         }
+
+        if (!IsNxmRegistered)
+        {
+            // Register path: confirm first (system-wide change).
+            var confirmed = await _dialogs.ConfirmAsync(
+                _localization["Integrations_NxmConfirmTitle"],
+                _localization["Integrations_NxmConfirmMessage"]);
+            if (!confirmed)
+            {
+                return;
+            }
+
+            try
+            {
+                _nxmRegistrar.Register();
+                _logger.LogInformation("Registered Curator as the nxm:// handler via Integrations.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to register the nxm:// handler via Integrations.");
+                await _dialogs.ShowAlertAsync(
+                    _localization["Integrations_NxmRegisterFailedTitle"],
+                    _localization.Format("Integrations_NxmRegisterFailedMessage", ex.Message));
+            }
+        }
+        else
+        {
+            // Unregister path: only release Curator's own registration. The
+            // registrar's IsRegistered returns true only when Curator is the
+            // current owner, so this guard never deletes another program's
+            // handler.
+            if (!_nxmRegistrar.IsRegistered())
+            {
+                RefreshNxmState();
+                return;
+            }
+
+            try
+            {
+                _nxmRegistrar.Unregister();
+                _logger.LogInformation("Released the nxm:// handler via Integrations.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to unregister the nxm:// handler via Integrations.");
+                await _dialogs.ShowAlertAsync(
+                    _localization["Integrations_NxmUnregisterFailedTitle"],
+                    _localization.Format("Integrations_NxmUnregisterFailedMessage", ex.Message));
+            }
+        }
+
+        RefreshNxmState();
     }
+
+    private bool CanToggleNxmHandler() => IsNxmAvailable;
+
+    /// <summary>
+    /// Re-reads the registrar state into <see cref="IsNxmAvailable"/> +
+    /// <see cref="IsNxmRegistered"/> + fires change notifications for the
+    /// derived status/label/tooltip so the view refreshes. Safe when no
+    /// registrar is present (sets unavailable + not registered). Called on
+    /// dialog open + after each toggle.
+    /// </summary>
+    private void RefreshNxmState()
+    {
+        IsNxmAvailable = _nxmRegistrar is not null;
+        try
+        {
+            IsNxmRegistered = _nxmRegistrar?.IsRegistered() ?? false;
+        }
+        catch (Exception ex)
+        {
+            // The platform registrars catch their own probe exceptions; this is
+            // defensive only. Treat a throw as "not registered" so the user can
+            // retry the register path.
+            _logger.LogWarning(ex, "IsRegistered probe threw; treating as not registered.");
+            IsNxmRegistered = false;
+        }
+
+        OnPropertyChanged(nameof(NxmStatusText));
+        OnPropertyChanged(nameof(NxmActionLabel));
+        OnPropertyChanged(nameof(NxmActionTooltip));
+    }
+
+    // ---- live state -------------------------------------------------------
 
     /// <summary>
     /// Re-resolves the localized strings (window title, labels, status line)
@@ -515,9 +656,12 @@ public partial class IntegrationsViewModel : ObservableObject
         OnPropertyChanged(nameof(AutoUpdateHeader));
         OnPropertyChanged(nameof(AutoUpdateEnabledLabel));
         OnPropertyChanged(nameof(AutoUpdateIntervalLabel));
-        OnPropertyChanged(nameof(TooltipRunning));
         OnPropertyChanged(nameof(ShowApiKeyTooltip));
         OnPropertyChanged(nameof(HideApiKeyTooltip));
+        OnPropertyChanged(nameof(NxmSectionHeader));
+        OnPropertyChanged(nameof(NxmStatusText));
+        OnPropertyChanged(nameof(NxmActionLabel));
+        OnPropertyChanged(nameof(NxmActionTooltip));
         // The status line embeds a localized format; re-resolve it by re-applying
         // the current state. Fire-and-forget: a culture flip mid-flight is rare,
         // and the next state-resolve will pick up the new culture.
@@ -526,12 +670,11 @@ public partial class IntegrationsViewModel : ObservableObject
 
     /// <summary>
     /// Detaches the VM's subscriptions so the short-lived dialog VM is
-    /// collectable after its window closes (the session + localization service
-    /// are singletons that outlive the dialog).
+    /// collectable after its window closes (the localization service is a
+    /// singleton that outlives the dialog).
     /// </summary>
     public void Detach()
     {
-        _session.PropertyChanged -= OnSessionPropertyChanged;
         _localization.PropertyChanged -= OnCultureChanged;
     }
 }
