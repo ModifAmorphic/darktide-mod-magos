@@ -25,7 +25,7 @@ unmodified).
 ## Status
 
 Initial releases are published on the
-[releases page](https://github.com/ModifAmorphic/darktide-mod-magos/releases) and
+[releases page](https://github.com/ModifAmorphic/darktide-modificus-curator/releases) and
 are marked as prereleases while the release pipeline settles. To build from
 source instead, see [`src/README.md`](src/README.md). The bundled runtime
 artifacts (launcher, shell DLL, mod loader) come from
@@ -49,8 +49,8 @@ manager" links work without any extra setup.
 
 ### Windows
 
-1. Download `<tag>-windows-x64.zip` from the
-   [latest release](https://github.com/ModifAmorphic/darktide-mod-magos/releases).
+ 1. Download `<tag>-windows-x64.zip` from the
+    [latest release](https://github.com/ModifAmorphic/darktide-modificus-curator/releases).
 2. Install the [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
    if you do not already have it.
 3. Extract the zip into `%LOCALAPPDATA%\Modificus Curator\` (create the folder
@@ -62,7 +62,7 @@ manager" links work without any extra setup.
 One line, installs the latest release (prereleases included):
 
 ```sh
-curl https://raw.githubusercontent.com/ModifAmorphic/darktide-mod-magos/main/scripts/install.sh | sh
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh
 ```
 
 The script installs into `~/.local/share/Modificus Curator/`, replaces only the
@@ -73,8 +73,8 @@ executable path to run instead.
 
 Manual install:
 
-1. Download `<tag>-linux-x64.tar.gz` from the
-   [latest release](https://github.com/ModifAmorphic/darktide-mod-magos/releases).
+ 1. Download `<tag>-linux-x64.tar.gz` from the
+    [latest release](https://github.com/ModifAmorphic/darktide-modificus-curator/releases).
 2. Extract it into `~/.local/share/Modificus Curator/` (create the folder if it
    does not exist), for example:
    `tar -xzf <tag>-linux-x64.tar.gz -C "$HOME/.local/share/Modificus Curator/"`.

@@ -263,7 +263,7 @@ jobs:
           }
 
       - name: Write workflow summary
-        if: always()
+        if: always() && steps.resolve_inputs.outcome == 'success'
         shell: bash
         env:
           RESOLVE_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
@@ -335,7 +335,7 @@ jobs:
 
       - name: Determine if issue is needed
         id: check
-        if: always()
+        if: always() && steps.resolve_inputs.outcome == 'success'
         shell: bash
         env:
           DEFENDER_EXIT: ${{ steps.defender_scan.outputs.exit_code }}
@@ -397,7 +397,7 @@ jobs:
 
       - name: Check for existing open issue
         id: check_existing
-        if: always() && steps.check.outputs.needs_issue == 'true'
+        if: always() && steps.check.outputs.needs_issue == 'true' && steps.resolve_inputs.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -418,7 +418,7 @@ jobs:
           fi
 
       - name: Create GitHub issue
-        if: always() && steps.check.outputs.needs_issue == 'true' && steps.check_existing.outputs.existing_issue == ''
+        if: always() && steps.check.outputs.needs_issue == 'true' && steps.check_existing.outputs.existing_issue == '' && steps.resolve_inputs.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
