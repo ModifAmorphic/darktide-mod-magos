@@ -328,9 +328,10 @@ scripts/            install.sh: the Linux installer served from raw/main (instal
                     in place of the download, for offline extraction tests).
 .github/workflows/  curator-build (the PR gate: an Ubuntu-only format job
                     auto-commits `dotnet format` as `style: dotnet format [skip ci]`
-                    for same-repo PRs, verify-only for fork PRs and push to main;
+                    for same-repo PRs, verify-only for fork PRs and workflow_dispatch;
                     build + test on a Windows/Ubuntu matrix depends on the format
-                    job; no artifact upload),
+                    job; no artifact upload; release-please-only PRs are ignored via
+                    paths-ignore; there is intentionally no push trigger),
                     release (release-please cuts the release, then per-target jobs publish
                     framework-dependent unsigned bundles as <tag>-<platform>-x64.{zip,tar.gz}
                     with a top-level app/ + relay/ layout, bundle the latest Relay release

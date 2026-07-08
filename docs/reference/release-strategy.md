@@ -15,15 +15,9 @@ product:
   `include-component-in-tag: false`, and `prerelease: true`. Tags follow the
   `v0.1.0` style (no component prefix), and GitHub releases are marked as
   prereleases (no suffix-style `v0.1.0-rc.1` tags).
-- `.release-please-manifest.json` is the source-of-truth version. It ships as
-  bootstrap `{ ".": "0.0.0" }` and stays there until the first release lands;
-  there is no manifest seeding (for example `0.0.1`) and no persistent
-  `release-as` in the config.
-- The first release is cut at `0.1.0` via a one-time `Release-As: 0.1.0`
-  directive in the commit body (or PR description footer) of the commit that
-  lands on `main`. This is release-please's supported mechanism for overriding
-  the next version a single time; afterwards release-please derives versions
-  from conventional commits as normal.
+- `.release-please-manifest.json` is the source-of-truth version. The first
+  release (v0.1.0) has already shipped, so the manifest now reflects the
+  current release version. Steady-state is derived from conventional commits.
 - No Curator version is paired to a Relay version. Any Curator version is
   expected to work with the latest Relay.
 
@@ -121,7 +115,7 @@ downloads the artifact would attest to nothing useful.
 Anyone can verify an asset:
 
 ```
-gh attestation verify <file> --repo ModifAmorphic/darktide-mod-magos
+gh attestation verify <file> --repo ModifAmorphic/darktide-modificus-curator
 ```
 
 What attestation does not do: bypass SmartScreen or Defender, help
@@ -193,13 +187,17 @@ accumulated download reputation. Everything else is either a CI signal
 
 ## PR gate
 
-`.github/workflows/curator-build.yml` runs on `push` and `pull_request`
-against `main` (plus `workflow_dispatch`).
+`.github/workflows/curator-build.yml` runs on `pull_request` targeting `main`
+(and `workflow_dispatch`). There is intentionally no `push` trigger; the release
+workflow handles push-to-main.
 
 - **Format job** (Ubuntu only): same-repo PRs run `dotnet format` and
   auto-commit any changes as `style: dotnet format [skip ci]`. Fork PRs and
-  pushes to `main` run `dotnet format --verify-no-changes` (no commit).
+  `workflow_dispatch` invocations run `dotnet format --verify-no-changes` (no commit).
 - **Build + test matrix** (Windows + Ubuntu), depends on the format job.
+- **paths-ignore** skips release-please's bot-authored release PRs (they only
+  touch `CHANGELOG.md` and `.release-please-manifest.json`), so those do not
+  run the build gate.
 - No `actions/upload-artifact` step. Release assets are produced by the
   release workflow.
 
@@ -208,7 +206,7 @@ against `main` (plus `workflow_dispatch`).
 `scripts/install.sh` is served from `raw/main`:
 
 ```sh
-curl https://raw.githubusercontent.com/ModifAmorphic/darktide-mod-magos/main/scripts/install.sh | sh
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh
 ```
 
 The script installs the latest release visible to an unauthenticated request
@@ -253,17 +251,25 @@ rehearsal is temporary and leaves `main` untouched:
    `target-branch` in `.release-please-config.json`, and point the release
    workflow's `on.push.branches` (and `workflow_dispatch`) at the same target
    branch.
-3. Push the branch and land a conventional commit whose body carries
-   `Release-As: 0.1.0` so release-please opens a `0.1.0` release PR against
-   the sandbox branch.
-4. Merge the release PR on the sandbox branch and let the release workflow
+3. For a fresh repo (not applicable to Curator, which has already shipped
+   v0.1.0), use a one-shot config-level `release-as` override in
+   `.release-please-config.json` to force the first release version, then remove
+   it immediately after shipping. Curator has already passed this bootstrap
+   phase.
+4. Push the branch and land a conventional commit so release-please opens a
+   release PR against the sandbox branch.
+5. Merge the release PR on the sandbox branch and let the release workflow
    run end to end: release-please cuts the release, the Windows + Linux
    archives are built and attested, and the AV/VT dispatch fires.
-5. Inspect the produced release, archives, attestations, and AV/VT result.
-6. Delete the sandbox release and its tag.
-7. Strip the sandbox settings (revert `target-branch` and the workflow
+6. Inspect the produced release, archives, attestations, and AV/VT result.
+7. Delete the sandbox release and its tag.
+8. Strip the sandbox settings (revert `target-branch` and the workflow
    trigger-branch changes) before opening the PR to `main`, so the production
    config stays normal and persistent.
+
+To test `curator-post-release-av.yml` after it exists on the default branch:
+- Run it via `workflow_dispatch` against an existing release, providing the
+   `tag_name` and `windows_asset` inputs manually.
 
 This is an operator rehearsal procedure, not part of the user-facing release
 path.

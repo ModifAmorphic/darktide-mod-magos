@@ -5,7 +5,7 @@
 # default app-data root, adds a launcher symlink in ~/.local/bin, and prints
 # the next steps. Served from raw/main:
 #
-#   curl https://raw.githubusercontent.com/ModifAmorphic/darktide-mod-magos/main/scripts/install.sh | sh
+#   curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh
 #
 # The script always installs the latest release visible to an unauthenticated
 # request (drafts are excluded by the API). Users wanting a specific release
@@ -19,7 +19,7 @@
 #                             to exercise extraction against a fake archive)
 set -eu
 
-REPO="${CURATOR_REPO:-ModifAmorphic/darktide-mod-magos}"
+REPO="${CURATOR_REPO:-ModifAmorphic/darktide-modificus-curator}"
 ASSET_SUFFIX="-linux-x64.tar.gz"
 UA="modificus-curator-installer"
 
