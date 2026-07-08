@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.2.0...v0.2.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **release:** strip PDBs from publish output ([#63](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/63)) ([b9d402c](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/b9d402cfc3d2bed684af4fc7e605f96aaf11eed4))
+
 ## [0.2.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.1.2...v0.2.0) (2026-07-08)
 
 
