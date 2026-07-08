@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.1.2...v0.2.0) (2026-07-08)
+
+
+### Features
+
+* **nxm:** require explicit handler registration ([#60](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/60)) ([4c88e44](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/4c88e441be83807799a11dd0db415e85850f3e27))
+
 ## [0.1.2](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.1.1...v0.1.2) (2026-07-08)
 
 
