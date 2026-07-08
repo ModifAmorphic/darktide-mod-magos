@@ -1,23 +1,33 @@
 # Modificus Curator: PR build gate: auto-format (same-repo PRs only), build, test.
 #
-# Runs on push/PR to main. Does not publish or upload artifacts;
-# those are handled by the release workflow.
+# There is intentionally no `push:` trigger here. The release workflow
+# (.github/workflows/release.yml) runs on push to main. This workflow is the
+# trust gate for merges.
 #
 # Format behavior:
 # - On pull_request from same repo: checkout PR head, run dotnet format, commit/push if changes
 # - On pull_request from fork: run format in no-commit mode, skip push (forks cannot be auto-formatted)
-# - On push to main: no auto-commit (format verification only if desired)
+# - On workflow_dispatch: verify-only mode (no auto-commit)
+#
+# paths-ignore skips release-please's bot-authored release PRs (they only touch
+# version/changelog files). Without this, those GITHUB_TOKEN-authored PRs would
+# run the build gate unnecessarily.
 name: curator-build
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'CHANGELOG.md'
+      - '.release-please-manifest.json'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   format:
@@ -59,13 +69,13 @@ jobs:
             echo "No formatting changes needed"
           fi
 
-      - name: Format check only (fork PR or push to main)
-        if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+      - name: Format check only (fork PR or workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "Fork PR detected - running format in no-commit mode only"
           else
-            echo "Push to main detected - running format verification"
+            echo "Manual workflow_dispatch - running format verification"
           fi
           dotnet format modificus-curator.sln --verify-no-changes
 

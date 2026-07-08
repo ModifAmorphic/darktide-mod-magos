@@ -80,13 +80,16 @@ dotnet test src/modificus-curator.sln --configuration Release
 
 ## CI and releases
 
-The PR gate (`.github/workflows/curator-build.yml`) runs an Ubuntu-only
+The PR gate (`.github/workflows/curator-build.yml`) runs on `pull_request`
+targeting `main` (and `workflow_dispatch`). There is intentionally no `push`
+trigger; the release workflow handles push-to-main. It runs an Ubuntu-only
 format job, then `dotnet build` and `dotnet test` on a Windows + Ubuntu
 matrix that depends on the format job. For same-repo PRs the format job
 runs `dotnet format` and commits any changes as
-`style: dotnet format [skip ci]`; for fork PRs and pushes to `main` it
-runs `dotnet format --verify-no-changes`. No build artifact is uploaded;
-release assets are produced by the release workflow instead.
+`style: dotnet format [skip ci]`; for fork PRs and `workflow_dispatch` it
+runs `dotnet format --verify-no-changes`. `paths-ignore` skips release-please's
+bot-authored release PRs. No build artifact is uploaded; release assets are
+produced by the release workflow instead.
 
 Releases are cut by `release-please` (`.release-please-config.json` +
 `.release-please-manifest.json` at the repo root; tag style `v0.1.0`, no
@@ -96,7 +99,7 @@ latest Modificus Relay release (prereleases included), and uploads a GitHub
 Artifact Attestation against each asset. Verify an asset's provenance with:
 
 ```
-gh attestation verify <file> --repo ModifAmorphic/darktide-mod-magos
+gh attestation verify <file> --repo ModifAmorphic/darktide-modificus-curator
 ```
 
 The release archive layout is two top-level folders, extracted into the default

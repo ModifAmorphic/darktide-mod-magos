@@ -46,21 +46,35 @@ jobs:
           INPUT_WINDOWS_ASSET: ${{ inputs.windows_asset }}
         run: |
           if ('${{ github.event_name }}' -eq 'repository_dispatch') {
-            echo "tag_name=$env:CLIENT_TAG_NAME" >> $env:GITHUB_OUTPUT
-            echo "windows_asset=$env:CLIENT_WINDOWS_ASSET" >> $env:GITHUB_OUTPUT
+            $tag = $env:CLIENT_TAG_NAME
+            $asset = $env:CLIENT_WINDOWS_ASSET
           } else {
-            echo "tag_name=$env:INPUT_TAG_NAME" >> $env:GITHUB_OUTPUT
-            echo "windows_asset=$env:INPUT_WINDOWS_ASSET" >> $env:GITHUB_OUTPUT
+            $tag = $env:INPUT_TAG_NAME
+            $asset = $env:INPUT_WINDOWS_ASSET
           }
+
+          if ([string]::IsNullOrEmpty($tag)) {
+            Write-Error "tag_name is empty - cannot proceed"
+            exit 1
+          }
+          if ([string]::IsNullOrEmpty($asset)) {
+            Write-Error "windows_asset is empty - cannot proceed"
+            exit 1
+          }
+
+          echo "tag_name=$tag" >> $env:GITHUB_OUTPUT
+          echo "windows_asset=$asset" >> $env:GITHUB_OUTPUT
 
       - name: Download Windows release asset
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           INPUT_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
           INPUT_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
         run: |
           gh release download "$INPUT_TAG_NAME" \
+            --repo "$GH_REPO" \
             --pattern "$INPUT_WINDOWS_ASSET" \
             --dir .
 
@@ -386,6 +400,7 @@ jobs:
         if: always() && steps.check.outputs.needs_issue == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RESOLVE_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
         shell: bash
         run: |
@@ -393,7 +408,7 @@ jobs:
           TITLE="AV/VT scan alert for release $TAG"
 
           # Search for existing open issues with this title using gh --jq with env.TITLE
-          ISSUES=$(TITLE="$TITLE" gh issue list --search "$TITLE" --state open --json number,title --jq '.[] | select(.title == env.TITLE) | .number')
+          ISSUES=$(TITLE="$TITLE" gh issue list --repo "$GH_REPO" --search "$TITLE" --state open --json number,title --jq '.[] | select(.title == env.TITLE) | .number')
 
           if [ -n "$ISSUES" ]; then
             echo "existing_issue=$ISSUES" >> $GITHUB_OUTPUT
@@ -406,6 +421,7 @@ jobs:
         if: always() && steps.check.outputs.needs_issue == 'true' && steps.check_existing.outputs.existing_issue == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RESOLVE_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
           RESOLVE_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
           CHECK_REASON: ${{ steps.check.outputs.reason }}
@@ -517,10 +533,10 @@ jobs:
 
           1. Review the scan results above
           2. If this is a false positive, submit the file to the affected vendor:
-             - Microsoft: https://www.microsoft.com/en-us/wdsi/filesubmission
-             - For other vendors, visit their respective false-positive submission portals
+              - Microsoft: https://www.microsoft.com/en-us/wdsi/filesubmission
+              - For other vendors, visit their respective false-positive submission portals
           3. Update this issue with the submission status and any responses received
           EOF
 
-          gh issue create --title "$TITLE" --body-file issue.md
+          gh issue create --repo "$GH_REPO" --title "$TITLE" --body-file issue.md
           echo "Created GitHub issue for AV/VT scan alert"

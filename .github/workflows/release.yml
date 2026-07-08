@@ -180,8 +180,8 @@ jobs:
           subject-path: src/${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz
 
   dispatch-av-vt:
-    needs: [build-windows, build-linux]
-    if: ${{ always() && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' }}
+    needs: [release-please, build-windows, build-linux]
+    if: ${{ always() && needs.release-please.result == 'success' && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' && needs.release-please.outputs.releases_created == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
