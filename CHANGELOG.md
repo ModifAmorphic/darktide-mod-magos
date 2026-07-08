@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.1.0...v0.1.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **ci:** align release workflows with Relay pattern ([#52](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/52)) ([c55554c](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/c55554c1e1200bba64c51b6fe17bcf6ac1388abe))
+
 ## 1.0.0 (2026-07-08)
 
 
