@@ -39,22 +39,29 @@ jobs:
     steps:
       - name: Resolve inputs
         id: resolve_inputs
+        env:
+          CLIENT_TAG_NAME: ${{ github.event.client_payload.tag_name }}
+          CLIENT_WINDOWS_ASSET: ${{ github.event.client_payload.windows_asset }}
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+          INPUT_WINDOWS_ASSET: ${{ inputs.windows_asset }}
         run: |
           if ('${{ github.event_name }}' -eq 'repository_dispatch') {
-            echo "tag_name=${{ github.event.client_payload.tag_name }}" >> $env:GITHUB_OUTPUT
-            echo "windows_asset=${{ github.event.client_payload.windows_asset }}" >> $env:GITHUB_OUTPUT
+            echo "tag_name=$env:CLIENT_TAG_NAME" >> $env:GITHUB_OUTPUT
+            echo "windows_asset=$env:CLIENT_WINDOWS_ASSET" >> $env:GITHUB_OUTPUT
           } else {
-            echo "tag_name=${{ inputs.tag_name }}" >> $env:GITHUB_OUTPUT
-            echo "windows_asset=${{ inputs.windows_asset }}" >> $env:GITHUB_OUTPUT
+            echo "tag_name=$env:INPUT_TAG_NAME" >> $env:GITHUB_OUTPUT
+            echo "windows_asset=$env:INPUT_WINDOWS_ASSET" >> $env:GITHUB_OUTPUT
           }
 
       - name: Download Windows release asset
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
+          INPUT_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
         run: |
-          gh release download "${{ steps.resolve_inputs.outputs.tag_name }}" \
-            --pattern "${{ steps.resolve_inputs.outputs.windows_asset }}" \
+          gh release download "$INPUT_TAG_NAME" \
+            --pattern "$INPUT_WINDOWS_ASSET" \
             --dir .
 
       - name: Locate Microsoft Defender
@@ -95,12 +102,16 @@ jobs:
       - name: Scan with Microsoft Defender
         id: defender_scan
         continue-on-error: true
+        env:
+          INPUT_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
+          LOCATE_DEFENDER_FOUND: ${{ steps.locate_defender.outputs.found }}
+          LOCATE_DEFENDER_PATH: ${{ steps.locate_defender.outputs.path }}
         run: |
-          $asset = "${{ steps.resolve_inputs.outputs.windows_asset }}"
+          $asset = $env:INPUT_WINDOWS_ASSET
           $outputFile = "defender_output.txt"
 
-          if ('${{ steps.locate_defender.outputs.found }}' -eq 'true') {
-            $mpcmdrun = "${{ steps.locate_defender.outputs.path }}"
+          if ($env:LOCATE_DEFENDER_FOUND -eq 'true') {
+            $mpcmdrun = $env:LOCATE_DEFENDER_PATH
             & $mpcmdrun -Scan -ScanType 3 -File $asset -DisableRemediation > $outputFile 2>&1
             $exitCode = $LASTEXITCODE
             echo "exit_code=$exitCode" >> $env:GITHUB_OUTPUT
@@ -130,8 +141,17 @@ jobs:
         continue-on-error: true
         env:
           VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          INPUT_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
         run: |
-          $asset = "${{ steps.resolve_inputs.outputs.windows_asset }}"
+          function Write-GitHubOutput {
+            param([string]$Name, [string]$Value)
+            $delimiter = [Guid]::NewGuid().ToString()
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "$Name<<$delimiter"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value $Value
+            Add-Content -Path $env:GITHUB_OUTPUT -Value $delimiter
+          }
+
+          $asset = $env:INPUT_WINDOWS_ASSET
           $assetSize = (Get-Item $asset).Length
           $apiKey = $env:VT_API_KEY
 
@@ -157,7 +177,7 @@ jobs:
           } catch {
             $errorMsg = $_.Exception.Message
             echo "error=true" >> $env:GITHUB_OUTPUT
-            echo "error_message=$errorMsg" >> $env:GITHUB_OUTPUT
+            Write-GitHubOutput -Name "error_message" -Value $errorMsg
             Write-Error "VirusTotal submission failed: $errorMsg"
             throw
           }
@@ -168,10 +188,19 @@ jobs:
         continue-on-error: true
         env:
           VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          INPUT_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
         run: |
+          function Write-GitHubOutput {
+            param([string]$Name, [string]$Value)
+            $delimiter = [Guid]::NewGuid().ToString()
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "$Name<<$delimiter"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value $Value
+            Add-Content -Path $env:GITHUB_OUTPUT -Value $delimiter
+          }
+
           $analysisId = $env:analysis_id
           $apiKey = $env:VT_API_KEY
-          $maxWait = 300 # 5 minutes
+          $maxWait = 1800 # 30 minutes
           $interval = 10
           $elapsed = 0
 
@@ -190,7 +219,7 @@ jobs:
                 echo "suspicious=$suspicious" >> $env:GITHUB_OUTPUT
 
                 # Compute SHA256 and construct permalink
-                $asset = "${{ steps.resolve_inputs.outputs.windows_asset }}"
+                $asset = $env:INPUT_WINDOWS_ASSET
                 $sha256 = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
                 $permalink = "https://www.virustotal.com/gui/file/$sha256"
                 echo "permalink=$permalink" >> $env:GITHUB_OUTPUT
@@ -214,7 +243,7 @@ jobs:
           } catch {
             $errorMsg = $_.Exception.Message
             echo "error=true" >> $env:GITHUB_OUTPUT
-            echo "error_message=$errorMsg" >> $env:GITHUB_OUTPUT
+            Write-GitHubOutput -Name "error_message" -Value $errorMsg
             Write-Error "VirusTotal polling failed: $errorMsg"
             throw
           }
@@ -223,18 +252,29 @@ jobs:
         if: always()
         shell: bash
         env:
+          RESOLVE_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
+          RESOLVE_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
+          DEFENDER_EXIT: ${{ steps.defender_scan.outputs.exit_code }}
+          VT_ENABLED: ${{ steps.vt_check.outputs.enabled }}
+          VT_ERROR: ${{ steps.vt_submit.outputs.error }}
+          VT_POLL_ERROR: ${{ steps.vt_poll.outputs.error }}
+          VT_PERMALINK: ${{ steps.vt_poll.outputs.permalink }}
+          VT_MALICIOUS: ${{ steps.vt_poll.outputs.malicious }}
+          VT_SUSPICIOUS: ${{ steps.vt_poll.outputs.suspicious }}
           VT_SUBMIT_ERROR_MESSAGE: ${{ steps.vt_submit.outputs.error_message }}
           VT_POLL_ERROR_MESSAGE: ${{ steps.vt_poll.outputs.error_message }}
         run: |
-          TAG="${{ steps.resolve_inputs.outputs.tag_name }}"
-          ASSET="${{ steps.resolve_inputs.outputs.windows_asset }}"
-          DEFENDER_EXIT="${{ steps.defender_scan.outputs.exit_code }}"
-          VT_ENABLED="${{ steps.vt_check.outputs.enabled }}"
-          VT_ERROR="${{ steps.vt_submit.outputs.error }}"
-          VT_POLL_ERROR="${{ steps.vt_poll.outputs.error }}"
-          VT_PERMALINK="${{ steps.vt_poll.outputs.permalink }}"
-          VT_MALICIOUS="${{ steps.vt_poll.outputs.malicious }}"
-          VT_SUSPICIOUS="${{ steps.vt_poll.outputs.suspicious }}"
+          TAG="$RESOLVE_TAG_NAME"
+          ASSET="$RESOLVE_WINDOWS_ASSET"
+          DEFENDER_EXIT="$DEFENDER_EXIT"
+          VT_ENABLED="$VT_ENABLED"
+          VT_ERROR="$VT_ERROR"
+          VT_POLL_ERROR="$VT_POLL_ERROR"
+          VT_PERMALINK="$VT_PERMALINK"
+          VT_MALICIOUS="$VT_MALICIOUS"
+          VT_SUSPICIOUS="$VT_SUSPICIOUS"
+          VT_SUBMIT_ERROR_MESSAGE="$VT_SUBMIT_ERROR_MESSAGE"
+          VT_POLL_ERROR_MESSAGE="$VT_POLL_ERROR_MESSAGE"
 
           echo "# Post-Release AV/VT Scan Results" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -283,12 +323,20 @@ jobs:
         id: check
         if: always()
         shell: bash
+        env:
+          DEFENDER_EXIT: ${{ steps.defender_scan.outputs.exit_code }}
+          VT_ENABLED: ${{ steps.vt_check.outputs.enabled }}
+          VT_ERROR: ${{ steps.vt_submit.outputs.error }}
+          VT_POLL_ERROR: ${{ steps.vt_poll.outputs.error }}
+          VT_MALICIOUS: ${{ steps.vt_poll.outputs.malicious }}
+          VT_SUSPICIOUS: ${{ steps.vt_poll.outputs.suspicious }}
+          VT_THRESHOLD_ENGINES: ${{ env.VT_THRESHOLD_ENGINES }}
         run: |
           NEEDS_ISSUE="false"
           REASON=""
 
           # Check if Defender scan failed or was not performed
-          DEFENDER_EXIT="${{ steps.defender_scan.outputs.exit_code }}"
+          DEFENDER_EXIT="$DEFENDER_EXIT"
           if [ -z "$DEFENDER_EXIT" ] || [ "$DEFENDER_EXIT" != "0" ]; then
             NEEDS_ISSUE="true"
             if [ "$DEFENDER_EXIT" = "missing" ]; then
@@ -299,10 +347,10 @@ jobs:
           fi
 
           # Check VT errors
-          VT_ENABLED="${{ steps.vt_check.outputs.enabled }}"
+          VT_ENABLED="$VT_ENABLED"
           if [ "$VT_ENABLED" = "true" ]; then
-            VT_ERROR="${{ steps.vt_submit.outputs.error }}"
-            VT_POLL_ERROR="${{ steps.vt_poll.outputs.error }}"
+            VT_ERROR="$VT_ERROR"
+            VT_POLL_ERROR="$VT_POLL_ERROR"
             if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
               NEEDS_ISSUE="true"
               if [ -n "$REASON" ]; then
@@ -313,9 +361,9 @@ jobs:
             fi
 
             # Check VT threshold
-            MALICIOUS="${{ steps.vt_poll.outputs.malicious }}"
-            SUSPICIOUS="${{ steps.vt_poll.outputs.suspicious }}"
-            THRESHOLD="${{ env.VT_THRESHOLD_ENGINES }}"
+            MALICIOUS="$VT_MALICIOUS"
+            SUSPICIOUS="$VT_SUSPICIOUS"
+            THRESHOLD="$VT_THRESHOLD_ENGINES"
 
             if [ -n "$MALICIOUS" ] && [ -n "$SUSPICIOUS" ]; then
               TOTAL=$((MALICIOUS + SUSPICIOUS))
@@ -338,13 +386,14 @@ jobs:
         if: always() && steps.check.outputs.needs_issue == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESOLVE_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
         shell: bash
         run: |
-          TAG="${{ steps.resolve_inputs.outputs.tag_name }}"
+          TAG="$RESOLVE_TAG_NAME"
           TITLE="AV/VT scan alert for release $TAG"
 
-          # Search for existing open issues with this title
-          ISSUES=$(gh issue list --search "$TITLE" --state open --json number,title --jq '.[] | select(.title == "'"$TITLE"'") | .number')
+          # Search for existing open issues with this title using gh --jq with env.TITLE
+          ISSUES=$(TITLE="$TITLE" gh issue list --search "$TITLE" --state open --json number,title --jq '.[] | select(.title == env.TITLE) | .number')
 
           if [ -n "$ISSUES" ]; then
             echo "existing_issue=$ISSUES" >> $GITHUB_OUTPUT
@@ -357,18 +406,33 @@ jobs:
         if: always() && steps.check.outputs.needs_issue == 'true' && steps.check_existing.outputs.existing_issue == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VT_SUBMIT_ERROR_MESSAGE: ${{ steps.vt_submit.outputs.error_message }}
-          VT_POLL_ERROR_MESSAGE: ${{ steps.vt_poll.outputs.error_message }}
+          RESOLVE_TAG_NAME: ${{ steps.resolve_inputs.outputs.tag_name }}
+          RESOLVE_WINDOWS_ASSET: ${{ steps.resolve_inputs.outputs.windows_asset }}
+          CHECK_REASON: ${{ steps.check.outputs.reason }}
+          DEFENDER_EXIT: ${{ steps.defender_scan.outputs.exit_code }}
+          VT_ENABLED: ${{ steps.vt_check.outputs.enabled }}
+          VT_ERROR: ${{ steps.vt_submit.outputs.error }}
+          VT_POLL_ERROR: ${{ steps.vt_poll.outputs.error }}
           VT_POLL_PERMALINK: ${{ steps.vt_poll.outputs.permalink }}
           VT_POLL_MALICIOUS: ${{ steps.vt_poll.outputs.malicious }}
           VT_POLL_SUSPICIOUS: ${{ steps.vt_poll.outputs.suspicious }}
+          VT_SUBMIT_ERROR_MESSAGE: ${{ steps.vt_submit.outputs.error_message }}
+          VT_POLL_ERROR_MESSAGE: ${{ steps.vt_poll.outputs.error_message }}
         shell: bash
         run: |
-          TAG="${{ steps.resolve_inputs.outputs.tag_name }}"
-          ASSET="${{ steps.resolve_inputs.outputs.windows_asset }}"
+          TAG="$RESOLVE_TAG_NAME"
+          ASSET="$RESOLVE_WINDOWS_ASSET"
           TITLE="AV/VT scan alert for release $TAG"
-          REASON="${{ steps.check.outputs.reason }}"
-          DEFENDER_EXIT="${{ steps.defender_scan.outputs.exit_code }}"
+          REASON="$CHECK_REASON"
+          DEFENDER_EXIT="$DEFENDER_EXIT"
+          VT_ENABLED="$VT_ENABLED"
+          VT_ERROR="$VT_ERROR"
+          VT_POLL_ERROR="$VT_POLL_ERROR"
+          VT_POLL_PERMALINK="$VT_POLL_PERMALINK"
+          VT_POLL_MALICIOUS="$VT_POLL_MALICIOUS"
+          VT_POLL_SUSPICIOUS="$VT_POLL_SUSPICIOUS"
+          VT_SUBMIT_ERROR_MESSAGE="$VT_SUBMIT_ERROR_MESSAGE"
+          VT_POLL_ERROR_MESSAGE="$VT_POLL_ERROR_MESSAGE"
 
           # Create issue body file
           cat > issue.md <<'EOF'
@@ -404,10 +468,7 @@ jobs:
           sed -i '/DEFENDER_OUTPUT_PLACEHOLDER/d' issue.md
 
           # Append VirusTotal section if enabled
-          VT_ENABLED="${{ steps.vt_check.outputs.enabled }}"
           if [ "$VT_ENABLED" = "true" ]; then
-            VT_ERROR="${{ steps.vt_submit.outputs.error }}"
-            VT_POLL_ERROR="${{ steps.vt_poll.outputs.error }}"
             if [ "$VT_ERROR" = "true" ] || [ "$VT_POLL_ERROR" = "true" ]; then
               cat >> issue.md <<'EOF'
 

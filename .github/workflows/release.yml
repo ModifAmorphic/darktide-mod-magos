@@ -17,7 +17,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  issues: write
 
 jobs:
   release-please:
@@ -147,8 +146,8 @@ jobs:
         run: |
           VERSION="${{ needs.release-please.outputs.version }}"
           VERSION="${VERSION#v}"
-           dotnet publish ui --configuration Release --output stage/app \
-             -p:Version="$VERSION" -p:InformationalVersion="$VERSION"
+          dotnet publish ui --configuration Release --output stage/app \
+            -p:Version="$VERSION" -p:InformationalVersion="$VERSION"
       - name: Publish NXM handler (AOT linux-x64)
         run: dotnet publish nxm-handler --configuration Release --runtime linux-x64 --output stage/app
       - name: Fetch latest Relay release
