@@ -143,33 +143,35 @@ The job downloads the published Windows asset and scans those exact bytes
   what a consumer Windows 11 box sees.
 - **VirusTotal**: required, gated on the `VIRUSTOTAL_API_KEY` repo secret.
   The workflow fails if the secret is not configured. Submits the zip via the
-  v3 API (`POST /api/v3/files`, or the large-upload URL for files over 32MB),
-  polls `GET /api/v3/analyses/{id}` every 20 seconds (first poll delayed by 20
-  seconds) until `status: completed`, then reads the multi-engine report. The
-  20-second interval and first-poll delay respect the VirusTotal public API
-  quota (4 requests/minute), especially for large uploads that require an
-  upload-url lookup. The VT permalink is posted to the workflow run summary.
-- **Issue creation**: opens a GitHub issue with the title "AV detection alert
-  for release <tag>" ONLY when a detection occurs. No issues are created for
-  tool errors, missing scanner tools, Defender command failures, VirusTotal
-  API errors, VirusTotal timeouts, or missing `VIRUSTOTAL_API_KEY`. The issue
-  body carries the release tag, the Defender output, the VT permalink, and a
-  small playbook with the Microsoft Security Intelligence submission portal
-  link (https://www.microsoft.com/en-us/wdsi/filesubmission) and a note that
-  non-Microsoft engines have their own developer portals. The issue deduplicates
-  against an existing open issue for the same title.
+  pinned Marketplace action `crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2`
+  with `request_rate: 4` to respect the VirusTotal public API quota (4 requests/minute).
+  The action handles large uploads automatically by using the `/files/upload_url`
+  endpoint for files 32MB or larger. It returns analysis links in the `analysis` output.
+  The workflow does not poll the VirusTotal API for final results or verdicts.
+- **Issue creation**: opens a GitHub issue with the title "AV manual review
+  for release <tag>" when VirusTotal upload succeeds and returns analysis links.
+  The issue is created regardless of VirusTotal detection results, since CI does not
+  poll the API to determine them. The issue body carries the release tag, the asset
+  name, the Defender output, the VirusTotal analysis links, and a note that the
+  operator should open the links and review the results manually. The issue deduplicates
+  against an existing open issue for the same title. No issue is created if VirusTotal
+  upload fails or returns no analysis links.
 
 The workflow fails (red) when:
 - Defender status is `tool_error` (scan command failed or Defender unavailable)
 - Defender status is `detection` (threat detected)
 - Defender status is empty (scan did not run)
 - `VIRUSTOTAL_API_KEY` is not configured
-- VirusTotal submission or polling errors occur
-- VirusTotal detection count meets or exceeds the threshold
+- VirusTotal action upload fails
+- VirusTotal analysis output is missing
+- A required GitHub issue for manual review could not be created, and no
+  existing open issue matched
 
-The workflow passes (green) ONLY when both scanners run successfully with no
-detections. The workflow is still post-release and non-gating for publication,
-but red means the scan signal is invalid or a detection occurred.
+The workflow passes (green) when both scanners run successfully with no Defender
+detections and VirusTotal returns analysis links. Note that the workflow does not
+fail on VirusTotal detections, since CI does not poll the API to know them. The
+workflow is still post-release and non-gating for publication, but red means the
+scan signal is invalid or VirusTotal upload failed.
 
 ### Why AV scanning exists
 
