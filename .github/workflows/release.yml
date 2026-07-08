@@ -188,7 +188,7 @@ jobs:
       contents: write
     steps:
       - name: Dispatch repository event for AV/VT scan
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |

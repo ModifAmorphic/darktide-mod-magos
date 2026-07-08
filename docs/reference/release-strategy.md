@@ -40,6 +40,14 @@ and the AV/VT dispatch in a single workflow. In-workflow chaining is used
 because events created with `GITHUB_TOKEN` do not trigger other workflows, so
 a `release: published` trigger would never fire.
 
+Repository Actions settings must allow the workflow token to write and to
+create pull requests, because release-please creates and updates release PRs
+with `GITHUB_TOKEN`. In GitHub, this is **Actions > General > Workflow
+permissions > Read and write permissions** plus **Allow GitHub Actions to
+create and approve pull requests**. The workflow still declares least-privilege
+job permissions, so this setting only makes those declared permissions
+available to the token.
+
 Jobs:
 
 1. **release-please** runs on `ubuntu-latest` against
