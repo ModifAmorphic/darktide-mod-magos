@@ -53,7 +53,8 @@ Jobs:
    requires a Windows runner); the Linux leg runs on `ubuntu-latest`. Each leg:
    - Sets up .NET 10.
    - Publishes the Curator UI framework-dependent into `stage/app/` with
-     `-p:Version` + `-p:InformationalVersion`.
+     `-p:Version` + `-p:InformationalVersion`, targeting `win-x64` or `linux-x64`
+     RIDs with `--self-contained false` to filter native libraries to one platform.
    - Publishes the NxmHandler native-AOT into `stage/app/` (`win-x64` on
      Windows, `linux-x64` on Linux).
    - Fetches the latest non-draft Relay release (prereleases included) from
@@ -64,8 +65,8 @@ Jobs:
      asset. The Relay tag is resolved per workflow run; there is no Relay
      version pinning and no Relay provenance sidecar.
    - Builds the release archive from `stage/` so it has a top-level `app/` +
-     `relay/` layout: `<tag>-windows-x64.zip` (7z) on Windows,
-     `<tag>-linux-x64.tar.gz` (tar) on Linux.
+     `relay/` layout: `curator-<tag>-windows-x64.zip` (7z) on Windows,
+     `curator-<tag>-linux-x64.tar.gz` (tar) on Linux.
    - Uploads the archive to the release with `gh release upload --clobber`.
    - Attests the uploaded asset with `actions/attest@v4`.
 3. **dispatch-av-vt**, gated on both build legs succeeding, fires a
@@ -227,7 +228,7 @@ The script installs the latest release visible to an unauthenticated request
 (prereleases included). It queries the GitHub releases list endpoint (which
 excludes drafts and returns newest first, so the first `tag_name` is the
 latest release; `/releases/latest` is not used because it skips prereleases),
-downloads `<tag>-linux-x64.tar.gz`, extracts to a temp dir, validates
+downloads `curator-<tag>-linux-x64.tar.gz`, extracts to a temp dir, validates
 `app/Modificus.Curator` + `relay/modificus_relay.exe` before touching the
 install root, then:
 

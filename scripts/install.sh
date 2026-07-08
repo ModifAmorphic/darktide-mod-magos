@@ -20,6 +20,7 @@
 set -eu
 
 REPO="${CURATOR_REPO:-ModifAmorphic/darktide-modificus-curator}"
+ASSET_PREFIX="curator-"
 ASSET_SUFFIX="-linux-x64.tar.gz"
 UA="modificus-curator-installer"
 
@@ -73,7 +74,8 @@ if [ -n "${CURATOR_ARCHIVE:-}" ]; then
         *"$ASSET_SUFFIX") tag=${arcbasename%"$ASSET_SUFFIX"} ;;
         *) tag="unknown" ;;
     esac
-    asset_name="${tag}${ASSET_SUFFIX}"
+    tag="${tag#"$ASSET_PREFIX"}"
+    asset_name="${ASSET_PREFIX}${tag}${ASSET_SUFFIX}"
     archive="$tmp_dir/$asset_name"
     cp "$CURATOR_ARCHIVE" "$archive"
     msg "Using local archive: $CURATOR_ARCHIVE (tag $tag, testing override)"
@@ -85,7 +87,7 @@ else
         | grep '"tag_name"' | head -n 1 \
         | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
     [ -n "$tag" ] || die "Could not parse a release tag from the GitHub API response."
-    asset_name="${tag}${ASSET_SUFFIX}"
+    asset_name="${ASSET_PREFIX}${tag}${ASSET_SUFFIX}"
     asset_url="https://github.com/$REPO/releases/download/${tag}/${asset_name}"
     archive="$tmp_dir/$asset_name"
     msg "Latest release: $tag"
