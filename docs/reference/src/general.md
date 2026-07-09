@@ -82,8 +82,9 @@ public sealed class ConfigLoader : IConfigLoader
   see either the prior file or the new one, never truncated JSON. Writes are
   best-effort: a persistence failure (unwritable dir, full disk) is swallowed
   rather than crashing the app mid-interaction.
-- `DefaultConfigPath()`: `<LocalApplicationData>/Modificus Curator/config.json`
-  (`%LOCALAPPDATA%` on Windows, `~/.local/share` on Linux).
+- `DefaultConfigPath()`: `<app-data>/config.json`, where `<app-data>` is
+  `AppPaths.AppDataDir` (`%LOCALAPPDATA%\ModifAmorphic\Modificus Curator` on
+  Windows, `~/.local/share/Modificus Curator` on Linux).
 
 ### `IAppStateStore` / `AppStateStore`
 
@@ -106,9 +107,9 @@ public sealed class AppStateStore : IAppStateStore
 }
 ```
 
-- File: `<LocalApplicationData>/Modificus Curator/app-state.json`
-  (`{ "ActiveProfileId": "<guid>" | null }`), derived the same way
-  `ConfigLoader` derives its config path.
+- File: `<app-data>/app-state.json`
+  (`{ "ActiveProfileId": "<guid>" | null }`), derived from `AppPaths.AppDataDir`
+  the same way `ConfigLoader` derives its config path.
 - JSON is handled with `System.Text.Json` directly (read + write);
   `Microsoft.Extensions.Configuration` is binding-oriented and read-only, the
   wrong fit for a tiny writable state file.

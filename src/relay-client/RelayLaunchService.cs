@@ -33,6 +33,14 @@ internal sealed class RelayLaunchService : IRelayLaunchService
     internal const string LauncherExecutableName = "modificus_relay.exe";
 
     /// <summary>
+    /// The app-local Relay folder name. A Velopack install on Windows ships
+    /// Relay alongside the app under <c>&lt;AppContext.BaseDirectory&gt;/relay/</c>;
+    /// this is the fallback when no Relay is deployed at
+    /// <see cref="CuratorConfig.RelayDir"/>.
+    /// </summary>
+    internal const string AppLocalRelayFolderName = "relay";
+
+    /// <summary>
     /// The Steam app id for Darktide. The launcher defaults to this value when
     /// <c>--steam-app-id</c> is omitted; Curator relies on that default and only
     /// emits <c>--steam-app-id</c> to override it (which the current config does
@@ -90,11 +98,20 @@ internal sealed class RelayLaunchService : IRelayLaunchService
             // caught below and mapped to LaunchStatus.Error.
             var modPath = _profiles.PrepareModRoot(profileId);
 
-            var launcherPath = Path.Combine(config.RelayDir, LauncherExecutableName);
-            if (!File.Exists(launcherPath))
+            var launcherPath = ResolveLauncherPath(
+                config.RelayDir, AppContext.BaseDirectory, OperatingSystem.IsWindows());
+            if (launcherPath is null)
             {
-                _logger.LogError("Relay launcher not found at {Path}.", launcherPath);
-                return ErrorResult($"Relay launcher not found at '{launcherPath}'.");
+                // Neither the configured RelayDir nor the Windows app-local
+                // payload had the launcher. Report the configured path in the
+                // error: that is where Curator looks first and what a user
+                // would reconfigure. The app-local path is an internal
+                // fallback, not something to surface.
+                var configuredPath = Path.Combine(config.RelayDir, LauncherExecutableName);
+                _logger.LogError(
+                    "Relay launcher not found at {Path} (nor app-local under {Base}).",
+                    configuredPath, AppContext.BaseDirectory);
+                return ErrorResult($"Relay launcher not found at '{configuredPath}'.");
             }
 
             var gameBinary = discovery.DarktideGameBinaryPath!;
@@ -128,6 +145,54 @@ internal sealed class RelayLaunchService : IRelayLaunchService
             _logger.LogError(ex, "Launch failed for profile {Id}: unexpected error.", profileId);
             return ErrorResult($"Launch failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Resolves the Relay launcher path with a deliberate precedence:
+    /// <list type="number">
+    /// <item><term>Configured <c>configRelayDir</c> first.</term>
+    /// <description>If the launcher exists there, use it. This honors an
+    /// explicit user override and the data-root default once Relay is deployed
+    /// there (the Linux layout, and the Windows dev/data layout).</description></item>
+    /// <item><term>App-local fallback (Windows only).</term>
+    /// <description>If the configured dir's launcher is missing and
+    /// <paramref name="isWindows"/> is true, look under
+    /// <c>&lt;baseDirectory&gt;/relay/</c>. A Velopack install ships Relay there
+    /// (app-local inside the payload); the <c>current\</c> directory is replaced
+    /// in place on update, so the path is stable. Linux does NOT use this:
+    /// Relay stays at the data-root <c>relay/</c> folder.</description></item>
+    /// <item><term>Otherwise <c>null</c>.</term>
+    /// <description>The caller reports not-found against the configured
+    /// path.</description></item>
+    /// </list>
+    /// </summary>
+    /// <remarks>
+    /// Factored as a pure function of its inputs so the precedence is
+    /// unit-testable on any CI OS. The production call passes
+    /// <see cref="AppContext.BaseDirectory"/> and
+    /// <see cref="OperatingSystem.IsWindows"/>.
+    /// </remarks>
+    internal static string? ResolveLauncherPath(string configRelayDir, string baseDirectory, bool isWindows)
+    {
+        ArgumentNullException.ThrowIfNull(configRelayDir);
+        ArgumentNullException.ThrowIfNull(baseDirectory);
+
+        var configLauncher = Path.Combine(configRelayDir, LauncherExecutableName);
+        if (File.Exists(configLauncher))
+        {
+            return configLauncher;
+        }
+
+        if (isWindows)
+        {
+            var appLocalLauncher = Path.Combine(baseDirectory, AppLocalRelayFolderName, LauncherExecutableName);
+            if (File.Exists(appLocalLauncher))
+            {
+                return appLocalLauncher;
+            }
+        }
+
+        return null;
     }
 
     private static LaunchResult ErrorResult(string message) =>

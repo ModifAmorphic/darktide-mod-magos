@@ -72,7 +72,7 @@ jobs:
           version="${{ needs.release-please.outputs.version }}"
           version="${version#v}"
           dotnet publish ui --configuration Release --runtime win-x64 --self-contained false --output stage/app \
-            -p:Version="$version" -p:InformationalVersion="$version"
+            -p:Version="$version" -p:InformationalVersion="$version" -p:CuratorUseVelopack=true
       - name: Publish NXM handler (AOT win-x64)
         run: dotnet publish nxm-handler --configuration Release --runtime win-x64 --output stage/app
       - name: Fetch latest Relay release
@@ -89,24 +89,58 @@ jobs:
       - name: Extract Relay to relay/ directory
         shell: bash
         run: |
-          mkdir -p stage/relay
-          unzip -q stage/*-windows-x64.zip -d stage/relay
+          mkdir -p stage/app/relay
+          unzip -q stage/*-windows-x64.zip -d stage/app/relay
           rm stage/*-windows-x64.zip
-      - name: Create release archive
+      - name: Resolve version
+        id: rel
         shell: bash
         run: |
-          cd stage && 7z a "../curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" app relay
-      - name: Upload release asset
+          version="${{ needs.release-please.outputs.version }}"
+          version="${version#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Pack Velopack installer
+        shell: bash
+        run: |
+          # Version-pinned vpk install (local path, no global tool manifest).
+          dotnet tool install vpk --version 1.2.0 --tool-path .vpk-temp
+          .vpk-temp/vpk pack \
+            --packId ModifAmorphic.ModificusCurator \
+            --packVersion "${{ steps.rel.outputs.version }}" \
+            --packDir stage/app \
+            --mainExe Modificus.Curator.exe \
+            --packTitle "Modificus Curator" \
+            --icon ui/app-icon.ico \
+            --framework net10.0-x64-runtime \
+            -o stage/releases
+      - name: Rename Setup.exe
+        shell: bash
+        run: |
+          mv stage/releases/ModifAmorphic.ModificusCurator-win-Setup.exe stage/releases/modificus-curator-setup.exe
+      - name: Upload Velopack assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
+          version="${{ steps.rel.outputs.version }}"
           gh release upload "${{ needs.release-please.outputs.tag_name }}" \
-            "curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" --clobber
-      - name: Attest release asset
+            stage/releases/modificus-curator-setup.exe \
+            "stage/releases/ModifAmorphic.ModificusCurator-${version}-full.nupkg" \
+            stage/releases/releases.win.json \
+            --clobber
+          # Upload delta.nupkg if present (will exist for non-first releases)
+          if [ -f "stage/releases/ModifAmorphic.ModificusCurator-${version}-delta.nupkg" ]; then
+            gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+              "stage/releases/ModifAmorphic.ModificusCurator-${version}-delta.nupkg" --clobber
+          fi
+      - name: Attest Velopack installer
         uses: actions/attest@v4
         with:
-          subject-path: src/curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip
+          subject-path: src/stage/releases/modificus-curator-setup.exe
+      - name: Attest Velopack nupkg
+        uses: actions/attest@v4
+        with:
+          subject-path: src/stage/releases/ModifAmorphic.ModificusCurator-${{ steps.rel.outputs.version }}-full.nupkg
 
   build-linux:
     needs: release-please
@@ -197,7 +231,7 @@ jobs:
               event_type: 'curator-release-assets-published',
               client_payload: {
                 tag_name: '${{ needs.release-please.outputs.tag_name }}',
-                windows_asset: 'curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip'
+                windows_asset: 'modificus-curator-setup.exe'
               }
             })
 

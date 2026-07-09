@@ -50,23 +50,47 @@ Jobs:
 2. **build-windows** and **build-linux** run in parallel, each gated on
    `releases_created == 'true'` and checked out at the release commit. The
    Windows leg runs on `windows-latest` (native AOT for the `nxm://` handler
-   requires a Windows runner); the Linux leg runs on `ubuntu-latest`. Each leg:
+   requires a Windows runner); the Linux leg runs on `ubuntu-latest`.
+
+   **Common to both legs:**
    - Sets up .NET 10.
    - Publishes the Curator UI framework-dependent into `stage/app/` with
      `-p:Version` + `-p:InformationalVersion`, targeting `win-x64` or `linux-x64`
      RIDs with `--self-contained false` to filter native libraries to one platform.
+     The Windows publish additionally sets `-p:CuratorUseVelopack=true`, which
+     adds the Velopack package reference and the `CURATOR_VELOPACK` compilation
+     symbol that wires the `VelopackApp.Build().Run()` lifecycle hook in
+     `Program.cs`.
    - Publishes the NxmHandler native-AOT into `stage/app/` (`win-x64` on
      Windows, `linux-x64` on Linux).
-   - Fetches the latest non-draft Relay release (prereleases included) from
-     `ModifAmorphic/darktide-modificus-relay` via `gh release list
-     --exclude-drafts` + `gh release download --pattern '*-windows-x64.zip'`,
-     and extracts it into `stage/relay/`. Both legs bundle the same Relay
-     Windows zip; Linux runs Relay under Proton, so there is no Relay Linux
-     asset. The Relay tag is resolved per workflow run; there is no Relay
-     version pinning and no Relay provenance sidecar.
+
+   **build-windows** then produces a Velopack installer (the Windows asset is
+   no longer a portable zip):
+   - Extracts the latest non-draft Relay release (prereleases included) from
+     `ModifAmorphic/darktide-modificus-relay` into `stage/app/relay/` so Relay
+     ships app-local inside the payload. (Fetched via
+     `gh release list --exclude-drafts` + `gh release download --pattern '*-windows-x64.zip'`.
+     The Relay tag is resolved per workflow run; there is no Relay version
+     pinning and no Relay provenance sidecar.)
+   - Runs `vpk pack` (Velopack 1.2.0) with `--packId ModifAmorphic.ModificusCurator`,
+     the release version, `--packDir stage/app`, `--mainExe Modificus.Curator.exe`,
+     `--packTitle "Modificus Curator"`, the app icon, and
+     `--framework net10.0-x64-runtime` (the installer bootstraps the .NET 10
+     runtime if it is missing). Output goes to `stage/releases/`: a `Setup.exe`,
+     a `*-full.nupkg`, and a `releases.win.json` (plus a `*-delta.nupkg` on
+     non-first releases).
+   - Renames `Setup.exe` to `modificus-curator-setup.exe`.
+   - Uploads `modificus-curator-setup.exe`, the `*-full.nupkg`, and
+     `releases.win.json` to the release with `gh release upload --clobber`
+     (plus the delta nupkg when present).
+   - Attests `modificus-curator-setup.exe` and the `*-full.nupkg` with
+     `actions/attest@v4`.
+
+   **build-linux** keeps the portable-archive flow:
+   - Fetches the same Relay Windows zip (Linux runs Relay under Proton, so
+     there is no Relay Linux asset) and extracts it into `stage/relay/`.
    - Builds the release archive from `stage/` so it has a top-level `app/` +
-     `relay/` layout: `curator-<tag>-windows-x64.zip` (7z) on Windows,
-     `curator-<tag>-linux-x64.tar.gz` (tar) on Linux.
+     `relay/` layout: `curator-<tag>-linux-x64.tar.gz` (tar).
    - Uploads the archive to the release with `gh release upload --clobber`.
    - Attests the uploaded asset with `actions/attest@v4`.
 3. **dispatch-av-vt**, gated on both build legs succeeding, fires a
@@ -85,11 +109,34 @@ Jobs:
 
 ### Deployment model
 
-Releases are framework-dependent. Users install the .NET 10 Runtime
-themselves; the base `Microsoft.NETCore.App` runtime is sufficient (Curator
-uses Avalonia, not WPF/WinForms, so the Windows Desktop Runtime is not
+Windows and Linux now ship differently.
+
+**Windows** ships as a [Velopack](https://github.com/velopack/velopack) installer
+plus auto-update payload. The release produces a one-click `Setup.exe` (renamed
+`modificus-curator-setup.exe`): no wizard, installs to
+`%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\` (the Velopack pack id is
+`ModifAmorphic.ModificusCurator`), creates Start Menu and desktop shortcuts, and
+registers in Apps & Features for uninstall. It bootstraps the .NET 10 runtime if
+missing (`--framework net10.0-x64-runtime` baked into the pack). The Velopack
+lifecycle hook (`VelopackApp.Build().Run()` in `Program.cs`, compiled in under
+`CURATOR_VELOPACK`) fires install/update/uninstall hooks and applies any pending
+update on startup. The in-app update-check UI (`UpdateManager`) is not
+implemented yet, so discovering updates still goes through GitHub releases;
+Relay and the app payload are delivered by Velopack once a new release is
+installed. Relay ships app-local inside the payload at `current\relay\`.
+
+The Windows user-data root (profiles, mods, config, logs) is deliberately
+separate from the install root, at `%LOCALAPPDATA%\ModifAmorphic\Modificus Curator\`
+(see `config/AppPaths.cs`). The install root
+(`...\ModifAmorphic.ModificusCurator\`) is owned by Velopack and replaced in
+place on update, so user data must not live there.
+
+**Linux** is unchanged: a framework-dependent tar.gz. Users install the .NET 10
+Runtime themselves; the base `Microsoft.NETCore.App` runtime is sufficient
+(Curator uses Avalonia, not WPF/WinForms, so the Windows Desktop Runtime is not
 required). Framework-dependent deployment also avoids the single-file
-extract-to-temp pattern that attracts dropper heuristics.
+extract-to-temp pattern that attracts dropper heuristics. The tar.gz has a
+top-level `app/` + `relay/` layout extracted into `~/.local/share/Modificus Curator/`.
 
 Two executables ship together in `app/`: `Modificus.Curator[.exe]` (the
 Avalonia UI, `WinExe`) and `Modificus.Curator.NxmHandler[.exe]` (the
@@ -98,20 +145,21 @@ resolves its sibling Curator exe via `AppContext.BaseDirectory`
 (`NxmHandlerRelay.ResolveCuratorMainExe`), so both land in one directory in
 every bundle.
 
-`CuratorConfig.RelayDir` defaults to
-`<app-data>/Modificus Curator/relay/` (`%LOCALAPPDATA%` on Windows,
-`~/.local/share` on Linux; see `config/AppPaths.cs`). The bundle seeds that
-default location. The only Relay-presence check in the codebase is in
-`RelayLaunchService.Launch` (`if (!File.Exists(launcherPath))`), which returns
-`LaunchStatus.Error`; there is no first-run Relay provisioning logic. Manual
-`RelayDir` overrides via JSON config are the user's responsibility.
+`CuratorConfig.RelayDir` defaults to `<app-data>/relay/` (the Windows data root
+or `~/.local/share/Modificus Curator/` on Linux; see `config/AppPaths.cs`).
+`RelayLaunchService.ResolveLauncherPath` looks there first, then (Windows only)
+falls back to the app-local `relay/` shipped inside the Velopack payload. There
+is no first-run Relay provisioning logic; a missing launcher maps to
+`LaunchStatus.Error`. Manual `RelayDir` overrides via JSON config are the
+user's responsibility.
 
-`nxm://` registration is done at runtime by Curator, not by an installer.
-`WindowsNxmHandlerRegistrar` writes `HKCU\Software\Classes\nxm` (per-user, no
-elevation); `LinuxNxmHandlerRegistrar` writes
-`~/.local/share/applications/modificus-curator-nxm-handler.desktop` + a
+`nxm://` registration is done at runtime by Curator, not by the Windows
+installer or the Linux install script. `WindowsNxmHandlerRegistrar` writes
+`HKCU\Software\Classes\nxm` (per-user, no elevation); `LinuxNxmHandlerRegistrar`
+writes `~/.local/share/applications/modificus-curator-nxm-handler.desktop` + a
 best-effort `xdg-mime default`. Both encode an absolute path to the handler
-exe.
+exe. On Windows the Velopack `current\` directory is replaced in place on
+update, so the registered path stays stable.
 
 ## Supply-chain integrity (artifact attestations)
 
@@ -141,11 +189,12 @@ release workflow, and also runs on manual `workflow_dispatch` (which takes
 `tag_name` + `windows_asset` inputs). It runs as a single job on
 `windows-latest`.
 
-The job downloads the published Windows asset and scans those exact bytes
-(not a fresh build), so it scans what users receive:
+The job downloads the published Windows asset (`modificus-curator-setup.exe`,
+the Velopack installer) and scans those exact bytes (not a fresh build), so it
+scans what users receive:
 
 - **Microsoft Defender**: runs `Start-MpScan -ScanType CustomScan -ScanPath
-  <full asset path>` against the downloaded zip. The scan is performed
+  <full asset path>` against the downloaded installer. The scan is performed
   using PowerShell cmdlets designed for programmatic use, which work on the
   Windows Server runner. The result is explicitly classified as `clean`,
   `detection`, or `tool_error`. A `tool_error` indicates the scan command
@@ -153,7 +202,7 @@ The job downloads the published Windows asset and scans those exact bytes
   sometimes cloud-delivery-off, so this is a coarse signal, not a guarantee of
   what a consumer Windows 11 box sees.
 - **VirusTotal**: required, gated on the `VIRUSTOTAL_API_KEY` repo secret.
-  The workflow fails if the secret is not configured. Submits the zip via the
+  The workflow fails if the secret is not configured. Submits the installer via the
   pinned Marketplace action `crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2`
   with `request_rate: 4` to respect the VirusTotal public API quota (4 requests/minute).
   The action handles large uploads automatically by using the `/files/upload_url`
@@ -316,12 +365,13 @@ path.
 
 What the release pipeline provides today, and what it does not:
 
-- **Code signing.** Releases are unsigned. SmartScreen reputation is not
-  established.
-- **Windows installer.** The Windows asset is a portable zip; there is no
-  Inno Setup / WiX / Velopack installer.
-- **In-app auto-update.** Neither Curator nor Relay is auto-updated in-app;
-  Relay is bundled as latest-per-release instead.
+- **Code signing.** Releases are unsigned, so Windows SmartScreen warns on the
+  installer's first run. SmartScreen reputation is not established.
+- **In-app update-check UI.** Velopack's lifecycle hook is wired (pending
+  updates auto-apply on the next startup), but the `UpdateManager`-driven in-app
+  update check is not implemented yet; discovering updates still goes through
+  GitHub releases. Relay is bundled as latest-per-Curator-release and is not
+  updated independently in-app.
 - **Linux arm64 / Steam Deck builds.** Only `win-x64` and `linux-x64` are
   published.
 - **Relay pinning or Relay provenance sidecar.** The bundled Relay is whatever
@@ -340,8 +390,11 @@ What the release pipeline provides today, and what it does not:
   `.release-please-manifest.json`.
 - GitHub Artifact Attestations (`actions/attest@v4`):
   https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations.
-- Architectural details from the codebase: `src/nxm/NxmHandlerRelay.cs`
+- Architectural details from the codebase: `src/ui/Program.cs`
+  (the Velopack `VelopackApp.Build().Run()` lifecycle hook, compiled under
+  `CURATOR_VELOPACK`), `src/nxm/NxmHandlerRelay.cs`
   (sibling-exe resolution), `src/nxm/{Windows,Linux}NxmHandlerRegistrar.cs`
   (runtime scheme registration), `src/relay-client/RelayLaunchService.cs`
-  (launch-time Relay presence check, no first-run provisioning),
-  `src/config/AppPaths.cs` (default `RelayDir` in app-data).
+  (launch-time Relay resolution: configured `RelayDir` first, then the Windows
+  app-local `relay/` fallback; no first-run provisioning),
+  `src/config/AppPaths.cs` (the app-data root and default `RelayDir`).

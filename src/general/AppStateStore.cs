@@ -1,15 +1,16 @@
 using System.Text.Json;
+using Modificus.Curator.Config;
 
 namespace Modificus.Curator.General;
 
 /// <summary>
 /// Default <see cref="IAppStateStore"/>. Loads + saves a single JSON file at
-/// <c>&lt;app-data&gt;/Modificus Curator/app-state.json</c> (<c>{ "ActiveProfileId": "&lt;guid&gt;" | null }</c>).
+/// <c>&lt;app-data&gt;/app-state.json</c> (<c>{ "ActiveProfileId": "&lt;guid&gt;" | null }</c>).
 /// The app-data dir is derived the same way <see cref="ConfigLoader"/> derives
-/// its config path. JSON is handled with <see cref="JsonSerializer"/> (direct,
-/// read+write) rather than <c>Microsoft.Extensions.Configuration</c>. The
-/// latter is binding-oriented and read-only; a tiny writable state file is the
-/// wrong fit for it.
+/// its config path (both via <see cref="AppPaths.AppDataDir"/>). JSON is handled
+/// with <see cref="JsonSerializer"/> (direct, read+write) rather than
+/// <c>Microsoft.Extensions.Configuration</c>. The latter is binding-oriented and
+/// read-only; a tiny writable state file is the wrong fit for it.
 /// </summary>
 public sealed class AppStateStore : IAppStateStore
 {
@@ -39,12 +40,9 @@ public sealed class AppStateStore : IAppStateStore
         set => Save(value);
     }
 
-    /// <summary>The conventional state-file location: <c>&lt;app-data&gt;/Modificus Curator/app-state.json</c>.</summary>
+    /// <summary>The conventional state-file location: <c>&lt;app-data&gt;/app-state.json</c>.</summary>
     public static string DefaultStatePath() =>
-        System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Modificus Curator",
-            "app-state.json");
+        System.IO.Path.Combine(AppPaths.AppDataDir, "app-state.json");
 
     private Guid? Load()
     {
