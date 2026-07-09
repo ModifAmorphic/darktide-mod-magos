@@ -1,0 +1,7 @@
+# USVFS spike scratch — nothing here is meant to ship.
+# Native binaries (downloaded, not committed) + build output.
+.cache/
+bin/
+artifacts/
+obj/
+*.user

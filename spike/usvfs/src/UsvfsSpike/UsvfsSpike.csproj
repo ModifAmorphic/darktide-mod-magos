@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    USVFS staging spike harness. Throwaway investigation; deliberately kept out of
+    src/modificus-curator.sln. Build with: dotnet build spike/usvfs/src/UsvfsSpike
+    (the run.ps1 helper does this for you).
+
+    Requires the vendored usvfs_x64.dll + usvfs_proxy_x64.exe under spike/usvfs/bin/
+    (fetched by fetch-usvfs.ps1). They are copied next to the exe so P/Invoke and
+    usvfs_x64.dll's internal proxy resolution both succeed.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <RootNamespace>UsvfsSpike</RootNamespace>
+    <AssemblyName>usvfs-spike</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\bin\usvfs_x64.dll" Link="usvfs_x64.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\bin\usvfs_proxy_x64.exe" Link="usvfs_proxy_x64.exe" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="EnsureUsvfsBinaries" BeforeTargets="Build">
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)..\..\bin\usvfs_x64.dll')"
+           Text="usvfs_x64.dll missing under spike/usvfs/bin/. Run spike/usvfs/fetch-usvfs.ps1 first." />
+  </Target>
+</Project>
