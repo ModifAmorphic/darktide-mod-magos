@@ -5,7 +5,7 @@ namespace Modificus.Curator.Profiles;
 /// <summary>
 /// Profile + per-profile mod-list management. Owns the profile data model,
 /// its on-disk persistence, and the projection of the mod list into a staged
-/// mod root (symlinks to the repository's resolved version folders) +
+/// mod root (staging links to the repository's resolved version folders) +
 /// <c>mods.lst</c> for Modificus Relay.
 /// </summary>
 /// <remarks>
@@ -13,8 +13,9 @@ namespace Modificus.Curator.Profiles;
 /// A profile references mods by <see cref="ModListEntry.ContainerId"/>; it never
 /// stores mod files of its own. Staging resolves each enabled mod's
 /// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/> (via
-/// <see cref="IModRepository"/>) and symlinks <c>staged/&lt;name&gt;</c> to the
-/// resolved version folder. <b>Symlinks, never copies.</b></para>
+/// <see cref="IModRepository"/>) and links <c>staged/&lt;name&gt;</c> to the
+/// resolved version folder (an NTFS junction on Windows, a symlink on Linux).
+/// <b>Staging links, never copies.</b></para>
 /// <para>
 /// No storage details (paths, version-folder ids) leak through the interface.
 /// Registered as a singleton: the service holds no per-request state, and
@@ -80,7 +81,7 @@ public interface IProfileService
     /// <summary>
     /// Adds a mod entry to the end of the list (<see cref="ModListEntry.Enabled"/>
     /// = true) with the given policy. <b>List entry only: does NOT fetch or
-    /// install mod files</b> (the repository holds the files; staging symlinks
+    /// install mod files</b> (the repository holds the files; staging links
     /// to them). Idempotent: re-adding a <paramref name="containerId"/> already
     /// in the list is a no-op (order/enabled/policy untouched).
     /// </summary>
@@ -158,13 +159,14 @@ public interface IProfileService
     /// <c>--mod-path</c> to pass to the Relay launcher.
     /// </summary>
     /// <remarks>
-    /// Symlinks, not copies (the repository holds the files). A symlink-creation
-    /// failure (e.g. Windows without symlink permissions / Developer Mode) throws
-    /// <see cref="SymlinkStagingException"/>; it never silently copies. A mod
+    /// Staging links, not copies (the repository holds the files). A staging-link
+    /// creation failure (e.g. Windows on a non-NTFS volume, or no write access to
+    /// the profile's <c>staged/</c> directory) throws
+    /// <see cref="StagingLinkException"/>; it never silently copies. A mod
     /// whose container or resolved version is missing is skipped with a warning
     /// (not a crash); it has no entry in <c>staged/</c> or <c>mods.lst</c>.
     /// </remarks>
     /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
-    /// <exception cref="SymlinkStagingException">A symlink could not be created.</exception>
+    /// <exception cref="StagingLinkException">A staging link could not be created.</exception>
     string PrepareModRoot(Guid id);
 }

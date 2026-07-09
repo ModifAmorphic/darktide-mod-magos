@@ -9,8 +9,9 @@ public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers <see cref="IProfileService"/> → <see cref="ProfileService"/>,
-    /// plus the staging dependencies it needs: the <see cref="SymlinkCreator"/>
-    /// default (wraps <see cref="System.IO.Directory.CreateSymbolicLink"/>) and,
+    /// plus the staging dependencies it needs: the <see cref="StagingLinkCreator"/>
+    /// default (platform-selective: an NTFS junction on Windows, a symlink via
+    /// <see cref="System.IO.Directory.CreateSymbolicLink"/> on Linux) and,
     /// defensively, <see cref="IModRepository"/> via <c>AddMods()</c>
     /// so a lone <c>AddProfiles()</c> yields a resolvable
     /// <see cref="IProfileService"/> (idempotent; the composition root also
@@ -29,10 +30,12 @@ public static class ServiceCollectionExtensions
         // safe to call again from the composition root / other libraries.
         services.AddMods();
 
-        // Default symlink impl: the BCL primitive. TryAdd so a caller may
-        // pre-register an override (e.g. tests inject a throwing delegate to
-        // exercise the SymlinkStagingException path without platform hacks).
-        services.TryAddSingleton<SymlinkCreator>(_ => CreateSymbolicLink);
+        // Default staging-link impl, platform-selective: a privilege-free NTFS
+        // junction on Windows (no Developer Mode / admin required) and the BCL
+        // symlink on Linux. TryAdd so a caller may pre-register an override
+        // (e.g. tests inject a throwing delegate to exercise the
+        // StagingLinkException path without platform hacks).
+        services.TryAddSingleton<StagingLinkCreator>(_ => CreateStagingLink);
 
         // Auto-sort seam: identity stub for now (no-op). TryAdd so a caller may
         // pre-register the real dependency-driven resolver when it lands.
@@ -42,6 +45,22 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    private static void CreateSymbolicLink(string linkPath, string targetPath) =>
-        Directory.CreateSymbolicLink(linkPath, targetPath);
+    /// <summary>
+    /// Selects the staging-link primitive for the current OS: an NTFS junction on
+    /// Windows (<see cref="Junction.Create"/>) or a symlink on Linux
+    /// (<see cref="Directory.CreateSymbolicLink"/>). The junction call is behind
+    /// an <see cref="OperatingSystem.IsWindows"/> guard so the Windows-only native
+    /// interop is never reached on Linux.
+    /// </summary>
+    private static void CreateStagingLink(string linkPath, string targetPath)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Junction.Create(linkPath, targetPath);
+        }
+        else
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+        }
+    }
 }

@@ -18,8 +18,9 @@ namespace Modificus.Curator.Profiles.Tests;
 /// Resolving via DI, rather than constructing the implementation directly,
 /// keeps the tests black-box against <see cref="IProfileService"/> +
 /// <see cref="IModRepository"/> and proves the real registration paths on every
-/// test. <see cref="SymlinkCreator"/> defaults to the real BCL symlink; pass a
-/// custom one to the constructor to exercise the symlink-failure path.
+/// test. <see cref="StagingLinkCreator"/> defaults to the real platform-selective
+/// staging link (an NTFS junction on Windows, a symlink on Linux); pass a custom
+/// one to the constructor to exercise the staging-link-failure path.
 /// </remarks>
 internal sealed class ProfileServiceFixture : IDisposable
 {
@@ -31,10 +32,11 @@ internal sealed class ProfileServiceFixture : IDisposable
     public IProfileService Service { get; }
     public IModRepository Repo { get; }
 
-    /// <param name="symlink">Optional override for the staging symlink seam
-    /// (default: the real BCL <see cref="Directory.CreateSymbolicLink"/>). Pass a
-    /// throwing delegate to exercise <see cref="SymlinkStagingException"/>.</param>
-    public ProfileServiceFixture(SymlinkCreator? symlink = null)
+    /// <param name="createLink">Optional override for the staging-link seam
+    /// (default: the platform-selective link, a junction on Windows or
+    /// <see cref="Directory.CreateSymbolicLink"/> on Linux). Pass a throwing
+    /// delegate to exercise <see cref="StagingLinkException"/>.</param>
+    public ProfileServiceFixture(StagingLinkCreator? createLink = null)
     {
         var config = CuratorConfig.CreateDefault();
         config.ProfilesBaseFolder = BaseFolder;
@@ -44,9 +46,9 @@ internal sealed class ProfileServiceFixture : IDisposable
         services.AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config });
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning)); // quiet by default
         services.AddMods();
-        if (symlink is not null)
+        if (createLink is not null)
         {
-            services.AddSingleton(symlink);
+            services.AddSingleton(createLink);
         }
         services.AddProfiles();
         _provider = services.BuildServiceProvider();
@@ -132,13 +134,59 @@ internal sealed class ProfileServiceFixture : IDisposable
     public void Dispose()
     {
         _provider.Dispose();
-        if (Directory.Exists(BaseFolder))
+        // staged/ holds staging links (junctions on Windows); a naive
+        // Directory.Delete(root, recursive: true) throws UnauthorizedAccessException
+        // on a directory junction on Windows, so teardown walks each tree
+        // entry-by-entry and removes reparse points as LINKS (never following
+        // them into the repository). Mirrors ProfileService's staged-entry delete.
+        DeleteTree(BaseFolder);
+        DeleteTree(ModsFolder);
+    }
+
+    private static void DeleteTree(string root)
+    {
+        if (!Directory.Exists(root))
         {
-            Directory.Delete(BaseFolder, recursive: true);
+            return;
         }
-        if (Directory.Exists(ModsFolder))
+
+        foreach (var entry in Directory.EnumerateFileSystemEntries(root))
         {
-            Directory.Delete(ModsFolder, recursive: true);
+            DeleteEntry(entry);
+        }
+
+        Directory.Delete(root); // empty (links + children removed above)
+    }
+
+    private static void DeleteEntry(string entry)
+    {
+        FileAttributes attrs;
+        try
+        {
+            attrs = File.GetAttributes(entry);
+        }
+        catch (FileNotFoundException) { return; } // raced away
+        catch (DirectoryNotFoundException) { return; }
+
+        if ((attrs & FileAttributes.ReparsePoint) != 0)
+        {
+            // Junction/symlink: remove the link only, never follow into its target.
+            if ((attrs & FileAttributes.Directory) != 0)
+            {
+                Directory.Delete(entry);
+            }
+            else
+            {
+                File.Delete(entry);
+            }
+        }
+        else if ((attrs & FileAttributes.Directory) != 0)
+        {
+            DeleteTree(entry);
+        }
+        else
+        {
+            File.Delete(entry);
         }
     }
 }
