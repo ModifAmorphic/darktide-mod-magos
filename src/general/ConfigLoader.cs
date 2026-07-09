@@ -113,8 +113,5 @@ public sealed class ConfigLoader : IConfigLoader
 
     /// <summary>The conventional config-file location: <c>&lt;app-data&gt;/config.json</c>.</summary>
     public static string DefaultConfigPath() =>
-        System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Modificus Curator",
-            "config.json");
+        System.IO.Path.Combine(AppPaths.AppDataDir, "config.json");
 }

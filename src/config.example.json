@@ -1,13 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/json",
-  "_comment": "Sample Modificus Curator global config. Copy to <app-data>/Modificus Curator/config.json and edit. Every field has a default; specify only what you want to override.",
+  "_comment": "Sample Modificus Curator global config. Copy to <app-data>/config.json and edit. Every field has a default; specify only what you want to override.",
   "Logging": {
     "Level": "Information",
-    "LogFile": "<app-data>/Modificus Curator/logs/curator.log"
+    "LogFile": "<app-data>/logs/curator.log"
   },
-  "ProfilesBaseFolder": "<app-data>/Modificus Curator/profiles",
-  "ModsFolder": "<app-data>/Modificus Curator/mods",
-  "RelayDir": "<app-data>/Modificus Curator/relay",
+  "ProfilesBaseFolder": "<app-data>/profiles",
+  "ModsFolder": "<app-data>/mods",
+  "RelayDir": "<app-data>/relay",
   "Preferences": {
     "Theme": "System",
     "FontScale": 1.0,

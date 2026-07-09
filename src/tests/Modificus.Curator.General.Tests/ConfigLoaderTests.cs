@@ -72,7 +72,13 @@ public sealed class ConfigLoaderTests
     {
         var path = ConfigLoader.DefaultConfigPath();
 
-        Assert.EndsWith(Path.Combine("Modificus Curator", "config.json"), path);
+        // Windows nests the data root under an org/app hierarchy
+        // (ModifAmorphic\Modificus Curator); Linux keeps the flat
+        // Modificus Curator segment. The config file sits directly under it.
+        var expectedSegment = OperatingSystem.IsWindows()
+            ? Path.Combine("ModifAmorphic", "Modificus Curator")
+            : "Modificus Curator";
+        Assert.EndsWith(Path.Combine(expectedSegment, "config.json"), path);
     }
 
     // ---- Preferences section -----------------------------------------------

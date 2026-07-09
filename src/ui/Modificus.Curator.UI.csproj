@@ -8,6 +8,21 @@
   </PropertyGroup>
 
   <!--
+    Velopack (Windows install + auto-update). Gated behind CuratorUseVelopack so
+    Linux builds never reference it: Velopack's Linux output is an AppImage,
+    which Curator does not use. The matching CURATOR_VELOPACK compilation symbol
+    gates the VelopackApp.Build().Run() startup hook in Program.cs. Set the
+    property at publish/pack time on Windows (e.g. -p:CuratorUseVelopack=true).
+  -->
+  <PropertyGroup Condition="'$(CuratorUseVelopack)' == 'true'">
+    <DefineConstants>$(DefineConstants);CURATOR_VELOPACK</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(CuratorUseVelopack)' == 'true'">
+    <PackageReference Include="Velopack" Version="1.2.0" />
+  </ItemGroup>
+
+  <!--
     Exposes the internal NxmModDownloadHandler implementation to the test
     assembly so it can be unit-tested directly (the handler is constructed by
     the composition root via a factory; tests construct it directly with a

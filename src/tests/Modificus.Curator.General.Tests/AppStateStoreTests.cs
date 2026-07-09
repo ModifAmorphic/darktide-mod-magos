@@ -91,7 +91,13 @@ public sealed class AppStateStoreTests
     {
         var path = AppStateStore.DefaultStatePath();
 
-        Assert.EndsWith(System.IO.Path.Combine("Modificus Curator", "app-state.json"), path);
+        // Windows nests the data root under an org/app hierarchy
+        // (ModifAmorphic\Modificus Curator); Linux keeps the flat
+        // Modificus Curator segment. The state file sits directly under it.
+        var expectedSegment = OperatingSystem.IsWindows()
+            ? System.IO.Path.Combine("ModifAmorphic", "Modificus Curator")
+            : "Modificus Curator";
+        Assert.EndsWith(System.IO.Path.Combine(expectedSegment, "app-state.json"), path);
     }
 
     private static string TempPath() =>

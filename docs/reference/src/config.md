@@ -8,7 +8,9 @@ settings live with the profile, not here. Every field carries a default, so an
 absent or partially-populated config file always yields a usable object.
 
 A sample file ships at `src/config.example.json`; copy it to
-`<LocalApplicationData>/Modificus Curator/config.json` and edit only what you want
+`<app-data>/config.json` (on Windows
+`%LOCALAPPDATA%\ModifAmorphic\Modificus Curator\config.json`, on Linux
+`~/.local/share/Modificus Curator/config.json`) and edit only what you want
 to override.
 
 ## Public surface
@@ -43,8 +45,10 @@ public sealed class CuratorConfig
 | `Integrations` | see `IntegrationsConfig` | External-service (mod-source) integration settings. |
 | `Preferences` | see `PreferencesConfig` | User-facing global preferences (theme, font scale, language). |
 
-`<app-data>` is `Environment.SpecialFolder.LocalApplicationData`: `%LOCALAPPDATA%`
-on Windows, `~/.local/share` on Linux, under a `Modificus Curator/` subfolder.
+`<app-data>` is `AppPaths.AppDataDir`: `Environment.SpecialFolder.LocalApplicationData`
+plus an app-data segment that is `ModifAmorphic\Modificus Curator` on Windows (an
+org/app hierarchy, kept distinct from the Velopack install root at
+`%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\`) and `Modificus Curator` on Linux.
 
 ### `LoggingConfig`
 
@@ -246,9 +250,13 @@ public sealed class DiscoveryConfig
 
 ### `AppPaths`
 
-Resolves the default locations once, from `LocalApplicationData`. Shared by
-`CuratorConfig` and `LoggingConfig` so every field has a default and the JSON
-binder only overwrites what the file sets.
+Resolves the default locations once, from `LocalApplicationData`. The app-data
+segment is `ModifAmorphic\Modificus Curator` on Windows (an org/app hierarchy,
+kept distinct from the Velopack install root at
+`%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\`, which Velopack owns and
+replaces on update) and `Modificus Curator` on Linux. Shared by `CuratorConfig`
+and `LoggingConfig` so every field has a default and the JSON binder only
+overwrites what the file sets.
 
 ## DI registration
 

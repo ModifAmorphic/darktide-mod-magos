@@ -266,7 +266,9 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
   relay-client/         Modificus.Curator.RelayClient -- the v1 launch façade
                         (IRelayLaunchService.Launch → LaunchResult; Windows: direct
                         launcher Process.Start; Linux: proton run with both STEAM_COMPAT_*
-                        env + Z:\-translated paths)
+                        env + Z:\-translated paths; ResolveLauncherPath prefers the
+                        configured RelayDir, then on Windows falls back to the app-local
+                        relay/ shipped inside the Velopack payload at <BaseDirectory>/relay/)
   launcher/             Modificus.Curator.Launcher -- stub (the Steam non-steam-shortcut
                           target placeholder)
   nxm/                  Modificus.Curator.Nxm -- the nxm:// scheme-handler plumbing:
@@ -329,7 +331,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             real named pipes are an OS-level shared resource)
 docs/               architecture/ + reference/ (src/ per-library API refs + the release strategy reference)
 scripts/            release.env: the install manifest (RELEASE_URL +
-                    PRE_RELEASE_URL Linux x64 asset URLs), written by the release
+                    PRE_RELEASE_URL Linux x64 asset URLs; Windows is not tracked here, it ships
+                    through Velopack), written by the release
                     workflow's update-manifest job; install.sh: the Linux installer
                     served from raw/main (stable by default, prerelease opt-in via
                     --prerelease or CURATOR_PRERELEASE=1; resolves the archive from
@@ -346,20 +349,29 @@ scripts/            release.env: the install manifest (RELEASE_URL +
                     job; no artifact upload; release-please-only PRs are ignored via
                     paths-ignore; there is intentionally no push trigger),
                     release (release-please cuts the release, then per-target jobs publish
-                    framework-dependent unsigned bundles as curator-<tag>-<platform>-x64.{zip,tar.gz}
-                    with a top-level app/ + relay/ layout, bundle the latest Relay release
-                    (prereleases included), upload a GitHub Artifact Attestation per asset via
-                    actions/attest@v4, then repository_dispatch the post-release workflow; an
+                    unsigned assets that diverge by platform: build-windows publishes the Curator
+                    UI framework-dependent with -p:CuratorUseVelopack=true (adds the Velopack
+                    reference + the CURATOR_VELOPACK symbol that wires VelopackApp.Build().Run()
+                    in Program.cs), stages Relay app-local under stage/app/relay, runs vpk pack
+                    (Velopack 1.2.0, packId ModifAmorphic.ModificusCurator, --framework
+                    net10.0-x64-runtime so the installer bootstraps .NET 10), renames Setup.exe to
+                    modificus-curator-setup.exe, uploads the installer + the full.nupkg +
+                    releases.win.json, and attests the installer + the nupkg; build-linux keeps the
+                    portable-archive flow, publishing the framework-dependent
+                    curator-<tag>-linux-x64.tar.gz with a top-level app/ + relay/ layout, bundling
+                    the latest Relay release (prereleases included), uploading + attesting it; both
+                    legs target win-x64 / linux-x64 RIDs with --self-contained false to filter native
+                    libs, and an AfterTargets=Publish target strips all .pdb files; then
+                    repository_dispatch the post-release workflow; an
                     update-manifest job (after build-linux, gated on releases_created + build-linux
                     success) rewrites the matching var in scripts/release.env (RELEASE_URL for a
                     stable release, PRE_RELEASE_URL for a prerelease, selected by the release's
                     prerelease flag; the Linux tar.gz asset resolved from the release by
                     content_type==application/x-gtar) and commits it as
-                    "chore(release): update install manifest [skip ci]"; the UI publish
-                    targets win-x64 and linux-x64 RIDs with --self-contained false to filter native libs, and an
-                    AfterTargets=Publish target strips all .pdb files so the bundles carry no debug symbols), and
+                    "chore(release): update install manifest [skip ci]"), and
                     curator-post-release-av (repository_dispatch event_type curator-release-assets-published,
-                    or manual workflow_dispatch; scans the published bytes with PowerShell
+                    or manual workflow_dispatch; scans the published Windows installer bytes
+                    (modificus-curator-setup.exe) with PowerShell
                     Start-MpScan Defender scan and VirusTotal, classifies Defender results
                     explicitly as clean/detection/tool_error, submits to VirusTotal via the
                     pinned crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2

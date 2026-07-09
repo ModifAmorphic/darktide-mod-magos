@@ -33,31 +33,26 @@ artifacts (launcher, shell DLL, mod loader) come from
 
 ## Installation
 
-Releases are **framework-dependent**: Curator needs the **.NET 10 Runtime**. If
-Windows prompts for a runtime on first launch, install it from
-<https://dotnet.microsoft.com/download/dotnet/10.0>.
-
-Each release archive contains two top-level folders:
-
-- `app/` - the Curator UI, the `nxm://` handler, and the launcher stub.
-- `relay/` - the bundled Modificus Relay runtime.
-
-Extracting the archive into Curator's default data folder seeds both the app
-and the default Relay location, so no extra configuration is needed. On first
-launch Curator registers the `nxm://` handler itself, so Nexus "Download with
-manager" links work without any extra setup.
-
 ### Windows
 
-1. Download `curator-<tag>-windows-x64.zip` from the
+1. Download `modificus-curator-setup.exe` from the
    [latest release](https://github.com/ModifAmorphic/darktide-modificus-curator/releases).
-2. Install the [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
-   if you do not already have it.
-3. Extract the zip into `%LOCALAPPDATA%\Modificus Curator\` (create the folder
-   if it does not exist).
-4. Run `app\Modificus.Curator.exe`.
+2. Run it. It is a one-click installer (no wizard): it installs Curator into
+   `%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\`, creates Start Menu and
+   desktop shortcuts, and registers in Apps & Features so you can uninstall it
+   the usual way. If the .NET 10 Runtime is missing, the installer downloads
+   and installs it for you.
+
+On first launch Curator registers the `nxm://` handler itself, so Nexus
+"Download with manager" links work without any extra setup.
+
+> The installer is not code-signed yet, so Windows SmartScreen may warn on the
+> first run. Choose **More info** > **Run anyway** to continue.
 
 ### Linux
+
+Curator needs the **.NET 10 Runtime**. If it is not already installed, get it
+from <https://dotnet.microsoft.com/download/dotnet/10.0>.
 
 One line, installs the latest stable release:
 
@@ -77,6 +72,14 @@ replaces only the `app/` and `relay/` folders (your profiles, mods, logs, and
 `config.json` are left alone), marks the binaries executable, and adds a
 `modificus-curator` symlink in `~/.local/bin/`. If the symlink cannot be
 created, it prints the executable path to run instead.
+
+The Linux release archive contains two top-level folders:
+
+- `app/` - the Curator UI, the `nxm://` handler, and the launcher stub.
+- `relay/` - the bundled Modificus Relay runtime.
+
+Extracting it into Curator's default data folder seeds both the app and the
+default Relay location, so no extra configuration is needed.
 
 Manual install:
 

@@ -94,7 +94,8 @@ produced by the release workflow instead.
 Releases are cut by `release-please` (`.release-please-config.json` +
 `.release-please-manifest.json` at the repo root; tag style `v0.1.0`, no
 component prefix). When release-please creates a release, the release workflow
-publishes each target as a framework-dependent, unsigned bundle, fetches the
+publishes each target as an unsigned asset (Windows: a Velopack installer;
+Linux: a framework-dependent tar.gz bundle), fetches the
 latest Modificus Relay release (prereleases included), and uploads a GitHub
 Artifact Attestation against each asset. Verify an asset's provenance with:
 
@@ -102,13 +103,19 @@ Artifact Attestation against each asset. Verify an asset's provenance with:
 gh attestation verify <file> --repo ModifAmorphic/darktide-modificus-curator
 ```
 
-The release archive layout is two top-level folders, extracted into the default
-app-data root (`%LOCALAPPDATA%\Modificus Curator` on Windows,
-`~/.local/share/Modificus Curator` on Linux):
+The Windows release is a Velopack installer (`modificus-curator-setup.exe`,
+pack id `ModifAmorphic.ModificusCurator`, installs to
+`%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\`, bootstraps the .NET 10
+runtime); the Linux release archive is two top-level folders, extracted into
+the Linux app-data root (`~/.local/share/Modificus Curator`):
 
 - `app/` - the Curator UI + the `nxm://` handler (+ the launcher stub, pending
   later cleanup).
 - `relay/` - the bundled Relay runtime, which seeds the default `RelayDir`.
+
+See [`docs/reference/release-strategy.md`](../docs/reference/release-strategy.md)
+for the full deployment model (Windows install vs data roots, app-local Relay,
+the Velopack pack, auto-update).
 
 A separate post-release workflow (triggered by `repository_dispatch` from the
 release workflow, also runnable on manual `workflow_dispatch`) scans the
@@ -170,8 +177,9 @@ tag, so the repo stays the sole source of truth for version details). See
 
 One global config file (JSON), loaded by
 `general/ConfigLoader.cs` onto a fully-defaulted `CuratorConfig`. The default
-location is `<app-data>/Modificus Curator/config.json`
-(`%LOCALAPPDATA%` on Windows, `~/.local/share` on Linux). Every field has a
+location is `<app-data>/config.json`, where `<app-data>` is
+`%LOCALAPPDATA%\ModifAmorphic\Modificus Curator` on Windows and
+`~/.local/share/Modificus Curator` on Linux. Every field has a
 platform-appropriate default, so the app runs with no file present; specify only
 what you want to override. See [`config.example.json`](./config.example.json)
 for the schema.
@@ -179,9 +187,9 @@ for the schema.
 | Field                  | Default                                         |
 | ---------------------- | ----------------------------------------------- |
 | `Logging:Level`        | `Information`                                   |
-| `Logging:LogFile`      | `<app-data>/Modificus Curator/logs/curator.log`     |
-| `ProfilesBaseFolder`   | `<app-data>/Modificus Curator/profiles`           |
-| `ModsFolder`           | `<app-data>/Modificus Curator/mods`               |
-| `RelayDir`             | `<app-data>/Modificus Curator/relay`              |
+| `Logging:LogFile`      | `<app-data>/logs/curator.log`                   |
+| `ProfilesBaseFolder`   | `<app-data>/profiles`                           |
+| `ModsFolder`           | `<app-data>/mods`                               |
+| `RelayDir`             | `<app-data>/relay`                              |
 
 Per-profile settings live with the profile, not in the global config.
