@@ -457,6 +457,9 @@ public partial class ShellViewModel : ObservableObject
     /// <item><term><see cref="LaunchStatus.DiscoveryIncomplete"/></term><description>
     /// opens the escape-hatch dialog with the missing fields. No retry: the user
     /// clicks Launch again after submitting.</description></item>
+    /// <item><term><see cref="LaunchStatus.StagingFailed"/></term><description>shows
+    /// a localized modal alert (the raw exception is for the log only; the user
+    /// never sees the exception body).</description></item>
     /// <item><term><see cref="LaunchStatus.Error"/></term><description>shows a
     /// modal alert with the result's message.</description></item>
     /// </list>
@@ -492,6 +495,17 @@ public partial class ShellViewModel : ObservableObject
                 _logger.LogInformation(
                     "Discovery incomplete on launch of {Id}; showed escape-hatch for fields: {Fields}.",
                     profile.Id, string.Join(", ", result.MissingDiscoveryFields));
+                break;
+
+            case LaunchStatus.StagingFailed:
+                // A staging link could not be created. The raw exception is for
+                // the log only (RelayLaunchService logged it); the user sees a
+                // localized, actionable alert. result.Message is null by design.
+                LaunchStatusNote = null;
+                await _dialogs.ShowAlertAsync(
+                    _localization["Launch_StagingFailedTitle"],
+                    _localization["Launch_StagingFailedMessage"]);
+                _logger.LogWarning("Staging failed on launch of {Id}.", profile.Id);
                 break;
 
             case LaunchStatus.Error:

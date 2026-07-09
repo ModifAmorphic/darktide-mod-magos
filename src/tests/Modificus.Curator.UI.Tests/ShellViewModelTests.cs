@@ -431,6 +431,29 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task Launch_StagingFailed_shows_a_localized_alert_with_no_exception_body()
+    {
+        // StagingFailed carries a null Message: the raw exception is for the log
+        // only. The user sees localized prose resolved from Strings.resx
+        // (title + body), never the exception message.
+        var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var dialogs = new FakeDialogService();
+        var launch = new FakeLaunchService
+        {
+            NextResult = new LaunchResult(LaunchStatus.StagingFailed, Message: null, Array.Empty<string>()),
+        };
+        var vm = Build(TestDoubles.Profiles(a), session, dialogs, launch);
+
+        await vm.LaunchCommand.ExecuteAsync(null);
+
+        Assert.Single(dialogs.AlertCalls);
+        Assert.Equal(Localization["Launch_StagingFailedTitle"], dialogs.AlertCalls[0].Title);
+        Assert.Equal(Localization["Launch_StagingFailedMessage"], dialogs.AlertCalls[0].Message);
+        Assert.Null(vm.LaunchStatusNote);
+    }
+
+    [Fact]
     public async Task Launch_with_no_selected_profile_is_a_no_op()
     {
         // Defense: even though CanLaunch gates this, a programmatic call with

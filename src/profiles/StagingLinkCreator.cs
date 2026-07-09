@@ -11,8 +11,8 @@ namespace Modificus.Curator.Profiles;
 /// </summary>
 /// <remarks>
 /// Throws <see cref="IOException"/> / <see cref="UnauthorizedAccessException"/>
-/// (or <see cref="StagingLinkException"/> at the staging call site) when the link
-/// can't be created (e.g. Windows on a non-NTFS volume, or no write access to the
-/// profile's <c>staged/</c> directory). The staging layer never silently copies.
+/// when the link can't be created (e.g. Windows on a non-NTFS volume, or no
+/// write access to the profile's <c>staged/</c> directory). The staging layer
+/// never silently copies.
 /// </remarks>
 public delegate void StagingLinkCreator(string linkPath, string targetPath);

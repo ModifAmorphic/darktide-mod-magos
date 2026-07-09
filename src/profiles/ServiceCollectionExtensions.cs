@@ -33,8 +33,8 @@ public static class ServiceCollectionExtensions
         // Default staging-link impl, platform-selective: a privilege-free NTFS
         // junction on Windows (no Developer Mode / admin required) and the BCL
         // symlink on Linux. TryAdd so a caller may pre-register an override
-        // (e.g. tests inject a throwing delegate to exercise the
-        // StagingLinkException path without platform hacks).
+        // (e.g. tests inject a throwing delegate to exercise the staging-link
+        // IOException path without platform hacks).
         services.TryAddSingleton<StagingLinkCreator>(_ => CreateStagingLink);
 
         // Auto-sort seam: identity stub for now (no-op). TryAdd so a caller may

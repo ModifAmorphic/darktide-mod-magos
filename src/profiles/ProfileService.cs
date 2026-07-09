@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
 using Modificus.Curator.Config;
@@ -354,8 +353,8 @@ internal sealed class ProfileService : IProfileService
         // (the add flow calls GetBaseNameCollision), so staging never sees two
         // mods with the same base folder name in normal use. No dedupe / no
         // last-wins / no disambiguation. (A hand-edited profile.json that somehow
-        // creates a duplicate base name would throw StagingLinkException here on
-        // on the second link - an accepted edge; no defensive logic is added.)
+        // creates a duplicate base name would throw IOException here on the
+        // second link - an accepted edge; no defensive logic is added.)
         var stagedNames = new List<string>();
         foreach (var mod in profile.Mods.Where(m => m.Enabled).OrderBy(m => m.Order))
         {
@@ -373,7 +372,7 @@ internal sealed class ProfileService : IProfileService
             }
 
             var linkPath = Path.Combine(staged, baseName);
-            CreateLinkOrThrow(linkPath, target);
+            _createLink(linkPath, target);
             stagedNames.Add(baseName);
             _logger.LogDebug(
                 "Staged container {Container} on profile {Id} as '{Link}' -> {Target}",
@@ -484,29 +483,6 @@ internal sealed class ProfileService : IProfileService
             }
         }
         return null;
-    }
-
-    /// <summary>
-    /// Creates a staging link, throwing <see cref="StagingLinkException"/> with a
-    /// clear, actionable message on failure. Never silently copies.
-    /// </summary>
-    private void CreateLinkOrThrow(string linkPath, string targetPath)
-    {
-        try
-        {
-            _createLink(linkPath, targetPath);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
-        {
-            throw new StagingLinkException(
-                $"Failed to create the staging link '{linkPath}' -> '{targetPath}'. Staging links are required " +
-                "for mod staging (the manager never copies). " +
-                (OperatingSystem.IsWindows()
-                    ? "Check that the profile's staged/ directory is writable and that the volume is NTFS " +
-                      "(junctions are NTFS-only)."
-                    : "Confirm write access to the profile's staged/ directory."),
-                ex);
-        }
     }
 
     /// <summary>

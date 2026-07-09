@@ -35,7 +35,7 @@ internal sealed class ProfileServiceFixture : IDisposable
     /// <param name="createLink">Optional override for the staging-link seam
     /// (default: the platform-selective link, a junction on Windows or
     /// <see cref="Directory.CreateSymbolicLink"/> on Linux). Pass a throwing
-    /// delegate to exercise <see cref="StagingLinkException"/>.</param>
+    /// delegate to exercise the staging-link <see cref="IOException"/> path.</param>
     public ProfileServiceFixture(StagingLinkCreator? createLink = null)
     {
         var config = CuratorConfig.CreateDefault();

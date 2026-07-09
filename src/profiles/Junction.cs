@@ -39,8 +39,9 @@ internal static class Junction
     /// Creates a junction at <paramref name="linkPath"/> pointing to
     /// <paramref name="targetPath"/>. The <paramref name="targetPath"/> must
     /// already exist; the <paramref name="linkPath"/> is created here as an empty
-    /// directory, then turned into a junction. Throws
-    /// <see cref="Win32Exception"/> (carrying the last P/Invoke error) on failure.
+    /// directory, then turned into a junction. Throws <see cref="IOException"/>
+    /// (wrapping the last P/Invoke error) on failure, consistent with the symlink
+    /// path's <see cref="Directory.CreateSymbolicLink"/>.
     /// </summary>
     internal static void Create(string linkPath, string targetPath)
     {
@@ -70,15 +71,29 @@ internal static class Junction
         Array.Copy(printBytes, 0, buf, p, printBytes.Length); p += printBytes.Length;
         Array.Copy(nulWide, 0, buf, p, 2);
 
-        using var h = CreateFileW(linkPath, GENERIC_WRITE, 0, IntPtr.Zero, OPEN_EXISTING,
-            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
-        if (h.IsInvalid)
+        // Wrap the P/Invoke calls so a Win32Exception (carrying the last
+        // SetLastError value) surfaces as a built-in IOException. This keeps the
+        // junction path consistent with the symlink path
+        // (Directory.CreateSymbolicLink throws IOException): staging-link
+        // failures from either primitive reach the caller as IOException. The
+        // technical detail stays in the message for the log; it is never
+        // surfaced to the user.
+        try
         {
-            throw new Win32Exception(); // captures the last P/Invoke error (SetLastError)
+            using var h = CreateFileW(linkPath, GENERIC_WRITE, 0, IntPtr.Zero, OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
+            if (h.IsInvalid)
+            {
+                throw new Win32Exception(); // captures the last P/Invoke error (SetLastError)
+            }
+            if (!DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, buf, (uint)buf.Length, null, 0, out _, IntPtr.Zero))
+            {
+                throw new Win32Exception();
+            }
         }
-        if (!DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, buf, (uint)buf.Length, null, 0, out _, IntPtr.Zero))
+        catch (Win32Exception ex)
         {
-            throw new Win32Exception();
+            throw new IOException(ex.Message, ex);
         }
     }
 

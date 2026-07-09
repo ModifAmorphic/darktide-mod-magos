@@ -19,8 +19,8 @@ namespace Modificus.Curator.Profiles.Tests;
 /// time (<see cref="IProfileService.GetBaseNameCollision"/>), so staging is a
 /// simple loop with no dedupe; the staged root holds only staging links (an NTFS
 /// junction on Windows, a symlink on Linux) + <c>mods.lst</c> (no copied files);
-/// a staging-link-creation failure throws
-/// <see cref="StagingLinkException"/> (never silently copies).
+/// a staging-link-creation failure throws <see cref="IOException"/> (never
+/// silently copies).
 /// </summary>
 public sealed class StagingTests
 {
@@ -315,9 +315,9 @@ public sealed class StagingTests
     // use: the add flow refuses them via IProfileService.GetBaseNameCollision
     // before importing (see ModListViewModelTests + ModListTests). Staging is a
     // simple loop with no dedupe, so a hand-edited profile.json that forces a
-    // duplicate base name throws StagingLinkException on the second link (the
-    // accepted "whatever it is" edge). No test asserts that edge: it is undefined
-    // behavior the operator explicitly chose not to support.
+    // duplicate base name throws IOException on the second link (the accepted
+    // "whatever it is" edge). No test asserts that edge: it is undefined behavior
+    // the operator explicitly chose not to support.
 
     [Fact]
     public void Corrupted_version_folder_with_zero_subdirectories_is_skipped_with_warning()
@@ -367,21 +367,18 @@ public sealed class StagingTests
     // ---- staging-link-failure path ----------------------------------------
 
     [Fact]
-    public void Symlink_creation_failure_throws_clear_error_not_silent_copy()
+    public void Symlink_creation_failure_throws_io_exception_not_silent_copy()
     {
         StagingLinkCreator throwing = (_, _) =>
-            throw new UnauthorizedAccessException("simulated: staging link not permitted");
+            throw new IOException("simulated: staging link could not be created");
 
         using var fx = new ProfileServiceFixture(createLink: throwing);
         var profile = fx.Service.CreateProfile("P");
         var container = fx.AddContainerWithVersion("DMF");
         fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
-        var ex = Assert.Throws<StagingLinkException>(() => fx.Service.PrepareModRoot(profile.Id));
-        Assert.Contains("Failed to create the staging link", ex.Message);
-        // The Developer-Mode error string is gone (junctions need no privilege);
-        // staging failures now point at write access / NTFS instead.
-        Assert.DoesNotContain("Developer Mode", ex.Message);
+        var ex = Assert.Throws<IOException>(() => fx.Service.PrepareModRoot(profile.Id));
+        Assert.Contains("staging link", ex.Message);
 
         // And it did NOT silently copy: no real mod dir under staged/.
         Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "DMF")));

@@ -54,6 +54,11 @@ internal sealed class FakeProfileService : IProfileService
     /// <summary>When set, <see cref="PrepareModRoot"/> throws KeyNotFoundException (unknown profile).</summary>
     public bool UnknownProfile { get; set; }
 
+    /// <summary>When set, <see cref="PrepareModRoot"/> throws
+    /// <see cref="IOException"/> (a staging-link failure) to drive the
+    /// <see cref="LaunchStatus.StagingFailed"/> path.</summary>
+    public bool PrepareModRootThrows { get; set; }
+
     public Guid LastPrepareModRootId { get; private set; }
     public int PrepareModRootCalls { get; private set; }
 
@@ -65,6 +70,10 @@ internal sealed class FakeProfileService : IProfileService
         if (UnknownProfile)
         {
             throw new KeyNotFoundException($"No profile exists with id '{id}'.");
+        }
+        if (PrepareModRootThrows)
+        {
+            throw new IOException("simulated staging-link failure");
         }
         return PrepareModRootResult;
     }
