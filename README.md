@@ -59,17 +59,24 @@ manager" links work without any extra setup.
 
 ### Linux
 
-One line, installs the latest release (prereleases included):
+One line, installs the latest stable release:
 
 ```sh
 curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh
 ```
 
-The script installs into `~/.local/share/Modificus Curator/`, replaces only the
-`app/` and `relay/` folders (your profiles, mods, logs, and `config.json` are
-left alone), marks the binaries executable, and adds a `modificus-curator`
-symlink in `~/.local/bin/`. If the symlink cannot be created, it prints the
-executable path to run instead.
+To install the latest prerelease instead, pass `--prerelease`:
+
+```sh
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh -s -- --prerelease
+```
+
+The script resolves the archive from a manifest the release pipeline maintains
+(no GitHub API calls), installs into `~/.local/share/Modificus Curator/`,
+replaces only the `app/` and `relay/` folders (your profiles, mods, logs, and
+`config.json` are left alone), marks the binaries executable, and adds a
+`modificus-curator` symlink in `~/.local/bin/`. If the symlink cannot be
+created, it prints the executable path to run instead.
 
 Manual install:
 

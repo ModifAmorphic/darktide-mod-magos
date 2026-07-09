@@ -72,6 +72,16 @@ Jobs:
 3. **dispatch-av-vt**, gated on both build legs succeeding, fires a
    `repository_dispatch` event (`event_type: curator-release-assets-published`,
    carrying the tag + asset names) to trigger the post-release AV/VT workflow.
+4. **update-manifest**, gated on `releases_created == 'true'` and `build-linux`
+   success, rewrites `scripts/release.env` (the install manifest the Linux
+   installer consumes) to point at the new Linux tar.gz. It resolves the asset
+   from the release by `content_type=="application/x-gtar"` via
+   `gh release view`, selects `RELEASE_URL` (stable) or `PRE_RELEASE_URL`
+   (prerelease) from the release's `prerelease` flag, and commits the change as
+   `chore(release): update install manifest [skip ci]`. The `[skip ci]` in the
+   commit message suppresses re-triggering this workflow, and the `chore` type
+   keeps release-please from picking it up. Only the one matching var line is
+   rewritten; the other (and the comment header) is left untouched.
 
 ### Deployment model
 
@@ -218,17 +228,29 @@ workflow handles push-to-main.
 
 ## Linux installer
 
-`scripts/install.sh` is served from `raw/main`:
+`scripts/install.sh` is served from `raw/main`. By default it installs the
+latest STABLE release; pass `--prerelease` (or set `CURATOR_PRERELEASE=1`) to
+install the latest prerelease:
 
 ```sh
+# stable (default)
 curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh
+# prerelease
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh -s -- --prerelease
 ```
 
-The script installs the latest release visible to an unauthenticated request
-(prereleases included). It queries the GitHub releases list endpoint (which
-excludes drafts and returns newest first, so the first `tag_name` is the
-latest release; `/releases/latest` is not used because it skips prereleases),
-downloads `curator-<tag>-linux-x64.tar.gz`, extracts to a temp dir, validates
+The script does NOT query the GitHub API or infer the asset filename. It
+resolves the archive from `scripts/release.env`, a small `KEY=value` manifest
+the release pipeline maintains on every release (see the `update-manifest` job
+above). It fetches the manifest from
+`https://raw.githubusercontent.com/<repo>/main/scripts/release.env` (CDN, no
+auth, no rate limit), parses `RELEASE_URL` and `PRE_RELEASE_URL` line by line
+(not sourced, for safety even though the file is ours), and downloads the URL
+matching the selected channel. If the chosen URL is empty (for example,
+`RELEASE_URL` is empty until the first stable release ships), the script exits
+with a message pointing the user at `--prerelease`.
+
+After downloading, the script extracts to a temp dir, validates
 `app/Modificus.Curator` + `relay/modificus_relay.exe` before touching the
 install root, then:
 
@@ -248,11 +270,12 @@ Curator's own first run handles `.desktop` registration for the `nxm://`
 handler; the script does not duplicate that.
 
 The script supports testing overrides (`INSTALL_ROOT`, `BIN_LINK`,
-`CURATOR_REPO`, `CURATOR_ARCHIVE`) so extraction + install can be exercised
-against a fake archive in a temp dir without touching real user data or
-hitting the network. The script in `main` is authoritative; users always get
-the current version, and it always installs the latest release. Users wanting
-a specific release manage the install themselves.
+`CURATOR_REPO`, `CURATOR_ARCHIVE`, `CURATOR_PRERELEASE`) so extraction +
+install can be exercised against a fake archive in a temp dir without touching
+real user data or hitting the network. The script in `main` is authoritative;
+users always get the current version, installing the latest stable by default
+or the latest prerelease on request. Users wanting a specific release manage
+the install themselves.
 
 ## Sandbox rehearsal (operator procedure)
 
@@ -311,6 +334,8 @@ What the release pipeline provides today, and what it does not:
   (repository_dispatch AV/VT scan), `.github/workflows/curator-build.yml`
   (PR gate).
 - `scripts/install.sh` (the Linux installer).
+- `scripts/release.env` (the install manifest the installer reads and the
+  `update-manifest` job maintains).
 - Release-please config: `.release-please-config.json` +
   `.release-please-manifest.json`.
 - GitHub Artifact Attestations (`actions/attest@v4`):

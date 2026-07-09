@@ -1,28 +1,45 @@
 #!/bin/sh
 # Modificus Curator Linux installer.
 #
-# Installs the latest GitHub release (prereleases included) into Curator's
-# default app-data root, adds a launcher symlink in ~/.local/bin, and prints
-# the next steps. Served from raw/main:
+# Installs the latest Linux x64 release into Curator's default app-data root,
+# adds a launcher symlink in ~/.local/bin, and prints the next steps. Served
+# from raw/main:
 #
 #   curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh
 #
-# The script always installs the latest release visible to an unauthenticated
-# request (drafts are excluded by the API). Users wanting a specific release
-# download and manage it themselves.
+# By default the script installs the latest STABLE release. Pass --prerelease
+# (or set CURATOR_PRERELEASE=1) to install the latest prerelease instead. The
+# asset to download is resolved from scripts/release.env, a manifest the
+# release pipeline maintains on every release. The script never queries the
+# GitHub API and never infers the filename.
 #
 # Testing overrides (env vars, not needed for normal use):
 #   INSTALL_ROOT=<dir>        install into this dir instead of the default root
 #   BIN_LINK=<path>           create the launcher symlink here
-#   CURATOR_REPO=<owner/repo> install from this repo
+#   CURATOR_REPO=<owner/repo> read the manifest from this repo
 #   CURATOR_ARCHIVE=<file>    use a local tar.gz instead of downloading (used
 #                             to exercise extraction against a fake archive)
+#   CURATOR_PRERELEASE=1      install the latest prerelease
 set -eu
 
 REPO="${CURATOR_REPO:-ModifAmorphic/darktide-modificus-curator}"
-ASSET_PREFIX="curator-"
-ASSET_SUFFIX="-linux-x64.tar.gz"
 UA="modificus-curator-installer"
+
+msg() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Stable by default; prerelease is opt-in via --prerelease (or CURATOR_PRERELEASE).
+prerelease=0
+if [ "${CURATOR_PRERELEASE:-0}" = "1" ]; then
+    prerelease=1
+fi
+for arg in "$@"; do
+    case "$arg" in
+        --prerelease) prerelease=1 ;;
+        *) die "Unknown argument: $arg" ;;
+    esac
+done
 
 # Default install root mirrors AppPaths.AppDataDir, which is
 # Environment.SpecialFolder.LocalApplicationData + "Modificus Curator" (the
@@ -37,10 +54,6 @@ BIN_LINK="${BIN_LINK:-$HOME/.local/bin/modificus-curator}"
 tmp_dir=""
 cleanup() { [ -n "$tmp_dir" ] && rm -rf "$tmp_dir"; }
 trap cleanup EXIT
-
-msg() { printf '%s\n' "$*"; }
-warn() { printf 'WARNING: %s\n' "$*" >&2; }
-die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 # Pick whichever HTTP client is available.
 if command -v curl >/dev/null 2>&1; then
@@ -62,34 +75,36 @@ tmp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t curator-install) \
     || die "Could not create a temp directory."
 
 # Resolve the asset. CURATOR_ARCHIVE (testing override) skips the network
-# entirely and derives the tag from the filename; otherwise query the releases
-# list endpoint and download. The list endpoint excludes drafts for
-# unauthenticated requests and returns newest first, so the first tag_name is
-# the latest release (prerelease or stable). /releases/latest is not used
-# because it skips prereleases.
+# entirely and installs the local archive. Otherwise read scripts/release.env,
+# a manifest the release pipeline maintains, and select the stable or
+# prerelease URL from it. The manifest is plain KEY=value text parsed line by
+# line (not sourced), so only the two expected keys are honored.
+archive="$tmp_dir/curator-archive.tar.gz"
 if [ -n "${CURATOR_ARCHIVE:-}" ]; then
     [ -f "$CURATOR_ARCHIVE" ] || die "CURATOR_ARCHIVE does not exist: $CURATOR_ARCHIVE"
-    arcbasename=$(basename "$CURATOR_ARCHIVE")
-    case "$arcbasename" in
-        *"$ASSET_SUFFIX") tag=${arcbasename%"$ASSET_SUFFIX"} ;;
-        *) tag="unknown" ;;
-    esac
-    tag="${tag#"$ASSET_PREFIX"}"
-    asset_name="${ASSET_PREFIX}${tag}${ASSET_SUFFIX}"
-    archive="$tmp_dir/$asset_name"
     cp "$CURATOR_ARCHIVE" "$archive"
-    msg "Using local archive: $CURATOR_ARCHIVE (tag $tag, testing override)"
+    tag="local archive"
+    msg "Using local archive: $CURATOR_ARCHIVE (testing override)"
 else
-    msg "Finding the latest release of $REPO ..."
-    releases_json=$(fetch "https://api.github.com/repos/$REPO/releases") \
-        || die "Could not fetch the release list. If this is a rate limit, wait and retry."
-    tag=$(printf '%s\n' "$releases_json" \
-        | grep '"tag_name"' | head -n 1 \
-        | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-    [ -n "$tag" ] || die "Could not parse a release tag from the GitHub API response."
-    asset_name="${ASSET_PREFIX}${tag}${ASSET_SUFFIX}"
-    asset_url="https://github.com/$REPO/releases/download/${tag}/${asset_name}"
-    archive="$tmp_dir/$asset_name"
+    if [ "$prerelease" = "1" ]; then
+        channel="prerelease"
+    else
+        channel="stable"
+    fi
+    msg "Resolving the latest $channel release of $REPO ..."
+    MANIFEST_URL="https://raw.githubusercontent.com/${REPO}/main/scripts/release.env"
+    manifest=$(fetch "$MANIFEST_URL") \
+        || die "Could not fetch the release manifest. If this persists, check your connection or CURATOR_REPO."
+    if [ "$prerelease" = "1" ]; then
+        asset_url=$(printf '%s\n' "$manifest" | sed -n 's/^PRE_RELEASE_URL=\(.*\)$/\1/p')
+        [ -n "$asset_url" ] || die "No prerelease is currently published."
+    else
+        asset_url=$(printf '%s\n' "$manifest" | sed -n 's/^RELEASE_URL=\(.*\)$/\1/p')
+        [ -n "$asset_url" ] || die "No stable Modificus Curator release is available yet. Re-run with --prerelease to install the latest prerelease."
+    fi
+    tag=$(printf '%s\n' "$asset_url" | sed -n 's#.*/download/\([^/]*\)/.*#\1#p')
+    [ -n "$tag" ] || tag="latest"
+    asset_name=$(basename "$asset_url")
     msg "Latest release: $tag"
     msg "Asset:         $asset_name"
     msg "Downloading $asset_url ..."
