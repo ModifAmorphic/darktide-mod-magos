@@ -100,10 +100,12 @@ Method behavior:
 - `PrepareModRoot(id)` -- regenerates the staged mod root (the `--mod-path`) from
   the current per-mod version resolution and writes `mods.lst`. Idempotent
   (clears + rebuilds `staged/` each call). Returns the `--mod-path` to pass to
-  the Relay launcher. Throws `IOException` if a staging link cannot be
-  created (the manager never silently copies); the relay-client launch façade
-  catches that and maps it to `LaunchStatus.StagingFailed`, and the UI surfaces
-  a localized alert (the raw exception is for the log only).
+  the Relay launcher. A staging-link creation failure propagates the raised
+  built-in exception (`Win32Exception` from the junction path on Windows,
+  `IOException` / `UnauthorizedAccessException` from the symlink path on Linux;
+  the manager never silently copies); the relay-client launch façade catches
+  that and maps it to `LaunchStatus.StagingFailed`, carrying the exception's
+  body, and the UI surfaces it after the localized framing.
 
 ### Key types
 
@@ -124,10 +126,11 @@ Method behavior:
   The default (registered by `AddProfiles`) is platform-selective: an NTFS
   junction on Windows (privilege-free; no Developer Mode / admin required) and a
   symlink via `Directory.CreateSymbolicLink` on Linux. Injectable so tests
-  exercise the failure path without platform permission hacks. Both primitives
-  surface a creation failure as a built-in `IOException` (the junction path
-  re-wraps its `Win32Exception`); the staging call site lets it propagate, so
-  the staging layer never silently copies.
+  exercise the failure path without platform permission hacks. A creation
+  failure propagates the raised built-in exception as-is (`Win32Exception` from
+  the junction path; `IOException` / `UnauthorizedAccessException` from the
+  symlink path); the staging call site lets it propagate, so the staging layer
+  never silently copies.
 
 `ModVersionPolicy` (PinnedPolicy/LatestPolicy), `ModSource`, `ModContainer`, and
 `ModVersion` live in the [mods](mods.md) library; Profiles consumes

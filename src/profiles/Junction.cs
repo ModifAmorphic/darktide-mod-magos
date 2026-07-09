@@ -39,9 +39,11 @@ internal static class Junction
     /// Creates a junction at <paramref name="linkPath"/> pointing to
     /// <paramref name="targetPath"/>. The <paramref name="targetPath"/> must
     /// already exist; the <paramref name="linkPath"/> is created here as an empty
-    /// directory, then turned into a junction. Throws <see cref="IOException"/>
-    /// (wrapping the last P/Invoke error) on failure, consistent with the symlink
-    /// path's <see cref="Directory.CreateSymbolicLink"/>.
+    /// directory, then turned into a junction. Throws
+    /// <see cref="Win32Exception"/> (carrying the last P/Invoke error) on failure;
+    /// the staging call site + launch façade let the raised built-in exception
+    /// propagate as-is (the symlink path's <see cref="IOException"/> likewise
+    /// propagates unwrapped), so the actual runtime/OS error reaches the caller.
     /// </summary>
     internal static void Create(string linkPath, string targetPath)
     {
@@ -71,29 +73,20 @@ internal static class Junction
         Array.Copy(printBytes, 0, buf, p, printBytes.Length); p += printBytes.Length;
         Array.Copy(nulWide, 0, buf, p, 2);
 
-        // Wrap the P/Invoke calls so a Win32Exception (carrying the last
-        // SetLastError value) surfaces as a built-in IOException. This keeps the
-        // junction path consistent with the symlink path
-        // (Directory.CreateSymbolicLink throws IOException): staging-link
-        // failures from either primitive reach the caller as IOException. The
-        // technical detail stays in the message for the log; it is never
-        // surfaced to the user.
-        try
+        // The P/Invoke calls throw Win32Exception (carrying the last SetLastError
+        // value) on failure. It is propagated as-is: the staging layer never
+        // silently copies, and the raised built-in exception's message (a
+        // runtime/OS error, not a string we invented) is surfaced to the user
+        // after the localized framing in the launch alert.
+        using var h = CreateFileW(linkPath, GENERIC_WRITE, 0, IntPtr.Zero, OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
+        if (h.IsInvalid)
         {
-            using var h = CreateFileW(linkPath, GENERIC_WRITE, 0, IntPtr.Zero, OPEN_EXISTING,
-                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
-            if (h.IsInvalid)
-            {
-                throw new Win32Exception(); // captures the last P/Invoke error (SetLastError)
-            }
-            if (!DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, buf, (uint)buf.Length, null, 0, out _, IntPtr.Zero))
-            {
-                throw new Win32Exception();
-            }
+            throw new Win32Exception(); // captures the last P/Invoke error (SetLastError)
         }
-        catch (Win32Exception ex)
+        if (!DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, buf, (uint)buf.Length, null, 0, out _, IntPtr.Zero))
         {
-            throw new IOException(ex.Message, ex);
+            throw new Win32Exception();
         }
     }
 

@@ -10,8 +10,10 @@ namespace Modificus.Curator.Profiles;
 /// platform permissions.
 /// </summary>
 /// <remarks>
-/// Throws <see cref="IOException"/> / <see cref="UnauthorizedAccessException"/>
-/// when the link can't be created (e.g. Windows on a non-NTFS volume, or no
+/// Throws the raised built-in exception when the link can't be created:
+/// <see cref="System.ComponentModel.Win32Exception"/> from the junction path on
+/// Windows, <see cref="IOException"/> / <see cref="UnauthorizedAccessException"/>
+/// from the symlink path on Linux (e.g. Windows on a non-NTFS volume, or no
 /// write access to the profile's <c>staged/</c> directory). The staging layer
 /// never silently copies.
 /// </remarks>

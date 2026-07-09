@@ -492,9 +492,9 @@ branches on `LaunchResult.Status`:
   paths, closes the dialog, and clicks Launch again. This avoids a loop if the
   user cannot get the paths right; the escape-hatch is a form, not a retry.
 - **`StagingFailed`**: the profile's mod root could not be prepared (a staging
-  link could not be created). The raw exception is logged by the launch façade;
-  `Message` is null and the UI surfaces a localized alert instead (no exception
-  body ever reaches the user).
+  link could not be created). The full exception is logged by the launch façade,
+  and its body is carried on `Message`; the UI surfaces it after the localized
+  framing (the body is a runtime/OS error, not a string Curator invented).
 - **`Error`**: a modal alert surfacing `LaunchResult.Message`.
 
 A new top-bar **Settings** button (gear) opens the **Settings window** with two

@@ -161,12 +161,17 @@ public interface IProfileService
     /// <remarks>
     /// Staging links, not copies (the repository holds the files). A staging-link
     /// creation failure (e.g. Windows on a non-NTFS volume, or no write access to
-    /// the profile's <c>staged/</c> directory) throws <see cref="IOException"/>;
-    /// it never silently copies. A mod whose container or resolved version is
+    /// the profile's <c>staged/</c> directory) propagates the raised built-in
+    /// exception as-is: <see cref="System.ComponentModel.Win32Exception"/> from
+    /// the NTFS junction path on Windows, <see cref="IOException"/> /
+    /// <see cref="UnauthorizedAccessException"/> from the symlink path on Linux.
+    /// It never silently copies. A mod whose container or resolved version is
     /// missing is skipped with a warning (not a crash); it has no entry in
     /// <c>staged/</c> or <c>mods.lst</c>.
     /// </remarks>
     /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
     /// <exception cref="IOException">A staging link could not be created.</exception>
+    /// <exception cref="System.ComponentModel.Win32Exception">A junction could
+    /// not be created on Windows.</exception>
     string PrepareModRoot(Guid id);
 }

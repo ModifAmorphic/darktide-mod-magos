@@ -96,10 +96,12 @@ internal sealed class RelayLaunchService : IRelayLaunchService
 
             // PrepareModRoot writes mods.lst + ensures the mod root exists and
             // returns the --mod-path. A staging-link creation failure surfaces as
-            // IOException (or UnauthorizedAccessException) and is mapped to
-            // StagingFailed here; KeyNotFoundException (unknown profile) is
-            // caught below and mapped to LaunchStatus.Error. The raw exception is
-            // for the log only; no message body is surfaced to the UI.
+            // the raised built-in exception (Win32Exception from the junction
+            // path on Windows, IOException / UnauthorizedAccessException from the
+            // symlink path on Linux) and is mapped to StagingFailed here; the
+            // exception's message is carried on the result so the UI can append
+            // it to the localized framing. KeyNotFoundException (unknown profile)
+            // is caught below and mapped to LaunchStatus.Error.
             string modPath;
             try
             {
@@ -110,7 +112,7 @@ internal sealed class RelayLaunchService : IRelayLaunchService
                 _logger.LogError(ex, "Staging failed for profile {Id}.", profileId);
                 return new LaunchResult(
                     LaunchStatus.StagingFailed,
-                    Message: null,
+                    Message: ex.Message,
                     MissingDiscoveryFields: Array.Empty<string>());
             }
 

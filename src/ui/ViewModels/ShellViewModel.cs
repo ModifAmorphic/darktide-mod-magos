@@ -458,8 +458,8 @@ public partial class ShellViewModel : ObservableObject
     /// opens the escape-hatch dialog with the missing fields. No retry: the user
     /// clicks Launch again after submitting.</description></item>
     /// <item><term><see cref="LaunchStatus.StagingFailed"/></term><description>shows
-    /// a localized modal alert (the raw exception is for the log only; the user
-    /// never sees the exception body).</description></item>
+    /// a localized modal alert: the framing + hint followed by the raised
+    /// exception's body (the runtime/OS error carried on the result).</description></item>
     /// <item><term><see cref="LaunchStatus.Error"/></term><description>shows a
     /// modal alert with the result's message.</description></item>
     /// </list>
@@ -498,13 +498,15 @@ public partial class ShellViewModel : ObservableObject
                 break;
 
             case LaunchStatus.StagingFailed:
-                // A staging link could not be created. The raw exception is for
-                // the log only (RelayLaunchService logged it); the user sees a
-                // localized, actionable alert. result.Message is null by design.
+                // A staging link could not be created. RelayLaunchService logged
+                // the full exception and carried the raised exception's body on
+                // the result. The user sees the localized framing + hint, then
+                // the runtime/OS detail appended, mirroring the Update/Import
+                // failure alerts.
                 LaunchStatusNote = null;
                 await _dialogs.ShowAlertAsync(
                     _localization["Launch_StagingFailedTitle"],
-                    _localization["Launch_StagingFailedMessage"]);
+                    _localization["Launch_StagingFailedMessage"] + " " + (result.Message ?? string.Empty));
                 _logger.LogWarning("Staging failed on launch of {Id}.", profile.Id);
                 break;
 

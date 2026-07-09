@@ -31,7 +31,7 @@ public interface IRelayLaunchService
     /// <list type="bullet">
     /// <item><term><see cref="LaunchStatus.Launched"/></term><description>the launcher process was started.</description></item>
     /// <item><term><see cref="LaunchStatus.DiscoveryIncomplete"/></term><description>Steam discovery is missing required fields for the current OS; <see cref="LaunchResult.MissingDiscoveryFields"/> lists them.</description></item>
-    /// <item><term><see cref="LaunchStatus.StagingFailed"/></term><description>the profile's mod root could not be prepared (a staging link could not be created). No message is carried; the raw exception is logged.</description></item>
+    /// <item><term><see cref="LaunchStatus.StagingFailed"/></term><description>the profile's mod root could not be prepared (a staging link could not be created). <see cref="LaunchResult.Message"/> carries the raised exception's body (the runtime/OS error).</description></item>
     /// <item><term><see cref="LaunchStatus.Error"/></term><description>unknown profile, missing runtime dir, or process-start failure -- see <see cref="LaunchResult.Message"/>.</description></item>
     /// </list>
     /// </summary>
@@ -45,8 +45,8 @@ public interface IRelayLaunchService
 /// <see cref="LaunchStatus.DiscoveryIncomplete"/>, <see cref="LaunchStatus.StagingFailed"/>,
 /// or <see cref="LaunchStatus.Error"/>.</param>
 /// <param name="Message">Human-readable detail; populated for
-/// <see cref="LaunchStatus.Error"/> (null otherwise; <see cref="LaunchStatus.StagingFailed"/>
-/// is message-less by design -- the raw exception is for the log only).</param>
+/// <see cref="LaunchStatus.Error"/> and <see cref="LaunchStatus.StagingFailed"/>
+/// (carries the raised staging exception's body; null otherwise).</param>
 /// <param name="MissingDiscoveryFields">The discovery fields the current OS
 /// requires but could not be resolved; populated only for
 /// <see cref="LaunchStatus.DiscoveryIncomplete"/> (empty otherwise). Field names
@@ -70,8 +70,10 @@ public enum LaunchStatus
 
     /// <summary>The profile's mod root could not be prepared: a staging link
     /// could not be created (e.g. Windows on a non-NTFS volume, or no write
-    /// access to the profile's <c>staged/</c> directory). No message is carried;
-    /// the raw exception is logged. The UI surfaces a localized alert.</summary>
+    /// access to the profile's <c>staged/</c> directory). <see cref="LaunchResult.Message"/>
+    /// carries the raised exception's body (a runtime/OS error, not a string we
+    /// invented); the UI surfaces it after the localized framing. The full
+    /// exception is logged.</summary>
     StagingFailed,
 
     /// <summary>Anything else: unknown profile, missing runtime dir, or a

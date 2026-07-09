@@ -585,7 +585,7 @@
   </data>
   <data name="Launch_StagingFailedMessage" xml:space="preserve">
     <value>Curator couldn't create the staging links for this profile. Check that Curator has write access to the profile's folder, and on Windows that the folder is on an NTFS volume (staging links require NTFS).</value>
-    <comment>Body of the StagingFailed alert. Actionable, platform-neutral hint: write access to the profile folder + NTFS on Windows. No exception body is surfaced; this is localized prose.</comment>
+    <comment>Localized framing + actionable hint for the StagingFailed alert body. The raised exception's body (a runtime/OS error) is appended after this at the call site, so this reads as a lead-in to the detail.</comment>
   </data>
 
   <!-- ============================================================ -->

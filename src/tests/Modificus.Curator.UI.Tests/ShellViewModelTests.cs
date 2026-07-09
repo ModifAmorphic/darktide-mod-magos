@@ -431,17 +431,18 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task Launch_StagingFailed_shows_a_localized_alert_with_no_exception_body()
+    public async Task Launch_StagingFailed_appends_the_exception_body_to_the_localized_framing()
     {
-        // StagingFailed carries a null Message: the raw exception is for the log
-        // only. The user sees localized prose resolved from Strings.resx
-        // (title + body), never the exception message.
+        // StagingFailed carries the raised exception's body on Message; the shell
+        // composes the localized framing + hint (Strings.resx) followed by that
+        // body, mirroring the Update/Import failure alerts. Both the framing and
+        // the carried detail appear in the shown alert.
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
         var session = new FakeProfileSession { ActiveProfileId = a.Id };
         var dialogs = new FakeDialogService();
         var launch = new FakeLaunchService
         {
-            NextResult = new LaunchResult(LaunchStatus.StagingFailed, Message: null, Array.Empty<string>()),
+            NextResult = new LaunchResult(LaunchStatus.StagingFailed, Message: "The parameter is incorrect", Array.Empty<string>()),
         };
         var vm = Build(TestDoubles.Profiles(a), session, dialogs, launch);
 
@@ -449,7 +450,8 @@ public sealed class ShellViewModelTests
 
         Assert.Single(dialogs.AlertCalls);
         Assert.Equal(Localization["Launch_StagingFailedTitle"], dialogs.AlertCalls[0].Title);
-        Assert.Equal(Localization["Launch_StagingFailedMessage"], dialogs.AlertCalls[0].Message);
+        Assert.Contains(Localization["Launch_StagingFailedMessage"], dialogs.AlertCalls[0].Message);
+        Assert.Contains("The parameter is incorrect", dialogs.AlertCalls[0].Message);
         Assert.Null(vm.LaunchStatusNote);
     }
 
