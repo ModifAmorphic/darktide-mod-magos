@@ -437,8 +437,9 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   `ContainerId`), and Launch (`LaunchCommand` -> `IRelayLaunchService.Launch`
   -> branch on `LaunchResult.Status` (`Launched` -> status note + immediate
   `IsGameRunning` refresh; `DiscoveryIncomplete` -> the focused discovery
-  escape-hatch modal over the shared `DiscoveryField` descriptor; `Error` ->
-  modal alert) + a Settings window editing `CuratorConfig.Discovery` user
+  escape-hatch modal over the shared `DiscoveryField` descriptor; `StagingFailed`
+  -> a localized modal alert (a staging link could not be created; the raw
+  exception is for the log only); `Error` -> modal alert) + a Settings window editing `CuratorConfig.Discovery` user
   overrides (per-field read-modify-save) + `ModsFolder` live-relocate via the
   atomic `IModRepository.Relocate` over the `DiscoveryConfig` +
   `SteamService.Discover()` validate+heal+persist pipeline). The DMF (Darktide

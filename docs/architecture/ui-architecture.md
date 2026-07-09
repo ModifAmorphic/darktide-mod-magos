@@ -140,7 +140,7 @@ Bracketing the swap and re-sync under `_syncing = true` makes those spurious
 events no-ops. `ManageProfiles`, `OpenIntegrations`, and `OpenSettings` all
 use this pattern.
 
-### Launch + the three result branches
+### Launch + the result branches
 
 `LaunchCommand` calls `IRelayLaunchService.Launch(activeProfileId)` and
 branches on `LaunchResult.Status`:
@@ -152,6 +152,9 @@ branches on `LaunchResult.Status`:
   missing fields. No auto-retry: the user submits the paths, closes the
   dialog, and clicks Launch again. A loop here would trap the user if they
   could not get the paths right.
+- **`StagingFailed`**: a localized modal alert. `Message` is null (the raw
+  staging exception is for the log only); the user sees localized prose, never
+  the exception body.
 - **`Error`**: a modal alert with the result's message.
 
 ### The post-dialog DMF prompt path

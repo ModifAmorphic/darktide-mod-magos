@@ -100,8 +100,10 @@ Method behavior:
 - `PrepareModRoot(id)` -- regenerates the staged mod root (the `--mod-path`) from
   the current per-mod version resolution and writes `mods.lst`. Idempotent
   (clears + rebuilds `staged/` each call). Returns the `--mod-path` to pass to
-  the Relay launcher. Throws `StagingLinkException` if a staging link cannot be
-  created (the manager never silently copies).
+  the Relay launcher. Throws `IOException` if a staging link cannot be
+  created (the manager never silently copies); the relay-client launch façade
+  catches that and maps it to `LaunchStatus.StagingFailed`, and the UI surfaces
+  a localized alert (the raw exception is for the log only).
 
 ### Key types
 
@@ -122,11 +124,10 @@ Method behavior:
   The default (registered by `AddProfiles`) is platform-selective: an NTFS
   junction on Windows (privilege-free; no Developer Mode / admin required) and a
   symlink via `Directory.CreateSymbolicLink` on Linux. Injectable so tests
-  exercise the failure path without platform permission hacks.
-- `StagingLinkException` -- an `InvalidOperationException` thrown by
-  `PrepareModRoot` when a staging link cannot be created (e.g. Windows on a
-  non-NTFS volume, or no write access to the profile's `staged/` directory). The
-  staging layer never silently copies.
+  exercise the failure path without platform permission hacks. Both primitives
+  surface a creation failure as a built-in `IOException` (the junction path
+  re-wraps its `Win32Exception`); the staging call site lets it propagate, so
+  the staging layer never silently copies.
 
 `ModVersionPolicy` (PinnedPolicy/LatestPolicy), `ModSource`, `ModContainer`, and
 `ModVersion` live in the [mods](mods.md) library; Profiles consumes
