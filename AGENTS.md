@@ -328,9 +328,13 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             serialized via DisableTestParallelization since
                                             real named pipes are an OS-level shared resource)
 docs/               architecture/ + reference/ (src/ per-library API refs + the release strategy reference)
-scripts/            install.sh: the Linux installer served from raw/main (installs
-                    the latest release, prereleases included, into
-                    ${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/;
+scripts/            release.env: the install manifest (RELEASE_URL +
+                    PRE_RELEASE_URL Linux x64 asset URLs), written by the release
+                    workflow's update-manifest job; install.sh: the Linux installer
+                    served from raw/main (stable by default, prerelease opt-in via
+                    --prerelease or CURATOR_PRERELEASE=1; resolves the archive from
+                    scripts/release.env rather than querying the GitHub API; installs
+                    into ${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/;
                     replaces only app/ + relay/, never the user-data root; symlinks the
                     UI into ~/.local/bin/modificus-curator). Testing overrides:
                     INSTALL_ROOT / BIN_LINK / CURATOR_REPO / CURATOR_ARCHIVE (local tar.gz
@@ -345,7 +349,13 @@ scripts/            install.sh: the Linux installer served from raw/main (instal
                     framework-dependent unsigned bundles as curator-<tag>-<platform>-x64.{zip,tar.gz}
                     with a top-level app/ + relay/ layout, bundle the latest Relay release
                     (prereleases included), upload a GitHub Artifact Attestation per asset via
-                    actions/attest@v4, then repository_dispatch the post-release workflow; the UI publish
+                    actions/attest@v4, then repository_dispatch the post-release workflow; an
+                    update-manifest job (after build-linux, gated on releases_created + build-linux
+                    success) rewrites the matching var in scripts/release.env (RELEASE_URL for a
+                    stable release, PRE_RELEASE_URL for a prerelease, selected by the release's
+                    prerelease flag; the Linux tar.gz asset resolved from the release by
+                    content_type==application/x-gtar) and commits it as
+                    "chore(release): update install manifest [skip ci]"; the UI publish
                     targets win-x64 and linux-x64 RIDs with --self-contained false to filter native libs, and an
                     AfterTargets=Publish target strips all .pdb files so the bundles carry no debug symbols), and
                     curator-post-release-av (repository_dispatch event_type curator-release-assets-published,

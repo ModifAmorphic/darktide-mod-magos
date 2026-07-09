@@ -129,7 +129,9 @@ Releases created with `GITHUB_TOKEN` do not fire `release: published`, which is
 why the AV/VT workflow runs on `repository_dispatch` instead.
 
 The Linux install script (`scripts/install.sh`, served from `raw/main`) installs
-the latest release into `${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`.
+the latest stable release (prereleases opt-in via `--prerelease`), resolving the
+archive from `scripts/release.env`, into
+`${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`.
 See the root [`README.md`](../README.md) for the user-facing install steps.
 
 ## Storage model (unified repository)
