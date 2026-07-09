@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.2.1...v0.3.0) (2026-07-09)
+
+
+### Features
+
+* **install:** integrate Velopack for Windows install and auto-update ([#67](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/67)) ([1951d98](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/1951d987c9d6016dcdd5eed34ca91da8309a8c45))
+* **install:** resolve releases via a maintained manifest ([#66](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/66)) ([5e00c7e](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/5e00c7ed700a2666be04f39d2cc281022910db2d))
+
+
+### Bug Fixes
+
+* **profiles:** stage mods via NTFS junctions on Windows ([#69](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/69)) ([5bac60d](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/5bac60ddead26b847aa2a8f139d6fcfa29bff2f9))
+
 ## [0.2.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.2.0...v0.2.1) (2026-07-08)
 
 
