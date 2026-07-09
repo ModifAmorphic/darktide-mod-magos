@@ -565,9 +565,9 @@ No backend library references the UI (the dependency direction is one-way).
 
 - **`ShellViewModelTests`**: profile CRUD and switch, active-profile
   persist, switch-blocked-while-running, the launch result branches
-  (Launched / DiscoveryIncomplete / Error), the `_syncing` guard against
-  spurious dropdown events, the post-dialog DMF prompt path, and the nxm
-  handler status (startup read + refresh after Integrations closes +
+  (Launched / DiscoveryIncomplete / StagingFailed / Error), the `_syncing`
+  guard against spurious dropdown events, the post-dialog DMF prompt path, and
+  the nxm handler status (startup read + refresh after Integrations closes +
   unavailable when no registrar).
 - **`ProfileSessionTests`**: the gate (RequestActive applies only when not
   running), persistence, `CanDeleteProfile`, `ReconcileActive` (delete of

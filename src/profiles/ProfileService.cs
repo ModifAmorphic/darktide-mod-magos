@@ -18,7 +18,7 @@ namespace Modificus.Curator.Profiles;
 ///     profile.json                   (metadata + mod list - the source of truth)
 ///     staged/                        (the staged mod root = the --mod-path;
 ///                                     REGENERATED each launch - a projection)
-///       &lt;baseName&gt;                 (symlink -> &lt;versionFolder&gt;/&lt;baseName&gt;/)
+///       &lt;baseName&gt;                 (staging link -> &lt;versionFolder&gt;/&lt;baseName&gt;/)
 ///       mods.lst                     (successfully-staged enabled mods, in order)
 /// </code>
 /// <para>
@@ -26,15 +26,16 @@ namespace Modificus.Curator.Profiles;
 /// no mod files. Staging resolves each enabled mod's
 /// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/> (via
 /// <see cref="IModRepository"/>), discovers the mod's base folder inside the
-/// resolved version folder, and symlinks <c>staged/&lt;baseName&gt;</c> to
+/// resolved version folder, and links <c>staged/&lt;baseName&gt;</c> to
 /// <c>&lt;versionFolder&gt;/&lt;baseName&gt;/</c>. <b>The base name (not the
 /// container's display name) is the link + mods.lst name</b>: mods bake their
 /// folder name into their code, so the link must carry the base name for the
 /// mod's hardcoded paths to resolve. Staging is a simple loop: base-name
 /// collisions are blocked at import time (<see cref="GetBaseNameCollision"/>),
 /// so staging never sees two mods with the same base folder name in normal use.
-/// <b>Symlinks, never copies.</b> The repository holds the files;
-/// <c>staged/</c> is a symlink projection.</para>
+/// <b>Staging links, never copies.</b> The repository holds the files;
+/// <c>staged/</c> is a staging-link projection (an NTFS junction on Windows, a
+/// symlink on Linux).</para>
 /// <para>
 /// Registered as a singleton: the service holds no per-request state (all state
 /// lives on disk). The profiles base folder is read live from
@@ -57,7 +58,7 @@ internal sealed class ProfileService : IProfileService
 
     private readonly IConfigLoader _configLoader;
     private readonly IModRepository _repo;
-    private readonly SymlinkCreator _symlink;
+    private readonly StagingLinkCreator _createLink;
     private readonly ILogger<ProfileService> _logger;
 
     /// <inheritdoc />
@@ -66,12 +67,12 @@ internal sealed class ProfileService : IProfileService
     public ProfileService(
         IConfigLoader configLoader,
         IModRepository repo,
-        SymlinkCreator symlink,
+        StagingLinkCreator createLink,
         ILogger<ProfileService> logger)
     {
         _configLoader = configLoader;
         _repo = repo;
-        _symlink = symlink;
+        _createLink = createLink;
         _logger = logger;
     }
 
@@ -192,6 +193,12 @@ internal sealed class ProfileService : IProfileService
             throw UnknownProfile(id);
         }
 
+        // staged/ holds staging links (junctions on Windows). A recursive
+        // Directory.Delete can't remove a directory junction (the BCL throws
+        // UnauthorizedAccessException on the reparse point) and must never follow
+        // one into the repository anyway. Clear staged/ reparse-awarely first, so
+        // the tree below is link-free before the recursive delete removes it.
+        ClearStagedDir(StagedDir(baseFolder, id));
         Directory.Delete(dir, recursive: true);
         _logger.LogInformation("Deleted profile {Id}", id);
     }
@@ -336,18 +343,18 @@ internal sealed class ProfileService : IProfileService
         ClearStagedDir(staged);
         Directory.CreateDirectory(staged);
 
-        // Resolve each enabled mod in Order; create the symlink for those that
-        // resolve to a present version folder. mods.lst reflects what actually
-        // got staged (a skipped mod has no entry in staged/ and must not be
-        // listed - otherwise the loader would look for a mod dir that isn't
-        // there).
+        // Resolve each enabled mod in Order; create the staging link for those
+        // that resolve to a present version folder. mods.lst reflects what
+        // actually got staged (a skipped mod has no entry in staged/ and must
+        // not be listed - otherwise the loader would look for a mod dir that
+        // isn't there).
         //
         // This is a SIMPLE loop: base-name collisions are blocked at import time
         // (the add flow calls GetBaseNameCollision), so staging never sees two
         // mods with the same base folder name in normal use. No dedupe / no
         // last-wins / no disambiguation. (A hand-edited profile.json that somehow
-        // creates a duplicate base name would throw SymlinkStagingException here
-        // on the second link - an accepted edge; no defensive logic is added.)
+        // creates a duplicate base name would throw IOException here on the
+        // second link - an accepted edge; no defensive logic is added.)
         var stagedNames = new List<string>();
         foreach (var mod in profile.Mods.Where(m => m.Enabled).OrderBy(m => m.Order))
         {
@@ -365,7 +372,7 @@ internal sealed class ProfileService : IProfileService
             }
 
             var linkPath = Path.Combine(staged, baseName);
-            CreateSymlinkOrThrow(linkPath, target);
+            _createLink(linkPath, target);
             stagedNames.Add(baseName);
             _logger.LogDebug(
                 "Staged container {Container} on profile {Id} as '{Link}' -> {Target}",
@@ -381,7 +388,7 @@ internal sealed class ProfileService : IProfileService
 
     /// <summary>
     /// Resolves a profile mod entry to its on-disk staging target: the mod's base
-    /// folder name + the absolute symlink target (<c>&lt;versionFolder&gt;/&lt;baseName&gt;/</c>).
+    /// folder name + the absolute staging-link target (<c>&lt;versionFolder&gt;/&lt;baseName&gt;/</c>).
     /// Returns a non-null <c>SkipReason</c> (and null base name + target) when the
     /// entry can't be staged. Pure: no logging, no side effects. Shared by
     /// <see cref="PrepareModRoot"/> (staging, warns on skip) and
@@ -391,10 +398,10 @@ internal sealed class ProfileService : IProfileService
     /// The base name is <b>not stored</b>; it is derived from the validated
     /// on-disk structure (the single subdirectory inside the version folder,
     /// which the import validation guarantees). Mods bake their folder name into
-    /// their code, so the symlink MUST carry the base name (not the container's
-    /// display name) for the mod's hardcoded paths to resolve. A version folder
-    /// with zero or multiple subdirs (corrupted / legacy data predating the
-    /// import validation) can't yield a base name and is skipped.
+    /// their code, so the staging link MUST carry the base name (not the
+    /// container's display name) for the mod's hardcoded paths to resolve. A
+    /// version folder with zero or multiple subdirs (corrupted / legacy data
+    /// predating the import validation) can't yield a base name and is skipped.
     /// </remarks>
     private (string? BaseName, string? Target, string? SkipReason) ResolveStagingTarget(ModListEntry mod)
     {
@@ -439,7 +446,7 @@ internal sealed class ProfileService : IProfileService
         }
 
         var baseName = Path.GetFileName(baseDirs[0]);
-        // The symlink target is the base folder inside the version folder:
+        // The staging-link target is the base folder inside the version folder:
         // <versionFolder>/<baseName>/.
         return (baseName, Path.Combine(versionFolder, baseName), null);
     }
@@ -476,26 +483,6 @@ internal sealed class ProfileService : IProfileService
             }
         }
         return null;
-    }
-
-    /// <summary>
-    /// Creates a symlink, throwing <see cref="SymlinkStagingException"/> with a
-    /// clear, actionable message on failure. Never silently copies.
-    /// </summary>
-    private void CreateSymlinkOrThrow(string linkPath, string targetPath)
-    {
-        try
-        {
-            _symlink(linkPath, targetPath);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw new SymlinkStagingException(
-                $"Failed to create symlink '{linkPath}' -> '{targetPath}'. Symlinks are required for mod staging " +
-                "(the manager never copies). On Windows, enable Developer Mode or run the manager as administrator; " +
-                "on Linux, confirm write access to the profile's staged/ directory.",
-                ex);
-        }
     }
 
     /// <summary>

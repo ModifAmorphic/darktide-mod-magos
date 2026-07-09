@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Modificus.Curator.Config;
 using Modificus.Curator.General;
 using Modificus.Curator.Profiles;
@@ -94,9 +95,26 @@ internal sealed class RelayLaunchService : IRelayLaunchService
             }
 
             // PrepareModRoot writes mods.lst + ensures the mod root exists and
-            // returns the --mod-path. KeyNotFoundException (unknown profile) is
-            // caught below and mapped to LaunchStatus.Error.
-            var modPath = _profiles.PrepareModRoot(profileId);
+            // returns the --mod-path. A staging-link creation failure surfaces as
+            // the raised built-in exception (Win32Exception from the junction
+            // path on Windows, IOException / UnauthorizedAccessException from the
+            // symlink path on Linux) and is mapped to StagingFailed here; the
+            // exception's message is carried on the result so the UI can append
+            // it to the localized framing. KeyNotFoundException (unknown profile)
+            // is caught below and mapped to LaunchStatus.Error.
+            string modPath;
+            try
+            {
+                modPath = _profiles.PrepareModRoot(profileId);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
+            {
+                _logger.LogError(ex, "Staging failed for profile {Id}.", profileId);
+                return new LaunchResult(
+                    LaunchStatus.StagingFailed,
+                    Message: ex.Message,
+                    MissingDiscoveryFields: Array.Empty<string>());
+            }
 
             var launcherPath = ResolveLauncherPath(
                 config.RelayDir, AppContext.BaseDirectory, OperatingSystem.IsWindows());

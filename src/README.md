@@ -158,7 +158,7 @@ copying would duplicate repository files). On-disk layout:
 <ProfilesBaseFolder>/<guid>/
   profile.json                       # metadata + mod list (entries carry ContainerId + Policy)
   staged/                            # the staged mod root = the --mod-path (REGENERATED each launch)
-    <baseName>                       #   symlink → <versionFolder>/<baseName>/ (Latest → isLatest; Pinned(versionId) → matching Folder); the base name, not the container display name
+    <baseName>                       #   staging link → <versionFolder>/<baseName>/ (junction on Windows, symlink on Linux; Latest → isLatest; Pinned(versionId) → matching Folder); the base name, not the container display name
     mods.lst                         #   successfully-staged enabled mods, in order
 ```
 

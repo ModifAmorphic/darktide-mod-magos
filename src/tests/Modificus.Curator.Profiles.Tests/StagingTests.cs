@@ -11,15 +11,16 @@ namespace Modificus.Curator.Profiles.Tests;
 /// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/>
 /// (<see cref="LatestPolicy"/> -> the container's isLatest version folder;
 /// <see cref="PinnedPolicy"/> -> the version whose <see cref="ModVersion.Folder"/>
-/// matches the pin's <see cref="PinnedPolicy.VersionId"/>) and is symlinked into
+/// matches the pin's <see cref="PinnedPolicy.VersionId"/>) and is linked into
 /// <c>staged/&lt;baseName&gt;</c>, where the base name is discovered on the fly as
 /// the single subdirectory inside the version folder (the mod's base folder);
 /// missing containers/versions and corrupted version folders (zero/multiple
 /// subdirs) are skipped + warned; same-base-name collisions are blocked at import
 /// time (<see cref="IProfileService.GetBaseNameCollision"/>), so staging is a
-/// simple loop with no dedupe; the staged root holds only symlinks +
-/// <c>mods.lst</c> (no copied files); a symlink-creation failure throws
-/// <see cref="SymlinkStagingException"/> (never silently copies).
+/// simple loop with no dedupe; the staged root holds only staging links (an NTFS
+/// junction on Windows, a symlink on Linux) + <c>mods.lst</c> (no copied files);
+/// a staging-link-creation failure throws <see cref="IOException"/> (never
+/// silently copies).
 /// </summary>
 public sealed class StagingTests
 {
@@ -129,6 +130,52 @@ public sealed class StagingTests
         // The mod's actual files live only in the repository, under the base folder.
         Assert.True(File.Exists(Path.Combine(
             fx.VersionDir(container.Id, container.Versions[0].Folder), "DMF", "marker.txt")));
+    }
+
+    // ---- Windows junction (privilege-free staging link) --------------------
+
+    [Fact]
+    public void On_windows_staging_creates_a_junction_not_a_copy()
+    {
+        // Junctions are privilege-free on Windows (no Developer Mode / admin), so
+        // staging works for a consumer release. The symlink tests above cover the
+        // Linux path. Skipped on non-Windows so the suite stays green on Ubuntu CI.
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var container = fx.AddContainerWithVersion("DMF");
+        fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
+
+        fx.Service.PrepareModRoot(profile.Id);
+
+        var link = fx.StagedModLink(profile.Id, "DMF");
+
+        // The staged entry is a reparse point (a directory junction), not a
+        // copied directory. A copy would NOT carry ReparsePoint.
+        var attrs = File.GetAttributes(link);
+        Assert.True((attrs & FileAttributes.ReparsePoint) != 0,
+            "staged entry must be a junction (reparse point), not a copy");
+        Assert.True((attrs & FileAttributes.Directory) != 0,
+            "a directory junction carries the Directory attribute");
+
+        // The junction points at the repository's base folder, proving the
+        // target's files are not physically duplicated under staged/.
+        Assert.Equal(
+            Path.Combine(fx.VersionDir(container.Id, container.Versions[0].Folder), "DMF"),
+            ResolveLink(link));
+
+        // The target's files are visible through the junction (relay + DMF see a
+        // normal mod folder), while the single source of truth stays in the repo.
+        var markerThroughLink = Path.Combine(link, "marker.txt");
+        Assert.True(File.Exists(markerThroughLink), "target's files are visible through the junction");
+        Assert.Equal("DMF", File.ReadAllText(markerThroughLink));
+        Assert.True(File.Exists(Path.Combine(
+            fx.VersionDir(container.Id, container.Versions[0].Folder), "DMF", "marker.txt")),
+            "the repository copy remains the source of truth");
     }
 
     // ---- regeneration ------------------------------------------------------
@@ -268,9 +315,9 @@ public sealed class StagingTests
     // use: the add flow refuses them via IProfileService.GetBaseNameCollision
     // before importing (see ModListViewModelTests + ModListTests). Staging is a
     // simple loop with no dedupe, so a hand-edited profile.json that forces a
-    // duplicate base name throws SymlinkStagingException on the second link (the
-    // accepted "whatever it is" edge). No test asserts that edge: it is undefined
-    // behavior the operator explicitly chose not to support.
+    // duplicate base name throws IOException on the second link (the accepted
+    // "whatever it is" edge). No test asserts that edge: it is undefined behavior
+    // the operator explicitly chose not to support.
 
     [Fact]
     public void Corrupted_version_folder_with_zero_subdirectories_is_skipped_with_warning()
@@ -317,22 +364,21 @@ public sealed class StagingTests
         Assert.Equal(string.Empty, File.ReadAllText(fx.ModsLst(profile.Id)));
     }
 
-    // ---- symlink-failure path ----------------------------------------------
+    // ---- staging-link-failure path ----------------------------------------
 
     [Fact]
-    public void Symlink_creation_failure_throws_clear_error_not_silent_copy()
+    public void Symlink_creation_failure_throws_io_exception_not_silent_copy()
     {
-        SymlinkCreator throwing = (_, _) =>
-            throw new UnauthorizedAccessException("simulated: symlink not permitted");
+        StagingLinkCreator throwing = (_, _) =>
+            throw new IOException("simulated: staging link could not be created");
 
-        using var fx = new ProfileServiceFixture(symlink: throwing);
+        using var fx = new ProfileServiceFixture(createLink: throwing);
         var profile = fx.Service.CreateProfile("P");
         var container = fx.AddContainerWithVersion("DMF");
         fx.Service.AddMod(profile.Id, container.Id, ModVersionPolicy.Latest);
 
-        var ex = Assert.Throws<SymlinkStagingException>(() => fx.Service.PrepareModRoot(profile.Id));
-        Assert.Contains("Symlinks are required", ex.Message);
-        Assert.Contains("Developer Mode", ex.Message);
+        var ex = Assert.Throws<IOException>(() => fx.Service.PrepareModRoot(profile.Id));
+        Assert.Contains("staging link", ex.Message);
 
         // And it did NOT silently copy: no real mod dir under staged/.
         Assert.False(Directory.Exists(fx.StagedModLink(profile.Id, "DMF")));

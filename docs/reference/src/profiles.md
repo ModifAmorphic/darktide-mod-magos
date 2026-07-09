@@ -2,10 +2,11 @@
 
 > Profile + per-profile mod-list management: the profile data model, its on-disk
 > persistence, and the projection of the mod list into a staged mod root
-> (symlinks to the repository's resolved version folders) + `mods.lst` for
+> (staging links to the repository's resolved version folders) + `mods.lst` for
 > Modificus Relay. Status: implemented (the unified mod repository replaced
-> the earlier shared-store + per-profile allocation model in #30; staging now
-> symlinks into the repository rather than copying).
+> the earlier shared-store + per-profile allocation model in #30; staging links
+> into the repository rather than copying; an NTFS junction on Windows, a symlink
+> on Linux).
 
 A profile owns its own mod list, mod settings, and load order. The profile's
 staged mod root is what Curator passes to the Relay launcher as `--mod-path`;
@@ -99,8 +100,12 @@ Method behavior:
 - `PrepareModRoot(id)` -- regenerates the staged mod root (the `--mod-path`) from
   the current per-mod version resolution and writes `mods.lst`. Idempotent
   (clears + rebuilds `staged/` each call). Returns the `--mod-path` to pass to
-  the Relay launcher. Throws `SymlinkStagingException` if a symlink cannot be
-  created (the manager never silently copies).
+  the Relay launcher. A staging-link creation failure propagates the raised
+  built-in exception (`Win32Exception` from the junction path on Windows,
+  `IOException` / `UnauthorizedAccessException` from the symlink path on Linux;
+  the manager never silently copies); the relay-client launch façade catches
+  that and maps it to `LaunchStatus.StagingFailed`, carrying the exception's
+  body, and the UI surfaces it after the localized framing.
 
 ### Key types
 
@@ -117,13 +122,15 @@ Method behavior:
   `IReadOnlyList<ModListEntry>`.
 - `ProfileSummary(Guid Id, string Name)` -- a lightweight projection for profile
   pickers (no mod list loaded).
-- `SymlinkCreator` -- a `delegate` that creates a directory symlink
-  (`Directory.CreateSymbolicLink` by default). Injectable so tests exercise the
-  failure path without platform permission hacks.
-- `SymlinkStagingException` -- an `InvalidOperationException` thrown by
-  `PrepareModRoot` when a staged symlink cannot be created (typically Windows
-  without symlink permissions / Developer Mode). The staging layer never
-  silently copies.
+- `StagingLinkCreator` -- a `delegate` that creates a directory staging link.
+  The default (registered by `AddProfiles`) is platform-selective: an NTFS
+  junction on Windows (privilege-free; no Developer Mode / admin required) and a
+  symlink via `Directory.CreateSymbolicLink` on Linux. Injectable so tests
+  exercise the failure path without platform permission hacks. A creation
+  failure propagates the raised built-in exception as-is (`Win32Exception` from
+  the junction path; `IOException` / `UnauthorizedAccessException` from the
+  symlink path); the staging call site lets it propagate, so the staging layer
+  never silently copies.
 
 `ModVersionPolicy` (PinnedPolicy/LatestPolicy), `ModSource`, `ModContainer`, and
 `ModVersion` live in the [mods](mods.md) library; Profiles consumes
@@ -175,14 +182,16 @@ public static IServiceCollection AddProfiles(this IServiceCollection services);
 
 - `AddMods()` -- called defensively (idempotent) so a lone `AddProfiles()`
   yields a resolvable `IProfileService`; the composition root also calls it.
-- `TryAddSingleton<SymlinkCreator>(_ => Directory.CreateSymbolicLink)` -- the BCL
-  default. `TryAdd` so a test may pre-register a throwing/fake delegate.
+- `TryAddSingleton<StagingLinkCreator>(_ => CreateStagingLink)` -- the
+  platform-selective default (an NTFS junction on Windows via `Junction.Create`;
+  `Directory.CreateSymbolicLink` on Linux). `TryAdd` so a test may pre-register a
+  throwing/fake delegate.
 - `TryAddSingleton<IModOrderResolver, IdentityModOrderResolver>()`: the auto-
   sort identity stub. `TryAdd` so a test (or a real dependency-driven resolver)
   may pre-register an override.
 - `AddSingleton<IProfileService, ProfileService>()` -- the filesystem-backed
   implementation (internal). Resolves `CuratorConfig`, `IModRepository`,
-  `SymlinkCreator`, and `ILogger<ProfileService>` from the container.
+  `StagingLinkCreator`, and `ILogger<ProfileService>` from the container.
 
 Registered as a singleton: it holds no per-request state, and `CuratorConfig` (its
 only config source) is itself a singleton.
@@ -195,7 +204,7 @@ only config source) is itself a singleton.
     profile.json                   (metadata + mod list - the source of truth)
     staged/                        (the staged mod root = the --mod-path;
                                      REGENERATED each launch - a projection)
-      <baseName>                   (symlink -> <versionFolder>/<baseName>/)
+      <baseName>                   (staging link -> <versionFolder>/<baseName>/)
       mods.lst                     (successfully-staged enabled mods, in order)
 ```
 
@@ -212,9 +221,9 @@ name: mods bake their folder name into their code, so the link must carry the
 base name for the mod's hardcoded paths to resolve. The container `Name` is UI
 display only.
 
-- **LatestPolicy** → symlink `staged/<baseName>` → `<versionFolder>/<baseName>/`
+- **LatestPolicy** → link `staged/<baseName>` → `<versionFolder>/<baseName>/`
   where the version is the container's `IsLatest`.
-- **PinnedPolicy(vId)** → symlink `staged/<baseName>` → `<versionFolder>/<baseName>/`
+- **PinnedPolicy(vId)** → link `staged/<baseName>` → `<versionFolder>/<baseName>/`
   where the version's `Folder == vId` (resolution by opaque version id, not by
   tag).
 - **No match / corrupted** (container missing, no versions, no `IsLatest`, the
@@ -225,8 +234,9 @@ display only.
 Staging is a **simple loop**: base-name collisions are blocked at import time
 (`GetBaseNameCollision`), so staging never sees two mods with the same base
 folder name in normal use. No dedupe, no last-wins, no disambiguation.
-**Symlinks, never copies** -- the repository holds the files; `staged/` is a
-symlink projection. `mods.lst` lists exactly what got staged, in `Order`: no
+**Staging links, never copies** -- the repository holds the files; `staged/` is a
+staging-link projection (an NTFS junction on Windows, a symlink on Linux).
+`mods.lst` lists exactly what got staged, in `Order`: no
 DMF-first enforcement, no auto-sort (those are higher-layer concerns).
 
 ### Moving `IsLatest` requires zero profile-entry changes
@@ -238,12 +248,13 @@ version on the next `PrepareModRoot`; no profile entry changes.
 
 ### Data safety -- `ClearStagedDir`
 
-`staged/` is cleared before each rebuild. The clear is **symlink-aware**: it
-removes each top-level entry as a link (never following it into the repository).
-A naive `Directory.Delete(staged, recursive: true)` could follow a directory
-symlink and delete repository mod files. The delete API is chosen to match the
-link's kind -- directory symlinks use `Directory.Delete` (the link only), file
-symlinks use `File.Delete` -- so it stays data-safe on both OSes.
+`staged/` is cleared before each rebuild. The clear is **reparse-point-aware**
+(it handles directory junctions and directory symlinks alike): it removes each
+top-level entry as a link (never following it into the repository). A naive
+`Directory.Delete(staged, recursive: true)` could follow a directory link and
+delete repository mod files. The delete API is chosen to match the link's kind --
+directory reparse points (junction or symlink) use `Directory.Delete` (the link
+only), file reparse points use `File.Delete` -- so it stays data-safe on both OSes.
 
 ## Dependencies
 
@@ -260,9 +271,9 @@ symlinks use `File.Delete` -- so it stays data-safe on both OSes.
 list ordering/enable/policy + the base-name collision hard-block
 (`ModListTests`, including the legacy-Name-entry drop + null-Policy coercion +
 `GetBaseNameCollision` over all/none/disabled/excluded/corrupted cases),
-`PrepareModRoot` + symlink staging + the data-safe `ClearStagedDir`
-(`PrepareModRootTests`, `StagingTests`), and the `AddProfiles` DI wiring
-(including the `TryAdd` `SymlinkCreator` override).
+`PrepareModRoot` + staging-link staging (junction on Windows, symlink on Linux)
++ the data-safe `ClearStagedDir` (`PrepareModRootTests`, `StagingTests`), and the
+`AddProfiles` DI wiring (including the `TryAdd` `StagingLinkCreator` override).
 
 ```sh
 dotnet test src/modificus-curator.sln -c Release

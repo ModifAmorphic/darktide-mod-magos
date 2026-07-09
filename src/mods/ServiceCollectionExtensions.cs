@@ -16,7 +16,7 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// Uses <see cref="ServiceCollectionDescriptorExtensions.TryAddSingleton{IService,Service}"/>,
-    /// mirroring the <c>SymlinkCreator</c> seam in Profiles: production behavior
+    /// mirroring the <c>StagingLinkCreator</c> seam in Profiles: production behavior
     /// is unchanged (TryAdd registers on first call when nothing's pre-registered),
     /// but a caller may pre-register an <see cref="IModRepository"/> fake and have
     /// it survive <c>AddProfiles()</c> (which calls <c>AddMods()</c>

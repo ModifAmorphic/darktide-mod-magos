@@ -25,8 +25,13 @@ expected conditions:
   launch that won't happen) -- `MissingDiscoveryFields` lists them. The
   per-platform required set comes from the active `IPlatformLaunchStrategy`.
 - Prepares the mod root (`IProfileService.PrepareModRoot(profileId)` -- writes
-  `mods.lst` and returns the `--mod-path`). An unknown profile (`KeyNotFoundException`
-  from PrepareModRoot) is caught and mapped to `Error`.
+  `mods.lst` and returns the `--mod-path`). A staging-link creation failure
+  (the raised built-in exception: `Win32Exception` from the junction path on
+  Windows, `IOException` / `UnauthorizedAccessException` from the symlink path
+  on Linux) is caught here and mapped to `StagingFailed`, carrying the
+  exception's body on `Message` (the full exception is also logged). An unknown
+  profile (`KeyNotFoundException` from PrepareModRoot) is caught and mapped to
+  `Error`.
 - Checks that the launcher exists at `<RelayDir>/modificus_relay.exe`.
 - Spawns the launcher via the active `IPlatformLaunchStrategy` (directly on
   Windows; under `proton run` on Linux) -- the service itself contains no
@@ -35,15 +40,18 @@ expected conditions:
 ```csharp
 public sealed record LaunchResult(
     LaunchStatus Status,
-    string? Message,                         // populated for Error; null otherwise
+    string? Message,                         // populated for Error + StagingFailed
     IReadOnlyList<string> MissingDiscoveryFields);  // populated only for DiscoveryIncomplete
 
-public enum LaunchStatus { Launched, DiscoveryIncomplete, Error }
+public enum LaunchStatus { Launched, DiscoveryIncomplete, StagingFailed, Error }
 ```
 
 - `Launched` -- the launcher process started (fire-and-forget; no game-process tracking in v1).
 - `DiscoveryIncomplete` -- discovery is missing required fields; the field names
   mirror `DiscoveryResult` properties so the UI can map them to a prompt.
+- `StagingFailed` -- the profile's mod root could not be prepared (a staging
+  link could not be created). `Message` carries the raised exception's body (a
+  runtime/OS error); the UI surfaces it after the localized framing.
 - `Error` -- unknown profile, missing runtime dir, or process-start failure; see
   `Message`.
 
@@ -163,8 +171,8 @@ from the container.
 `Modificus.Curator.RelayClient.Tests` is a **dual-purpose** project. `dotnet
 test` runs the xUnit suite -- `RelayLaunchServiceTests` (Windows + Linux arg
 assembly via the concrete `WindowsLaunchStrategy` / `LinuxLaunchStrategy` + a
-fake `IProcessLauncher`, `DiscoveryIncomplete` missing-field derivation, `Error`
-mapping), `WinePathTests`, the `AddRelayClient` DI wiring, all against the
+fake `IProcessLauncher`, `DiscoveryIncomplete` missing-field derivation,
+`StagingFailed` + `Error` mapping), `WinePathTests`, the `AddRelayClient` DI wiring, all against the
 fakes in `TestDoubles.cs`. Tests inject the concrete strategy to exercise either
 path on any CI OS. `dotnet run -- <discover|list|launch>` runs the **composition
 smoke harness** under `SmokeHarness/Program.cs` -- it composes the **real**

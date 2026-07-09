@@ -273,6 +273,30 @@ public sealed class RelayLaunchServiceTests
     // ---- Error ---------------------------------------------------------------
 
     [Fact]
+    public void Launch_returns_StagingFailed_when_PrepareModRoot_throws()
+    {
+        // A staging-link creation failure propagates the raised built-in
+        // exception from PrepareModRoot (the junction path throws Win32Exception
+        // on Windows; the symlink path throws IOException natively; here the fake
+        // throws IOException). Launch maps it to StagingFailed, carrying the
+        // exception's body on Message (surfaced after the localized framing in
+        // the UI), with an empty missing-fields list.
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteLinux;
+        fx.Profiles.PrepareModRootThrows = true;
+        var profileId = Guid.NewGuid();
+        var svc = fx.BuildLinuxService();
+
+        var result = svc.Launch(profileId);
+
+        Assert.Equal(LaunchStatus.StagingFailed, result.Status);
+        Assert.Equal("simulated staging-link failure", result.Message);
+        Assert.Empty(result.MissingDiscoveryFields);
+        Assert.Equal(1, fx.Profiles.PrepareModRootCalls);
+        Assert.Equal(0, fx.Launcher.Calls); // never spawned
+    }
+
+    [Fact]
     public void Error_unknown_profile_returns_error_not_thrown()
     {
         using var fx = new RelayFixture();
