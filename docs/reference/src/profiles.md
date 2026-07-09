@@ -100,7 +100,7 @@ Method behavior:
 - `PrepareModRoot(id)` -- regenerates the staged mod root (the `--mod-path`) from
   the current per-mod version resolution and writes `mods.lst`. Idempotent
   (clears + rebuilds `staged/` each call). Returns the `--mod-path` to pass to
-  the   Relay launcher. Throws `StagingLinkException` if a staging link cannot be
+  the Relay launcher. Throws `StagingLinkException` if a staging link cannot be
   created (the manager never silently copies).
 
 ### Key types
