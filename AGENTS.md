@@ -188,12 +188,14 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         including the NexusConfig slot under Integrations
                         (AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs)
   profiles/             Modificus.Curator.Profiles -- profile data model, persistence,
-                        container-based staging (ProfileService.PrepareModRoot
-                        discovers each enabled mod's base folder name inside the
-                        resolved version folder + symlinks staged/<baseName> ->
-                        <versionFolder>/<baseName>/, then writes mods.lst; the
-                        base name, not the container's display name, is the link
-                        + mods.lst name) + SetModPolicy transitions + the
+                          container-based staging (ProfileService.PrepareModRoot
+                          discovers each enabled mod's base folder name inside the
+                          resolved version folder + staging links (an NTFS junction
+                          on Windows, a symlink on Linux) staged/<baseName> ->
+                          <versionFolder>/<baseName>/, then writes mods.lst; the
+                          base name, not the container's display name, is the link
+                          + mods.lst name; the StagingLinkCreator delegate selects
+                          junction vs symlink per OS) + SetModPolicy transitions + the
                         import-time base-name collision hard-block
                         (GetBaseNameCollision; two same-folder mods can't coexist
                         in a profile) + the auto-sort seam
@@ -407,7 +409,8 @@ dotnet run   --project src/ui --configuration Release   # app shell window
 - The backend libraries are all implemented: **Profiles** (profile data model +
   lifecycle; container-based staging, where `PrepareModRoot` discovers each
   enabled mod's base folder name inside the resolved version folder via
-  `IModRepository` + symlinks `staged/<baseName>` -> `<versionFolder>/<baseName>/`,
+  `IModRepository` + staging links (an NTFS junction on Windows, a symlink on
+  Linux) `staged/<baseName>` -> `<versionFolder>/<baseName>/`,
   then writes `mods.lst`; the base name, not the container's display name, is the
   link + mods.lst name; no per-profile mod files) + the import-time base-name
   collision hard-block (`GetBaseNameCollision`; two same-folder mods can't

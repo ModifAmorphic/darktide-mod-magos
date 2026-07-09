@@ -316,7 +316,7 @@ public static IServiceCollection AddMods(this IServiceCollection services)
 }
 ```
 
-Uses `TryAddSingleton` (mirroring the `SymlinkCreator` seam in Profiles):
+Uses `TryAddSingleton` (mirroring the `StagingLinkCreator` seam in Profiles):
 production behavior is unchanged, but a caller may pre-register an
 `IModRepository` or `IModImportService` fake and have it survive `AddProfiles()`
 (which calls `AddMods()` unconditionally). Resolves `IConfigLoader` +

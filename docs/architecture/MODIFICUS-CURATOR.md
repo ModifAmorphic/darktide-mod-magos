@@ -102,7 +102,8 @@ through a registered library interface. The UI registers only its own surface
    - `AddMods()`: the unified mod repository + import service (called explicitly here and
      idempotently again inside `AddProfiles()`, so the store is discoverable at
      the root and `IProfileService` always resolves its staging dependency).
-   - `AddProfiles()`: profile service + the `SymlinkCreator` staging seam.
+   - `AddProfiles()`: profile service + the `StagingLinkCreator` staging seam
+     (junction on Windows, symlink on Linux).
     - `AddIntegrations()`: the typed GitHub HTTP client + the typed Nexus v1
       HTTP client + the Nexus auth service + the OAuth token
       store + the loopback `IBrowser`.
@@ -124,10 +125,10 @@ through a registered library interface. The UI registers only its own surface
 **The DI contract:** each library exposes one `Add<Library>()` extension and
 accepts only interfaces or primitives (never concrete UI models). Supporting
 services and injectable seams are registered with `TryAdd` -- `SteamDiscoveryOptions`,
-`ISteamRegistryReader`, `IProcessLookup` (Steam), `SymlinkCreator` (Profiles),
+`ISteamRegistryReader`, `IProcessLookup` (Steam), `StagingLinkCreator` (Profiles),
 `IProcessLauncher` (Relay-client), `IModRepository` (Mods) -- so tests
 and hosts can pre-register overrides (e.g. the Steam fixture's fakes, or a
-throwing `SymlinkCreator` to exercise the failure path) and have them survive the
+throwing `StagingLinkCreator` to exercise the failure path) and have them survive the
 `Add<Library>()` chain. `TryAdd` is specifically load-bearing for `AddProfiles()`,
 which calls `AddMods()` unconditionally: a plain `AddSingleton` there would
 clobber a pre-registered mock.
@@ -288,15 +289,17 @@ collision.
 **Staging:** at launch (alongside regenerating `mods.lst`), Curator materializes
 the profile's mod root (the `--mod-path` dir) by, for each enabled mod,
 discovering its base folder name (the single subdirectory inside the resolved
-version folder) and symlinking `staged/<baseName>` to
-`<versionFolder>/<baseName>/`. The base name, not the container's display name,
+version folder) and linking `staged/<baseName>` to
+`<versionFolder>/<baseName>/` via the platform-selective `StagingLinkCreator`
+seam (an NTFS junction on Windows, where it is privilege-free: no Developer Mode,
+no admin; a symlink on Linux). The base name, not the container's display name,
 is the link + `mods.lst` name: mods bake their folder name into their code, so
 the link must carry the base name for the mod's hardcoded paths to resolve. Like
 `mods.lst`, the mod root is a projection of the profile's mod-list metadata,
 regenerated each launch. Staging is a simple loop: base-name collisions are
 blocked at import time, so staging never sees two mods with the same base folder
-name in normal use. **Symlinks, never copies**: the repository holds the files;
-`staged/` is a symlink projection.
+name in normal use. **Staging links, never copies**: the repository holds the
+files; `staged/` is a staging-link projection.
 
 **Startup cleanup:** `ModCleanup.PruneUnreferenced` runs once after composition,
 dropping version folders no profile references + removing empty containers.

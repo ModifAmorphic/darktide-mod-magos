@@ -239,7 +239,8 @@ Curator's behavior profile reads as malware-shaped regardless of intent:
 launching a process that injects a DLL (Relay), enumerating processes
 (SingleInstanceGuard), writing URL-handler registry keys, running a named-pipe
 server, downloading and extracting archives that contain executables (Nexus
-acquisition, DMF install), and creating symlinks (ProfileService.PrepareModRoot).
+acquisition, DMF install), and creating staging links
+(`ProfileService.PrepareModRoot`: NTFS junctions on Windows, symlinks on Linux).
 Each is legitimate for a mod manager and each matches a malware heuristic.
 False positives are expected on early releases.
 
