@@ -11,6 +11,16 @@
         MinWidth="720" MinHeight="480"
         WindowStartupLocation="CenterScreen">
 
+  <Window.Styles>
+    <!-- Compact icon button (the dismiss affordance on the update pill): flat,
+         inherits the button foreground. Mirrors ModListView's Button.icon. -->
+    <Style Selector="Button.icon">
+      <Setter Property="Padding" Value="4" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+  </Window.Styles>
+
   <Grid RowDefinitions="Auto,*,Auto">
 
     <!-- Top bar: app title · profile dropdown · Manage… · Integrations… · Preferences… · Settings · Launch Darktide -->
@@ -155,6 +165,48 @@
                    VerticalAlignment="Center"
                    Margin="12,0,0,0"
                    ToolTip.Tip="{Binding NxmHandlerStatusTooltip}" />
+        <!--
+          App self-update notice: a dismissible pill in the status strip. Shown
+          only when an update is available (ShowAppUpdateNotice) and not yet
+          dismissed this session. The accent dot + the link read as "Curator X
+          is available"; clicking the link confirms + downloads + restarts. The
+          close button (a drawn Material "close" Path, not a glyph) hides the
+          notice for this session. Mirrors the ModListView notice-pill styling
+          (Border + Ellipse + content). All icons are drawn geometry per
+          AGENTS.md.
+        -->
+        <Border IsVisible="{Binding ShowAppUpdateNotice}"
+                Background="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}"
+                CornerRadius="8"
+                Padding="6,1"
+                Margin="12,0,0,0"
+                VerticalAlignment="Center"
+                ToolTip.Tip="{Binding AppUpdateNoticeTooltip}">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <Ellipse Width="7" Height="7"
+                     Fill="{DynamicResource SystemControlForegroundAccentBrush}"
+                     VerticalAlignment="Center" />
+            <HyperlinkButton Command="{Binding CheckAppUpdateNowCommand}"
+                             Padding="2,0" Margin="0" MinWidth="0"
+                             VerticalAlignment="Center"
+                             ToolTip.Tip="{Binding AppUpdateNoticeTooltip}">
+              <TextBlock Text="{Binding AppUpdateNoticeText}"
+                         FontSize="{DynamicResource AppStatusFontSize}"
+                         VerticalAlignment="Center" />
+            </HyperlinkButton>
+            <Button Classes="icon"
+                    Command="{Binding DismissAppUpdateCommand}"
+                    VerticalAlignment="Center"
+                    ToolTip.Tip="{Binding AppUpdateDismissTooltip}">
+              <!-- Material "close" (24x24 source): drawn geometry, themed via the
+                   button foreground. Mirrors the DialogTitleBar close Path. -->
+              <Path Width="10" Height="10" Stretch="Uniform"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Fill="{Binding $parent[Button].Foreground}"
+                    Data="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+            </Button>
+          </StackPanel>
+        </Border>
       </StackPanel>
     </Border>
   </Grid>

@@ -131,6 +131,52 @@
   </data>
 
   <!-- ============================================================ -->
+  <!-- App self-update (ShellViewModel status-strip notice +        -->
+  <!--  download flow; SettingsViewModel manual check + version)    -->
+  <!-- ============================================================ -->
+
+  <data name="AppUpdate_NoticeText" xml:space="preserve">
+    <value>Curator {0} is available</value>
+    <comment>Text on the dismissible update pill in the shell status strip. {0} is the available version.</comment>
+  </data>
+  <data name="AppUpdate_NoticeTooltip" xml:space="preserve">
+    <value>A new Curator version is available. Click to update.</value>
+    <comment>Tooltip on the update pill in the shell status strip.</comment>
+  </data>
+  <data name="AppUpdate_DismissTooltip" xml:space="preserve">
+    <value>Dismiss</value>
+    <comment>Tooltip on the dismiss button on the shell update pill (hides the notice for this session).</comment>
+  </data>
+  <data name="AppUpdate_ConfirmTitle" xml:space="preserve">
+    <value>Update Curator</value>
+    <comment>Title of the confirm shown when the user clicks the shell update pill (download and restart).</comment>
+  </data>
+  <data name="AppUpdate_ConfirmMessage" xml:space="preserve">
+    <value>Curator {0} is available. Download and restart now?</value>
+    <comment>Body of the update confirm. {0} is the available version.</comment>
+  </data>
+  <data name="AppUpdate_DownloadingTitle" xml:space="preserve">
+    <value>Updating</value>
+    <comment>Title of the modal spinner shown while the update downloads.</comment>
+  </data>
+  <data name="AppUpdate_DownloadingMessage" xml:space="preserve">
+    <value>Downloading the update. Curator will restart when ready.</value>
+    <comment>Body of the modal spinner shown while the update downloads.</comment>
+  </data>
+  <data name="AppUpdate_DownloadFailedTitle" xml:space="preserve">
+    <value>Update failed</value>
+    <comment>Title of the alert shown when the update download fails.</comment>
+  </data>
+  <data name="AppUpdate_DownloadFailedMessage" xml:space="preserve">
+    <value>The update could not be downloaded.</value>
+    <comment>Prefix of the update download-failure alert body. The error detail follows.</comment>
+  </data>
+  <data name="AppUpdate_CheckFailedMessage" xml:space="preserve">
+    <value>Could not check for updates.</value>
+    <comment>Inline status shown in Settings when a manual update check fails.</comment>
+  </data>
+
+  <!-- ============================================================ -->
   <!-- Manage Profiles dialog (ManageProfilesWindow / VM)           -->
   <!-- ============================================================ -->
 
@@ -515,6 +561,42 @@
   <data name="Settings_ModRepoLabel" xml:space="preserve">
     <value>Mod repository</value>
     <comment>Label next to the mod-repository location TextBox in the Settings dialog.</comment>
+  </data>
+  <data name="Settings_UpdatesSection" xml:space="preserve">
+    <value>Updates</value>
+    <comment>Header over the updates section of the Settings dialog (app self-update).</comment>
+  </data>
+  <data name="Settings_CurrentVersionLabel" xml:space="preserve">
+    <value>Current version</value>
+    <comment>Label next to the installed Curator version in the Settings updates section.</comment>
+  </data>
+  <data name="Settings_VersionUnknown" xml:space="preserve">
+    <value>unknown</value>
+    <comment>Shown in place of the version when it cannot be resolved (a non-packaged build).</comment>
+  </data>
+  <data name="Settings_CheckForUpdatesButton" xml:space="preserve">
+    <value>Check for Updates</value>
+    <comment>The manual update-check button in the Settings updates section.</comment>
+  </data>
+  <data name="Settings_DownloadAndRestartButton" xml:space="preserve">
+    <value>Download and Restart</value>
+    <comment>The download-and-restart button in the Settings updates section, shown when an update is available.</comment>
+  </data>
+  <data name="Settings_UpToDate" xml:space="preserve">
+    <value>Curator is up to date.</value>
+    <comment>Inline status shown in Settings after a manual check finds no update.</comment>
+  </data>
+  <data name="Settings_UpdateAvailable" xml:space="preserve">
+    <value>Curator {0} is available.</value>
+    <comment>Inline status shown in Settings when an update is available. {0} is the available version.</comment>
+  </data>
+  <data name="Settings_CheckOnStartup" xml:space="preserve">
+    <value>Check for Curator updates on startup</value>
+    <comment>Label next to the startup update-check toggle in the Settings updates section.</comment>
+  </data>
+  <data name="Settings_CheckOnStartupTooltip" xml:space="preserve">
+    <value>When off, Curator will not check for new versions on startup. You can still check manually.</value>
+    <comment>Tooltip on the startup update-check toggle in the Settings updates section.</comment>
   </data>
 
   <!-- ============================================================ -->

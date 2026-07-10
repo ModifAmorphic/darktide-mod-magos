@@ -8,6 +8,7 @@ using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.Mods;
 using Modificus.Curator.Steam;
+using Modificus.Curator.UI.AppUpdate;
 using Modificus.Curator.UI.Dialogs;
 using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Preferences;
@@ -1170,4 +1171,117 @@ internal sealed class FakeNxmHandlerRegistrar : INxmHandlerRegistrar
         }
         Registered = false;
     }
+}
+
+/// <summary>
+/// Configurable <see cref="IAppUpdateService"/> for the app self-update runner
+/// tests. <see cref="CheckAsync"/> records the call, optionally throws (after
+/// recording), and returns a settable result while raising
+/// <see cref="UpdateStateChanged"/> (mirrors the real service's atomic publish).
+/// The download + apply members record their calls for assertion but are not
+/// driven by the runner (the runner only fires the check). Thread-safe recording
+/// so the runner's thread-pool dispatch can be polled from the test thread.
+/// </summary>
+internal sealed class FakeAppUpdateService : IAppUpdateService
+{
+    private readonly ConcurrentQueue<int> _checkCalls = new();
+    private readonly ConcurrentQueue<int> _downloadCalls = new();
+    private readonly ConcurrentQueue<int> _applyCalls = new();
+
+    /// <summary>The number of <see cref="CheckForUpdatesAsync"/> calls recorded
+    /// so far. Thread-safe; safe to poll from the test thread while the runner
+    /// fires on a thread-pool task.</summary>
+    public int CheckCallCount => _checkCalls.Count;
+
+    /// <summary>The number of <see cref="DownloadUpdatesAsync"/> calls recorded
+    /// so far. Thread-safe.</summary>
+    public int DownloadCallCount => _downloadCalls.Count;
+
+    /// <summary>The number of <see cref="ApplyUpdatesAndRestart"/> calls recorded
+    /// so far. Thread-safe.</summary>
+    public int ApplyCallCount => _applyCalls.Count;
+
+    /// <summary>
+    /// The value returned by the next <see cref="CheckForUpdatesAsync"/> call
+    /// (default <c>null</c> = no update). When non-null, it is also published on
+    /// <see cref="LastCheckResult"/> and announced via
+    /// <see cref="UpdateStateChanged"/>.
+    /// </summary>
+    public AppUpdateInfo? NextCheckResult { get; set; }
+
+    /// <summary>
+    /// When set, thrown synchronously from every
+    /// <see cref="CheckForUpdatesAsync"/> call, after the call is recorded. Lets
+    /// the exception-safety test assert the call was made AND that the runner
+    /// swallowed the throw.
+    /// </summary>
+    public Exception? ThrowOnCheck { get; set; }
+
+    /// <summary>
+    /// When set, thrown from every <see cref="DownloadUpdatesAsync"/> call
+    /// (after recording) so the shell/settings VM tests can exercise the
+    /// download-failure alert path. Default <c>null</c> = success.
+    /// </summary>
+    public Exception? ThrowOnDownload { get; set; }
+
+    /// <summary>
+    /// The supported / installed flag exposed by the fake. Defaults to
+    /// <c>true</c> so the runner's check is not short-circuited; tests that
+    /// exercise the unsupported path set this to <c>false</c>.
+    /// </summary>
+    public bool IsUpdateSupported { get; set; } = true;
+
+    public string? CurrentVersion { get; set; } = "1.0.0";
+
+    /// <summary>
+    /// The last check result exposed by the fake. Public setter so the
+    /// shell/settings VM tests can stage a result without invoking a check
+    /// (mirrors <see cref="FakeUpdateCheckService.LastResult"/>).
+    /// </summary>
+    public AppUpdateInfo? LastCheckResult { get; set; }
+
+    public AppUpdateInfo? UpdatePendingRestart { get; private set; }
+
+    public event EventHandler? UpdateStateChanged;
+
+    /// <summary>
+    /// Raises <see cref="UpdateStateChanged"/> (mirrors how the real service
+    /// publishes from its background check + how
+    /// <see cref="FakeUpdateCheckService.RaiseCheckCompleted"/> works). Used by
+    /// the shell/settings VM tests to simulate a check landing without invoking
+    /// <see cref="CheckForUpdatesAsync"/>.
+    /// </summary>
+    public void RaiseUpdateStateChanged() => UpdateStateChanged?.Invoke(this, EventArgs.Empty);
+
+    public Task<AppUpdateInfo?> CheckForUpdatesAsync(CancellationToken ct = default)
+    {
+        _checkCalls.Enqueue(1);
+        if (ThrowOnCheck is not null)
+        {
+            throw ThrowOnCheck;
+        }
+
+        LastCheckResult = NextCheckResult;
+        UpdateStateChanged?.Invoke(this, EventArgs.Empty);
+        return Task.FromResult(NextCheckResult);
+    }
+
+    public Task DownloadUpdatesAsync(CancellationToken ct = default)
+    {
+        _downloadCalls.Enqueue(1);
+
+        // When set, thrown before the download is recorded as successful so the
+        // caller's download flow surfaces the failure (the shell/settings VM
+        // tests exercise the alert path). Defaults to null (success).
+        if (ThrowOnDownload is not null)
+        {
+            return Task.FromException(ThrowOnDownload);
+        }
+
+        UpdatePendingRestart = LastCheckResult;
+        UpdateStateChanged?.Invoke(this, EventArgs.Empty);
+        return Task.CompletedTask;
+    }
+
+    public void ApplyUpdatesAndRestart() => _applyCalls.Enqueue(1);
 }

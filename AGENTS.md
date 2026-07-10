@@ -29,7 +29,8 @@ game-binary constraints now live with the runtime, in
   management, global Preferences + i18n, the mod-list UI + local import, the
   Launch flow + Settings window + discovery escape-hatch, the nxm:// scheme
   handler, Nexus auth + Integrations dialog, mod acquisition, the update-check
-  service, the mod-list update UI, and the DMF new-profile/auth install prompt.
+  service, the mod-list update UI, the DMF new-profile/auth install prompt,
+  and Windows in-app self-update (Velopack).
   The app is user-usable:
   create profiles, import mods (folder/`.zip`, Nexus/GitHub/Untracked), manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
@@ -128,6 +129,42 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           predates the Month window) fires on the manual "check
                           now" button; both share `LastResult`/`CheckCompleted`,
                           distinguished by the result's `Thorough` flag);
+                          the app self-update service
+                          `IAppUpdateService` (ui/AppUpdate/) with its
+                          conditional `VelopackAppUpdateService` (real impl,
+                          `#if CURATOR_VELOPACK`, wraps a Velopack `UpdateManager`
+                          whose source is config-driven: null
+                          `CuratorConfig.AppUpdates.SourceOverride` (the default)
+                          builds the production anonymous
+                          `Velopack.Sources.GithubSource` pointing at the Curator
+                          repo, prereleases included; a set value (a local dir or
+                          URL) builds the manager from `UpdateManager`'s
+                          urlOrPath overload for local testing / self-hosted feeds,
+                          read once at construction via the injected
+                          `IConfigLoader`)
+                          vs `NoopAppUpdateService` (default, IsUpdateSupported
+                          false, registered everywhere else incl. Linux + dev)
+                          split, registered conditionally in CuratorComposition;
+                          `AppUpdateCheckRunner` (ui/Session/) fires ONE
+                          availability check on startup (fire-and-forget,
+                          best-effort, profile-independent, no periodic timer,
+                          unlike the mod-update UpdateCheckRunner; gated on
+                          `CuratorConfig.AppUpdates.CheckOnStartup`, read live
+                          on startup; the manual Settings "Check for Updates"
+                          calls the service directly + is never gated); the
+                          shell status-strip dismissible update pill
+                          (`ShowAppUpdateNotice`, session-only dismiss via the
+                          dismiss button OR cancel-on-confirm, the notice-click
+                          flow is confirm then download-under-ProgressDialog
+                          then ApplyUpdatesAndRestart which exits the process
+                          + Velopack relaunches) + the Settings "Updates"
+                          section (current version + Check for Updates +
+                          startup-check toggle + inline result + Download and
+                          Restart); the
+                          `IAppUpdateService.UpdateStateChanged` event fires on a
+                          threadpool thread and the shell/Settings handlers
+                          marshal to the UI thread via the shared `Action<Action>`
+                          seam;
                           the DMF (Darktide Mod Framework)
                           install-prompt coordinator `DmfPromptService`
                           (ui/Session/) + the modal `ProgressDialog`
@@ -187,6 +224,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
   config/               Modificus.Curator.Config -- the CuratorConfig schema + defaults (POCO),
                         including the NexusConfig slot under Integrations
                         (AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs)
+                        + the AppUpdatesConfig slot (CheckOnStartup, gates the
+                        automatic startup self-update check)
   profiles/             Modificus.Curator.Profiles -- profile data model, persistence,
                           container-based staging (ProfileService.PrepareModRoot
                           discovers each enabled mod's base folder name inside the

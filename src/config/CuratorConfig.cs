@@ -43,6 +43,9 @@ public sealed class CuratorConfig
     /// <summary>External-service (mod-source) integration settings.</summary>
     public IntegrationsConfig Integrations { get; set; } = new();
 
+    /// <summary>App self-update settings (the in-app Curator update check).</summary>
+    public AppUpdatesConfig AppUpdates { get; set; } = new();
+
     /// <summary>
     /// User-facing global preferences (theme, font scale, language). The
     /// Preferences dialog reads + writes this section via the

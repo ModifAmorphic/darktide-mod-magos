@@ -8,8 +8,8 @@
         Title="{ReflectionBinding [Settings_Title], Source={StaticResource Loc}}"
         ExtendClientAreaToDecorationsHint="True"
         WindowDecorations="None"
-        Width="560" Height="520"
-        MinWidth="480" MinHeight="380"
+        Width="560" Height="600"
+        MinWidth="480" MinHeight="460"
         CanResize="True"
         ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner">
@@ -81,6 +81,53 @@
                        Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}"
                        FontSize="11"
                        TextWrapping="Wrap" />
+          </StackPanel>
+
+          <!-- ============== Updates section ============== -->
+          <!--
+            Always shown (current version + Check for Updates), so Linux / dev
+            builds (IsUpdateSupported=false) still see the version with a disabled
+            Check button. The Check button's enabled state follows its command's
+            CanExecute (gated on IsAppUpdateSupported && !IsCheckingAppUpdate);
+            an indeterminate spinner replaces the press affordance while a check
+            runs. The Download and Restart button is visible only when an update
+            is available.
+          -->
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding UpdatesSectionHeader}"
+                       FontWeight="SemiBold" />
+            <Grid ColumnDefinitions="160,*" Margin="0,4">
+              <TextBlock Grid.Column="0"
+                         Text="{Binding CurrentVersionLabel}"
+                         VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1"
+                         Text="{Binding CurrentVersionDisplay}"
+                         Margin="8,0,0,0"
+                         VerticalAlignment="Center" />
+            </Grid>
+            <CheckBox IsChecked="{Binding CheckOnStartup, Mode=TwoWay}"
+                      Content="{ReflectionBinding [Settings_CheckOnStartup], Source={StaticResource Loc}}"
+                      ToolTip.Tip="{ReflectionBinding [Settings_CheckOnStartupTooltip], Source={StaticResource Loc}}"
+                      Margin="0,4" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4">
+              <Button Content="{ReflectionBinding [Settings_CheckForUpdatesButton], Source={StaticResource Loc}}"
+                      Command="{Binding CheckAppUpdateCommand}"
+                      VerticalAlignment="Center" />
+              <ProgressBar Width="18" Height="18"
+                           IsIndeterminate="True"
+                           IsVisible="{Binding IsCheckingAppUpdate}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4">
+              <TextBlock Text="{Binding AppUpdateStatusMessage}"
+                         IsVisible="{Binding AppUpdateStatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                         VerticalAlignment="Center"
+                         TextWrapping="Wrap" />
+              <Button Content="{ReflectionBinding [Settings_DownloadAndRestartButton], Source={StaticResource Loc}}"
+                      Command="{Binding DownloadAndRestartAppUpdateCommand}"
+                      IsVisible="{Binding IsAppUpdateAvailable}"
+                      VerticalAlignment="Center" />
+            </StackPanel>
           </StackPanel>
 
       </StackPanel>

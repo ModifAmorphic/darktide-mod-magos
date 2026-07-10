@@ -105,6 +105,12 @@ _local/
 [Ll]og/
 [Ll]ogs/
 
+# Local dotnet publish / Velopack vpk release output (e.g. from the
+# app-auto-update verification commands: dotnet publish -o publish,
+# vpk pack -o releases). Not tracked.
+[Pp]ublish/
+[Rr]eleases/
+
 # MSBuild Binary and Structured Log
 *.binlog
 

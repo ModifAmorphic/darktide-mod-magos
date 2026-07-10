@@ -405,6 +405,20 @@ service itself has no UI; the mod-list UI consumes `LastResult` /
 Update button (which calls `IModAcquisitionService`). The public surface is in
 [integrations reference](../reference/src/integrations.md).
 
+## App self-update
+
+Curator can update itself in place on Windows, where it ships as a Velopack
+install. On startup the app checks the GitHub Releases feed for a newer
+version of itself; when one is available a dismissible pill appears in the
+shell status strip, and an "Updates" section in Settings offers a manual
+check and a Download and Restart action. The download, apply, and relaunch
+are handled by Velopack, so the user never re-runs the installer. Linux is
+out of scope (it keeps the manual install script). Full detail (the
+engine-neutral `IAppUpdateService`, the conditional Velopack/no-op split, the
+startup-only check, the threading discipline, and the lifecycle interaction)
+is in [app auto-update architecture](app-auto-update.md); the public surface
+is in [UI reference](../reference/src/ui.md).
+
 ## Mod list (main view)
 
 - Per-mod: enable / disable, remove, update (when the source reports a newer
@@ -555,6 +569,8 @@ Per-profile settings live with the profile, not in the global config.
   new-profile prompt (Nexus mod 8).
 - Launch Darktide (Windows trivial; Linux native + Proton-at-launch +
   discovery + escape hatch).
+- App self-update (Windows; in-app check, download, and relaunch via
+  Velopack).
 - Global config + per-profile settings.
 - DMF new-profile prompt.
 

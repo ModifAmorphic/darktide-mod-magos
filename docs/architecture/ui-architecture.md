@@ -11,8 +11,8 @@ the UI only presents state and orchestrates calls.
 
 This doc covers how the UI is structured, how the active profile is owned, how
 the shell wires its commands, how the mod list and the update UI behave, how
-the DMF install prompt fires, and how dialogs, preferences, and i18n fit
-together.
+the app self-update surfaces, how the DMF install prompt fires, and how
+dialogs, preferences, and i18n fit together.
 
 > Public surface, exact signatures, and DI registration are documented in the
 > [UI reference](../reference/src/ui.md). This doc covers the
@@ -37,6 +37,7 @@ together.
 │  └─────────────────────────────────────────────────────────────────────┘ │
 │  ┌─ Status strip ──────────────────────────────────────────────────────┐ │
 │  │ Drawn Ellipse (running / stopped) · GameRunningText · LaunchStatusNote│ │
+│  │ · AppUpdateNotice pill (dismissible; shown when a self-update exists) │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -58,14 +59,23 @@ a UI-layer singleton that the shell (and other view models) inject:
  │       │
  │       └── ModItemViewModel  one row; carries state only (no service calls)
  │
- ├── UpdateCheckRunner ─────── fires IUpdateCheckService on profile load,
- │                             active-profile switch, a periodic timer, and
- │                             the manual "check now" affordance
- │
- └── DmfPromptService ──────── records triggers from IProfileService +
-                               INexusAuthService; the shell calls
-                               ProcessPendingAsync after the triggering dialog
-                               closes so the DMF prompt is never dialog-on-dialog
+  ├── UpdateCheckRunner ─────── fires IUpdateCheckService on profile load,
+  │                             active-profile switch, a periodic timer, and
+  │                             the manual "check now" affordance
+  │
+  ├── IAppUpdateService ─────── Curator's own self-update (Velopack, Windows);
+  │   │                         the shell notice + Settings section read it.
+  │   │                         Conditional impl behind CURATOR_VELOPACK
+  │   │                         (NoopAppUpdateService everywhere else).
+  │   │
+  │   └── AppUpdateCheckRunner ── fires one availability check on startup,
+  │                              fire-and-forget; no periodic timer (unlike
+  │                              UpdateCheckRunner)
+  │
+  └── DmfPromptService ──────── records triggers from IProfileService +
+                                INexusAuthService; the shell calls
+                                ProcessPendingAsync after the triggering dialog
+                                closes so the DMF prompt is never dialog-on-dialog
 
  IDialogService ────────────── the testable dialog seam (every Show* is one method);
                              production DialogService owns the real Window wiring
@@ -331,6 +341,44 @@ lands.
   to the parent's pre-computed `IsUpdateEnabled` (`IsPremiumUser &&
   !AnyRowUpdating`).
 
+## The app self-update UI
+
+The shell and the Settings window surface Curator's own self-update through
+`IAppUpdateService` (Windows only, via Velopack). The check is fired once on
+startup by `AppUpdateCheckRunner` and the result lands through the service's
+`UpdateStateChanged` event; the UI reads `LastCheckResult`. Full detail on the
+service, the update source, and the lifecycle is in
+[app auto-update architecture](app-auto-update.md).
+
+Two surfaces:
+
+- **The shell status-strip pill.** A dismissible pill shown only when
+  `ShowAppUpdateNotice` holds: self-update is supported, a check found an
+  update (`LastCheckResult` non-null), and the user has not dismissed it this
+  session. Clicking the pill runs the notice flow: a confirm ("vX is
+  available, download and restart?"), then the download under the shared
+  `ProgressDialog` spinner, then `ApplyUpdatesAndRestart` (which exits the
+  process; Velopack relaunches). Cancel on the confirm leaves the pill
+  visible; only the drawn close button dismisses it, and dismissal is
+  session-only (not persisted, so a later update is not hidden).
+- **The Settings "Updates" section.** Always rendered (so Linux and dev
+  builds still see their version), with the current version, a "Check for
+  Updates" button plus an inline indeterminate spinner and status line, and a
+  "Download and Restart" button visible only when an update is available. The
+  manual check calls `CheckForUpdatesAsync` off the UI thread; "Download and
+  Restart" runs the same download-and-apply flow as the pill without the
+  confirm (the user is already in the dedicated section).
+
+Both view models subscribe to `UpdateStateChanged` and reflect any result that
+already landed during construction. The event fires on a threadpool thread
+(the service publishes from its background check), so both handlers marshal to
+the UI thread through the same injected `Action<Action>` seam
+(`Dispatcher.UIThread.Post` in production, a synchronous pass-through in
+tests) that `ModListViewModel` uses for its `CheckCompleted` handler. The view
+models use no `ConfigureAwait(false)` (the project rule); their network calls
+run inside `Task.Run`. Download failures surface an alert and never proceed to
+apply.
+
 ## The DMF install prompt (`DmfPromptService`)
 
 The DMF (Darktide Mod Framework, Nexus mod 8) install-prompt coordinator
@@ -492,3 +540,6 @@ dismiss an in-flight operation.
   `AuthStateChanged` event the DMF prompt coordinator subscribes to.
 - [Nexus API rate limiting](nexus-rate-limiting.md): how the update check's
   rate-limit signal becomes the mod-list "check incomplete" notice.
+- [App auto-update architecture](app-auto-update.md): Curator's own
+  self-update (Velopack, Windows) behind `IAppUpdateService`, surfaced in the
+  shell status-strip pill and the Settings "Updates" section.

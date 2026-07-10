@@ -450,4 +450,57 @@ public sealed class ConfigLoaderTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public void AppUpdates_SourceOverride_defaults_to_null_when_absent()
+    {
+        // SourceOverride is the optional Velopack update-source override (a local
+        // directory path or URL); null (the default) means the production
+        // GithubSource. A missing section must leave it null.
+        var loader = new ConfigLoader(Path.Combine(Path.GetTempPath(), "curator-missing-" + Guid.NewGuid() + ".json"));
+
+        var appUpdates = loader.Load().AppUpdates;
+
+        Assert.Null(appUpdates.SourceOverride);
+        // CheckOnStartup keeps its default too, so the section is fully usable.
+        Assert.True(appUpdates.CheckOnStartup);
+    }
+
+    [Fact]
+    public void Save_round_trips_app_updates_SourceOverride_through_a_subsequent_Load()
+    {
+        // SourceOverride must bind from JSON and survive a Save/Load round-trip
+        // (the local-testing / self-hosted-feed knob; set in config.json under
+        // AppUpdates). A string field with no special converter auto-serializes.
+        var dir = Path.Combine(Path.GetTempPath(), "curator-cfg-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "config.json");
+        File.WriteAllText(configPath, """
+            {
+              "AppUpdates": { "SourceOverride": "/local/releases" }
+            }
+            """);
+
+        try
+        {
+            var loader = new ConfigLoader(configPath);
+
+            // JSON override binds onto the default.
+            Assert.Equal("/local/releases", loader.Load().AppUpdates.SourceOverride);
+
+            // And survives a Save/Load round-trip.
+            var config = loader.Load();
+            loader.Save(config);
+            Assert.Equal("/local/releases", loader.Load().AppUpdates.SourceOverride);
+
+            // Clearing it writes back null.
+            config.AppUpdates.SourceOverride = null;
+            loader.Save(config);
+            Assert.Null(loader.Load().AppUpdates.SourceOverride);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }

@@ -23,14 +23,21 @@ public sealed class SettingsViewModelTests
     private static (SettingsViewModel vm, FakeConfigLoader loader, FakeModRepository repo) Build(
         DiscoveryConfig? discovery = null,
         string? modsFolder = null,
-        FakeModRepository? repo = null)
+        FakeModRepository? repo = null,
+        FakeAppUpdateService? appUpdate = null,
+        FakeDialogService? dialogs = null)
     {
         var config = CuratorConfig.CreateDefault();
         if (discovery is not null) config.Discovery = discovery;
         if (modsFolder is not null) config.ModsFolder = modsFolder;
         var loader = new FakeConfigLoader { Config = config };
         repo ??= new FakeModRepository();
-        var vm = new SettingsViewModel(loader, repo, Localization, Logger);
+        var vm = new SettingsViewModel(
+            loader, repo, Localization,
+            appUpdate ?? new FakeAppUpdateService(),
+            dialogs ?? new FakeDialogService(),
+            invokeOnUi: static action => action(),
+            Logger);
         return (vm, loader, repo);
     }
 
@@ -104,7 +111,9 @@ public sealed class SettingsViewModelTests
         persisted.Discovery = healed;
         loader.Save(persisted);
 
-        var vm = new SettingsViewModel(loader, new FakeModRepository(), Localization, Logger);
+        var vm = new SettingsViewModel(loader, new FakeModRepository(), Localization,
+            new FakeAppUpdateService(), new FakeDialogService(),
+            invokeOnUi: static action => action(), Logger);
 
         Assert.Equal("/resolved/steam", Row(vm, "SteamInstallPath").Value);
         Assert.Equal("/resolved/darktide.exe", Row(vm, "DarktideGameBinaryPath").Value);
@@ -243,7 +252,9 @@ public sealed class SettingsViewModelTests
         {
             Config = new CuratorConfig { ModsFolder = "/old/mods" },
         };
-        var vm = new SettingsViewModel(loader, repo, Localization, Logger);
+        var vm = new SettingsViewModel(loader, repo, Localization,
+            new FakeAppUpdateService(), new FakeDialogService(),
+            invokeOnUi: static action => action(), Logger);
 
         vm.ApplyModsFolderCommand.Execute("/bad/path");
 
