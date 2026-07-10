@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.3.0...v0.4.0) (2026-07-10)
+
+
+### Features
+
+* **ui:** add in-app self-update check, notice, and controls ([#72](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/72)) ([0af6688](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/0af6688e7db9ac7cd306bf8a8100c979cad9a10c))
+
 ## [0.3.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.2.1...v0.3.0) (2026-07-09)
 
 
