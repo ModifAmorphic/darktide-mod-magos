@@ -4,6 +4,7 @@ using Modificus.Curator.Integrations;
 using Modificus.Curator.Mods;
 using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
+using Modificus.Curator.UI.AppUpdate;
 using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Preferences;
 using Modificus.Curator.UI.Session;
@@ -47,6 +48,8 @@ public sealed class DialogService : IDialogService
     private readonly IConfigLoader _configLoader;
     private readonly IModRepository _mods;
     private readonly INexusAuthService _nexusAuth;
+    private readonly IAppUpdateService _appUpdate;
+    private readonly Action<Action> _invokeOnUi;
     private readonly INxmHandlerRegistrar? _nxmRegistrar;
     private readonly ILoggerFactory _loggerFactory;
 
@@ -68,6 +71,12 @@ public sealed class DialogService : IDialogService
     /// atomic relocate flow (move + save + rescan) on a ModsFolder change.</param>
     /// <param name="nexusAuth">The Nexus auth service; handed to the Integrations VM
     /// for OAuth login + API-key validate + sign-out + current-state reads.</param>
+    /// <param name="appUpdate">The app self-update service; handed to the Settings
+    /// VM for the Updates section (current version, manual check, download +
+    /// restart).</param>
+    /// <param name="invokeOnUi">The UI-thread marshal seam; handed to the Settings
+    /// VM so its off-thread <c>UpdateStateChanged</c> handler refreshes the inline
+    /// status on the UI thread.</param>
     /// <param name="nxmRegistrar">The platform nxm:// handler registrar (null on
     /// unsupported platforms); handed to the Integrations VM so its "Nexus download
     /// links" section can query + toggle the OS handler registration.</param>
@@ -83,6 +92,8 @@ public sealed class DialogService : IDialogService
         IConfigLoader configLoader,
         IModRepository mods,
         INexusAuthService nexusAuth,
+        IAppUpdateService appUpdate,
+        Action<Action> invokeOnUi,
         INxmHandlerRegistrar? nxmRegistrar,
         ILoggerFactory loggerFactory)
     {
@@ -94,6 +105,8 @@ public sealed class DialogService : IDialogService
         _configLoader = configLoader;
         _mods = mods;
         _nexusAuth = nexusAuth;
+        _appUpdate = appUpdate;
+        _invokeOnUi = invokeOnUi;
         _nxmRegistrar = nxmRegistrar;
         _loggerFactory = loggerFactory;
     }
@@ -207,6 +220,9 @@ public sealed class DialogService : IDialogService
             _configLoader,
             _mods,
             _localization,
+            _appUpdate,
+            this,
+            _invokeOnUi,
             _loggerFactory.CreateLogger<SettingsViewModel>());
         var window = new SettingsWindow
         {

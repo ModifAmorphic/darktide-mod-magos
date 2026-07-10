@@ -49,6 +49,12 @@ On first launch Curator registers the `nxm://` handler itself, so Nexus
 > The installer is not code-signed yet, so Windows SmartScreen may warn on the
 > first run. Choose **More info** > **Run anyway** to continue.
 
+Curator checks for new versions on startup and can update itself in place.
+When one is available, a notice appears in the bottom status strip and the
+**Settings** window's **Updates** section lets you download and restart into
+the new version, so you never need to re-run the installer to stay current.
+(This is Windows-only; on Linux, re-run the install script to update.)
+
 ### Linux
 
 Curator needs the **.NET 10 Runtime**. If it is not already installed, get it

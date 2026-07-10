@@ -5,6 +5,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using Modificus.Curator.Config;
 using Modificus.Curator.General;
 using Modificus.Curator.Mods;
+using Modificus.Curator.UI.AppUpdate;
+using Modificus.Curator.UI.Dialogs;
 using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Settings;
 using Microsoft.Extensions.Logging;
@@ -52,6 +54,9 @@ public partial class SettingsViewModel : ObservableObject
     private readonly IConfigLoader _configLoader;
     private readonly IModRepository _repo;
     private readonly LocalizationService _localization;
+    private readonly IAppUpdateService _appUpdate;
+    private readonly IDialogService _dialogs;
+    private readonly Action<Action> _invokeOnUi;
     private readonly ILogger<SettingsViewModel> _logger;
 
     /// <summary>
@@ -61,6 +66,20 @@ public partial class SettingsViewModel : ObservableObject
     /// no-op.
     /// </summary>
     private bool _suppressApply;
+
+    /// <summary>
+    /// True after the user has run at least one manual check from this Settings
+    /// session (or a background check landed while Settings was open). Before
+    /// that, <see cref="AppUpdateStatusMessage"/> is null (no status shown); once
+    /// a check has run, a null <see cref="IAppUpdateService.LastCheckResult"/>
+    /// resolves to the "up to date" message rather than blank.
+    /// </summary>
+    /// <remarks>Volatile: <see cref="OnAppUpdateStateChanged"/> fires on a
+    /// threadpool thread (the service publishes from its background check) and
+    /// sets this before marshaling, while <see cref="RefreshAppUpdateStatus"/>
+    /// reads it on the UI thread. Mirrors the
+    /// <c>DmfPromptService._pendingAuthConfigured</c> convention.</remarks>
+    private volatile bool _hasCheckedAppUpdate;
 
     /// <summary>
     /// Creates the Settings VM, pre-fills the discovery rows (platform-gated:
@@ -74,16 +93,30 @@ public partial class SettingsViewModel : ObservableObject
     /// ModsFolder change.</param>
     /// <param name="localization">The localization service; handed to each
     /// discovery row so its label resolves + refreshes on a culture change.</param>
+    /// <param name="appUpdate">The app self-update service; backs the Updates
+    /// section (current version, manual check, download + restart).</param>
+    /// <param name="dialogs">The dialog service; the download + restart flow runs
+    /// the download under its modal spinner and surfaces failures as an alert.</param>
+    /// <param name="invokeOnUi">Marshals the off-thread
+    /// <see cref="IAppUpdateService.UpdateStateChanged"/> handler's refresh onto
+    /// the UI thread. Production wires <c>Dispatcher.UIThread.Post</c>; tests
+    /// inject a synchronous <c>action =&gt; action()</c>.</param>
     /// <param name="logger">Logger for the relocate flow.</param>
     public SettingsViewModel(
         IConfigLoader configLoader,
         IModRepository repo,
         LocalizationService localization,
+        IAppUpdateService appUpdate,
+        IDialogService dialogs,
+        Action<Action> invokeOnUi,
         ILogger<SettingsViewModel> logger)
     {
         _configLoader = configLoader;
         _repo = repo;
         _localization = localization;
+        _appUpdate = appUpdate;
+        _dialogs = dialogs;
+        _invokeOnUi = invokeOnUi ?? throw new ArgumentNullException(nameof(invokeOnUi));
         _logger = logger;
 
         _suppressApply = true;
@@ -111,6 +144,11 @@ public partial class SettingsViewModel : ObservableObject
                         InitialValue(field, discovery),
                         _localization,
                         onValueChanged: WriteThroughDiscovery)));
+
+            // Pre-fill the app-update startup-check toggle. Inside the
+            // _suppressApply block so the OnCheckOnStartupChanged write-back is
+            // a no-op during the restore.
+            CheckOnStartup = _configLoader.Load().AppUpdates.CheckOnStartup;
         }
         finally
         {
@@ -121,6 +159,13 @@ public partial class SettingsViewModel : ObservableObject
         // (which embeds a resx key when set); the row VMs each subscribe on
         // their own.
         _localization.PropertyChanged += OnCultureChanged;
+
+        // Subscribe to the app self-update state so a check that lands while
+        // Settings is open refreshes the inline status. Also reflect any result
+        // the startup check already published so the section shows the current
+        // state immediately on open.
+        _appUpdate.UpdateStateChanged += OnAppUpdateStateChanged;
+        RefreshAppUpdateStatus();
 
         ModsFolder = _configLoader.Load().ModsFolder;
     }
@@ -171,6 +216,87 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string? _statusMessage;
 
+    // ---- Updates section ---------------------------------------------------
+
+    /// <summary>
+    /// The localized header for the Updates section. Re-resolves on a culture
+    /// change.
+    /// </summary>
+    public string UpdatesSectionHeader => _localization["Settings_UpdatesSection"];
+
+    /// <summary>
+    /// The localized label for the current-version row. Re-resolves on a culture
+    /// change.
+    /// </summary>
+    public string CurrentVersionLabel => _localization["Settings_CurrentVersionLabel"];
+
+    /// <summary>
+    /// Whether app self-update is meaningful for this build (a packaged Windows
+    /// install). The section always renders; the controls are disabled when this
+    /// is false (Linux, a dev run) so those users still see the version.
+    /// </summary>
+    public bool IsAppUpdateSupported => _appUpdate.IsUpdateSupported;
+
+    /// <summary>
+    /// The installed Curator version, or a localized "unknown" when it cannot be
+    /// resolved (a non-packaged build). Re-resolves on a culture change.
+    /// </summary>
+    public string CurrentVersionDisplay =>
+        _appUpdate.CurrentVersion ?? _localization["Settings_VersionUnknown"];
+
+    /// <summary>
+    /// Whether Curator checks for a new version of itself on startup. Pre-filled
+    /// from <c>CuratorConfig.AppUpdates.CheckOnStartup</c> on construction;
+    /// persisted on each user change via a read-modify-save. Gates ONLY the
+    /// automatic startup check (<c>AppUpdateCheckRunner</c>); the manual "Check
+    /// for Updates" button always works regardless.
+    /// </summary>
+    [ObservableProperty]
+    private bool _checkOnStartup;
+
+    /// <summary>
+    /// Persisted when the user flips <see cref="CheckOnStartup"/>. Read-modify-
+    /// saves <c>CuratorConfig.AppUpdates.CheckOnStartup</c> (no caching, mirrors
+    /// <c>IntegrationsViewModel.SaveAutoUpdateSettings</c>). Suppressed during
+    /// the initial restore so pre-filling the field does not trigger a redundant
+    /// write-back.
+    /// </summary>
+    partial void OnCheckOnStartupChanged(bool value)
+    {
+        if (_suppressApply)
+        {
+            return;
+        }
+
+        var config = _configLoader.Load();
+        config.AppUpdates.CheckOnStartup = value;
+        _configLoader.Save(config);
+    }
+
+    /// <summary>
+    /// True while a manual update check is in flight (drives the inline spinner +
+    /// disables the Check button).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CheckAppUpdateCommand))]
+    private bool _isCheckingAppUpdate;
+
+    /// <summary>
+    /// Inline status under the Check button: null before any check; a localized
+    /// "up to date" once a check finds nothing; or a formatted "Curator X is
+    /// available" once a check finds an update. The visibility of this row in the
+    /// view is gated on non-empty (the up-to-date + available messages).
+    /// </summary>
+    [ObservableProperty]
+    private string? _appUpdateStatusMessage;
+
+    /// <summary>
+    /// Whether an update is available (a non-null
+    /// <see cref="IAppUpdateService.LastCheckResult"/>). Gates the Download and
+    /// Restart button's visibility + the download command's CanExecute.
+    /// </summary>
+    public bool IsAppUpdateAvailable => _appUpdate.LastCheckResult is not null;
+
     /// <summary>
     /// Detaches the VM's culture subscription + each row's, so the short-lived
     /// dialog VM is collectable after its window closes (the localization service
@@ -180,6 +306,7 @@ public partial class SettingsViewModel : ObservableObject
     public void Detach()
     {
         _localization.PropertyChanged -= OnCultureChanged;
+        _appUpdate.UpdateStateChanged -= OnAppUpdateStateChanged;
         foreach (var row in DiscoveryRows)
         {
             row.Detach();
@@ -201,6 +328,9 @@ public partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(DiscoverySectionHeader));
         OnPropertyChanged(nameof(StorageSectionHeader));
         OnPropertyChanged(nameof(ModsFolderLabel));
+        OnPropertyChanged(nameof(UpdatesSectionHeader));
+        OnPropertyChanged(nameof(CurrentVersionLabel));
+        OnPropertyChanged(nameof(CurrentVersionDisplay));
     }
 
     /// <summary>
@@ -253,6 +383,128 @@ public partial class SettingsViewModel : ObservableObject
             _logger.LogWarning(ex, "Mod repository relocate to {Path} failed.", newPath);
         }
     }
+
+    // ---- Updates section: app self-update ---------------------------------
+
+    /// <summary>
+    /// The app self-update service published new state (a check landed while
+    /// Settings was open). The event fires on a threadpool thread, so the
+    /// property changes are marshaled to the UI thread via the
+    /// <see cref="_invokeOnUi"/> seam before touching
+    /// <see cref="ObservableObject"/> bindings (mirrors the shell's handler).
+    /// </summary>
+    private void OnAppUpdateStateChanged(object? sender, EventArgs e)
+    {
+        // Set on the threadpool thread (before the marshal); volatile so the
+        // UI-thread RefreshAppUpdateStatus observes the write.
+        _hasCheckedAppUpdate = true;
+        _invokeOnUi(RefreshAppUpdateStatus);
+    }
+
+    /// <summary>
+    /// Re-derives <see cref="AppUpdateStatusMessage"/> from
+    /// <see cref="IAppUpdateService.LastCheckResult"/> + re-fires
+    /// <see cref="IsAppUpdateAvailable"/> + the download command's CanExecute.
+    /// Before any check has run, the status is blank (no message shown); after a
+    /// check, a null result resolves to "up to date" and a non-null result to
+    /// the available-version message.
+    /// </summary>
+    private void RefreshAppUpdateStatus()
+    {
+        var info = _appUpdate.LastCheckResult;
+        if (info is not null)
+        {
+            AppUpdateStatusMessage = _localization.Format("Settings_UpdateAvailable", info.TargetVersion);
+        }
+        else if (_hasCheckedAppUpdate)
+        {
+            AppUpdateStatusMessage = _localization["Settings_UpToDate"];
+        }
+        else
+        {
+            AppUpdateStatusMessage = null;
+        }
+
+        OnPropertyChanged(nameof(IsAppUpdateAvailable));
+        DownloadAndRestartAppUpdateCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Manual "Check for Updates": runs the availability check off the UI thread
+    /// and refreshes the inline status from the result. A failure surfaces a
+    /// localized "check failed" inline status (the check itself is best-effort,
+    /// so a throw here is a wiring problem; defensive). Toggles
+    /// <see cref="IsCheckingAppUpdate"/> around the check for the spinner.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanCheckAppUpdate))]
+    private async Task CheckAppUpdate()
+    {
+        IsCheckingAppUpdate = true;
+        try
+        {
+            // The check is I/O; offload it to a thread-pool task so the UI thread
+            // stays free. Bare await inside Task.Run is fine (no
+            // SynchronizationContext).
+            await Task.Run(() => _appUpdate.CheckForUpdatesAsync());
+            _hasCheckedAppUpdate = true;
+            RefreshAppUpdateStatus();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Manual app update check failed.");
+            _hasCheckedAppUpdate = true;
+            AppUpdateStatusMessage = _localization["AppUpdate_CheckFailedMessage"];
+            OnPropertyChanged(nameof(IsAppUpdateAvailable));
+            DownloadAndRestartAppUpdateCommand.NotifyCanExecuteChanged();
+        }
+        finally
+        {
+            IsCheckingAppUpdate = false;
+        }
+    }
+
+    /// <summary>Only one check at a time, and only when self-update is supported.</summary>
+    private bool CanCheckAppUpdate() => !IsCheckingAppUpdate && IsAppUpdateSupported;
+
+    /// <summary>
+    /// Download and Restart: runs the download under a modal spinner, then
+    /// applies the update on restart. Download failures surface an alert and do
+    /// NOT proceed to apply. Mirrors the shell's download flow.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDownloadAndRestartAppUpdate))]
+    private async Task DownloadAndRestartAppUpdate()
+    {
+        try
+        {
+            // The download is I/O; offload it to a thread-pool task inside the
+            // spinner's work delegate. The ProgressDialog is indeterminate (the
+            // final design), so no percentage is surfaced.
+            await _dialogs.ShowProgressAsync(
+                _localization["AppUpdate_DownloadingTitle"],
+                _localization["AppUpdate_DownloadingMessage"],
+                () => Task.Run(async () =>
+                {
+                    // Bare await inside Task.Run (no SynchronizationContext); the
+                    // VM-file convention forbids ConfigureAwait(false) entirely.
+                    await _appUpdate.DownloadUpdatesAsync();
+                    return true;
+                }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "App update download failed (Settings).");
+            await _dialogs.ShowAlertAsync(
+                _localization["AppUpdate_DownloadFailedTitle"],
+                _localization["AppUpdate_DownloadFailedMessage"] + " " + ex.Message);
+            return;
+        }
+
+        // Success: terminates this process + relaunches under the new version.
+        _appUpdate.ApplyUpdatesAndRestart();
+    }
+
+    /// <summary>The download is only reachable when an update is available.</summary>
+    private bool CanDownloadAndRestartAppUpdate() => IsAppUpdateAvailable;
 
     /// <summary>
     /// The write-through for a discovery field change: read-modify-save the

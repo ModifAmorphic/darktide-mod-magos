@@ -28,7 +28,9 @@ public sealed class ShellViewModelTests
         FakeDialogService? dialogs = null,
         FakeLaunchService? launch = null,
         DmfPromptService? dmfPrompts = null,
-        FakeNxmHandlerRegistrar? nxmRegistrar = null)
+        FakeNxmHandlerRegistrar? nxmRegistrar = null,
+        FakeAppUpdateService? appUpdate = null,
+        FakeConfigLoader? configLoader = null)
     {
         profiles ??= TestDoubles.Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -44,7 +46,10 @@ public sealed class ShellViewModelTests
             dmfPrompts,
             Localization,
             TestDoubles.BuildModList(profiles, session),
+            appUpdate ?? new FakeAppUpdateService(),
+            invokeOnUi: static action => action(),
             Logger,
+            configLoader ?? new FakeConfigLoader(),
             nxmRegistrar);
     }
 
@@ -501,7 +506,10 @@ public sealed class ShellViewModelTests
             TestDoubles.BuildDmfPromptService(profiles, session),
             Localization,
             modList,
-            Logger);
+            new FakeAppUpdateService(),
+            invokeOnUi: static action => action(),
+            Logger,
+            new FakeConfigLoader());
 
         // Initially the active profile has no mods.
         Assert.Empty(modList.Mods);

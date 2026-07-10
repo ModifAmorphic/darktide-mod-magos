@@ -1,9 +1,12 @@
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Modificus.Curator.Config;
+using Modificus.Curator.General;
 using Modificus.Curator.Nxm;
 using Modificus.Curator.RelayClient;
 using Modificus.Curator.Profiles;
+using Modificus.Curator.UI.AppUpdate;
 using Modificus.Curator.UI.Dialogs;
 using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Session;
@@ -57,8 +60,22 @@ public partial class ShellViewModel : ObservableObject
     private readonly IDialogService _dialogs;
     private readonly DmfPromptService _dmfPrompts;
     private readonly LocalizationService _localization;
+    private readonly IAppUpdateService _appUpdate;
+    private readonly IConfigLoader _configLoader;
+    private readonly Action<Action> _invokeOnUi;
     private readonly INxmHandlerRegistrar? _nxmRegistrar;
     private readonly ILogger<ShellViewModel> _logger;
+
+    // Whether the automatic startup self-update check is enabled
+    // (CuratorConfig.AppUpdates.CheckOnStartup). The status-strip update notice
+    // shows only while this is true: when the user disables automatic checks the
+    // notice is suppressed entirely (the manual Settings check stays
+    // self-contained with its own Download-and-Restart button). Read at
+    // construction + refreshed after the Settings dialog closes (the only place
+    // the toggle can change), so a toggle-off-then-close dismisses a showing
+    // notice immediately and a toggle-on re-enables it. No config-change
+    // subscription: Settings is the sole mutation point.
+    private bool _autoUpdateChecksEnabled;
 
     // Guards selection updates while the shell mirrors the session's authoritative
     // active id back into the dropdown, so re-syncing the selection does not
@@ -78,7 +95,10 @@ public partial class ShellViewModel : ObservableObject
         DmfPromptService dmfPrompts,
         LocalizationService localization,
         ModListViewModel modList,
+        IAppUpdateService appUpdate,
+        Action<Action> invokeOnUi,
         ILogger<ShellViewModel> logger,
+        IConfigLoader configLoader,
         INxmHandlerRegistrar? nxmRegistrar = null)
     {
         _profileService = profiles;
@@ -88,8 +108,12 @@ public partial class ShellViewModel : ObservableObject
         _dmfPrompts = dmfPrompts;
         _localization = localization;
         ModList = modList;
+        _appUpdate = appUpdate;
+        _invokeOnUi = invokeOnUi ?? throw new ArgumentNullException(nameof(invokeOnUi));
         _logger = logger;
         _nxmRegistrar = nxmRegistrar;
+        _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
+        _autoUpdateChecksEnabled = _configLoader.Load().AppUpdates.CheckOnStartup;
 
         // Set the backing fields directly: no subscribers yet, and setting
         // SelectedProfile through the property would route through the selection
@@ -106,6 +130,13 @@ public partial class ShellViewModel : ObservableObject
         // Re-resolve the localized strings when the UI culture flips so the
         // status strip + tooltip refresh alongside the rest of the UI.
         _localization.PropertyChanged += OnCultureChanged;
+
+        // Subscribe to the app self-update state changes so the status-strip
+        // notice appears the moment a check resolves an update (the startup
+        // check fires on a background task). Also reflect any result that
+        // already landed during shell construction.
+        _appUpdate.UpdateStateChanged += OnAppUpdateStateChanged;
+        RefreshAppUpdateNotice();
 
         _logger.LogInformation(
             "Shell initialized: {ProfileCount} profile(s) loaded; active={ActiveId}; " +
@@ -224,6 +255,55 @@ public partial class ShellViewModel : ObservableObject
         };
 
     /// <summary>
+    /// Whether the user dismissed the update notice this session. Session-only:
+    /// not persisted (a persisted dismissal would wrongly hide a later update).
+    /// Re-shown next startup if an update is still available. Flipping this
+    /// re-fires <see cref="ShowAppUpdateNotice"/>.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowAppUpdateNotice))]
+    private bool _isAppUpdateDismissed;
+
+    /// <summary>
+    /// Whether the dismissible update pill should show in the status strip:
+    /// self-update must be supported, the automatic startup check must be enabled
+    /// (<see cref="CuratorConfig.AppUpdates.CheckOnStartup"/>), a check must have
+    /// found an update, and the user must not have dismissed it this session.
+    /// </summary>
+    /// <remarks>
+    /// The notice shows only when the startup check is enabled
+    /// (<see cref="CuratorConfig.AppUpdates.CheckOnStartup"/>); when the user
+    /// disables automatic checks the notice is suppressed entirely, even if a
+    /// check (manual or otherwise) has populated <c>LastCheckResult</c>. The
+    /// manual check in Settings is unaffected: it is self-contained, with its own
+    /// inline result + Download-and-Restart button.
+    /// </remarks>
+    public bool ShowAppUpdateNotice =>
+        _appUpdate.IsUpdateSupported
+            && _autoUpdateChecksEnabled
+            && _appUpdate.LastCheckResult is not null
+            && !IsAppUpdateDismissed;
+
+    /// <summary>
+    /// The status-strip text on the update pill, formatted with the available
+    /// version. Localized; re-resolves on a culture change.
+    /// </summary>
+    public string AppUpdateNoticeText =>
+        _localization.Format("AppUpdate_NoticeText", _appUpdate.LastCheckResult?.TargetVersion ?? string.Empty);
+
+    /// <summary>
+    /// The status-strip tooltip on the update pill. Localized; re-resolves on a
+    /// culture change.
+    /// </summary>
+    public string AppUpdateNoticeTooltip => _localization["AppUpdate_NoticeTooltip"];
+
+    /// <summary>
+    /// The tooltip on the dismiss button. Localized; re-resolves on a culture
+    /// change.
+    /// </summary>
+    public string AppUpdateDismissTooltip => _localization["AppUpdate_DismissTooltip"];
+
+    /// <summary>
     /// Whether the profile dropdown is interactive: a profile must exist and the
     /// game must not be running. The gate itself lives in the session; this just
     /// exposes the running-state so the dropdown can disable while Darktide runs.
@@ -301,6 +381,9 @@ public partial class ShellViewModel : ObservableObject
         OnPropertyChanged(nameof(ProfileSwitchTooltip));
         OnPropertyChanged(nameof(NxmHandlerStatusText));
         OnPropertyChanged(nameof(NxmHandlerStatusTooltip));
+        OnPropertyChanged(nameof(AppUpdateNoticeText));
+        OnPropertyChanged(nameof(AppUpdateNoticeTooltip));
+        OnPropertyChanged(nameof(AppUpdateDismissTooltip));
         // LaunchStatusNote is a transient formatted string (not a key), so a
         // culture flip while it happens to be visible is not re-translated. The
         // next launch overwrites it; the durable signal is GameRunningText.
@@ -331,6 +414,36 @@ public partial class ShellViewModel : ObservableObject
             _logger.LogWarning(ex, "IsRegistered probe threw; treating as not registered.");
             IsNxmRegistered = false;
         }
+    }
+
+    /// <summary>
+    /// The app self-update service published new state (a check resolved an
+    /// update, or a download landed). The event fires on a threadpool thread
+    /// (the service publishes from its background check), so the property
+    /// changes are marshaled to the UI thread via the <see cref="_invokeOnUi"/>
+    /// seam before touching <see cref="ObservableObject"/> bindings. Mirrors
+    /// <see cref="Modificus.Curator.UI.ViewModels.ModListViewModel"/>'s
+    /// <c>CheckCompleted</c> marshaling.
+    /// </summary>
+    private void OnAppUpdateStateChanged(object? sender, EventArgs e)
+    {
+        // Marshal to the UI thread: the event fires on a threadpool thread and
+        // the notice properties feed UI-bound state.
+        _invokeOnUi(RefreshAppUpdateNotice);
+    }
+
+    /// <summary>
+    /// Re-fires the property-changed events for the notice's computed strings +
+    /// the show/hide flag so the status strip re-resolves. Called from
+    /// <see cref="OnAppUpdateStateChanged"/> (marshaled to the UI thread) and at
+    /// construction so a check that completed during shell construction is
+    /// reflected immediately.
+    /// </summary>
+    private void RefreshAppUpdateNotice()
+    {
+        OnPropertyChanged(nameof(ShowAppUpdateNotice));
+        OnPropertyChanged(nameof(AppUpdateNoticeText));
+        OnPropertyChanged(nameof(AppUpdateNoticeTooltip));
     }
 
     /// <summary>
@@ -422,19 +535,103 @@ public partial class ShellViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Opens the Settings dialog (discovery paths + mod-repository location),
-    /// then reloads the mod list. Each setting applies + persists immediately
-    /// through the dialog; on close the only follow-up is a mod-list reload,
-    /// because a Settings relocate rescans the repository's index out-of-band
-    /// and the <see cref="ModListViewModel.Mods"/> snapshot would otherwise be
-    /// stale. (Discovery overrides are read live by the next
-    /// <c>Discover()</c> / launch; no shell-side action needed for those.)
+    /// Opens the Settings dialog (discovery paths + mod-repository location +
+    /// the startup self-update toggle), then reloads the mod list + refreshes the
+    /// status-strip update notice. Each setting applies + persists immediately
+    /// through the dialog; on close the shell: (1) reloads the mod list, because
+    /// a Settings relocate rescans the repository's index out-of-band and the
+    /// <see cref="ModListViewModel.Mods"/> snapshot would otherwise be stale; and
+    /// (2) re-reads the startup-check toggle so a notice shown before the toggle
+    /// was turned off is dismissed immediately, and a notice previously hidden by
+    /// an off toggle re-enables the moment it is turned back on. (Discovery
+    /// overrides are read live by the next <c>Discover()</c> / launch; no
+    /// shell-side action needed for those.)
     /// </summary>
     [RelayCommand]
     private async Task OpenSettings()
     {
         await _dialogs.ShowSettingsAsync();
         ModList.Reload();
+
+        // The startup-check toggle can only change inside Settings; re-read it on
+        // close so the notice visibility tracks the current config. No
+        // config-change subscription is needed because Settings is the sole
+        // mutation point.
+        _autoUpdateChecksEnabled = _configLoader.Load().AppUpdates.CheckOnStartup;
+        RefreshAppUpdateNotice();
+    }
+
+    /// <summary>
+    /// The notice-click flow: confirms the download, then runs the download under
+    /// a modal spinner and applies the update on restart. Cancel on the confirm
+    /// dismisses the notice for this session (cancel = "dismiss for now", not
+    /// "not now"); the explicit <see cref="DismissAppUpdate"/> command (the x
+    /// button) also dismisses for the session. Download failures surface an
+    /// alert and do NOT proceed to apply.
+    /// </summary>
+    [RelayCommand]
+    private async Task CheckAppUpdateNow()
+    {
+        var info = _appUpdate.LastCheckResult;
+        if (info is null)
+        {
+            // Nothing to download (the notice should not be visible in this
+            // state, but a race with a clearing check is harmless to guard).
+            return;
+        }
+
+        var confirmed = await _dialogs.ConfirmAsync(
+            _localization["AppUpdate_ConfirmTitle"],
+            _localization.Format("AppUpdate_ConfirmMessage", info.TargetVersion));
+
+        if (!confirmed)
+        {
+            // Cancel dismisses the notice for this session; the explicit dismiss
+            // button (DismissAppUpdate) also dismisses for the session. The
+            // notice re-shows next startup if an update is still available.
+            IsAppUpdateDismissed = true;
+            return;
+        }
+
+        try
+        {
+            // The download is I/O; offload it to a thread-pool task inside the
+            // spinner's work delegate so the UI thread stays free. The
+            // ProgressDialog is indeterminate (the final design), so no
+            // percentage is surfaced.
+            await _dialogs.ShowProgressAsync(
+                _localization["AppUpdate_DownloadingTitle"],
+                _localization["AppUpdate_DownloadingMessage"],
+                () => Task.Run(async () =>
+                {
+                    // Bare await inside Task.Run (no SynchronizationContext); the
+                    // VM-file convention forbids ConfigureAwait(false) entirely.
+                    await _appUpdate.DownloadUpdatesAsync();
+                    return true;
+                }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "App update download failed.");
+            await _dialogs.ShowAlertAsync(
+                _localization["AppUpdate_DownloadFailedTitle"],
+                _localization["AppUpdate_DownloadFailedMessage"] + " " + ex.Message);
+            return;
+        }
+
+        // Success: terminates this process + relaunches under the new version.
+        _appUpdate.ApplyUpdatesAndRestart();
+    }
+
+    /// <summary>
+    /// Dismisses the update notice for this session (in-memory only; not
+    /// persisted). The notice re-shows next startup if an update is still
+    /// available. Bound to the drawn close Path on the status-strip pill.
+    /// </summary>
+    [RelayCommand]
+    private void DismissAppUpdate()
+    {
+        IsAppUpdateDismissed = true;
     }
 
     /// <summary>

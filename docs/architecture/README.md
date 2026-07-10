@@ -28,6 +28,9 @@ unmodified).
 - [`ui-architecture.md`](ui-architecture.md): the UI layer (the shell, the
   profile session, the mod list, the update UI, the DMF install prompt,
   dialogs, preferences, and i18n).
+- [`app-auto-update.md`](app-auto-update.md): the in-app self-update
+  (Velopack on Windows): the engine-neutral `IAppUpdateService`, the
+  startup-only check, and the shell notice + Settings "Updates" section.
 - [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay): the
   runtime architecture (the Rust↔C Hybrid, the seam, the launcher flow,
   discovery, the mod loader).

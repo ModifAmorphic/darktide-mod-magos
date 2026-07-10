@@ -4,9 +4,9 @@
 > management, the mod list, every dialog (Settings, Preferences,
 > Integrations, Manage profiles, import, discovery escape-hatch, progress),
 > global preferences (theme, font scale, language), the i18n infrastructure,
-> the DMF install-prompt coordinator, and the update-check runner. The UI
-> never touches the filesystem or the network directly; every data operation
-> flows through a backend library service.
+> the DMF install-prompt coordinator, the update-check runner, and the app
+> self-update service. The UI never touches the filesystem or the network
+> directly; every data operation flows through a backend library service.
 
 The UI is an executable (`OutputType=WinExe`), not a library: it is the
 composition root and the only project that constructs Avalonia windows. It
@@ -436,6 +436,145 @@ time deterministically. Production wires a `DispatcherTimer` and
 (`IProfileSession`) and drives an Integrations service, so it belongs on the
 consumer side of that boundary.
 
+## The app self-update service
+
+### `IAppUpdateService`
+
+Curator's own self-update (the Velopack-managed installer on Windows). The
+shape mirrors `IUpdateCheckService`: a best-effort availability check that
+never throws to the caller for non-cancellation failures, plus a
+state-holding `LastCheckResult` / `UpdatePendingRestart` surface published
+under a lock together with the `UpdateStateChanged` event. The download and
+apply steps are user-initiated and DO surface their failures (a checksum
+mismatch or a locked-file error is something the user needs to see), so they
+propagate from those two methods. See
+[app auto-update architecture](../../architecture/app-auto-update.md) for the
+Windows-only scope, the update source, and the lifecycle interaction.
+
+```csharp
+public sealed record AppUpdateInfo(string TargetVersion, string? Notes);
+
+public interface IAppUpdateService
+{
+    bool IsUpdateSupported { get; }
+    string? CurrentVersion { get; }
+    AppUpdateInfo? LastCheckResult { get; }
+    AppUpdateInfo? UpdatePendingRestart { get; }
+    event EventHandler? UpdateStateChanged;
+
+    Task<AppUpdateInfo?> CheckForUpdatesAsync(CancellationToken ct = default);
+    Task DownloadUpdatesAsync(CancellationToken ct = default);
+    void ApplyUpdatesAndRestart();
+}
+```
+
+- `AppUpdateInfo`: a plain data record exposing no Velopack types, so the UI
+  consumes it without a hard dependency on the update engine. `TargetVersion`
+  is the available update's version string; `Notes` is the target version's
+  release notes, or `null` (currently empty until `vpk pack` is given
+  `--releaseNotes`).
+- `IsUpdateSupported`: `true` only when the running app is a Velopack install
+  and the update manager initialized. The UI gates the entire update surface
+  (the shell notice, the Settings controls, apply) on this, so a non-Velopack
+  build (Linux, a dev run) shows nothing.
+- `CurrentVersion`: the installed app version as a string
+  (`UpdateManager.CurrentVersion.ToString()`), or `null` when unsupported. The
+  UI shows it alongside `AppUpdateInfo.TargetVersion`.
+- `LastCheckResult`: the most recent check result, or `null` before the first
+  check, when no update was found, when self-update is unsupported, or when a
+  check failed (a failure leaves the prior value untouched). Written under the
+  state lock together with the `UpdateStateChanged` invocation; read lock-free.
+- `UpdatePendingRestart`: the update that has been downloaded and is waiting
+  for the next restart, or `null` until a download succeeds. Set by
+  `DownloadUpdatesAsync`; consumed by `ApplyUpdatesAndRestart`.
+- `UpdateStateChanged`: raised on the completing thread when `LastCheckResult`
+  or `UpdatePendingRestart` changes. Never raised on a swallowed check
+  failure. Handlers marshal to the UI thread via the shared `Action<Action>`
+  seam.
+- `CheckForUpdatesAsync`: returns the available update, or `null` when
+  unsupported, no update is available, or the check failed. Never throws for
+  non-cancellation failures; `OperationCanceledException` propagates.
+- `DownloadUpdatesAsync`: downloads the update the last check resolved,
+  staging it for apply. Propagates its failures (the download is
+  user-initiated). `InvalidOperationException` when no check resolved an
+  update (a wiring mistake, since the UI gates the download).
+- `ApplyUpdatesAndRestart`: exits the process, applies the staged update, and
+  relaunches under the new version. A no-op when no update has been
+  downloaded.
+
+### Conditional implementation
+
+Two implementations live behind the one interface, selected at compile time by
+the `CURATOR_VELOPACK` symbol (defined when `CuratorUseVelopack=true` is set at
+publish time, i.e. a packaged Windows build):
+
+- **`VelopackAppUpdateService`** (`#if CURATOR_VELOPACK`): the real impl. Wraps
+  a Velopack `UpdateManager` whose source is config-driven: the constructor
+  reads `CuratorConfig.AppUpdates.SourceOverride` once via the injected
+  `IConfigLoader` (the same pattern every other service uses; `UpdateManager` is
+  built once with its source, so the value is not held beyond the constructor).
+  `null`/whitespace (the default) builds the production anonymous `GithubSource`
+  (`Velopack.Sources` namespace; repo
+  `https://github.com/ModifAmorphic/darktide-modificus-curator`,
+  `accessToken: null`, `prerelease: true`); a set value (a local directory path
+  or a URL) builds the manager from `UpdateManager`'s `urlOrPath` overload
+  instead, the local-testing / self-hosted-feed path with no code change.
+  Construction catches `Velopack.Exceptions.NotInstalledException` (the expected
+  throw for a non-Velopack run) and leaves the manager `null`, so
+  `IsUpdateSupported` is `false`.
+- **`NoopAppUpdateService`**: the default, registered everywhere else. Every
+  member returns the neutral value; `UpdateStateChanged` is never raised;
+  `DownloadUpdatesAsync` throws `NotSupportedException` rather than silently
+  no-op-ing (reaching the download path in an unsupported build is a wiring
+  mistake).
+
+### `AppUpdateCheckRunner`
+
+The UI-layer glue that fires one Curator self-update availability check on
+startup, fire-and-forget, against `IAppUpdateService`. Unlike
+`UpdateCheckRunner`, app updates are profile-independent: this class has no
+profile dependency and no periodic timer. The manual check (the Settings
+"Check for Updates" button) calls `CheckForUpdatesAsync` directly, so it always
+works regardless of the `CheckOnStartup` toggle.
+
+```csharp
+public sealed class AppUpdateCheckRunner
+{
+    public AppUpdateCheckRunner(
+        IAppUpdateService appUpdate,
+        IConfigLoader configLoader,
+        ILogger<AppUpdateCheckRunner> logger);
+
+    public void Start();
+}
+```
+
+- `Start()`: reads `CuratorConfig.AppUpdates.CheckOnStartup` live. When it is
+  on (the default), fires one check on a thread-pool task and discards the
+  returned `Task`. When it is off, logs an informational line and returns
+  without firing the check (the manual check path is unaffected). Called once
+  from the composition root after the provider is built (best-effort: failures
+  are logged and swallowed, never blocking startup). The result lands through
+  `IAppUpdateService.UpdateStateChanged`; the runner itself surfaces nothing.
+
+The toggle gates ONLY the automatic startup check. When it is off, no startup
+check runs and the status-strip update notice is suppressed entirely: the
+notice's visibility (`ShellViewModel.ShowAppUpdateNotice`) is itself gated on
+`CheckOnStartup`, so even a manual check that populates `LastCheckResult`
+cannot surface it (the manual Settings check is the only remaining path and is
+self-contained, with its own inline result plus a Download-and-Restart button).
+The shell re-reads the toggle when Settings closes so the notice tracks a
+runtime toggle without a restart. The toggle is surfaced in the Settings
+Updates section (read-modify-save, no caching).
+
+The runner never blocks on the check, never surfaces its result, and never
+lets an unobserved exception escape the threadpool task.
+`CheckForUpdatesAsync` is documented to swallow its own non-cancellation
+failures; the runner wraps the call in its own try/catch as belt-and-suspenders
+(`OperationCanceledException` swallowed silently, anything else logged).
+`ConfigureAwait(false)` is used only inside its `Task.Run` block, the narrow
+documented exception to the UI-layer rule for explicit background-task code.
+
 ## Converters
 
 ### `BoolAllConverter`
@@ -487,9 +626,19 @@ services.AddSingleton<IPreferencesService, PreferencesService>();
 services.AddSingleton<MainWindow>();
 services.AddSingleton<Action<Action>>(_ => action => Dispatcher.UIThread.Post(action));
 services.AddSingleton<ModListViewModel>();
-services.AddSingleton(sp => new ShellViewModel(/* … */, sp.GetService<INxmHandlerRegistrar>()));
-services.AddSingleton<IDialogService>(sp => new DialogService(/* … incl. sp.GetService<INxmHandlerRegistrar>() */));
+services.AddSingleton(sp => new ShellViewModel(/* … incl. IAppUpdateService, Action<Action> */,
+                                              sp.GetService<INxmHandlerRegistrar>()));
+services.AddSingleton<IDialogService>(sp => new DialogService(/* … incl. IAppUpdateService, Action<Action>,
+                                                                sp.GetService<INxmHandlerRegistrar>() */));
 services.AddSingleton(sp => new UpdateCheckRunner(/* … */, StartUpdateCheckPolling));
+#if CURATOR_VELOPACK
+services.AddSingleton<IAppUpdateService>(sp => new VelopackAppUpdateService(
+    sp.GetRequiredService<IConfigLoader>(),
+    sp.GetRequiredService<ILogger<VelopackAppUpdateService>>()));
+#else
+services.AddSingleton<IAppUpdateService, NoopAppUpdateService>();
+#endif
+services.AddSingleton(sp => new AppUpdateCheckRunner(/* IAppUpdateService, IConfigLoader, logger */));
 services.AddSingleton(sp => new DmfPromptService(/* … */, sp.GetService<INxmHandlerRegistrar>()));
 ```
 
@@ -512,16 +661,23 @@ Key wiring notes:
 - `Action<Action>` is registered as a factory that posts to
   `Dispatcher.UIThread`. `ModListViewModel` injects it as its `invokeOnUi`
   seam so the `CheckCompleted` handler (which fires on a threadpool thread)
-  marshals its `Mods` collection iteration to the UI thread.
+  marshals its `Mods` collection iteration to the UI thread. `ShellViewModel`
+  and `SettingsViewModel` use the same seam for their
+  `IAppUpdateService.UpdateStateChanged` handlers.
+- `IAppUpdateService` is registered conditionally on `CURATOR_VELOPACK`: a
+  packaged Windows build gets `VelopackAppUpdateService`; every other build
+  (Linux, a dev run without `CuratorUseVelopack=true`) gets
+  `NoopAppUpdateService`. Consumers talk to `IAppUpdateService` unconditionally
+  and gate their affordances on `IsUpdateSupported`.
 - `INxmModDownloadHandler` is registered AFTER `AddNxm()` with a factory
   that resolves its dependencies lazily at first use (the handler is first
   resolved by the IPC router, by which point all dependencies are
   registered). MS DI resolves the last registration for an interface, so
   this supersedes the no-op default registered inside `AddNxm()`. See
   [nxm reference](nxm.md) + [mod acquisition](../../architecture/mod-acquisition.md).
-- `UpdateCheckRunner.Start()` is called after the provider is built
-  (best-effort; a wiring failure is logged and swallowed, never blocks
-  startup).
+- `UpdateCheckRunner.Start()` and `AppUpdateCheckRunner.Start()` are called
+  after the provider is built (best-effort; a wiring failure is logged and
+  swallowed, never blocks startup).
 
 `App.OnFrameworkInitializationCompleted` runs `CuratorComposition.Build()`,
 applies the user's preferences before any window shows (so the first paint
@@ -550,7 +706,9 @@ instance violation) propagates out; `App` catches it and calls
   `Avalonia.Themes.Fluent` 12.0.5 (the UI framework), `CommunityToolkit.Mvvm`
   8.4.2 (`ObservableObject`, `[ObservableProperty]`, `[RelayCommand]`),
   `Microsoft.Extensions.DependencyInjection` 10.0.9,
-  `Microsoft.Extensions.Logging` 10.0.9.
+  `Microsoft.Extensions.Logging` 10.0.9. `Velopack` 1.2.0 is conditionally
+  referenced (Windows packaging only, gated on `CuratorUseVelopack=true`),
+  which defines `CURATOR_VELOPACK` and brings in the app self-update engine.
 - **BCL otherwise:** `System.Resources.ResourceManager` (the i18n lookup),
   `System.Globalization.CultureInfo`, `Avalonia.Threading.DispatcherTimer`
   (the polling timers), `Avalonia.Styling.ThemeVariant` (the theme) all
@@ -569,6 +727,11 @@ No backend library references the UI (the dependency direction is one-way).
   guard against spurious dropdown events, the post-dialog DMF prompt path, and
   the nxm handler status (startup read + refresh after Integrations closes +
   unavailable when no registrar).
+- **`ShellViewModelAppUpdateTests`**: the status-strip notice (show/hide on
+  `IsUpdateSupported` + `LastCheckResult` + dismissal, session-only dismiss,
+  the `UpdateStateChanged` marshal), and the notice-click flow (confirm gate,
+  download under the progress dialog, apply on success, alert on failure,
+  cancel dismisses the notice for the session).
 - **`ProfileSessionTests`**: the gate (RequestActive applies only when not
   running), persistence, `CanDeleteProfile`, `ReconcileActive` (delete of
   active clears to null; never auto-selects), `Refresh`.
@@ -586,8 +749,11 @@ No backend library references the UI (the dependency direction is one-way).
 - **`LocalizationServiceTests`**: the indexer, `Format`, `SetCulture`
   (unknown name -> invariant), the `Item[]` event that refreshes every
   indexer binding.
-- **`SettingsViewModelTests`**: the Settings dialog (discovery overrides +
-  mod-repo relocation).
+- **`SettingsViewModelTests`** + **`SettingsViewModelAppUpdateTests`**: the
+  Settings dialog (discovery overrides + mod-repo relocation), plus the
+  Updates section (current version, manual check + inline status, the
+  `UpdateStateChanged` marshal, Download and Restart, the unsupported-build
+  disabled controls, and the startup-check toggle persist + pre-fill).
 - **`ImportModViewModelTests`**: the per-mod import modal (URL parsing,
   version field, name edit).
 - **`DiscoveryEscapeHatchViewModelTests`**: the focused escape-hatch form
@@ -601,6 +767,14 @@ No backend library references the UI (the dependency direction is one-way).
   active-switch, periodic timer with the live toggle + interval, manual
   CheckNowAsync), the periodic-clock reset, the unobserved-exception safety,
   the thorough vs Month-only check selection.
+- **`AppUpdateCheckRunnerTests`**: the single startup fire
+  (fire-and-forget, never blocks, result lands through `UpdateStateChanged`),
+  the `CheckOnStartup` config gate (no fire when disabled, fires when enabled),
+  and the belt-and-suspenders unobserved-exception safety.
+- **`NoopAppUpdateServiceTests`**: the no-op impl's neutral values
+  (`IsUpdateSupported` false, null state, completed-null check, never-raised
+  event) and the `NotSupportedException` from `DownloadUpdatesAsync` (the
+  wiring-mistake guard).
 - **`DmfPromptServiceTests`**: the three DMF cases, the new-profile and
   auth-configured triggers, the ask-once auth flag, the decline path, the
   dialog-on-dialog avoidance (the prompt fires from the shell after the
@@ -625,6 +799,9 @@ dotnet test src/modificus-curator.sln -c Release
 - [UI architecture](../../architecture/ui-architecture.md): the shell
   layout, the profile session, the mod list, the update UI, the DMF prompt,
   and the dialog / preferences / i18n design.
+- [App auto-update architecture](../../architecture/app-auto-update.md): the
+  Windows-only self-update flow behind `IAppUpdateService` (Velopack), the
+  startup-only check, and the lifecycle interaction.
 - [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md): the
   high-level tie-together (component model, the Relay contract Curator
   consumes, profiles, launch).

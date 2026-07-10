@@ -7,6 +7,7 @@ using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.Mods;
 using Modificus.Curator.Steam;
+using Modificus.Curator.UI.AppUpdate;
 using Modificus.Curator.UI.Dialogs;
 using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Preferences;
@@ -121,7 +122,10 @@ public static class CuratorComposition
             sp.GetRequiredService<DmfPromptService>(),
             sp.GetRequiredService<LocalizationService>(),
             sp.GetRequiredService<ModListViewModel>(),
+            sp.GetRequiredService<IAppUpdateService>(),
+            sp.GetRequiredService<Action<Action>>(),
             sp.GetRequiredService<ILogger<ShellViewModel>>(),
+            sp.GetRequiredService<IConfigLoader>(),
             // Optional: null on platforms with no registrar (not Windows or
             // Linux). Resolved via GetService so unsupported platforms do not
             // throw on activation; the shell shows an "unavailable" status.
@@ -136,6 +140,8 @@ public static class CuratorComposition
                 sp.GetRequiredService<IConfigLoader>(),
                 sp.GetRequiredService<IModRepository>(),
                 sp.GetRequiredService<INexusAuthService>(),
+                sp.GetRequiredService<IAppUpdateService>(),
+                sp.GetRequiredService<Action<Action>>(),
                 sp.GetService<INxmHandlerRegistrar>(),
                 sp.GetRequiredService<ILoggerFactory>()));
 
@@ -156,6 +162,42 @@ public static class CuratorComposition
             sp.GetRequiredService<IConfigLoader>(),
             sp.GetRequiredService<ILogger<UpdateCheckRunner>>(),
             StartUpdateCheckPolling));
+
+        // The Curator self-update service (Velopack on Windows). Conditional on
+        // CURATOR_VELOPACK: a packaged Windows build gets the real
+        // VelopackAppUpdateService; everything else (Linux, dev builds without
+        // CuratorUseVelopack=true) gets the no-op implementation that reports
+        // IsUpdateSupported=false. Consumers talk to IAppUpdateService
+        // unconditionally and gate their affordances on IsUpdateSupported. The
+        // Velopack impl resolves IConfigLoader so it can read
+        // CuratorConfig.AppUpdates.SourceOverride once at construction: null
+        // (the default) builds the production anonymous GithubSource; a set
+        // value (a local directory path or URL) builds the manager from
+        // UpdateManager's urlOrPath overload, the local-testing / self-hosted
+        // feed path with no code change.
+#if CURATOR_VELOPACK
+        services.AddSingleton<IAppUpdateService>(sp => new VelopackAppUpdateService(
+            sp.GetRequiredService<IConfigLoader>(),
+            sp.GetRequiredService<ILogger<VelopackAppUpdateService>>()));
+#else
+        services.AddSingleton<IAppUpdateService, NoopAppUpdateService>();
+#endif
+
+        // The UI-layer glue that fires one self-update availability check on
+        // startup (fire-and-forget, profile-independent: app updates do not
+        // depend on the active profile or the Nexus auth). The result lands
+        // through IAppUpdateService.UpdateStateChanged; the runner itself
+        // surfaces nothing. The startup check is gated on
+        // CuratorConfig.AppUpdates.CheckOnStartup (read live on startup); the
+        // manual "Check for Updates" button in Settings always works and calls
+        // IAppUpdateService.CheckForUpdatesAsync directly. Started after the
+        // provider is built (see StartAppUpdateCheck); best-effort, never
+        // blocks startup. Singleton: owns the single startup fire for the app
+        // lifetime.
+        services.AddSingleton(sp => new AppUpdateCheckRunner(
+            sp.GetRequiredService<IAppUpdateService>(),
+            sp.GetRequiredService<IConfigLoader>(),
+            sp.GetRequiredService<ILogger<AppUpdateCheckRunner>>()));
 
         // The DMF (Darktide Mod Framework) install-prompt coordinator.
         // Subscribes to IProfileService.ProfileCreated +
@@ -210,6 +252,12 @@ public static class CuratorComposition
         // Best-effort: a failure is logged + swallowed so a wiring problem never
         // blocks startup (the mod-list update badges just stay blank until restart).
         StartUpdateCheck(provider, loggerFactory);
+
+        // Start the app self-update runner so an availability check fires once
+        // on startup. Best-effort: a failure is logged + swallowed so a wiring
+        // problem never blocks startup (the user sees nothing; the self-update
+        // notice simply never appears).
+        StartAppUpdateCheck(provider, loggerFactory);
 
         return provider;
     }
@@ -304,6 +352,28 @@ public static class CuratorComposition
             // app works without it (the mod-list update badges just stay blank).
             loggerFactory.CreateLogger(nameof(CuratorComposition))
                 .LogWarning(ex, "Failed to start the update-check runner (best-effort).");
+        }
+    }
+
+    /// <summary>
+    /// Resolves the <see cref="AppUpdateCheckRunner"/> + calls
+    /// <see cref="AppUpdateCheckRunner.Start"/> so a Curator self-update
+    /// availability check fires once on startup. Best-effort: any failure is
+    /// logged + swallowed so a wiring problem never blocks app startup (the user
+    /// sees nothing; the self-update notice simply never appears).
+    /// </summary>
+    private static void StartAppUpdateCheck(IServiceProvider provider, ILoggerFactory loggerFactory)
+    {
+        try
+        {
+            provider.GetRequiredService<AppUpdateCheckRunner>().Start();
+        }
+        catch (Exception ex)
+        {
+            // Swallow: self-update-check wiring is best-effort. Log + continue;
+            // the app works without it (the self-update notice just never shows).
+            loggerFactory.CreateLogger(nameof(CuratorComposition))
+                .LogWarning(ex, "Failed to start the app self-update runner (best-effort).");
         }
     }
 
