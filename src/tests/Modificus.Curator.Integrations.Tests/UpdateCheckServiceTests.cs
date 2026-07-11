@@ -155,6 +155,59 @@ public sealed class UpdateCheckServiceTests
     }
 
     [Fact]
+    public async Task CheckAsync_flags_when_installed_version_differs_even_if_viewerUpdateAvailable_is_false()
+    {
+        // viewerUpdateAvailable is false (the server's per-user download
+        // tracking doesn't reflect the local state: user installed an older
+        // version, uses multiple PCs, or imported manually). The version
+        // comparison catches this: installed "1.0" vs server "1.2.1" flags.
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: false, version: "1.2.1") },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
+    }
+
+    [Fact]
+    public async Task CheckAsync_does_not_flag_when_versions_match_and_viewerUpdateAvailable_is_false()
+    {
+        // Both signals agree: no update. viewerUpdateAvailable is false and the
+        // installed version matches the server's version.
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: false, version: "1.0") },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.Empty(result.Updates);
+    }
+
+    [Fact]
     public async Task CheckAsync_does_not_flag_mods_missing_from_response()
     {
         // The API returns fewer mods than expected (a UID did not resolve):
@@ -640,15 +693,18 @@ public sealed class UpdateCheckServiceTests
     /// <summary>
     /// Builds a <see cref="ModUpdateStatus"/> for <paramref name="modId"/> with
     /// the given <paramref name="viewerUpdateAvailable"/> + optional
-    /// <paramref name="updatedAt"/>.
+    /// <paramref name="updatedAt"/> + <paramref name="version"/>. The version
+    /// defaults to "" so the version comparison is skipped unless a test
+    /// explicitly sets one.
     /// </summary>
     private static ModUpdateStatus Status(
-        int modId, bool? viewerUpdateAvailable, DateTimeOffset? updatedAt = null) =>
+        int modId, bool? viewerUpdateAvailable, DateTimeOffset? updatedAt = null,
+        string version = "") =>
         new()
         {
             Uid = Uid(modId),
             Name = "Mod " + modId,
-            Version = "2.0",
+            Version = version,
             UpdatedAt = updatedAt,
             ViewerUpdateAvailable = viewerUpdateAvailable,
         };

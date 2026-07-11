@@ -236,20 +236,33 @@ internal sealed class UpdateCheckService : IUpdateCheckService
                 continue;
             }
 
-            // viewerUpdateAvailable == true flags the mod; false or null does
-            // not. Null (server has no download record for the user, e.g. a
-            // manually imported mod) is treated as false.
-            if (status.ViewerUpdateAvailable != true)
+            var resolved = container.ResolveVersion(new LatestPolicy());
+            var installedVersion = resolved?.VersionString ?? string.Empty;
+
+            // Dual-signal update detection. viewerUpdateAvailable alone is
+            // insufficient: the server tracks a single per-user download
+            // timestamp (tied to the Nexus account, not the machine), so it
+            // returns false when the user installed an older version, uses
+            // multiple PCs with different local versions, or imported manually
+            // (no API-tracked download). The version comparison catches these
+            // by comparing the installed version directly against the server's
+            // current version. Either signal triggering is sufficient to flag.
+            bool hasUpdate = status.ViewerUpdateAvailable == true
+                || (!string.IsNullOrEmpty(status.Version)
+                    && !string.IsNullOrEmpty(installedVersion)
+                    && !string.Equals(installedVersion, status.Version,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!hasUpdate)
             {
                 continue;
             }
 
-            var resolved = container.ResolveVersion(new LatestPolicy());
             flagged.Add(new ModUpdateInfo(
                 entry.ContainerId,
                 nexus.ModId,
                 container.Name,
-                resolved?.VersionString ?? string.Empty,
+                installedVersion,
                 status.UpdatedAt));
         }
 
