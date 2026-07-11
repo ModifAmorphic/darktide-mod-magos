@@ -250,8 +250,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          prerelease=$(gh release view "$TAG" --json prerelease --jq '.prerelease' || echo true)
-          asset_url=$(gh release view "$TAG" --json assets --jq '.assets[] | select(.content_type=="application/x-gtar") | .browser_download_url' | head -n1)
+          prerelease=$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' || echo true)
+          asset_url=$(gh release view "$TAG" --json assets --jq '.assets[] | select(.contentType=="application/x-gtar") | .url' | head -n1)
+          if [ -z "$asset_url" ]; then
+            echo "::error::No Linux tar.gz asset (contentType application/x-gtar) found in release $TAG"
+            exit 1
+          fi
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "asset_url=$asset_url" >> "$GITHUB_OUTPUT"
       - name: Update scripts/release.env
@@ -271,5 +275,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add scripts/release.env
-          git commit -m "chore(release): update install manifest [skip ci]"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to manifest; skipping commit"
+          else
+            git commit -m "chore(release): update install manifest [skip ci]"
+            git push
+          fi
