@@ -506,13 +506,15 @@ the `Thorough` flag on the result).
    all-zero fallback when headers are absent, e.g. test stubs or non-rate-limited
    gateways). If rate-limited -> return an empty result with `RateLimited = true`
    (the mod-list UI surfaces a "check incomplete" indicator).
-6. **Map `viewerUpdateAvailable` to flagged list.** Index the response nodes by
+6. **Map results to flagged list.** Index the response nodes by
    UID (`Dictionary<long, ModUpdateStatus>`). For each checkable mod, compute
-   its UID + look up the node. If `viewerUpdateAvailable == true`, flag the mod
-   as a `ModUpdateInfo` (populated with `ContainerId`, `ModId`, `ModName`,
-   `CurrentVersion` from the resolved version, + `LatestUpdateAt` from the v2
-   `updatedAt` field). If `viewerUpdateAvailable` is `false` or `null` (server
-   has no download record for the user, e.g. a manually imported mod), do not
+   its UID + look up the node. Flag the mod if **either** signal triggers:
+   (a) `viewerUpdateAvailable == true` (server confirms an update since the
+   user's last API-tracked download), or (b) the server's `version` string
+   differs from the installed `VersionString` (ordinal, case-insensitive;
+   catches cases `viewerUpdateAvailable` misses: user installed an older
+   version, uses multiple PCs, or imported manually). If `viewerUpdateAvailable`
+   is `false` or `null` AND versions match (or either version is empty), do not
    flag. If no node was returned for a UID (invalid id, removed mod), do not
    flag (conservative).
 7. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the

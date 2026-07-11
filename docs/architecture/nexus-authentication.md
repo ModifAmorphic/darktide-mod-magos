@@ -205,17 +205,23 @@ and logs them. A 429 (or a 403 with `*-remaining: 0`) throws
 ## v1 endpoints
 
 Grounded against NMA's `NexusApiClient.cs` and node-nexus-api, mirroring that
-shape. v3 is Experimental for the surfaces we need, so v1 only:
+shape. v3 is Experimental for the surfaces we need, so v1 + v2 only:
 
+v1 REST:
 - `GET /v1/users/validate.json` (API-key validate)
 - `GET /oauth/userinfo` on the OAuth base URL (user info)
-- `GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}` (recent updates)
+- `GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}` (retained on the
+  interface; the update check no longer calls it)
 - `GET /v1/games/{domain}/mods/{modId}/files/{fileId}/download_link.json`
   (premium download links); same endpoint with
   `?key={nxmKey}&expires={epoch}` for free users
 - `GET /v1/games/{domain}/mods/{modId}.json` (mod info)
 - `GET /v1/games/{domain}/mods/{modId}/files.json` (mod files; unwrapped from
   `{"files":[...]}`)
+
+v2 GraphQL:
+- `POST /v2/graphql` with the `modsByUid` batch query (the update check; 1 call
+  for all mods, returns the server-computed `viewerUpdateAvailable` field)
 
 ## See also
 

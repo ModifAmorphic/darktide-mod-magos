@@ -391,7 +391,14 @@ Month-endpoint intersect, cross-endpoint timestamp tolerance, per-mod
 reconciliation, and reconciliation pinning: the server tracks the user's
 downloads and computes the signal directly. A `null` `viewerUpdateAvailable`
 (server has no download record, e.g. a manually imported mod) is treated as
-false (not flagged). `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods
+false (not flagged). A second signal supplements `viewerUpdateAvailable`:
+if the server's latest `version` string differs from the installed
+`VersionString` (ordinal, case-insensitive), the mod is also flagged. This
+catches cases `viewerUpdateAvailable` misses: the user installed an older
+version, uses multiple PCs with different local versions, or imported manually
+(all share the same root cause: the server's per-user download tracking doesn't
+reflect the local machine's state). Either signal triggering is sufficient to
+flag. `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods
 are skipped. Rate-limit-aware: if the client throws `NexusRateLimitException`
 (HTTP 429 / exhausted headers) or the response reports an exhausted daily or
 hourly quota (and the limit was actually reported, guarding against the all-zero

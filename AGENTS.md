@@ -297,9 +297,14 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         the server-computed `viewerUpdateAvailable` field
                         replaces the v1 Month-endpoint intersect, timestamp
                         tolerance, per-mod reconciliation, + reconciliation
-                        pinning; `viewerUpdateAvailable == true` flags a mod,
+                        pinning;                         `viewerUpdateAvailable == true` flags a mod,
                         `false` or `null` (server has no download record for
                         the user, e.g. a manually imported mod) does not;
+                        a version-string comparison supplements this: if the
+                        server's latest `version` differs from the installed
+                        `VersionString` the mod is also flagged (catches older-
+                        version-installed, multi-PC, + manual-import cases the
+                        server's per-user download tracking misses);
                         rate-limit-aware with the all-zero Unknown guard +
                         NexusRateLimitException surfacing; LastResult +
                         CheckCompleted event for the mod-list badges;
