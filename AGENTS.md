@@ -98,7 +98,7 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           `UpdateAvailable` from `LastResult.Updates` matched by
                           ContainerId, list-level `IsRateLimited` notice + a
                           companion `IsRecentOnly`/"showing recent updates"
-                          notice that fires after a Month-only check and clears
+                          notice that fires after a non-thorough check and clears
                           after a thorough one), reads
                           `INexusAuthService.GetCurrentStateAsync` once at construction
                           for the premium gate (`IsPremiumUser`, no mid-session refresh),
@@ -121,12 +121,12 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           `CanShowUpdateButton` with the list VM's
                           `IsPremiumUser` for the button's `IsVisible`
                           MultiBinding. The check is split by trigger:
-                          `IUpdateCheckService.CheckAsync` (Month-only, 1 API
-                          call) fires on profile load + the periodic timer;
-                          `IUpdateCheckService.CheckThoroughAsync` (adds a
-                          per-mod `ListModFilesAsync` pass for mods the Month
-                          response missed, catching mods whose latest release
-                          predates the Month window) fires on the manual "check
+                          `IUpdateCheckService.CheckAsync` (the v2 GraphQL
+                          `modsByUid` batch query, 1 API call for all mods)
+                          fires on profile load + the periodic timer;
+                          `IUpdateCheckService.CheckThoroughAsync` (same v2
+                          batch query; the two differ only in the result's
+                          `Thorough` flag) fires on the manual "check
                           now" button; both share `LastResult`/`CheckCompleted`,
                           distinguished by the result's `Thorough` flag);
                           the app self-update service
@@ -260,10 +260,9 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         source has exactly one base dir with a matching <base>.mod +
                         preserves the base folder under <versionFolder>/<base>/;
                         exposes GetBaseName + FindExistingContainer peeks for the
-                        collision block; SetReconciliation persists/clears the
-                        update-check reconciliation pin
-                        ModContainer.ReconciledLatestFileUpdate, cleared on
-                        AddVersion so a new import forces re-evaluation).
+                        collision block; AddVersion dedup refreshes
+                        RemoteUploadedAt from the re-acquired version's
+                        remote-publish timestamp).
   integrations/         Modificus.Curator.Integrations -- GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
@@ -292,24 +291,20 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         to AcquireFromNexusAsync with null nxm tokens (premium
                         path); ModFile gains an `archived` bool for the filter;
                         IUpdateCheckService the Nexus-only
-                        update-check service (1 ModUpdatesAsync Month call per
-                        check, intersected with the profile's
-                        LatestPolicy+NexusSource mods; a 10s tolerance suppresses
-                        cross-endpoint timestamp jitter between the Month
-                        latest_file_update + the per-mod files.json
-                        uploaded_timestamp when RemoteUploadedAt is present;
-                        flagged mods are reconciled via a per-mod
-                        ListModFilesAsync same-endpoint comparison that clears
-                        false positives; a reconciliation pin
-                        (ModContainer.ReconciledLatestFileUpdate, persisted via
-                        IModRepository.SetReconciliation, cleared on AddVersion)
-                        skips a mod whose Month latest_file_update hasn't changed
-                        since the last reconciliation; compares against the
-                        imported version's RemoteUploadedAt with an ImportedAt
-                        fallback; rate-limit-aware with the all-zero Unknown
-                        guard; LastResult + CheckCompleted event for the mod-list
-                        badges; Integrations now references
-                        Profiles, acyclic, for IProfileService.GetModList)
+                        update-check service (1 v2 GraphQL `modsByUid` batch
+                        query per check, 1 API call for all mods; computes UIDs
+                        from game_id * 2^32 + mod_id, Darktide game_id = 4943;
+                        the server-computed `viewerUpdateAvailable` field
+                        replaces the v1 Month-endpoint intersect, timestamp
+                        tolerance, per-mod reconciliation, + reconciliation
+                        pinning; `viewerUpdateAvailable == true` flags a mod,
+                        `false` or `null` (server has no download record for
+                        the user, e.g. a manually imported mod) does not;
+                        rate-limit-aware with the all-zero Unknown guard +
+                        NexusRateLimitException surfacing; LastResult +
+                        CheckCompleted event for the mod-list badges;
+                        Integrations references Profiles, acyclic, for
+                        IProfileService.GetModList)
   steam/                Modificus.Curator.Steam -- Steam + Darktide + Proton discovery
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup
                         via process comm on Windows; LinuxProcessLookup via /proc

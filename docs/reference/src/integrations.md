@@ -87,9 +87,11 @@ public sealed class GitHubRateLimitException : GitHubApiException
 
 ### `INexusClient`
 
-The Nexus Mods v1 REST API client. Auth is per-request via the auth message
-factory selector (which reads `NexusConfig.AuthMethod` live); the parsed rate
-limits are carried on every response.
+The Nexus Mods API client. Auth is per-request via the auth message factory
+selector (which reads `NexusConfig.AuthMethod` live); the parsed rate limits are
+carried on every response. The v1 REST endpoints cover auth validation,
+downloads, + mod-file listing; the v2 GraphQL endpoint covers the update check
+(the `modsByUid` batch query).
 
 ```csharp
 public interface INexusClient
@@ -101,18 +103,26 @@ public interface INexusClient
     Task<Response<DownloadLink[]>> DownloadLinksAsync(string gameDomain, int modId, int fileId, string nxmKey, long expiresEpoch, CancellationToken ct = default); // free user
     Task<Response<ModInfo>> GetModInfoAsync(string gameDomain, int modId, CancellationToken ct = default);
     Task<Response<ModFile[]>> ListModFilesAsync(string gameDomain, int modId, CancellationToken ct = default);
+    Task<Response<ModUpdateStatus[]>> CheckUpdatesGraphQlAsync(int gameId, IReadOnlyList<int> modIds, CancellationToken ct = default);                          // v2 GraphQL
 }
 ```
 
 - `ValidateAsync` -- hits `GET /v1/users/validate.json` (API-key validate).
 - `GetOAuthUserInfoAsync` -- hits `GET /oauth/userinfo` on the OAuth base URL.
 - `ModUpdatesAsync` -- hits `GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}`.
+  (Retained on the v1 API surface; the update check no longer calls it.)
 - `DownloadLinksAsync` (premium) -- hits `GET /v1/games/{domain}/mods/{modId}/files/{fileId}/download_link.json`.
 - `DownloadLinksAsync` (free user, with `nxmKey` + `expiresEpoch`) -- same
   endpoint with `?key={nxmKey}&expires={epoch}`.
 - `GetModInfoAsync` -- hits `GET /v1/games/{domain}/mods/{modId}.json`.
 - `ListModFilesAsync` -- hits `GET /v1/games/{domain}/mods/{modId}/files.json`
   and unwraps the `{"files":[...]}` envelope to the array.
+- `CheckUpdatesGraphQlAsync` -- POSTs to `POST /v2/graphql` with the `modsByUid`
+  batch query. Computes UIDs from `gameId` + `modIds`
+  (`uid = game_id * 2^32 + mod_id`, stringified for the GraphQL `ID` scalar).
+  Returns `ModUpdateStatus[]` with the server-computed `viewerUpdateAvailable`
+  field per mod. Throws `NexusApiException` on GraphQL-level errors in a 200 OK
+  body (in addition to the standard HTTP error handling).
 
 Every method throws `NexusApiException` on a non-2xx; `NexusRateLimitException`
 on a rate-limit signal (429, or 403 with `x-rl-*-remaining: 0`);
@@ -410,23 +420,18 @@ A Nexus-only service that checks the active profile's Nexus mods for available
 updates and produces a result the mod-list badges consume. Two check shapes
 share the same `LastResult` / `CheckCompleted` surface: a periodic check (fired
 on profile load + the periodic timer) and a thorough check (the manual "check
-now" affordance, which also catches mods whose latest release predates the Month
-window). Both share the Month call, a tolerance-suppress + flag intersect, and a
-per-mod reconciliation of flagged mods (a same-endpoint `ListModFilesAsync`
-comparison that clears false positives the Month cross-endpoint timestamp jitter
-produced); the thorough check additionally walks the checkable mods NOT in the
-Month response. A reconciliation pin on each container records the
-`latest_file_update` it was last reconciled against, so a mod whose Month
-timestamp hasn't changed is skipped on the next check. GitHub is out of v1 (no
-GitHub code paths anywhere); `PinnedPolicy`, `UntrackedSource`, and
-`GitHubSource` mods are skipped (only `LatestPolicy` + `NexusSource` are
-checked).
+now" affordance). Both run the same v2 GraphQL `modsByUid` batch query (1 API
+call for all checkable mods) and rely on the server-computed
+`viewerUpdateAvailable` field as the update signal; they differ only in the
+result's `Thorough` flag. GitHub is out of scope (no GitHub code paths
+anywhere); `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods are
+skipped (only `LatestPolicy` + `NexusSource` are checked).
 
 ```csharp
 public interface IUpdateCheckService
 {
-    Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);             // periodic (Month + tolerance + reconcile)
-    Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default);      // + per-mod Month-missed walk
+    Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);             // periodic (v2 GraphQL batch query)
+    Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default);      // same query, Thorough = true
     UpdateCheckResult? LastResult { get; }
     event EventHandler<UpdateCheckResult?>? CheckCompleted;
 }
@@ -445,26 +450,18 @@ public sealed record ModUpdateInfo(
     DateTimeOffset? LatestUpdateAt);
 ```
 
-- `CheckAsync(profileId)`: the periodic check (see flow below). Intersects the
-  Month response, suppresses small cross-endpoint timestamp jitter via a
-  tolerance, flags the remainder, then reconciles each flagged mod via a per-mod
-  `ListModFilesAsync` same-endpoint comparison that clears false positives. The
+- `CheckAsync(profileId)`: the periodic check (see flow below). Queries the v2
+  GraphQL `modsByUid` batch endpoint (1 API call for all checkable mods) and
+  flags each mod whose server-computed `viewerUpdateAvailable` is true. The
   result has `Thorough = false`. Best-effort, never throws for non-cancellation
   failures: a transient API failure, missing auth, or exhausted rate limit all
   surface as an empty result. Cancellation (`OperationCanceledException`)
   propagates, and a `KeyNotFoundException` from `IProfileService.GetModList`
   (an unknown profile id) propagates; the caller owns passing a valid id.
-- `CheckThoroughAsync(profileId)`: the thorough check. Does everything
-  `CheckAsync` does (Month call, tolerance-suppress + flag, per-mod
-  reconciliation), AND for each profile Nexus+Latest mod NOT in the Month
-  response calls `ListModFilesAsync` to resolve the latest MAIN / non-archived
-  file (category_id 1, newest by `UploadedTimestamp`), then compares that file's
-  upload time against `resolved.RemoteUploadedAt ?? resolved.ImportedAt`. Catches
-  mods whose latest release predates the Month window. The result has
-  `Thorough = true`. Rate-limit-aware: a mid-pass `NexusRateLimitException` from
-  `ListModFilesAsync` (during reconciliation or the Month-missed walk) stops the
-  pass + returns what's flagged so far with `RateLimited = true` (partial
-  results, not empty); other per-mod failures are logged + skipped.
+- `CheckThoroughAsync(profileId)`: runs the same v2 batch query as
+  `CheckAsync`; the two differ only in the result's `Thorough` flag (`true`
+  here). Kept for interface compatibility + the mod-list UI's result-surface
+  contract (the "check now" affordance clears the "recent updates only" notice).
 - `LastResult`: the last check result, or null before the first check. Holds
   the most recent result regardless of which method produced it. The mod-list
   UI reads this to render badges without awaiting. Written under a lock
@@ -478,78 +475,47 @@ public sealed record ModUpdateInfo(
 
 The latest-MAIN filter (`NexusModFiles.LatestMain`, category_id 1 +
 non-archived, newest by `UploadedTimestamp`) is shared with
-`ModAcquisitionService.AcquireLatestNexusAsync`, so the update check + the
-per-mod update button agree on what "latest release" means.
+`ModAcquisitionService.AcquireLatestNexusAsync`, so the per-mod update button
+resolves the same "latest release" the acquisition flow does.
 
 ### Check flow (`UpdateCheckService`)
 
-The two checks share the front-half; the thorough method adds the back-half.
+Both `CheckAsync` + `CheckThoroughAsync` run the same logic (they differ only in
+the `Thorough` flag on the result).
 
 1. **Auth gate.** Read `IConfigLoader.Load().Integrations.Nexus.AuthMethod`. If
-   `None` → return an empty result (no API call; the user hasn't configured
-   Nexus). For `CheckThoroughAsync` the empty result carries `Thorough = true`
-   (the thorough method was the entry point even though it short-circuited).
-2. **Profile mods.** `IProfileService.GetModList(profileId)` → the entries.
+   `None` -> return an empty result (no API call; the user hasn't configured
+   Nexus).
+2. **Profile mods.** `IProfileService.GetModList(profileId)` -> the entries.
 3. **Filter to checkable mods.** For each entry, resolve the container via
    `IModRepository.Get`. Keep only `LatestPolicy` + `NexusSource` entries. Skip
-   `PinnedPolicy`, `UntrackedSource`, `GitHubSource`. If none qualify → empty
+   `PinnedPolicy`, `UntrackedSource`, `GitHubSource`. If none qualify -> empty
    result (API not called).
-4. **Query Nexus (1 call).** `INexusClient.ModUpdatesAsync("warhammer40kdarktide",
-   NexusPeriod.Month, ct)`. A non-cancellation failure is caught + surfaces as
-   an empty result (the check is best-effort; a transient failure should not
-   crash the fire-and-forget caller). Cancellation propagates.
+4. **Query Nexus v2 GraphQL (1 call).**
+   `INexusClient.CheckUpdatesGraphQlAsync(GameId, modIds, ct)` where `GameId`
+   is the Darktide constant `4943` + `modIds` is the checkable mods' Nexus mod
+   ids. The client computes UIDs (`uid = game_id * 2^32 + mod_id`), builds the
+   `modsByUid` GraphQL query, and POSTs to `/v2/graphql`. A
+   `NexusRateLimitException` is caught + surfaces as a rate-limited result. A
+   non-cancellation `Exception` is caught + surfaces as an empty result (the
+   check is best-effort). Cancellation propagates.
 5. **Rate-limit gate (post-call).** From `response.RateLimits`: treat as
    rate-limited only when a limit was reported AND remaining is zero:
    `(DailyLimit > 0 && DailyRemaining <= 0) || (HourlyLimit > 0 && HourlyRemaining <= 0)`.
    The `> 0` guard avoids a false positive on `NexusRateLimits.Unknown` (the
    all-zero fallback when headers are absent, e.g. test stubs or non-rate-limited
-   gateways). If rate-limited → return an empty result with `RateLimited = true`
-   (no per-mod comparison; the mod-list UI surfaces a "check incomplete"
-   indicator).
-6. **Intersect + pin check + tolerance + flag (both checks, `FlagFromMonth`).**
-   Index the response by `ModId`, then for each checkable mod find the matching
-   `ModUpdate` (`NexusSource.ModId` is `int`, widened against `ModUpdate.ModId`
-   `long`). Resolve the imported version via
-   `container.ResolveVersion(new LatestPolicy())`; if null (no versions / no
-   `IsLatest`), skip. For each Month-present mod:
-   - **Pin check:** if `container.ReconciledLatestFileUpdate ==
-     update.LatestFileUpdate` (raw `long` equality, both Unix seconds from the
-     same Month endpoint), skip entirely (no tolerance check, no per-mod call,
-     flag state unchanged). The pin is cleared on `AddVersion` (a new import
-     forces re-evaluation).
-   - **Tolerance check:** when `RemoteUploadedAt` is non-null, if
-     `LatestFileUpdateUtc <= (RemoteUploadedAt ?? ImportedAt) + 10s`, suppress
-     (not flagged) + pin. The Month endpoint's `latest_file_update` and the
-     per-mod `files.json` endpoint's `uploaded_timestamp` can disagree by 1+
-     seconds for the same upload (two different API endpoints); the tolerance
-     absorbs that jitter. The tolerance is NOT applied when `RemoteUploadedAt`
-     is null (the `ImportedAt` fallback has no fixed relationship to the remote
-     publish date, so a strict `>` comparison preserves the prior behavior).
-   - **Flag:** otherwise, if `LatestFileUpdateUtc > (RemoteUploadedAt ??
-     ImportedAt)`, flag it for reconciliation. Use `LatestFileUpdate`, NOT
-     `LatestModActivity` (the latter includes page comments / endorsements /
-     edits and would flag mods that haven't gained a new file).
-7. **Reconcile flagged mods (both checks, `ReconcileFlaggedAsync`).** For each
-   flagged mod, `INexusClient.ListModFilesAsync` + resolve the latest MAIN /
-   non-archived file via `NexusModFiles.LatestMain`, then compare its
-   `UploadedTimestamp` (same `files.json` endpoint `RemoteUploadedAt` came from)
-   against `RemoteUploadedAt ?? ImportedAt`. A same-endpoint comparison is
-   reliable, unlike the Month cross-endpoint `latest_file_update` that produced
-   the flag: if `LatestMain.UploadedTimestamp <= versionDate`, the flag is a
-   false positive (cleared); if strictly greater, it is a genuine update (kept).
-   Both outcomes pin the `latest_file_update` (best-effort) so the next check
-   skips the mod unless its Month timestamp changes. A `NexusRateLimitException`
-   stops the pass (remaining mods stay flagged + unpinned, `RateLimited = true`);
-   other per-mod failures leave the mod flagged + unpinned (the next check
-   retries). `CheckAsync` returns here with `Thorough = false`.
-8. **Per-mod thorough pass (`CheckThoroughAsync` only, `FlagFromPerModLookupAsync`).**
-   For each checkable mod NOT in the Month response, `ListModFilesAsync` +
-   `NexusModFiles.LatestMain`, then compare `UploadedTimestamp` against
-   `RemoteUploadedAt ?? ImportedAt` (same publish-date basis). A
-   `NexusRateLimitException` stops the walk + the result carries `RateLimited =
-   true` with the partial flags collected so far; other per-mod failures are
-   logged + skipped.
-9. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
+   gateways). If rate-limited -> return an empty result with `RateLimited = true`
+   (the mod-list UI surfaces a "check incomplete" indicator).
+6. **Map `viewerUpdateAvailable` to flagged list.** Index the response nodes by
+   UID (`Dictionary<long, ModUpdateStatus>`). For each checkable mod, compute
+   its UID + look up the node. If `viewerUpdateAvailable == true`, flag the mod
+   as a `ModUpdateInfo` (populated with `ContainerId`, `ModId`, `ModName`,
+   `CurrentVersion` from the resolved version, + `LatestUpdateAt` from the v2
+   `updatedAt` field). If `viewerUpdateAvailable` is `false` or `null` (server
+   has no download record for the user, e.g. a manually imported mod), do not
+   flag. If no node was returned for a UID (invalid id, removed mod), do not
+   flag (conservative).
+7. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
    lock), return the result.
 
 ### UI wiring (`UpdateCheckRunner`)
@@ -559,16 +525,16 @@ NOT in the Integrations library (the service itself has no knowledge of profile
 switches; it just takes a `profileId` + checks). The runner is a UI-layer
 singleton that subscribes to `IProfileSession.PropertyChanged` filtered to
 `ActiveProfileId` only (it ignores `IsRunning`, which the polling timer drives
-every few seconds) and fires the Month-only `CheckAsync` fire-and-forget via
-`Task.Run` on three triggers: startup (the restored active id), an active-profile
-switch, and the periodic timer (every `AutoUpdateCheckIntervalMinutes` when
+every few seconds) and fires `CheckAsync` fire-and-forget via `Task.Run` on
+three triggers: startup (the restored active id), an active-profile switch, and
+the periodic timer (every `AutoUpdateCheckIntervalMinutes` when
 `AutoUpdateCheckEnabled` is on; the only gated trigger). A fourth trigger, the
-manual "check now" affordance on the mod list, fires the thorough
-`CheckThoroughAsync` via an awaitable `CheckNowAsync()` (the mod-list VM awaits
-it to drive an `IsCheckingNow` spinner while the per-mod pass runs). Registered
-+ started from `CuratorComposition` after the provider is built (best-effort: a
-wiring failure is logged + swallowed, never blocks startup). The mod-list UI
-subscribes to `CheckCompleted` + reads `LastResult`.
+manual "check now" affordance on the mod list, fires `CheckThoroughAsync` via an
+awaitable `CheckNowAsync()` (the mod-list VM awaits it to drive an
+`IsCheckingNow` spinner). Registered + started from `CuratorComposition` after
+the provider is built (best-effort: a wiring failure is logged + swallowed,
+never blocks startup). The mod-list UI subscribes to `CheckCompleted` + reads
+`LastResult`.
 
 ## DI registration
 
@@ -658,34 +624,19 @@ view. No construction-time cycle.
   `AcquireLatestNexusAsync`.
 - **`UpdateCheckService`** against a fake `INexusClient` + a fake
   `IProfileService` + a fake `IModRepository` + the `FakeConfigLoader`: correct
-  flagging (file-update vs imported-at), `PinnedPolicy` / `UntrackedSource` /
-  `GitHubSource` skipping, no-auth short-circuit (no API call), rate-limit guard
-  (the `> 0` guard prevents a false positive on `NexusRateLimits.Unknown`), the
-  symmetric daily + hourly rate-limit paths, no-checkable-mods short-circuit,
+  flagging (`viewerUpdateAvailable == true` flags, `false` + `null` do not),
+  `PinnedPolicy` / `UntrackedSource` / `GitHubSource` skipping, no-auth
+  short-circuit (no API call), no-checkable-mods short-circuit, rate-limit
+  guard (the `> 0` guard prevents a false positive on `NexusRateLimits.Unknown`,
+  symmetric daily + hourly paths, + `NexusRateLimitException` surfacing),
   API-failure best-effort, the `LastResult` + `CheckCompleted` contract, the
-  `Thorough` flag on both methods, + the `CheckThoroughAsync` per-mod pass: the
-  out-of-Month-window scenario (a mod whose latest MAIN file predates the Month
-  response but is newer than the imported version), the negative case (older
-  MAIN file), the two per-mod query phases (reconciliation for Month-present
-  mods + the Month-missed walk, neither double-querying), archived / non-MAIN
-  file filtering, mid-pass `NexusRateLimitException` (partial results +
-  `RateLimited`), other per-mod failures (logged + skipped), + the no-auth
-  short-circuit carrying `Thorough = true`. The false-positive suppression is
-  covered directly: the 10s tolerance (jitter within tolerance is not flagged +
-  is pinned), reconciliation clearing a false positive (LatestMain not newer),
-  reconciliation keeping a genuine update, the pin short-circuit (a matching
-  `ReconciledLatestFileUpdate` skips entirely), the pin persisting across a
-  second check, no tolerance when `RemoteUploadedAt` is null (strict `>`), a
-  reconciliation failure leaving the mod flagged + unpinned, + a mid-pass rate
-  limit during reconciliation (remaining mods flagged + unpinned +
-  `RateLimited`).
-
-  `Modificus.Curator.Mods.Tests` covers the `SetReconciliation` persistence
-  (pin round-trips through `container.json` + survives a new repository
-  instance; null clears it; unknown container is a no-op), the `AddVersion`
-  pin-clearing (new version + dedup both clear it), + the backward-compatible
-  on-disk default (a manifest without `ReconciledLatestFileUpdate` deserializes
-  to `null`).
+  `Thorough` flag on both methods, the 1-API-call-per-check contract, +
+  `CheckThoroughAsync` producing the same results as `CheckAsync`. Mods missing
+  from the response (a UID did not resolve) are not flagged (conservative). The
+  internal `NexusClient.CheckUpdatesGraphQlAsync` is covered against canned HTTP
+  responses: POST to `/v2/graphql`, UID computation from game id + mod ids,
+  string + numeric UID deserialization, GraphQL-error surfacing (200 OK body
+  with errors), + rate-limit exception.
 
 The internal `NexusClient`, `NexusAuthService`, `NexusOAuthTokenStore`,
 `LoopbackBrowser`, `HttpListenerLoopbackListener`, `ModAcquisitionService`,

@@ -66,13 +66,15 @@ which surfaces it as an error.
 ### The update-check post-call flag
 
 `UpdateCheckService.CheckAsync` (the update check that fires on profile load)
-makes one `ModUpdatesAsync` call, then inspects `response.RateLimits`: if a
-limit was reported and its remaining is zero (`(DailyLimit > 0 &&
-DailyRemaining <= 0) || (HourlyLimit > 0 && HourlyRemaining <= 0)`), it returns
-an `UpdateCheckResult` with `RateLimited = true` and skips the per-mod
-comparison. The `> 0`-on-the-limit guard prevents a false positive when the
-headers were absent (`NexusRateLimits.Unknown`, all zeros). The UI consumes this
-flag to show "check incomplete."
+makes one `CheckUpdatesGraphQlAsync` call (the v2 GraphQL `modsByUid` batch
+query), then inspects `response.RateLimits`: if a limit was reported and its
+remaining is zero (`(DailyLimit > 0 && DailyRemaining <= 0) || (HourlyLimit > 0
+&& HourlyRemaining <= 0)`), it returns an `UpdateCheckResult` with
+`RateLimited = true`. The `> 0`-on-the-limit guard prevents a false positive when
+the headers were absent (`NexusRateLimits.Unknown`, all zeros). A
+`NexusRateLimitException` thrown by the client (HTTP 429 / exhausted headers) is
+also caught + surfaced as `RateLimited = true`. The UI consumes this flag to
+show "check incomplete."
 
 Both paths react only after the call has consumed a unit or hit the wall.
 Nothing anticipates the wall.
@@ -82,8 +84,8 @@ Nothing anticipates the wall.
 Stated plainly, because the gaps matter as much as the handling:
 
 - **No proactive back-off.** No operation checks the last-known remaining before
-  making a call. The update check fires `ModUpdatesAsync` even if the previous
-  response showed remaining at 5.
+  making a call. The update check fires `CheckUpdatesGraphQlAsync` even if the
+  previous response showed remaining at 5.
 - **No low-remaining reaction.** Curator reacts at zero (the update-check flag)
   and at the hard wall (the exception). "Low but not zero" gets no throttle, no
   skip, no warning.
@@ -105,16 +107,13 @@ does not actively manage the budget or avoid the wall.
 
 ## What consumes the budget
 
-Only authenticated calls to `api.nexusmods.com/v1/*` count. Per operation:
+Only authenticated calls to `api.nexusmods.com` count. Per operation:
 
-- **Update check:** 1 `ModUpdatesAsync` call per profile load (app start with
-  the restored profile, plus each profile switch), plus a bounded number of
-  `ListModFilesAsync` calls (one per flagged mod that exceeds the tolerance +
-  hasn't been pinned). The reconciliation pin suppresses repeat calls: once a
-  mod is reconciled, it is skipped until its Month `latest_file_update` changes
-  or a new version is imported, so a steady-state check is typically just the
-  1 Month call. A rate-limited or failed reconciliation leaves the mod unpinned,
-  so the next check retries it.
+- **Update check:** 1 `CheckUpdatesGraphQlAsync` call (the v2 GraphQL
+  `modsByUid` batch query) per profile load (app start with the restored
+  profile, plus each profile switch). The batch query covers all checkable mods
+  in one call, so the cost is constant regardless of how many mods are in the
+  profile.
 - **Mod acquisition (download):** about 3 calls per download
   (`DownloadLinksAsync` + `GetModInfoAsync` + `ListModFilesAsync`). This is
   parity with Vortex, which Nexus's help article cites at 3 calls per download.

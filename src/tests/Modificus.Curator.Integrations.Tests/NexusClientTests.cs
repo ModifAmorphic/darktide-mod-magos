@@ -279,6 +279,140 @@ public sealed class NexusClientTests
             request.RequestUri);
     }
 
+    // ---- CheckUpdatesGraphQl ----------------------------------------------
+
+    private const string GraphQlResponseJson = @"
+    {
+      ""data"": {
+        ""modsByUid"": {
+          ""nodes"": [
+            {
+              ""uid"": ""21233675571372"",
+              ""name"": ""Test Mod"",
+              ""version"": ""1.2.3"",
+              ""updatedAt"": ""2024-06-15T12:00:00Z"",
+              ""viewerUpdateAvailable"": true,
+              ""viewerDownloaded"": ""2024-01-01T00:00:00Z""
+            },
+            {
+              ""uid"": ""21233675571472"",
+              ""name"": ""Other Mod"",
+              ""version"": ""2.0"",
+              ""updatedAt"": null,
+              ""viewerUpdateAvailable"": false,
+              ""viewerDownloaded"": null
+            }
+          ],
+          ""totalCount"": 2
+        }
+      }
+    }";
+
+    [Fact]
+    public async Task CheckUpdatesGraphQlAsync_posts_to_v2_graphql_and_parses_nodes()
+    {
+        var (client, handler) = CreateClient(_ => HttpResponses.NexusOk(GraphQlResponseJson, daily: 1000, hourly: 100));
+
+        var response = await client.CheckUpdatesGraphQlAsync(4943, new[] { 100, 200 });
+
+        Assert.Equal(2, response.Data.Length);
+        Assert.Equal(21233675571372L, response.Data[0].Uid);
+        Assert.Equal("Test Mod", response.Data[0].Name);
+        Assert.Equal("1.2.3", response.Data[0].Version);
+        Assert.True(response.Data[0].ViewerUpdateAvailable);
+        Assert.Equal(
+            new DateTimeOffset(2024, 6, 15, 12, 0, 0, TimeSpan.Zero),
+            response.Data[0].UpdatedAt);
+        Assert.False(response.Data[1].ViewerUpdateAvailable);
+        Assert.Null(response.Data[1].UpdatedAt);
+        Assert.Equal(1000, response.RateLimits.DailyLimit);
+        Assert.Equal(100, response.RateLimits.HourlyRemaining);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(new Uri(ApiBase + "v2/graphql"), request.RequestUri);
+        Assert.Equal(HttpMethod.Post, request.Method);
+    }
+
+    [Fact]
+    public async Task CheckUpdatesGraphQlAsync_computes_uids_from_game_id_and_mod_ids()
+    {
+        // uid = game_id * 2^32 + mod_id. Computed dynamically so the assertion
+        // tracks the formula, not a hardcoded (error-prone) constant.
+        const int gameId = 4943;
+        var expectedUid100 = ((long)gameId * 4294967296L + 100).ToString();
+        var expectedUid200 = ((long)gameId * 4294967296L + 200).ToString();
+        string? capturedBody = null;
+        var (client, _) = CreateClient(req =>
+        {
+            capturedBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            return HttpResponses.NexusOk(GraphQlResponseJson);
+        });
+
+        await client.CheckUpdatesGraphQlAsync(gameId, new[] { 100, 200 });
+
+        // The UIDs are stringified in the variables (GraphQL ID scalar).
+        Assert.Contains($"\"uids\":[\"{expectedUid100}\",\"{expectedUid200}\"]", capturedBody);
+        // The query string is the modsByUid batch query.
+        Assert.Contains("modsByUid", capturedBody);
+        Assert.Contains("viewerUpdateAvailable", capturedBody);
+    }
+
+    [Fact]
+    public async Task CheckUpdatesGraphQlAsync_accepts_numeric_uid_in_response()
+    {
+        // Some GraphQL implementations serialize ID as a number rather than a
+        // string. The JsonNumberHandling.AllowReadingFromString attribute on
+        // ModUpdateStatus.Uid handles both.
+        const string numericUidJson = @"
+        {
+          ""data"": {
+            ""modsByUid"": {
+              ""nodes"": [
+                { ""uid"": 21233675571372, ""name"": ""Mod"", ""version"": ""1.0"", ""viewerUpdateAvailable"": true }
+              ],
+              ""totalCount"": 1
+            }
+          }
+        }";
+        var (client, _) = CreateClient(_ => HttpResponses.NexusOk(numericUidJson));
+
+        var response = await client.CheckUpdatesGraphQlAsync(4943, new[] { 100 });
+
+        var node = Assert.Single(response.Data);
+        Assert.Equal(21233675571372L, node.Uid);
+    }
+
+    [Fact]
+    public async Task CheckUpdatesGraphQlAsync_throws_NexusApiException_on_graphql_errors()
+    {
+        // A 200 OK can still carry GraphQL-level errors in the body.
+        const string errorJson = @"
+        {
+          ""data"": null,
+          ""errors"": [
+            { ""message"": ""Unknown query."" },
+            { ""message"": ""Second error."" }
+          ]
+        }";
+        var (client, _) = CreateClient(_ => HttpResponses.NexusOk(errorJson));
+
+        var ex = await Assert.ThrowsAsync<NexusApiException>(
+            () => client.CheckUpdatesGraphQlAsync(4943, new[] { 100 }));
+        Assert.Equal(200, ex.StatusCode);
+        Assert.Contains("Unknown query.", ex.Message);
+        Assert.Contains("Second error.", ex.Message);
+    }
+
+    [Fact]
+    public async Task CheckUpdatesGraphQlAsync_rate_limit_429_throws_NexusRateLimitException()
+    {
+        var (client, _) = CreateClient(_ => HttpResponses.NexusRateLimited());
+
+        var ex = await Assert.ThrowsAsync<NexusRateLimitException>(
+            () => client.CheckUpdatesGraphQlAsync(4943, new[] { 100 }));
+        Assert.Equal(429, ex.StatusCode);
+    }
+
     // ---- error mapping ----------------------------------------------------
 
     [Fact]
