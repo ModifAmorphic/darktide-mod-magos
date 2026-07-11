@@ -892,6 +892,27 @@ public sealed class ModListViewModelTests
         Assert.True(Row(vm, "DMF").UpdateAvailable);
     }
 
+    [Fact]
+    public void ReloadAndClearUpdateFlag_clears_the_flag_despite_a_stale_LastResult()
+    {
+        // After an nxm install/reinstall, Reload alone would re-apply the stale
+        // LastResult (computed before the version change) and leave the flag set.
+        // ReloadAndClearUpdateFlag overrides it for instant UX; the next check
+        // reconciles (the pin was cleared by AddVersion).
+        var (vm, nexusId, _, updateCheck, _, _) = BuildForUpdateFlow();
+
+        updateCheck.RaiseCheckCompleted(new UpdateCheckResult(
+            new[] { new ModUpdateInfo(nexusId, 8, "DMF", "1.0", DateTimeOffset.UtcNow) },
+            DateTimeOffset.UtcNow, false, Thorough: false));
+        Assert.True(Row(vm, "DMF").UpdateAvailable);
+
+        vm.ReloadAndClearUpdateFlag(nexusId);
+
+        Assert.False(Row(vm, "DMF").UpdateAvailable);
+        // Other rows are unaffected by the per-container clear.
+        Assert.False(Row(vm, "SoundPack").UpdateAvailable);
+    }
+
     // ---- thorough vs month-only: the IsRecentOnly / ShowRecentOnlyNotice ----
 
     [Fact]

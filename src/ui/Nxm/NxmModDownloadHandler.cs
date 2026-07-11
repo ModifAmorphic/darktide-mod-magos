@@ -73,7 +73,7 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
     private readonly IConfigLoader _configLoader;
     private readonly IDialogService _dialogs;
     private readonly LocalizationService _localization;
-    private readonly Action? _refreshModList;
+    private readonly Action<Guid>? _refreshModList;
     private readonly ILogger<NxmModDownloadHandler> _logger;
 
     /// <summary>
@@ -92,7 +92,7 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
         IDialogService dialogs,
         LocalizationService localization,
         ILogger<NxmModDownloadHandler> logger,
-        Action? refreshModList = null)
+        Action<Guid>? refreshModList = null)
     {
         _invokeOnUi = invokeOnUi ?? throw new ArgumentNullException(nameof(invokeOnUi));
         _acquisition = acquisition ?? throw new ArgumentNullException(nameof(acquisition));
@@ -162,11 +162,17 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
 
             _profileService.AddMod(profileId.Value, containerId, ModVersionPolicy.Latest);
 
-            // Refresh the mod list on the UI thread so the newly-added mod
-            // appears immediately without a profile switch.
+            // Refresh the mod list on the UI thread so the newly-added (or
+            // reinstalled) mod appears immediately without a profile switch.
+            // The container id is forwarded so the refresh can also clear a
+            // stale UpdateAvailable flag: the last check result (computed
+            // before the version change) would otherwise re-apply it via the
+            // reload. No fresh check is fired; the reconciliation pin was
+            // cleared by AddVersion, so the next automatic or manual check
+            // re-evaluates the mod.
             if (_refreshModList is not null)
             {
-                await _invokeOnUi(() => { _refreshModList(); return Task.CompletedTask; });
+                await _invokeOnUi(() => { _refreshModList(containerId); return Task.CompletedTask; });
             }
 
             _logger.LogInformation(

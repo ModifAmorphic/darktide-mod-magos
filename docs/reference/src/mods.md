@@ -31,6 +31,7 @@ public interface IModRepository
     ModContainer? FindUntrackedByName(string name);   // Untracked identity is the container Name
     ModContainer CreateContainer(ModSource source, string name);
     ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder, DateTimeOffset? remoteUploadedAt = null);
+    void SetReconciliation(Guid containerId, long? latestFileUpdate);  // pin/clear the update-check reconciliation timestamp
     void RemoveVersion(Guid containerId, string versionFolder);
     void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
     string GetVersionFolderPath(Guid containerId, string versionFolder);  // derived, never stored
@@ -66,7 +67,17 @@ public interface IModRepository
   existing version folder + manifest are left untouched, so a failed re-import
   is non-destructive (the old version survives a mid-extraction CRC/I/O
   failure). Orphan temps from a process crash are swept at each `AddVersion` +
-  at index build (`RebuildIndex`).
+  at index build (`RebuildIndex`). Also clears
+  `ReconciledLatestFileUpdate` (a new import forces the next update check to
+  re-evaluate the new version).
+- `SetReconciliation(containerId, latestFileUpdate)`: records (or clears, when
+  `null`) the raw Unix-seconds `latest_file_update` from the Nexus Month
+  endpoint that this container's latest version was last reconciled against
+  during an update check. Used by `UpdateCheckService` to skip a mod whose
+  Month timestamp hasn't changed since the last reconciliation. Persists to the
+  container's `container.json` + updates the in-memory index. Best-effort: a
+  write failure is logged + swallowed (the check continues with the in-memory
+  value; the next check re-evaluates). A missing container is a no-op.
 - `RemoveVersion(containerId, versionFolder)`: idempotent. Promotes the newest
   remaining version to `IsLatest` if the removed one carried it.
 - `PruneUnreferenced(referenced)`: GC. Drops every `(containerId, versionFolder)`
@@ -208,6 +219,7 @@ A single mod in the repository (immutable record):
 | `Source` | Where this mod came from: Untracked / Nexus / GitHub (`ModSource`, default `UntrackedSource`). |
 | `Name` | The display name + the untracked dedup key. Set at import. |
 | `Versions` | The container's imported versions (`IReadOnlyList<ModVersion>`). One may carry `IsLatest`. |
+| `ReconciledLatestFileUpdate` | The raw Unix-seconds `latest_file_update` (from the Nexus Month endpoint) this container's latest version was last reconciled against during an update check. `null` = never reconciled. Set through `SetReconciliation`; cleared on `AddVersion` (a new import forces re-evaluation). Backward-compatible on disk: a manifest from before this field existed deserializes it to `null`. |
 
 The container's on-disk path is **derived**:
 `<ModsFolder>/<Id>/`. It is never stored absolute, so relocating the

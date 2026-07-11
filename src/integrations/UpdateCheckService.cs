@@ -9,22 +9,41 @@ namespace Modificus.Curator.Integrations;
 /// <summary>
 /// Default <see cref="IUpdateCheckService"/>. Orchestrates a Nexus update check
 /// across <see cref="INexusClient"/> (the one-call recently-updated list, plus
-/// the per-mod thorough pass), <see cref="IProfileService"/> (the active
-/// profile's mod list), and <see cref="IModRepository"/> (per-container source
-/// + version resolution). Registered as a singleton.
+/// the per-mod reconciliation + thorough pass), <see cref="IProfileService"/>
+/// (the active profile's mod list), and <see cref="IModRepository"/>
+/// (per-container source + version resolution + the reconciliation pin).
+/// Registered as a singleton.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Two check shapes, shared Month path.</b> Both <see cref="CheckAsync"/>
-/// (Month-only, cheap) and <see cref="CheckThoroughAsync"/> (adds a per-mod
-/// <see cref="INexusClient.ListModFilesAsync"/> pass for mods the Month response
-/// missed) share the auth gate, the checkable-mods filter, the Month API call,
-/// the Month rate-limit gate, and the intersect+compare over the Month
-/// response. The thorough method then walks the checkable mods NOT in the Month
-/// response + resolves each one's latest MAIN file to compare. The split keeps
-/// the periodic/profile-load path cheap (1 API call) while letting the manual
-/// "check now" affordance catch mods whose latest release predates the Month
-/// window.</para>
+/// (the periodic/profile-load path) and <see cref="CheckThoroughAsync"/> (the
+/// manual "check now" path) share the auth gate, the checkable-mods filter,
+/// the Month API call, the Month rate-limit gate, and the Month intersect
+/// (tolerance-suppressed + flagged, with pinning). Both then reconcile the
+/// flagged mods via a per-mod <see cref="INexusClient.ListModFilesAsync"/> call
+/// (a same-endpoint comparison that clears false positives the Month
+/// cross-endpoint jitter produced). The thorough method additionally walks the
+/// checkable mods NOT in the Month response + resolves each one's latest MAIN
+/// file to compare (catching mods whose latest release predates the Month
+/// window). The split keeps the periodic path bounded (1 Month call plus
+/// bounded per-mod reconciliation, suppressed by pinning once reconciled) while
+/// the manual affordance also catches Month-missed mods.</para>
+/// <para>
+/// <b>False-positive suppression.</b> The Month endpoint's
+/// <c>latest_file_update</c> and the per-mod <c>files.json</c> endpoint's
+/// <c>uploaded_timestamp</c> can disagree by 1+ seconds for the same upload.
+/// The Month intersect applies a small tolerance
+/// (<see cref="MonthTolerance"/>) when <see cref="ModVersion.RemoteUploadedAt"/>
+/// is present (the reliable same-endpoint basis), and the per-mod
+/// reconciliation resolves the latest MAIN file from the same
+/// <c>files.json</c> endpoint <c>RemoteUploadedAt</c> came from, so a flag the
+/// tolerance could not suppress is confirmed or cleared by the reliable
+/// same-endpoint comparison. A reconciliation pin
+/// (<see cref="ModContainer.ReconciledLatestFileUpdate"/>) records the
+/// <c>latest_file_update</c> a mod was last reconciled against, so a mod whose
+/// Month timestamp hasn't changed is skipped on the next check (no tolerance
+/// check, no per-mod call).</para>
 /// <para>
 /// <b>Best-effort, never throws (except cancellation).</b> A transient API
 /// failure, a missing auth config, or an exhausted rate limit all surface as an
@@ -45,6 +64,20 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     /// support that does not exist).
     /// </summary>
     private const string GameDomain = "warhammer40kdarktide";
+
+    /// <summary>
+    /// The tolerance applied when comparing the Month endpoint's
+    /// <see cref="ModUpdate.LatestFileUpdateUtc"/> against the imported
+    /// version's <see cref="ModVersion.RemoteUploadedAt"/>. The two values come
+    /// from different Nexus API endpoints (<c>updated.json</c> vs
+    /// <c>files.json</c>) that can disagree by 1+ seconds for the same upload;
+    /// a jitter within this window is treated as "no update" and pinned rather
+    /// than flagged + reconciled. Only applied when
+    /// <see cref="ModVersion.RemoteUploadedAt"/> is non-null (the
+    /// <see cref="ModVersion.ImportedAt"/> fallback has no fixed relationship
+    /// to the remote publish date, so it keeps a strict <c>&gt;</c> comparison).
+    /// </summary>
+    private static readonly TimeSpan MonthTolerance = TimeSpan.FromSeconds(10);
 
     private readonly INexusClient _nexus;
     private readonly IProfileService _profiles;
@@ -90,8 +123,11 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     /// <inheritdoc />
     public async Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default)
     {
-        // Month-only: run the shared Month path + flag the intersect. No
-        // per-mod pass (mods outside the Month window are NOT caught here).
+        // Month path: tolerance-suppress + flag the intersect, then reconcile the
+        // flagged mods via a per-mod ListModFilesAsync call (the same-endpoint
+        // comparison that clears false positives the Month cross-endpoint jitter
+        // produced). Mods outside the Month window are NOT caught here (use
+        // CheckThoroughAsync).
         var (shortCircuit, month) = await RunMonthCheckAsync(profileId, ct).ConfigureAwait(false);
         if (shortCircuit is not null)
         {
@@ -99,19 +135,21 @@ internal sealed class UpdateCheckService : IUpdateCheckService
         }
 
         var flagged = FlagFromMonth(month!);
+        var rateLimited = await ReconcileFlaggedAsync(month!, flagged, ct).ConfigureAwait(false);
         _logger.LogInformation(
-            "Update check for profile {Profile}: {Count} mod(s) flagged for update.",
-            profileId, flagged.Count);
+            "Update check for profile {Profile}: {Count} mod(s) flagged for update{RateLimited}.",
+            profileId, flagged.Count, rateLimited ? " (rate-limited mid-reconciliation)" : string.Empty);
         return Publish(new UpdateCheckResult(
-            flagged, DateTimeOffset.UtcNow, RateLimited: false, Thorough: false));
+            flagged, DateTimeOffset.UtcNow, RateLimited: rateLimited, Thorough: false));
     }
 
     /// <inheritdoc />
     public async Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default)
     {
-        // Thorough: run the shared Month path, then walk the checkable mods NOT
-        // in the Month response + resolve each one's latest MAIN file to
-        // compare. Catches mods whose latest release predates the Month window.
+        // Thorough: run the shared Month path (tolerance-suppress + flag +
+        // reconcile, same as CheckAsync), then walk the checkable mods NOT in
+        // the Month response + resolve each one's latest MAIN file to compare.
+        // Catches mods whose latest release predates the Month window.
         var (shortCircuit, month) = await RunMonthCheckAsync(profileId, ct).ConfigureAwait(false);
         if (shortCircuit is not null)
         {
@@ -122,7 +160,18 @@ internal sealed class UpdateCheckService : IUpdateCheckService
         }
 
         var flagged = FlagFromMonth(month!);
-        var rateLimited = await FlagFromPerModLookupAsync(month!, flagged, ct).ConfigureAwait(false);
+        var rateLimited = await ReconcileFlaggedAsync(month!, flagged, ct).ConfigureAwait(false);
+        // The Month-missed per-mod pass complements the Month intersect +
+        // reconciliation: it covers checkable mods NOT in the Month response
+        // (FlagFromMonth + ReconcileFlaggedAsync only touch Month-present mods).
+        // Skip when reconciliation already hit the rate limit: the per-mod pass
+        // issues a ListModFilesAsync call that would immediately re-trip the
+        // limit, wasting one round-trip for no result.
+        if (!rateLimited)
+        {
+            rateLimited = await FlagFromPerModLookupAsync(month!, flagged, ct).ConfigureAwait(false)
+                || rateLimited;
+        }
 
         _logger.LogInformation(
             "Thorough update check for profile {Profile}: {Count} mod(s) flagged for update{RateLimited}.",
@@ -253,18 +302,33 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     /// <summary>
     /// The Month intersect + compare: for each checkable mod in
     /// <paramref name="data"/>, find the matching <see cref="ModUpdate"/> (by
-    /// Nexus mod id) and compare the API's latest file-update time against the
-    /// imported version's publish date (<see cref="ModVersion.RemoteUploadedAt"/>
-    /// with an <see cref="ModVersion.ImportedAt"/> fallback for versions
-    /// imported before that field existed). Mutates + returns
-    /// <paramref name="flagged"/> for the caller to extend (thorough) or
-    /// publish (Month-only).
+    /// Nexus mod id) and apply the pin check, the tolerance check, or the
+    /// strict comparison. Returns the list of mods that exceed the tolerance
+    /// (or the strict threshold when <see cref="ModVersion.RemoteUploadedAt"/>
+    /// is null) for the caller to reconcile via
+    /// <see cref="ReconcileFlaggedAsync"/>. Has a side effect: tolerance-
+    /// suppressed mods are pinned (best-effort
+    /// <see cref="IModRepository.SetReconciliation"/>) so the next check skips
+    /// them entirely.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Uses <see cref="ModUpdate.LatestFileUpdateUtc"/> (NOT
     /// <see cref="ModUpdate.LatestModActivityUtc"/>): the latter counts page
     /// comments / endorsements / edits, not file changes, and would flag mods
-    /// that haven't actually gained a new file (false positives).
+    /// that haven't actually gained a new file (false positives).</para>
+    /// <para>
+    /// The Month endpoint's <see cref="ModUpdate.LatestFileUpdate"/> and the
+    /// per-mod <c>files.json</c> endpoint's <see cref="ModFile.UploadedTimestamp"/>
+    /// can disagree by 1+ seconds for the same upload (two different API
+    /// endpoints). The tolerance (<see cref="MonthTolerance"/>) suppresses that
+    /// jitter when <see cref="ModVersion.RemoteUploadedAt"/> is present; the
+    /// flagged remainder is reconciled by <see cref="ReconcileFlaggedAsync"/>
+    /// using the reliable same-endpoint comparison. The pin
+    /// (<see cref="ModContainer.ReconciledLatestFileUpdate"/>) records the raw
+    /// <see cref="ModUpdate.LatestFileUpdate"/> (long) a mod was last evaluated
+    /// against, so a mod whose Month timestamp hasn't changed is skipped on the
+    /// next check.</para>
     /// </remarks>
     private List<ModUpdateInfo> FlagFromMonth(MonthData data)
     {
@@ -278,6 +342,29 @@ internal sealed class UpdateCheckService : IUpdateCheckService
                 // The mod was not updated in the Month window. The thorough
                 // method picks these up via the per-mod lookup; the Month-only
                 // method skips them.
+                continue;
+            }
+
+            // Pin check: this container's latest version was already reconciled
+            // against this exact latest_file_update value. Skip re-evaluation
+            // (no tolerance check, no per-mod call) but carry forward the
+            // previous flag state: a mod that was flagged (genuine update found
+            // in a prior reconciliation) stays flagged until the user updates
+            // (AddVersion clears the pin) or the mod author publishes new
+            // activity (latest_file_update changes, breaking the pin match). A
+            // mod that was not flagged stays not flagged. Without this
+            // carry-forward, rebuilding the flagged list from scratch each
+            // check would clear a genuine update's flag whenever the pin
+            // matches. Raw long equality: both values are Unix seconds from
+            // the same Month endpoint, so no conversion is needed.
+            if (container.ReconciledLatestFileUpdate == update.LatestFileUpdate)
+            {
+                var previous = LastResult?.Updates?.FirstOrDefault(
+                    u => u.ContainerId == entry.ContainerId);
+                if (previous is not null)
+                {
+                    flagged.Add(previous);
+                }
                 continue;
             }
 
@@ -302,6 +389,28 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             // before this field existed (and for non-Nexus, though non-Nexus
             // are filtered out above).
             var versionDate = resolved.RemoteUploadedAt ?? resolved.ImportedAt;
+
+            // Tolerance check: only when RemoteUploadedAt is present (the
+            // reliable same-endpoint basis). The Month endpoint's
+            // latest_file_update and the imported version's RemoteUploadedAt
+            // come from two different endpoints that can disagree by 1+ seconds
+            // for the same upload; a jitter within the tolerance is "no update"
+            // + pinned, rather than flagged + reconciled. The tolerance is NOT
+            // applied when RemoteUploadedAt is null: ImportedAt has no fixed
+            // relationship to the remote publish date, so a strict > comparison
+            // preserves the prior behavior for legacy imports.
+            if (resolved.RemoteUploadedAt is not null
+                && update.LatestFileUpdateUtc <= versionDate + MonthTolerance)
+            {
+                TrySetReconciliation(container.Id, update.LatestFileUpdate);
+                continue;
+            }
+
+            // Exceeds the tolerance (or no RemoteUploadedAt + strictly newer).
+            // Flag for per-mod reconciliation. ReconcileFlaggedAsync resolves
+            // the latest MAIN file via the same files.json endpoint
+            // RemoteUploadedAt came from, so a false positive (jitter or
+            // non-upload activity bumping latest_file_update) is cleared there.
             if (update.LatestFileUpdateUtc > versionDate)
             {
                 flagged.Add(new ModUpdateInfo(
@@ -313,6 +422,181 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             }
         }
         return flagged;
+    }
+
+    /// <summary>
+    /// Reconciles the mods <see cref="FlagFromMonth"/> flagged by resolving each
+    /// one's latest MAIN file via <see cref="INexusClient.ListModFilesAsync"/>
+    /// (the same <c>files.json</c> endpoint <see cref="ModVersion.RemoteUploadedAt"/>
+    /// came from) and comparing it against the imported version's publish date.
+    /// A same-endpoint comparison is reliable, unlike the Month endpoint's
+    /// cross-endpoint <c>latest_file_update</c> that produced the flag. Mutates
+    /// <paramref name="flagged"/> in place: a false positive (LatestMain not
+    /// newer) is removed; a genuine update is kept. Both outcomes pin the
+    /// <c>latest_file_update</c> (best-effort) so the next check skips the mod
+    /// unless its Month timestamp changes.
+    /// </summary>
+    /// <returns><c>true</c> if a mid-pass <see cref="NexusRateLimitException"/>
+    /// aborted the reconciliation (the caller surfaces
+    /// <see cref="UpdateCheckResult.RateLimited"/>). The mods not yet reconciled
+    /// stay flagged and are NOT pinned (the next check retries). Other per-mod
+    /// failures are logged + the mod stays flagged + unpinned (the pass
+    /// continues; one mod's transient failure must not abort the whole pass).
+    /// </returns>
+    private async Task<bool> ReconcileFlaggedAsync(
+        MonthData data, List<ModUpdateInfo> flagged, CancellationToken ct)
+    {
+        if (flagged.Count == 0)
+        {
+            return false;
+        }
+
+        // Map each flagged entry back to its container + NexusSource for the
+        // per-mod ListModFilesAsync call. The flagged list carries ContainerId
+        // + ModId but not the container object; data.Checkable has the full
+        // tuple.
+        var byContainerId = new Dictionary<Guid, (ModListEntry Entry, ModContainer Container, NexusSource Nexus)>();
+        foreach (var c in data.Checkable)
+        {
+            byContainerId[c.Container.Id] = c;
+        }
+
+        // Forward iteration with in-place removal: when a false positive is
+        // removed, the next entry shifts into the current index (no increment).
+        // A rate-limit abort returns immediately, leaving the current + all
+        // remaining mods flagged + unpinned.
+        int i = 0;
+        while (i < flagged.Count)
+        {
+            var info = flagged[i];
+
+            if (!byContainerId.TryGetValue(info.ContainerId, out var checkable))
+            {
+                // Should not happen: FlagFromMonth built flagged from
+                // data.Checkable. Leave flagged, advance.
+                i++;
+                continue;
+            }
+            var (_, container, nexus) = checkable;
+
+            // The raw latest_file_update (Unix seconds) for pinning after
+            // reconciliation, regardless of outcome.
+            if (!data.ByModId.TryGetValue(info.ModId, out var update))
+            {
+                // Not in the Month response (should not happen: FlagFromMonth
+                // only flags Month-present mods). Leave flagged, advance.
+                i++;
+                continue;
+            }
+            var latestFileUpdate = update.LatestFileUpdate;
+
+            Response<ModFile[]> files;
+            try
+            {
+                files = await _nexus.ListModFilesAsync(GameDomain, nexus.ModId, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (NexusRateLimitException ex)
+            {
+                // Stop the reconciliation + return what's flagged so far. The
+                // current mod + all remaining stay flagged + are NOT pinned
+                // (the next check retries them).
+                _logger.LogInformation(
+                    ex,
+                    "Update check reconciliation rate-limited at mod {Mod}; keeping {Count} mod(s) flagged so far.",
+                    nexus.ModId, flagged.Count);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // Transient / per-mod failure: log + leave flagged + do NOT pin
+                // (the next check retries). One mod's bad response must not
+                // abort the whole pass.
+                _logger.LogWarning(
+                    ex,
+                    "Update check reconciliation: ListModFilesAsync for mod {Mod} failed; leaving flagged.",
+                    nexus.ModId);
+                i++;
+                continue;
+            }
+
+            var latest = NexusModFiles.LatestMain(files.Data);
+            if (latest is null)
+            {
+                // No MAIN / non-archived file to compare against. Leave flagged,
+                // do not pin (next check retries).
+                i++;
+                continue;
+            }
+
+            var resolved = container.ResolveVersion(new LatestPolicy());
+            if (resolved is null)
+            {
+                // No resolvable version. Leave flagged, do not pin.
+                i++;
+                continue;
+            }
+
+            // Same-endpoint comparison (files.json uploaded_timestamp vs the
+            // imported version's RemoteUploadedAt, also from files.json):
+            // reliable, unlike the Month-endpoint cross-endpoint comparison
+            // that produced the flag. When RemoteUploadedAt is null (a legacy
+            // import that predates the field), the ImportedAt fallback is used
+            // instead; ImportedAt is NOT same-endpoint (it is when Curator
+            // imported the file, not the remote publish date), but it is the
+            // established fallback, consistent with FlagFromMonth and
+            // FlagFromPerModLookupAsync. A zero UploadedTimestamp (the wire
+            // default when absent) would compare as epoch 1970, older than any
+            // real import, so it would never confirm an update; that's fine (a
+            // stub payload shouldn't produce a false "update confirmed").
+            var latestUploaded = DateTimeOffset.FromUnixTimeSeconds(latest.UploadedTimestamp);
+            var versionDate = resolved.RemoteUploadedAt ?? resolved.ImportedAt;
+            if (latestUploaded > versionDate)
+            {
+                // Genuine update: keep flagged + pin so the next check skips it
+                // unless the Month timestamp changes.
+                TrySetReconciliation(container.Id, latestFileUpdate);
+                i++;
+            }
+            else
+            {
+                // False positive: the Month endpoint's latest_file_update
+                // jittered ahead of the imported file's publish date, but the
+                // same-endpoint files.json comparison confirms no newer MAIN
+                // file. Remove the flag + pin so the next check skips this
+                // latest_file_update value.
+                TrySetReconciliation(container.Id, latestFileUpdate);
+                flagged.RemoveAt(i);
+                // Do not increment: the next entry shifted into index i.
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Best-effort wrapper around <see cref="IModRepository.SetReconciliation"/>:
+    /// a write failure is logged + swallowed so the check continues with the
+    /// in-memory value. A failed pin is harmless (the next check re-evaluates
+    /// the mod against the same latest_file_update, at worst re-doing one
+    /// <see cref="INexusClient.ListModFilesAsync"/> call).
+    /// </summary>
+    private void TrySetReconciliation(Guid containerId, long latestFileUpdate)
+    {
+        try
+        {
+            _repository.SetReconciliation(containerId, latestFileUpdate);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not persist reconciliation pin for container {Id}; the check continues with the in-memory value.",
+                containerId);
+        }
     }
 
     /// <summary>
@@ -431,8 +715,9 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     /// <summary>
     /// Intermediate state shared between the Month front-half
     /// (<see cref="RunMonthCheckAsync"/>) and the intersect / per-mod back-half
-    /// (<see cref="FlagFromMonth"/> / <see cref="FlagFromPerModLookupAsync"/>):
-    /// the checkable mods + the Month response indexed by mod id.
+    /// (<see cref="FlagFromMonth"/> / <see cref="ReconcileFlaggedAsync"/> /
+    /// <see cref="FlagFromPerModLookupAsync"/>): the checkable mods + the Month
+    /// response indexed by mod id.
     /// </summary>
     private sealed record MonthData(
         List<(ModListEntry Entry, ModContainer Container, NexusSource Nexus)> Checkable,

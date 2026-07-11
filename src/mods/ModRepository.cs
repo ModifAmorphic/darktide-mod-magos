@@ -32,8 +32,14 @@ namespace Modificus.Curator.Mods;
 /// The mods root folder is read live from <see cref="IConfigLoader"/> on each
 /// operation (one snapshot per op), so a runtime folder change via the upcoming
 /// Settings window takes effect immediately; <see cref="Directory.CreateDirectory"/>
-/// runs per-op (idempotent) on the live path. Concurrent writes are not
-/// coordinated (single-UI-thread assumption).</para>
+/// runs per-op (idempotent) on the live path. All public methods are
+/// synchronized via an internal lock (<c>_sync</c>), serializing reads and
+/// writes so a background-thread mutation (e.g. a reconciliation write from
+/// <c>UpdateCheckService</c>) cannot race a UI-thread mutation on the in-memory
+/// index or the manifests. The lock is reentrant (Monitor), so a public method
+/// that delegates to another on the same thread (e.g.
+/// <see cref="PruneUnreferenced"/> calls <see cref="RemoveVersion"/>;
+/// <see cref="Relocate"/> calls <see cref="Rescan"/>) does not self-deadlock.</para>
 /// </remarks>
 internal sealed class ModRepository : IModRepository
 {
@@ -56,6 +62,16 @@ internal sealed class ModRepository : IModRepository
     // without a real second volume (cross-volume cannot be simulated under one
     // temp root). The DI constructor wires the real path-root comparison.
     private readonly Func<string, string, bool> _sameVolume;
+
+    // Serializes all public method access so a background-thread write (e.g.
+    // SetReconciliation from UpdateCheckService) cannot race a UI-thread write
+    // (e.g. AddVersion) on the in-memory index or the manifests. Coarse
+    // locking is acceptable: the operations are infrequent and the dictionaries
+    // are small. The lock is reentrant (Monitor), so a public method that
+    // delegates to another public method on the same thread (e.g.
+    // PruneUnreferenced -> RemoveVersion, Relocate -> Rescan,
+    // FindUntrackedByName -> Get) does not self-deadlock.
+    private readonly object _sync = new();
 
     // Primary index: containerId -> container. Source identity lookups are
     // served by scanning this (cheap for dozens of containers); the untracked-
@@ -112,68 +128,88 @@ internal sealed class ModRepository : IModRepository
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<ModContainer> List() => _byId.Values.ToArray();
+    public IReadOnlyList<ModContainer> List()
+    {
+        lock (_sync)
+        {
+            return _byId.Values.ToArray();
+        }
+    }
 
     /// <inheritdoc />
-    public ModContainer? Get(Guid containerId) =>
-        _byId.TryGetValue(containerId, out var c) ? c : null;
+    public ModContainer? Get(Guid containerId)
+    {
+        lock (_sync)
+        {
+            return _byId.TryGetValue(containerId, out var c) ? c : null;
+        }
+    }
 
     /// <inheritdoc />
     public ModContainer? FindBySource(ModSource source)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        // Untracked identity is the container Name, not a field on the source.
-        // Callers route untracked dedup through FindUntrackedByName; here we
-        // return null so a generic FindBySource caller never gets a false match.
-        if (source is UntrackedSource)
+        lock (_sync)
         {
-            return null;
-        }
+            ArgumentNullException.ThrowIfNull(source);
+            // Untracked identity is the container Name, not a field on the source.
+            // Callers route untracked dedup through FindUntrackedByName; here we
+            // return null so a generic FindBySource caller never gets a false match.
+            if (source is UntrackedSource)
+            {
+                return null;
+            }
 
-        return source switch
-        {
-            NexusSource n => _byId.Values.FirstOrDefault(c =>
-                c.Source is NexusSource ns && ns.ModId == n.ModId),
-            GitHubSource g => _byId.Values.FirstOrDefault(c =>
-                c.Source is GitHubSource gs
-                && string.Equals(gs.Owner, g.Owner, StringComparison.Ordinal)
-                && string.Equals(gs.Repo, g.Repo, StringComparison.Ordinal)),
-            _ => null,
-        };
+            return source switch
+            {
+                NexusSource n => _byId.Values.FirstOrDefault(c =>
+                    c.Source is NexusSource ns && ns.ModId == n.ModId),
+                GitHubSource g => _byId.Values.FirstOrDefault(c =>
+                    c.Source is GitHubSource gs
+                    && string.Equals(gs.Owner, g.Owner, StringComparison.Ordinal)
+                    && string.Equals(gs.Repo, g.Repo, StringComparison.Ordinal)),
+                _ => null,
+            };
+        }
     }
 
     /// <inheritdoc />
     public ModContainer? FindUntrackedByName(string name)
     {
-        ArgumentNullException.ThrowIfNull(name);
-        return _untrackedByName.TryGetValue(name, out var id) ? Get(id) : null;
+        lock (_sync)
+        {
+            ArgumentNullException.ThrowIfNull(name);
+            return _untrackedByName.TryGetValue(name, out var id) ? Get(id) : null;
+        }
     }
 
     /// <inheritdoc />
     public ModContainer CreateContainer(ModSource source, string name)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        if (string.IsNullOrWhiteSpace(name))
+        lock (_sync)
         {
-            throw new ArgumentException("Container name must not be null or whitespace.", nameof(name));
+            ArgumentNullException.ThrowIfNull(source);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new ArgumentException("Container name must not be null or whitespace.", nameof(name));
+            }
+
+            var baseFolder = EnsureBaseFolder();
+            var container = new ModContainer
+            {
+                Id = Guid.NewGuid(),
+                Source = source,
+                Name = name,
+                Versions = Array.Empty<ModVersion>(),
+            };
+
+            Directory.CreateDirectory(ContainerDir(baseFolder, container.Id));
+            WriteContainer(container, baseFolder);
+
+            _byId[container.Id] = container;
+            IndexUntrackedName(container);
+            _logger.LogInformation("Created container {Id} ('{Name}', source={Source})", container.Id, name, source);
+            return container;
         }
-
-        var baseFolder = EnsureBaseFolder();
-        var container = new ModContainer
-        {
-            Id = Guid.NewGuid(),
-            Source = source,
-            Name = name,
-            Versions = Array.Empty<ModVersion>(),
-        };
-
-        Directory.CreateDirectory(ContainerDir(baseFolder, container.Id));
-        WriteContainer(container, baseFolder);
-
-        _byId[container.Id] = container;
-        IndexUntrackedName(container);
-        _logger.LogInformation("Created container {Id} ('{Name}', source={Source})", container.Id, name, source);
-        return container;
     }
 
     /// <inheritdoc />
@@ -183,75 +219,97 @@ internal sealed class ModRepository : IModRepository
         Action<string> populateFolder,
         DateTimeOffset? remoteUploadedAt = null)
     {
-        ArgumentNullException.ThrowIfNull(versionString);
-        ArgumentNullException.ThrowIfNull(populateFolder);
-
-        if (!_byId.TryGetValue(containerId, out var container))
+        lock (_sync)
         {
-            throw new KeyNotFoundException($"No mod container with id '{containerId}'.");
-        }
+            ArgumentNullException.ThrowIfNull(versionString);
+            ArgumentNullException.ThrowIfNull(populateFolder);
 
-        var baseFolder = EnsureBaseFolder();
-        var containerDir = ContainerDir(baseFolder, containerId);
-        Directory.CreateDirectory(containerDir);
-
-        var existing = container.Versions.FirstOrDefault(v =>
-            string.Equals(v.VersionString, versionString, StringComparison.Ordinal));
-
-        List<ModVersion> versions;
-        if (existing is not null)
-        {
-            // Dedup: reuse the existing folder + entry. PopulateAtomically swaps
-            // the new content into the existing version folder atomically (the
-            // old contents survive any populateFolder failure); the version
-            // entry (Folder, VersionString, IsLatest, ImportedAt) is left
-            // unchanged so the manifest ordering stays stable. (Re-importing a
-            // version is a file refresh, not a re-order.) RemoteUploadedAt is
-            // the one entry field refreshed on re-import: a re-acquired version
-            // carries the current remote-publish timestamp (callers pass null
-            // for manual re-imports, which clears it; non-remote sources aren't
-            // update-checked anyway).
-            var versionDir = VersionDir(baseFolder, containerId, existing.Folder);
-            PopulateAtomically(versionDir, populateFolder);
-            var refreshed = existing with { RemoteUploadedAt = remoteUploadedAt };
-            versions = container.Versions.Select(v => ReferenceEquals(v, existing) ? refreshed : v).ToList();
-            _logger.LogInformation(
-                "Re-imported version '{Version}' on container {Id} (folder reused: {Folder})",
-                versionString, containerId, existing.Folder);
-        }
-        else
-        {
-            // New version: new opaque folder + new entry stamped now; the new
-            // entry is the newest by ImportedAt, so it becomes IsLatest and the
-            // flag is cleared on every other version. PopulateAtomically stages
-            // into a temp + swaps into the new version folder; on a
-            // populateFolder failure nothing is created on disk and the manifest
-            // is left untouched (no entry added below).
-            var folder = Guid.NewGuid().ToString("N");
-            var versionDir = VersionDir(baseFolder, containerId, folder);
-            PopulateAtomically(versionDir, populateFolder);
-
-            var entry = new ModVersion
+            if (!_byId.TryGetValue(containerId, out var container))
             {
-                Folder = folder,
-                VersionString = versionString,
-                IsLatest = true,
-                ImportedAt = DateTimeOffset.UtcNow,
-                RemoteUploadedAt = remoteUploadedAt,
-            };
-            versions = container.Versions
-                .Select(v => v with { IsLatest = false })
-                .Append(entry)
-                .ToList();
-            _logger.LogInformation(
-                "Added version '{Version}' on container {Id} (folder: {Folder}, isLatest=true)",
-                versionString, containerId, folder);
-        }
+                throw new KeyNotFoundException($"No mod container with id '{containerId}'.");
+            }
 
-        var updated = container with { Versions = versions };
-        _byId[containerId] = updated;
-        WriteContainer(updated, baseFolder);
-        return updated;
+            var baseFolder = EnsureBaseFolder();
+            var containerDir = ContainerDir(baseFolder, containerId);
+            Directory.CreateDirectory(containerDir);
+
+            var existing = container.Versions.FirstOrDefault(v =>
+                string.Equals(v.VersionString, versionString, StringComparison.Ordinal));
+
+            List<ModVersion> versions;
+            if (existing is not null)
+            {
+                // Dedup: reuse the existing folder + entry. PopulateAtomically swaps
+                // the new content into the existing version folder atomically (the
+                // old contents survive any populateFolder failure); the version
+                // entry (Folder, VersionString, IsLatest, ImportedAt) is left
+                // unchanged so the manifest ordering stays stable. (Re-importing a
+                // version is a file refresh, not a re-order.) RemoteUploadedAt is
+                // the one entry field refreshed on re-import: a re-acquired version
+                // carries the current remote-publish timestamp (callers pass null
+                // for manual re-imports, which clears it; non-remote sources aren't
+                // update-checked anyway).
+                var versionDir = VersionDir(baseFolder, containerId, existing.Folder);
+                PopulateAtomically(versionDir, populateFolder);
+                var refreshed = existing with { RemoteUploadedAt = remoteUploadedAt };
+                versions = container.Versions.Select(v => ReferenceEquals(v, existing) ? refreshed : v).ToList();
+                _logger.LogInformation(
+                    "Re-imported version '{Version}' on container {Id} (folder reused: {Folder})",
+                    versionString, containerId, existing.Folder);
+            }
+            else
+            {
+                // New version: new opaque folder + new entry stamped now; the new
+                // entry is the newest by ImportedAt, so it becomes IsLatest and the
+                // flag is cleared on every other version. PopulateAtomically stages
+                // into a temp + swaps into the new version folder; on a
+                // populateFolder failure nothing is created on disk and the manifest
+                // is left untouched (no entry added below).
+                var folder = Guid.NewGuid().ToString("N");
+                var versionDir = VersionDir(baseFolder, containerId, folder);
+                PopulateAtomically(versionDir, populateFolder);
+
+                var entry = new ModVersion
+                {
+                    Folder = folder,
+                    VersionString = versionString,
+                    IsLatest = true,
+                    ImportedAt = DateTimeOffset.UtcNow,
+                    RemoteUploadedAt = remoteUploadedAt,
+                };
+                versions = container.Versions
+                    .Select(v => v with { IsLatest = false })
+                    .Append(entry)
+                    .ToList();
+                _logger.LogInformation(
+                    "Added version '{Version}' on container {Id} (folder: {Folder}, isLatest=true)",
+                    versionString, containerId, folder);
+            }
+
+            var updated = container with { Versions = versions, ReconciledLatestFileUpdate = null };
+            _byId[containerId] = updated;
+            WriteContainer(updated, baseFolder);
+            return updated;
+        }
+    }
+
+    /// <inheritdoc />
+    public void SetReconciliation(Guid containerId, long? latestFileUpdate)
+    {
+        lock (_sync)
+        {
+            if (!_byId.TryGetValue(containerId, out var container))
+            {
+                _logger.LogDebug(
+                    "SetReconciliation: container {Id} not found; no-op.", containerId);
+                return;
+            }
+
+            var baseFolder = EnsureBaseFolder();
+            var updated = container with { ReconciledLatestFileUpdate = latestFileUpdate };
+            _byId[containerId] = updated;
+            WriteContainer(updated, baseFolder);
+        }
     }
 
     /// <summary>
@@ -380,243 +438,260 @@ internal sealed class ModRepository : IModRepository
     /// <inheritdoc />
     public void RemoveVersion(Guid containerId, string versionFolder)
     {
-        ArgumentNullException.ThrowIfNull(versionFolder);
-
-        if (!_byId.TryGetValue(containerId, out var container))
+        lock (_sync)
         {
-            return; // idempotent: unknown container is a no-op.
+            ArgumentNullException.ThrowIfNull(versionFolder);
+
+            if (!_byId.TryGetValue(containerId, out var container))
+            {
+                return; // idempotent: unknown container is a no-op.
+            }
+
+            var existing = container.Versions.FirstOrDefault(v =>
+                string.Equals(v.Folder, versionFolder, StringComparison.Ordinal));
+            if (existing is null)
+            {
+                return; // idempotent: unknown folder is a no-op.
+            }
+
+            var baseFolder = EnsureBaseFolder();
+            var wasLatest = existing.IsLatest;
+            var versions = container.Versions.Where(v => !ReferenceEquals(v, existing)).ToList();
+
+            // If the removed entry was latest, promote the newest remaining by
+            // ImportedAt (stable on ties; MaxBy returns the first max for ties under
+            // LINQ-to-Objects, matching the storage order).
+            if (wasLatest && versions.Count > 0)
+            {
+                var newest = versions.MaxBy(v => v.ImportedAt)!;
+                versions = versions
+                    .Select(v => v with { IsLatest = ReferenceEquals(v, newest) })
+                    .ToList();
+            }
+
+            var updated = container with { Versions = versions };
+            _byId[containerId] = updated;
+            WriteContainer(updated, baseFolder);
+
+            // Best-effort: drop the on-disk folder. A missing / unwritable folder
+            // is logged + swallowed so a prune never crashes on a stray lock.
+            DeleteVersionDir(baseFolder, containerId, versionFolder);
+            _logger.LogInformation(
+                "Removed version folder '{Folder}' from container {Id}", versionFolder, containerId);
         }
-
-        var existing = container.Versions.FirstOrDefault(v =>
-            string.Equals(v.Folder, versionFolder, StringComparison.Ordinal));
-        if (existing is null)
-        {
-            return; // idempotent: unknown folder is a no-op.
-        }
-
-        var baseFolder = EnsureBaseFolder();
-        var wasLatest = existing.IsLatest;
-        var versions = container.Versions.Where(v => !ReferenceEquals(v, existing)).ToList();
-
-        // If the removed entry was latest, promote the newest remaining by
-        // ImportedAt (stable on ties; MaxBy returns the first max for ties under
-        // LINQ-to-Objects, matching the storage order).
-        if (wasLatest && versions.Count > 0)
-        {
-            var newest = versions.MaxBy(v => v.ImportedAt)!;
-            versions = versions
-                .Select(v => v with { IsLatest = ReferenceEquals(v, newest) })
-                .ToList();
-        }
-
-        var updated = container with { Versions = versions };
-        _byId[containerId] = updated;
-        WriteContainer(updated, baseFolder);
-
-        // Best-effort: drop the on-disk folder. A missing / unwritable folder
-        // is logged + swallowed so a prune never crashes on a stray lock.
-        DeleteVersionDir(baseFolder, containerId, versionFolder);
-        _logger.LogInformation(
-            "Removed version folder '{Folder}' from container {Id}", versionFolder, containerId);
     }
 
     /// <inheritdoc />
     public string GetVersionFolderPath(Guid containerId, string versionFolder)
     {
-        ArgumentNullException.ThrowIfNull(versionFolder);
-        var baseFolder = EnsureBaseFolder();
-        return VersionDir(baseFolder, containerId, versionFolder);
+        lock (_sync)
+        {
+            ArgumentNullException.ThrowIfNull(versionFolder);
+            var baseFolder = EnsureBaseFolder();
+            return VersionDir(baseFolder, containerId, versionFolder);
+        }
     }
 
     /// <inheritdoc />
     public void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced)
     {
-        ArgumentNullException.ThrowIfNull(referenced);
-        var baseFolder = EnsureBaseFolder();
-
-        // Drop unreferenced versions per container. Snapshot the containers
-        // first (RemoveVersion mutates the index); each RemoveVersion call
-        // operates on the live index, not the snapshot, so consecutive calls on
-        // the same container see the updated state.
-        foreach (var container in _byId.Values.ToArray())
+        lock (_sync)
         {
-            var orphans = container.Versions
-                .Where(v => !referenced.Contains((container.Id, v.Folder)))
-                .Select(v => v.Folder)
-                .ToArray();
-            foreach (var folder in orphans)
-            {
-                RemoveVersion(container.Id, folder);
-            }
-        }
+            ArgumentNullException.ThrowIfNull(referenced);
+            var baseFolder = EnsureBaseFolder();
 
-        // Remove containers left with zero versions (manifest + dir). Snapshot
-        // again; the index shrank above.
-        foreach (var empty in _byId.Values.Where(c => c.Versions.Count == 0).ToArray())
-        {
-            _byId.Remove(empty.Id);
-            if (empty.Source is UntrackedSource)
+            // Drop unreferenced versions per container. Snapshot the containers
+            // first (RemoveVersion mutates the index); each RemoveVersion call
+            // operates on the live index, not the snapshot, so consecutive calls on
+            // the same container see the updated state.
+            foreach (var container in _byId.Values.ToArray())
             {
-                _untrackedByName.Remove(empty.Name);
-            }
-            var containerDir = ContainerDir(baseFolder, empty.Id);
-            if (Directory.Exists(containerDir))
-            {
-                try
+                var orphans = container.Versions
+                    .Where(v => !referenced.Contains((container.Id, v.Folder)))
+                    .Select(v => v.Folder)
+                    .ToArray();
+                foreach (var folder in orphans)
                 {
-                    Directory.Delete(containerDir, recursive: true);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    _logger.LogWarning(ex, "Could not delete empty container dir {Path}", containerDir);
+                    RemoveVersion(container.Id, folder);
                 }
             }
-            _logger.LogInformation("Pruned empty container {Id} ('{Name}')", empty.Id, empty.Name);
+
+            // Remove containers left with zero versions (manifest + dir). Snapshot
+            // again; the index shrank above.
+            foreach (var empty in _byId.Values.Where(c => c.Versions.Count == 0).ToArray())
+            {
+                _byId.Remove(empty.Id);
+                if (empty.Source is UntrackedSource)
+                {
+                    _untrackedByName.Remove(empty.Name);
+                }
+                var containerDir = ContainerDir(baseFolder, empty.Id);
+                if (Directory.Exists(containerDir))
+                {
+                    try
+                    {
+                        Directory.Delete(containerDir, recursive: true);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        _logger.LogWarning(ex, "Could not delete empty container dir {Path}", containerDir);
+                    }
+                }
+                _logger.LogInformation("Pruned empty container {Id} ('{Name}')", empty.Id, empty.Name);
+            }
         }
     }
 
     /// <inheritdoc />
     public void Rescan()
     {
-        // Read the live mods root (the path the config currently points at) and
-        // rebuild the index from it. Clear first: RebuildIndex only adds, so
-        // without a clear a container removed from disk between scans would
-        // survive as a stale entry.
-        var baseFolder = EnsureBaseFolder();
-        _byId.Clear();
-        _untrackedByName.Clear();
-        RebuildIndex(baseFolder);
-        _logger.LogInformation("Rescanned mods repository at {Path} ({Count} containers).", baseFolder, _byId.Count);
+        lock (_sync)
+        {
+            // Read the live mods root (the path the config currently points at) and
+            // rebuild the index from it. Clear first: RebuildIndex only adds, so
+            // without a clear a container removed from disk between scans would
+            // survive as a stale entry.
+            var baseFolder = EnsureBaseFolder();
+            _byId.Clear();
+            _untrackedByName.Clear();
+            RebuildIndex(baseFolder);
+            _logger.LogInformation("Rescanned mods repository at {Path} ({Count} containers).", baseFolder, _byId.Count);
+        }
     }
 
     /// <inheritdoc />
     public void Relocate(string newBasePath)
     {
-        ValidateNewBasePath(newBasePath);
-
-        // Atomic contract: Relocate owns the whole move + config save + rescan
-        // so a save failure can never strand the files at the new path with the
-        // config still pointing at the old one. The OLD path is read live first
-        // (before the save flips ModsFolder to the new path).
-        var config = _configLoader.Load();
-        var oldBasePath = config.ModsFolder;
-
-        // No-op when the destination is the same as the source: the subsequent
-        // save + Rescan would be a confusing no-op anyway, and the conflict
-        // check below would otherwise always fire (the current root is full of
-        // the indexed UUIDs).
-        if (SamePath(oldBasePath, newBasePath))
+        lock (_sync)
         {
-            _logger.LogInformation(
-                "Relocate target {Path} is the current mods root; no move needed.", newBasePath);
-            return;
-        }
+            ValidateNewBasePath(newBasePath);
 
-        // Refuse to relocate into a directory that already contains one of the
-        // indexed container UUIDs: that would silently shadow an existing
-        // container (the scan would pick up the pre-existing dir's manifest,
-        // not the moved one). The caller picks a fresh or empty destination.
-        foreach (var containerId in _byId.Keys)
-        {
-            var conflictDir = Path.Combine(newBasePath, containerId.ToString());
-            if (Directory.Exists(conflictDir))
+            // Atomic contract: Relocate owns the whole move + config save + rescan
+            // so a save failure can never strand the files at the new path with the
+            // config still pointing at the old one. The OLD path is read live first
+            // (before the save flips ModsFolder to the new path).
+            var config = _configLoader.Load();
+            var oldBasePath = config.ModsFolder;
+
+            // No-op when the destination is the same as the source: the subsequent
+            // save + Rescan would be a confusing no-op anyway, and the conflict
+            // check below would otherwise always fire (the current root is full of
+            // the indexed UUIDs).
+            if (SamePath(oldBasePath, newBasePath))
             {
-                throw new InvalidOperationException(
-                    $"Cannot relocate into '{newBasePath}': it already contains a directory " +
-                    $"named '{containerId}', which is a container UUID the repository tracks.");
+                _logger.LogInformation(
+                    "Relocate target {Path} is the current mods root; no move needed.", newBasePath);
+                return;
             }
-        }
 
-        Directory.CreateDirectory(newBasePath);
+            // Refuse to relocate into a directory that already contains one of the
+            // indexed container UUIDs: that would silently shadow an existing
+            // container (the scan would pick up the pre-existing dir's manifest,
+            // not the moved one). The caller picks a fresh or empty destination.
+            foreach (var containerId in _byId.Keys)
+            {
+                var conflictDir = Path.Combine(newBasePath, containerId.ToString());
+                if (Directory.Exists(conflictDir))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot relocate into '{newBasePath}': it already contains a directory " +
+                        $"named '{containerId}', which is a container UUID the repository tracks.");
+                }
+            }
 
-        // Volume strategy, detected once from the two base paths (it is not
-        // per-container): same-volume keeps the fast, atomic directory rename
-        // (Directory.Move); cross-volume copies the tree + deletes the source,
-        // because Directory.Move throws IOException across volumes (e.g.
-        // Windows C: -> D:) rather than falling back to a copy. Without this
-        // branch, a cross-volume relocate would throw on every container, the
-        // save would still flip ModsFolder, Rescan would rebuild against an
-        // empty new path, and the containers would be stranded (invisible, no
-        // UI recovery).
-        var crossVolume = !_sameVolume(oldBasePath, newBasePath);
+            Directory.CreateDirectory(newBasePath);
 
-        // Best-effort per-container move: one locked directory must not abort
-        // the rest. Each container dir is moved whole via MoveContainerDir,
-        // which picks its strategy from the volume flag above. The ids that
-        // actually moved are tracked so a save failure can roll exactly them
-        // back; containers that fail to move remain under the old path (their
-        // files are untouched, but the relocated index at the new path will
-        // not include them).
-        var movedIds = new List<Guid>();
-        var failed = 0;
-        foreach (var containerId in _byId.Keys.ToArray())
-        {
-            var sourceDir = Path.Combine(oldBasePath, containerId.ToString());
-            var destDir = Path.Combine(newBasePath, containerId.ToString());
+            // Volume strategy, detected once from the two base paths (it is not
+            // per-container): same-volume keeps the fast, atomic directory rename
+            // (Directory.Move); cross-volume copies the tree + deletes the source,
+            // because Directory.Move throws IOException across volumes (e.g.
+            // Windows C: -> D:) rather than falling back to a copy. Without this
+            // branch, a cross-volume relocate would throw on every container, the
+            // save would still flip ModsFolder, Rescan would rebuild against an
+            // empty new path, and the containers would be stranded (invisible, no
+            // UI recovery).
+            var crossVolume = !_sameVolume(oldBasePath, newBasePath);
+
+            // Best-effort per-container move: one locked directory must not abort
+            // the rest. Each container dir is moved whole via MoveContainerDir,
+            // which picks its strategy from the volume flag above. The ids that
+            // actually moved are tracked so a save failure can roll exactly them
+            // back; containers that fail to move remain under the old path (their
+            // files are untouched, but the relocated index at the new path will
+            // not include them).
+            var movedIds = new List<Guid>();
+            var failed = 0;
+            foreach (var containerId in _byId.Keys.ToArray())
+            {
+                var sourceDir = Path.Combine(oldBasePath, containerId.ToString());
+                var destDir = Path.Combine(newBasePath, containerId.ToString());
+                try
+                {
+                    MoveContainerDir(sourceDir, destDir, crossVolume);
+                    movedIds.Add(containerId);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    failed++;
+                    _logger.LogError(
+                        ex,
+                        "Could not move container {Id} from {Source} to {Dest} during relocate; " +
+                        "its files remain at the old location; the relocated index will not include this container.",
+                        containerId, sourceDir, destDir);
+                }
+            }
+
+            // Persist ModsFolder = newPath. Two failure modes: a thrown exception
+            // (a loader that reports failure) OR a silent failure (the production
+            // ConfigLoader.Save swallows write errors by design, for the best-
+            // effort Preferences flow). Either one strands the moved files at the
+            // new path while the config still points at the old one, so either
+            // triggers a rollback: the moved container dirs go back to the old
+            // path, files + config agree again, and the failure surfaces to the
+            // caller. The catch is deliberately broad (any exception, not just
+            // IO/auth): the rollback is safe to run on any save failure, and the
+            // re-load verification below catches the silent-swallow case.
+            config.ModsFolder = newBasePath;
+            Exception? saveFailure = null;
             try
             {
-                MoveContainerDir(sourceDir, destDir, crossVolume);
-                movedIds.Add(containerId);
+                _configLoader.Save(config);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex)
             {
-                failed++;
-                _logger.LogError(
-                    ex,
-                    "Could not move container {Id} from {Source} to {Dest} during relocate; " +
-                    "its files remain at the old location; the relocated index will not include this container.",
-                    containerId, sourceDir, destDir);
+                saveFailure = ex;
             }
-        }
 
-        // Persist ModsFolder = newPath. Two failure modes: a thrown exception
-        // (a loader that reports failure) OR a silent failure (the production
-        // ConfigLoader.Save swallows write errors by design, for the best-
-        // effort Preferences flow). Either one strands the moved files at the
-        // new path while the config still points at the old one, so either
-        // triggers a rollback: the moved container dirs go back to the old
-        // path, files + config agree again, and the failure surfaces to the
-        // caller. The catch is deliberately broad (any exception, not just
-        // IO/auth): the rollback is safe to run on any save failure, and the
-        // re-load verification below catches the silent-swallow case.
-        config.ModsFolder = newBasePath;
-        Exception? saveFailure = null;
-        try
-        {
-            _configLoader.Save(config);
-        }
-        catch (Exception ex)
-        {
-            saveFailure = ex;
-        }
+            if (saveFailure is null && !SamePath(_configLoader.Load().ModsFolder, newBasePath))
+            {
+                // The save did not throw but also did not persist (the swallowing
+                // loader's silent-failure mode). Fabricate the failure so the
+                // rollback + rethrow path is shared.
+                saveFailure = new IOException(
+                    $"Config save did not persist ModsFolder='{newBasePath}' (silent failure).");
+            }
 
-        if (saveFailure is null && !SamePath(_configLoader.Load().ModsFolder, newBasePath))
-        {
-            // The save did not throw but also did not persist (the swallowing
-            // loader's silent-failure mode). Fabricate the failure so the
-            // rollback + rethrow path is shared.
-            saveFailure = new IOException(
-                $"Config save did not persist ModsFolder='{newBasePath}' (silent failure).");
+            if (saveFailure is not null)
+            {
+                RollbackMoves(movedIds, newBasePath, oldBasePath, crossVolume);
+                _logger.LogWarning(
+                    saveFailure,
+                    "Relocate config save failed after moving {Count} container(s) to {New}; " +
+                    "rolled them back to {Old} so files + config agree.",
+                    movedIds.Count, newBasePath, oldBasePath);
+                throw saveFailure;
+            }
+
+            _logger.LogInformation(
+                "Relocated {Moved} container(s) from {Old} to {New} ({Failed} failed to move) " +
+                "and persisted the new mods root.",
+                movedIds.Count, oldBasePath, newBasePath, failed);
+
+            // Rebuild the index at the new path, which is now the live config path.
+            // Reentrant: Relocate holds _sync, Rescan re-acquires it on the same
+            // thread (Monitor allows re-entry), so this does not self-deadlock.
+            Rescan();
         }
-
-        if (saveFailure is not null)
-        {
-            RollbackMoves(movedIds, newBasePath, oldBasePath, crossVolume);
-            _logger.LogWarning(
-                saveFailure,
-                "Relocate config save failed after moving {Count} container(s) to {New}; " +
-                "rolled them back to {Old} so files + config agree.",
-                movedIds.Count, newBasePath, oldBasePath);
-            throw saveFailure;
-        }
-
-        _logger.LogInformation(
-            "Relocated {Moved} container(s) from {Old} to {New} ({Failed} failed to move) " +
-            "and persisted the new mods root.",
-            movedIds.Count, oldBasePath, newBasePath, failed);
-
-        // Rebuild the index at the new path, which is now the live config path.
-        Rescan();
     }
 
     /// <summary>

@@ -38,10 +38,13 @@ namespace Modificus.Curator.Mods;
 /// (import the repository copy, then reference it from the profile).</para>
 /// <para>
 /// Registered as a singleton (no per-request state). The single-UI-thread
-/// assumption holds, matching <see cref="ModRepository"/> +
-/// <c>ProfileService</c>. The mods root folder is read live from
-/// <see cref="IConfigLoader"/> on each import, so a runtime folder change via
-/// the upcoming Settings window routes the next import to the new path.</para>
+/// assumption holds (matching <c>ProfileService</c>); the underlying
+/// <see cref="ModRepository"/> synchronizes its own access via an internal
+/// lock, so a background-thread repository mutation (e.g. a reconciliation
+/// write from <c>UpdateCheckService</c>) cannot race an import. The mods root
+/// folder is read live from <see cref="IConfigLoader"/> on each import, so a
+/// runtime folder change via the upcoming Settings window routes the next
+/// import to the new path.</para>
 /// </remarks>
 internal sealed class ModImportService : IModImportService
 {

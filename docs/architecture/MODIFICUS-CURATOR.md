@@ -383,10 +383,18 @@ placement, and OS registration) is in
 The `IUpdateCheckService` (Integrations) is the Nexus-only update check.
 On profile load it calls `ModUpdatesAsync("warhammer40kdarktide", Month)` once,
 intersects the response with the active profile's `LatestPolicy` +
-`NexusSource` mods, and flags any whose imported version's `ImportedAt`
-predates the Nexus-reported `LatestFileUpdateUtc` (the file-upload time, not
-mod-page activity, which would false-positive on comments). One API call
-regardless of profile size; `PinnedPolicy`, `UntrackedSource`, and
+`NexusSource` mods, suppresses small cross-endpoint timestamp jitter via a 10s
+tolerance (the Month endpoint's `latest_file_update` and the per-mod
+`files.json` endpoint's `uploaded_timestamp` can disagree by 1+ seconds for the
+same upload), flags the remainder, then reconciles each flagged mod via a
+per-mod `ListModFilesAsync` same-endpoint comparison that clears false positives
+the Month jitter produced. The comparison is against the imported version's
+`RemoteUploadedAt` (the file-publish time, not mod-page activity, which would
+false-positive on comments), with an `ImportedAt` fallback for versions imported
+before that field existed. A reconciliation pin on each container
+(`ReconciledLatestFileUpdate`) records the `latest_file_update` it was last
+reconciled against, so a mod whose Month timestamp hasn't changed is skipped on
+the next check (cleared on `AddVersion`). `PinnedPolicy`, `UntrackedSource`, and
 `GitHubSource` mods are skipped. Rate-limit-aware: if the response reports an
 exhausted daily or hourly quota (and the limit was actually reported, guarding
 against the all-zero header-absent fallback), the result is flagged

@@ -724,9 +724,21 @@ internal class FakeModRepository : IModRepository
                 .Append(entry)
                 .ToList();
         }
-        var updated = container with { Versions = versions };
+        var updated = container with { Versions = versions, ReconciledLatestFileUpdate = null };
         _byId[containerId] = updated;
         return updated;
+    }
+
+    // Mirrors the production repo: records (or clears) the reconciliation pin
+    // on the in-memory container so a subsequent FlagFromMonth pin check reads
+    // it. The VM tests don't drive the update check, but the fake must satisfy
+    // the interface contract.
+    public void SetReconciliation(Guid containerId, long? latestFileUpdate)
+    {
+        if (_byId.TryGetValue(containerId, out var c))
+        {
+            _byId[containerId] = c with { ReconciledLatestFileUpdate = latestFileUpdate };
+        }
     }
 
     public void RemoveVersion(Guid containerId, string versionFolder)

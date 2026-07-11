@@ -61,6 +61,25 @@ public sealed record ModContainer
     public IReadOnlyList<ModVersion> Versions { get; init; } = Array.Empty<ModVersion>();
 
     /// <summary>
+    /// The <c>latest_file_update</c> timestamp (raw Unix seconds from the Nexus
+    /// <c>updated.json</c> Month endpoint) that this container's latest version
+    /// was last reconciled against. When the automatic update check encounters a
+    /// mod whose <c>latest_file_update</c> matches this value, it skips
+    /// re-evaluation (the mod was already checked and found up-to-date or
+    /// flagged). Cleared on <see cref="IModRepository.AddVersion"/> (a new
+    /// import forces re-evaluation). <c>null</c> = never reconciled.
+    /// </summary>
+    /// <remarks>
+    /// Backward-compatible on disk: a <c>container.json</c> from before this
+    /// field existed deserializes it to <c>null</c> (System.Text.Json default
+    /// for a missing nullable property). Set through
+    /// <see cref="IModRepository.SetReconciliation"/>; best-effort (a write
+    /// failure is logged + swallowed, so the check continues with the in-memory
+    /// value and the next check re-evaluates).
+    /// </remarks>
+    public long? ReconciledLatestFileUpdate { get; init; }
+
+    /// <summary>
     /// Resolves the version a profile entry should stage, given its policy.
     /// <see cref="LatestPolicy"/> → the container's <see cref="ModVersion.IsLatest"/>
     /// version; <see cref="PinnedPolicy"/> → the version whose
