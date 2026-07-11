@@ -408,21 +408,25 @@ headers: `Application-Name: Modificus-Curator`, `Application-Version: <asm>`,
 
 A Nexus-only service that checks the active profile's Nexus mods for available
 updates and produces a result the mod-list badges consume. Two check shapes
-share the same `LastResult` / `CheckCompleted` surface: a Month-only check (one
-API call, the cheap path fired on profile load + the periodic timer) and a
-thorough check (the per-mod pass the manual "check now" affordance fires, which
-also catches mods whose latest release predates the Month window). Per-mod work
-in the Month path is pure intersection + timestamp comparison against the single
-response; the thorough path adds one `ListModFilesAsync` call per profile mod
-the Month response missed. GitHub is out of v1 (no GitHub code paths anywhere);
-`PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods are skipped (only
-`LatestPolicy` + `NexusSource` are checked).
+share the same `LastResult` / `CheckCompleted` surface: a periodic check (fired
+on profile load + the periodic timer) and a thorough check (the manual "check
+now" affordance, which also catches mods whose latest release predates the Month
+window). Both share the Month call, a tolerance-suppress + flag intersect, and a
+per-mod reconciliation of flagged mods (a same-endpoint `ListModFilesAsync`
+comparison that clears false positives the Month cross-endpoint timestamp jitter
+produced); the thorough check additionally walks the checkable mods NOT in the
+Month response. A reconciliation pin on each container records the
+`latest_file_update` it was last reconciled against, so a mod whose Month
+timestamp hasn't changed is skipped on the next check. GitHub is out of v1 (no
+GitHub code paths anywhere); `PinnedPolicy`, `UntrackedSource`, and
+`GitHubSource` mods are skipped (only `LatestPolicy` + `NexusSource` are
+checked).
 
 ```csharp
 public interface IUpdateCheckService
 {
-    Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);             // Month-only
-    Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default);      // per-mod pass
+    Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);             // periodic (Month + tolerance + reconcile)
+    Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default);      // + per-mod Month-missed walk
     UpdateCheckResult? LastResult { get; }
     event EventHandler<UpdateCheckResult?>? CheckCompleted;
 }
@@ -441,22 +445,26 @@ public sealed record ModUpdateInfo(
     DateTimeOffset? LatestUpdateAt);
 ```
 
-- `CheckAsync(profileId)`: the cheap Month-only check (see flow below). The
+- `CheckAsync(profileId)`: the periodic check (see flow below). Intersects the
+  Month response, suppresses small cross-endpoint timestamp jitter via a
+  tolerance, flags the remainder, then reconciles each flagged mod via a per-mod
+  `ListModFilesAsync` same-endpoint comparison that clears false positives. The
   result has `Thorough = false`. Best-effort, never throws for non-cancellation
   failures: a transient API failure, missing auth, or exhausted rate limit all
   surface as an empty result. Cancellation (`OperationCanceledException`)
   propagates, and a `KeyNotFoundException` from `IProfileService.GetModList`
   (an unknown profile id) propagates; the caller owns passing a valid id.
 - `CheckThoroughAsync(profileId)`: the thorough check. Does everything
-  `CheckAsync` does, AND for each profile Nexus+Latest mod NOT in the Month
+  `CheckAsync` does (Month call, tolerance-suppress + flag, per-mod
+  reconciliation), AND for each profile Nexus+Latest mod NOT in the Month
   response calls `ListModFilesAsync` to resolve the latest MAIN / non-archived
   file (category_id 1, newest by `UploadedTimestamp`), then compares that file's
   upload time against `resolved.RemoteUploadedAt ?? resolved.ImportedAt`. Catches
   mods whose latest release predates the Month window. The result has
   `Thorough = true`. Rate-limit-aware: a mid-pass `NexusRateLimitException` from
-  `ListModFilesAsync` stops the walk + returns what's flagged so far with
-  `RateLimited = true` (partial results, not empty); other per-mod failures are
-  logged + skipped.
+  `ListModFilesAsync` (during reconciliation or the Month-missed walk) stops the
+  pass + returns what's flagged so far with `RateLimited = true` (partial
+  results, not empty); other per-mod failures are logged + skipped.
 - `LastResult`: the last check result, or null before the first check. Holds
   the most recent result regardless of which method produced it. The mod-list
   UI reads this to render badges without awaiting. Written under a lock
@@ -498,33 +506,50 @@ The two checks share the front-half; the thorough method adds the back-half.
    gateways). If rate-limited → return an empty result with `RateLimited = true`
    (no per-mod comparison; the mod-list UI surfaces a "check incomplete"
    indicator).
-6. **Intersect + compare (both checks).** Index the response by `ModId`, then
-   for each checkable mod find the matching `ModUpdate` (`NexusSource.ModId` is
-   `int`, widened against `ModUpdate.ModId` `long`). Resolve the imported
-   version via `container.ResolveVersion(new LatestPolicy())`; if null (no
-   versions / no `IsLatest`), skip. Compare **`ModUpdate.LatestFileUpdateUtc`**
-   (the file-upload time) against the imported file's publish date:
-   `version.RemoteUploadedAt ?? version.ImportedAt`. The publish-date basis is
-   what makes the check correct: `ImportedAt` is whenever Curator happened to
-   download the file (no relationship to when it was published on Nexus), so
-   reinstalling an older file today would set `ImportedAt = now`, newer than
-   any past upload, and mask an outdated install. `RemoteUploadedAt` is
-   captured at acquisition (Integrations records it from the matched `ModFile`'s
-   `UploadedTimestamp`); the `?? ImportedAt` fallback preserves the prior
-   behavior for versions imported before that field existed. Use
-   `LatestFileUpdate`, NOT `LatestModActivity` (the latter includes page
-   comments / endorsements / edits and would flag mods that haven't gained a
-   new file). If `LatestFileUpdateUtc > (RemoteUploadedAt ?? ImportedAt)` →
-   flag it. `CheckAsync` returns here with `Thorough = false`.
-7. **Per-mod thorough pass (`CheckThoroughAsync` only).** For each checkable
-   mod NOT in the Month response, `INexusClient.ListModFilesAsync` + resolve the
-   latest MAIN / non-archived file via `NexusModFiles.LatestMain`, then compare
-   its `UploadedTimestamp` against `RemoteUploadedAt ?? ImportedAt` (same
-   publish-date basis). A `NexusRateLimitException` from the per-mod call stops
-   the walk + the result carries `RateLimited = true` with the partial flags
-   collected so far; other per-mod failures are logged + skipped (the walk
-   continues; one mod's transient failure must not abort the whole check).
-8. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
+6. **Intersect + pin check + tolerance + flag (both checks, `FlagFromMonth`).**
+   Index the response by `ModId`, then for each checkable mod find the matching
+   `ModUpdate` (`NexusSource.ModId` is `int`, widened against `ModUpdate.ModId`
+   `long`). Resolve the imported version via
+   `container.ResolveVersion(new LatestPolicy())`; if null (no versions / no
+   `IsLatest`), skip. For each Month-present mod:
+   - **Pin check:** if `container.ReconciledLatestFileUpdate ==
+     update.LatestFileUpdate` (raw `long` equality, both Unix seconds from the
+     same Month endpoint), skip entirely (no tolerance check, no per-mod call,
+     flag state unchanged). The pin is cleared on `AddVersion` (a new import
+     forces re-evaluation).
+   - **Tolerance check:** when `RemoteUploadedAt` is non-null, if
+     `LatestFileUpdateUtc <= (RemoteUploadedAt ?? ImportedAt) + 10s`, suppress
+     (not flagged) + pin. The Month endpoint's `latest_file_update` and the
+     per-mod `files.json` endpoint's `uploaded_timestamp` can disagree by 1+
+     seconds for the same upload (two different API endpoints); the tolerance
+     absorbs that jitter. The tolerance is NOT applied when `RemoteUploadedAt`
+     is null (the `ImportedAt` fallback has no fixed relationship to the remote
+     publish date, so a strict `>` comparison preserves the prior behavior).
+   - **Flag:** otherwise, if `LatestFileUpdateUtc > (RemoteUploadedAt ??
+     ImportedAt)`, flag it for reconciliation. Use `LatestFileUpdate`, NOT
+     `LatestModActivity` (the latter includes page comments / endorsements /
+     edits and would flag mods that haven't gained a new file).
+7. **Reconcile flagged mods (both checks, `ReconcileFlaggedAsync`).** For each
+   flagged mod, `INexusClient.ListModFilesAsync` + resolve the latest MAIN /
+   non-archived file via `NexusModFiles.LatestMain`, then compare its
+   `UploadedTimestamp` (same `files.json` endpoint `RemoteUploadedAt` came from)
+   against `RemoteUploadedAt ?? ImportedAt`. A same-endpoint comparison is
+   reliable, unlike the Month cross-endpoint `latest_file_update` that produced
+   the flag: if `LatestMain.UploadedTimestamp <= versionDate`, the flag is a
+   false positive (cleared); if strictly greater, it is a genuine update (kept).
+   Both outcomes pin the `latest_file_update` (best-effort) so the next check
+   skips the mod unless its Month timestamp changes. A `NexusRateLimitException`
+   stops the pass (remaining mods stay flagged + unpinned, `RateLimited = true`);
+   other per-mod failures leave the mod flagged + unpinned (the next check
+   retries). `CheckAsync` returns here with `Thorough = false`.
+8. **Per-mod thorough pass (`CheckThoroughAsync` only, `FlagFromPerModLookupAsync`).**
+   For each checkable mod NOT in the Month response, `ListModFilesAsync` +
+   `NexusModFiles.LatestMain`, then compare `UploadedTimestamp` against
+   `RemoteUploadedAt ?? ImportedAt` (same publish-date basis). A
+   `NexusRateLimitException` stops the walk + the result carries `RateLimited =
+   true` with the partial flags collected so far; other per-mod failures are
+   logged + skipped.
+9. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
    lock), return the result.
 
 ### UI wiring (`UpdateCheckRunner`)
@@ -641,10 +666,26 @@ view. No construction-time cycle.
   `Thorough` flag on both methods, + the `CheckThoroughAsync` per-mod pass: the
   out-of-Month-window scenario (a mod whose latest MAIN file predates the Month
   response but is newer than the imported version), the negative case (older
-  MAIN file), the in-Month mod NOT being re-queried, archived / non-MAIN file
-  filtering, mid-pass `NexusRateLimitException` (partial results +
+  MAIN file), the two per-mod query phases (reconciliation for Month-present
+  mods + the Month-missed walk, neither double-querying), archived / non-MAIN
+  file filtering, mid-pass `NexusRateLimitException` (partial results +
   `RateLimited`), other per-mod failures (logged + skipped), + the no-auth
-  short-circuit carrying `Thorough = true`.
+  short-circuit carrying `Thorough = true`. The false-positive suppression is
+  covered directly: the 10s tolerance (jitter within tolerance is not flagged +
+  is pinned), reconciliation clearing a false positive (LatestMain not newer),
+  reconciliation keeping a genuine update, the pin short-circuit (a matching
+  `ReconciledLatestFileUpdate` skips entirely), the pin persisting across a
+  second check, no tolerance when `RemoteUploadedAt` is null (strict `>`), a
+  reconciliation failure leaving the mod flagged + unpinned, + a mid-pass rate
+  limit during reconciliation (remaining mods flagged + unpinned +
+  `RateLimited`).
+
+  `Modificus.Curator.Mods.Tests` covers the `SetReconciliation` persistence
+  (pin round-trips through `container.json` + survives a new repository
+  instance; null clears it; unknown container is a no-op), the `AddVersion`
+  pin-clearing (new version + dedup both clear it), + the backward-compatible
+  on-disk default (a manifest without `ReconciledLatestFileUpdate` deserializes
+  to `null`).
 
 The internal `NexusClient`, `NexusAuthService`, `NexusOAuthTokenStore`,
 `LoopbackBrowser`, `HttpListenerLoopbackListener`, `ModAcquisitionService`,

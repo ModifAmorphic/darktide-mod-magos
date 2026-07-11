@@ -107,8 +107,14 @@ does not actively manage the budget or avoid the wall.
 
 Only authenticated calls to `api.nexusmods.com/v1/*` count. Per operation:
 
-- **Update check:** 1 call (`ModUpdatesAsync`) per profile load (app start with
-  the restored profile, plus each profile switch). No polling, no timer.
+- **Update check:** 1 `ModUpdatesAsync` call per profile load (app start with
+  the restored profile, plus each profile switch), plus a bounded number of
+  `ListModFilesAsync` calls (one per flagged mod that exceeds the tolerance +
+  hasn't been pinned). The reconciliation pin suppresses repeat calls: once a
+  mod is reconciled, it is skipped until its Month `latest_file_update` changes
+  or a new version is imported, so a steady-state check is typically just the
+  1 Month call. A rate-limited or failed reconciliation leaves the mod unpinned,
+  so the next check retries it.
 - **Mod acquisition (download):** about 3 calls per download
   (`DownloadLinksAsync` + `GetModInfoAsync` + `ListModFilesAsync`). This is
   parity with Vortex, which Nexus's help article cites at 3 calls per download.

@@ -473,6 +473,25 @@ public partial class ModListViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Reloads the mod list and clears the update flag for the specified
+    /// container. Called after an nxm install/reinstall: the stale
+    /// <see cref="IUpdateCheckService.LastResult"/> (computed before the
+    /// version change) would re-apply the flag via
+    /// <see cref="ApplyUpdateCheckResult"/>, so this overrides it for instant
+    /// UX. The next automatic or manual check reconciles the flag (the pin
+    /// was cleared by <c>AddVersion</c>, so the mod is re-evaluated).
+    /// </summary>
+    public void ReloadAndClearUpdateFlag(Guid containerId)
+    {
+        Reload();
+        var row = Mods.FirstOrDefault(m => m.ContainerId == containerId);
+        if (row is not null)
+        {
+            row.UpdateAvailable = false;
+        }
+    }
+
+    /// <summary>
     /// The version string shown in the badge for an entry: the resolved
     /// version's tag when the container + a matching version exist; empty
     /// otherwise (an orphan pin surfaces no readable tag, since the pin is an

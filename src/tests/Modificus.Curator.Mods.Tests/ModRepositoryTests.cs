@@ -481,6 +481,121 @@ public sealed class ModRepositoryTests
         Assert.Equal(publishedAt, version.RemoteUploadedAt);
     }
 
+    // ---- SetReconciliation + ReconciledLatestFileUpdate -------------------
+
+    [Fact]
+    public void SetReconciliation_persists_the_pin_and_survives_a_new_repository_instance()
+    {
+        // The reconciliation pin round-trips through container.json: a fresh
+        // repository instance (rebuilt from disk) reads back the pinned value.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "Mod");
+        fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate);
+        var pin = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+
+        fx.Repo.SetReconciliation(container.Id, pin);
+
+        // In-memory: the pin is visible.
+        Assert.Equal(pin, fx.Repo.Get(container.Id)!.ReconciledLatestFileUpdate);
+        // On disk: a fresh repo reads it back.
+        var reloaded = fx.Reload();
+        Assert.Equal(pin, reloaded.Get(container.Id)!.ReconciledLatestFileUpdate);
+    }
+
+    [Fact]
+    public void SetReconciliation_clears_the_pin_when_passed_null()
+    {
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "Mod");
+        fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate);
+        var pin = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+        fx.Repo.SetReconciliation(container.Id, pin);
+        Assert.NotNull(fx.Repo.Get(container.Id)!.ReconciledLatestFileUpdate);
+
+        fx.Repo.SetReconciliation(container.Id, null);
+
+        Assert.Null(fx.Repo.Get(container.Id)!.ReconciledLatestFileUpdate);
+        var reloaded = fx.Reload();
+        Assert.Null(reloaded.Get(container.Id)!.ReconciledLatestFileUpdate);
+    }
+
+    [Fact]
+    public void SetReconciliation_is_a_noop_for_an_unknown_container()
+    {
+        using var fx = new RepoFixture();
+        // No throw, no side effect (the production impl logs + returns).
+        fx.Repo.SetReconciliation(Guid.NewGuid(), 12345L);
+    }
+
+    [Fact]
+    public void AddVersion_clears_the_reconciliation_pin_on_a_new_version()
+    {
+        // A new import forces re-evaluation: AddVersion clears
+        // ReconciledLatestFileUpdate to null so the next update check re-
+        // evaluates the new version (the pin was for the old version's
+        // latest_file_update).
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "Mod");
+        fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate);
+        var pin = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+        fx.Repo.SetReconciliation(container.Id, pin);
+        Assert.Equal(pin, fx.Repo.Get(container.Id)!.ReconciledLatestFileUpdate);
+
+        // A new version import clears the pin.
+        fx.Repo.AddVersion(container.Id, "2.0", EmptyPopulate);
+
+        Assert.Null(fx.Repo.Get(container.Id)!.ReconciledLatestFileUpdate);
+        // Persists through a reload.
+        var reloaded = fx.Reload();
+        Assert.Null(reloaded.Get(container.Id)!.ReconciledLatestFileUpdate);
+    }
+
+    [Fact]
+    public void AddVersion_dedup_also_clears_the_reconciliation_pin()
+    {
+        // Re-importing the same version (dedup) also clears the pin: a re-
+        // acquired version carries a fresh RemoteUploadedAt, so the old pin is
+        // stale.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "Mod");
+        fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate);
+        var pin = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+        fx.Repo.SetReconciliation(container.Id, pin);
+        Assert.Equal(pin, fx.Repo.Get(container.Id)!.ReconciledLatestFileUpdate);
+
+        fx.Repo.AddVersion(container.Id, "1.0", EmptyPopulate);
+
+        Assert.Null(fx.Repo.Get(container.Id)!.ReconciledLatestFileUpdate);
+    }
+
+    [Fact]
+    public void Container_manifest_without_ReconciledLatestFileUpdate_deserializes_to_null()
+    {
+        // Backward-compatible on disk: a manifest written before the field
+        // existed (no ReconciledLatestFileUpdate property) deserializes it to
+        // null, so the next update check re-evaluates the mod.
+        using var fx = new RepoFixture();
+        var externalId = Guid.NewGuid();
+        var externalDir = Path.Combine(fx.Folder, externalId.ToString());
+        Directory.CreateDirectory(externalDir);
+        File.WriteAllText(
+            Path.Combine(externalDir, "container.json"),
+            $$"""
+            {
+              "$kind": "nexus",
+              "Id": "{{externalId}}",
+              "Name": "Legacy",
+              "Source": { "$kind": "nexus", "ModId": 42 },
+              "Versions": []
+            }
+            """);
+
+        var reloaded = fx.Reload();
+
+        Assert.NotNull(reloaded.Get(externalId));
+        Assert.Null(reloaded.Get(externalId)!.ReconciledLatestFileUpdate);
+    }
+
     // ---- RemoveVersion -----------------------------------------------------
 
     [Fact]

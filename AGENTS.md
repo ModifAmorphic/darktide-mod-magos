@@ -260,7 +260,10 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         source has exactly one base dir with a matching <base>.mod +
                         preserves the base folder under <versionFolder>/<base>/;
                         exposes GetBaseName + FindExistingContainer peeks for the
-                        collision block).
+                        collision block; SetReconciliation persists/clears the
+                        update-check reconciliation pin
+                        ModContainer.ReconciledLatestFileUpdate, cleared on
+                        AddVersion so a new import forces re-evaluation).
   integrations/         Modificus.Curator.Integrations -- GitHub Releases client
                         (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
                         via IHttpClientFactory, typed exceptions, optional PAT)
@@ -289,16 +292,23 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         to AcquireFromNexusAsync with null nxm tokens (premium
                         path); ModFile gains an `archived` bool for the filter;
                         IUpdateCheckService the Nexus-only
-                        update-check service (1 ModUpdatesAsync call per check,
-                        intersected with the profile's LatestPolicy+NexusSource
-                        mods; compares LatestFileUpdateUtc against the imported
-                        version's RemoteUploadedAt (with an ImportedAt fallback
-                        for versions imported before that field existed); the
-                        publish-date basis, not ImportedAt, is what catches an
-                        outdated install re-acquired today (ImportedAt = now
-                        would mask it); rate-limit-aware with the all-zero
-                        Unknown guard; LastResult + CheckCompleted event for
-                        the mod-list badges; Integrations now references
+                        update-check service (1 ModUpdatesAsync Month call per
+                        check, intersected with the profile's
+                        LatestPolicy+NexusSource mods; a 10s tolerance suppresses
+                        cross-endpoint timestamp jitter between the Month
+                        latest_file_update + the per-mod files.json
+                        uploaded_timestamp when RemoteUploadedAt is present;
+                        flagged mods are reconciled via a per-mod
+                        ListModFilesAsync same-endpoint comparison that clears
+                        false positives; a reconciliation pin
+                        (ModContainer.ReconciledLatestFileUpdate, persisted via
+                        IModRepository.SetReconciliation, cleared on AddVersion)
+                        skips a mod whose Month latest_file_update hasn't changed
+                        since the last reconciliation; compares against the
+                        imported version's RemoteUploadedAt with an ImportedAt
+                        fallback; rate-limit-aware with the all-zero Unknown
+                        guard; LastResult + CheckCompleted event for the mod-list
+                        badges; Integrations now references
                         Profiles, acyclic, for IProfileService.GetModList)
   steam/                Modificus.Curator.Steam -- Steam + Darktide + Proton discovery
                         (multi-library + compatdata), IsGameRunning (WinProcessLookup

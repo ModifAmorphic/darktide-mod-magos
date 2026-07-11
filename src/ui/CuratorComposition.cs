@@ -89,7 +89,7 @@ public static class CuratorComposition
             sp.GetRequiredService<IDialogService>(),
             sp.GetRequiredService<LocalizationService>(),
             sp.GetRequiredService<ILogger<NxmModDownloadHandler>>(),
-            refreshModList: () => sp.GetRequiredService<ModListViewModel>().Reload()));
+            refreshModList: containerId => sp.GetRequiredService<ModListViewModel>().ReloadAndClearUpdateFlag(containerId)));
 
         // UI surface. MainWindow is a singleton: the desktop lifetime installs
         // the resolved instance as desktop.MainWindow, and DialogService resolves

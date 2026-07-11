@@ -483,6 +483,429 @@ public sealed class UpdateCheckServiceTests
         Assert.Single(result.Updates);
     }
 
+    // ---- tolerance + reconciliation + pinning -----------------------------
+
+    [Fact]
+    public async Task CheckAsync_does_not_flag_when_latest_file_update_is_within_tolerance_of_RemoteUploadedAt()
+    {
+        // The false-positive bug: the Month endpoint's latest_file_update can be
+        // 1+ seconds newer than the files.json uploaded_timestamp for the same
+        // upload. A jitter within the 10s tolerance (RemoteUploadedAt present)
+        // is suppressed + pinned, not flagged.
+        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var importedAt = remoteUploadedAt.AddMonths(1); // imported later (irrelevant to the compare)
+        var jitteredUpdate = remoteUploadedAt.AddSeconds(1); // 1s newer, within tolerance
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, jitteredUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // Within tolerance: not flagged. No reconciliation needed (nothing flagged).
+        Assert.Empty(result.Updates);
+        Assert.False(result.RateLimited);
+        // The mod was pinned (tolerance-suppressed), so no ListModFilesAsync call.
+        Assert.Empty(nexus.ListModFilesModIds);
+        // The pin was persisted on the container.
+        Assert.Equal(jitteredUpdate.ToUnixTimeSeconds(),
+            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
+    }
+
+    [Fact]
+    public async Task CheckAsync_reconciliation_clears_false_positive_when_LatestMain_is_not_newer()
+    {
+        // A mod whose latest_file_update is 93s newer than RemoteUploadedAt
+        // exceeds the 10s tolerance and is flagged. Reconciliation resolves the
+        // latest MAIN file via files.json (same endpoint as RemoteUploadedAt);
+        // when that file is NOT newer than the imported version, the flag is
+        // cleared (the Month jitter was a false positive, e.g. non-upload
+        // activity bumping latest_file_update).
+        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var importedAt = remoteUploadedAt.AddMonths(1);
+        var jitteredUpdate = remoteUploadedAt.AddSeconds(93); // exceeds 10s tolerance
+        // The files.json endpoint reports a MAIN file whose upload time matches
+        // the imported version (no newer file): the Month endpoint's 93s jitter
+        // was non-upload activity, not a real new file.
+        var latestMainUploaded = remoteUploadedAt;
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, jitteredUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
+            },
+            NexusRateLimits.Unknown);
+
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // Flagged by FlagFromMonth (exceeds tolerance), then cleared by
+        // reconciliation (LatestMain not newer than RemoteUploadedAt).
+        Assert.Empty(result.Updates);
+        Assert.False(result.RateLimited);
+        // The reconciliation ran + pinned the mod.
+        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
+        Assert.Equal(jitteredUpdate.ToUnixTimeSeconds(),
+            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
+    }
+
+    [Fact]
+    public async Task CheckAsync_reconciliation_keeps_flag_when_LatestMain_is_genuinely_newer()
+    {
+        // A mod that exceeds the tolerance is flagged, then reconciliation
+        // confirms a genuine update (LatestMain.UploadedTimestamp strictly
+        // greater than RemoteUploadedAt). The flag stays + the mod is pinned.
+        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var importedAt = remoteUploadedAt.AddMonths(1);
+        var monthUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
+        var latestMainUploaded = remoteUploadedAt.AddDays(15); // genuinely newer
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, monthUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
+            },
+            NexusRateLimits.Unknown);
+
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // Flagged + reconciliation confirmed: still flagged + pinned.
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
+        Assert.Equal(monthUpdate, flagged.LatestUpdateAt);
+        Assert.Equal(monthUpdate.ToUnixTimeSeconds(),
+            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
+    }
+
+    [Fact]
+    public async Task CheckAsync_skips_mod_whose_pin_matches_the_current_latest_file_update()
+    {
+        // A mod whose ReconciledLatestFileUpdate matches the Month response's
+        // latest_file_update is skipped entirely: no tolerance check, no per-mod
+        // call, no re-flag. Even though the Month timestamp would exceed the
+        // tolerance (and would flag + reconcile without the pin), the pin
+        // short-circuits the mod.
+        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var importedAt = remoteUploadedAt.AddMonths(1);
+        var jitteredUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, jitteredUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
+        // Pre-pin the container with the same latest_file_update the Month
+        // response will report (simulating a prior reconciliation).
+        repository.SetReconciliation(NexusLatestContainer, jitteredUpdate.ToUnixTimeSeconds());
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // Pinned: not flagged, no per-mod call.
+        Assert.Empty(result.Updates);
+        Assert.Empty(nexus.ListModFilesModIds);
+    }
+
+    [Fact]
+    public async Task CheckAsync_second_check_skips_a_mod_pinned_by_the_first_check()
+    {
+        // After the first check pins a tolerance-suppressed mod, the second
+        // check (same Month response) skips it entirely: no tolerance check, no
+        // per-mod call. Proves the pin is read back from the repository on the
+        // next check (the FakeModRepository.SetReconciliation updates the
+        // in-memory container, mirroring the production repo).
+        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var importedAt = remoteUploadedAt.AddMonths(1);
+        var jitteredUpdate = remoteUploadedAt.AddSeconds(5); // within tolerance
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, jitteredUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        // First check: tolerance-suppressed + pinned. No per-mod call.
+        await service.CheckAsync(ProfileId);
+        Assert.Empty(nexus.ListModFilesModIds);
+        Assert.Equal(jitteredUpdate.ToUnixTimeSeconds(),
+            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
+
+        // Second check: the pin matches, so the mod is skipped entirely. The
+        // Month call runs again (1 call per check), but still no per-mod call.
+        await service.CheckAsync(ProfileId);
+
+        Assert.Empty(nexus.ListModFilesModIds);
+        Assert.Equal(2, nexus.ModUpdatesCallCount);
+    }
+
+    [Fact]
+    public async Task CheckAsync_second_check_carries_forward_flag_when_pin_matches_for_a_genuine_update()
+    {
+        // First check: the mod exceeds the tolerance, is flagged, then
+        // reconciliation confirms a genuine update (LatestMain is newer). The
+        // flag is kept + the pin is set to the Month latest_file_update.
+        // Second check: the pin matches (latest_file_update unchanged), so the
+        // mod is NOT re-evaluated. But the flag is CARRIED FORWARD from the
+        // first check's result: a genuine update stays flagged until the user
+        // updates (AddVersion clears the pin) or the author publishes new
+        // activity (latest_file_update changes). Without the carry-forward,
+        // rebuilding the flagged list from scratch would clear the flag.
+        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var importedAt = remoteUploadedAt.AddMonths(1);
+        var monthUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
+        var latestMainUploaded = remoteUploadedAt.AddDays(15); // genuinely newer
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, monthUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
+            },
+            NexusRateLimits.Unknown);
+
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        // First check: flagged + reconciled (genuine update) + pinned.
+        var first = await service.CheckAsync(ProfileId);
+        var firstFlagged = Assert.Single(first.Updates);
+        Assert.Equal(NexusLatestContainer, firstFlagged.ContainerId);
+        Assert.Equal(monthUpdate.ToUnixTimeSeconds(),
+            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
+        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
+
+        // Second check: pin matches. The flag is carried forward (not cleared).
+        // No per-mod call (the pin short-circuits re-evaluation).
+        nexus.ListModFilesModIds.Clear();
+        var second = await service.CheckAsync(ProfileId);
+
+        var secondFlagged = Assert.Single(second.Updates);
+        Assert.Equal(NexusLatestContainer, secondFlagged.ContainerId);
+        Assert.Empty(nexus.ListModFilesModIds);
+        Assert.Equal(2, nexus.ModUpdatesCallCount);
+    }
+
+    [Fact]
+    public async Task CheckAsync_applies_no_tolerance_when_RemoteUploadedAt_is_null()
+    {
+        // The tolerance only applies when RemoteUploadedAt is present. When it's
+        // null (ImportedAt fallback), a strict > comparison is used: even a 1s
+        // jitter flags the mod (the ImportedAt basis has no fixed relationship
+        // to the remote publish date, so the tolerance would be unsound). The
+        // flag is then cleared by reconciliation (same-endpoint comparison).
+        var importedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var jitteredUpdate = importedAt.AddSeconds(1); // 1s newer
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, jitteredUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        // Reconciliation: the files.json endpoint reports a MAIN file NOT newer
+        // than importedAt, so the flag is cleared (the 1s jitter was a false
+        // positive). That reconciliation ran at all proves the strict > flagged
+        // it (tolerance would have suppressed it without a per-mod call).
+        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: importedAt),
+            },
+            NexusRateLimits.Unknown);
+
+        var repository = new FakeModRepository();
+        // RemoteUploadedAt omitted -> null.
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // No tolerance: the 1s jitter flagged it (strict >), then reconciliation
+        // cleared it (LatestMain not newer than ImportedAt).
+        Assert.Empty(result.Updates);
+        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
+    }
+
+    [Fact]
+    public async Task CheckAsync_reconciliation_failure_keeps_mod_flagged_and_unpinned()
+    {
+        // A non-rate-limit, non-cancellation failure during reconciliation (e.g.
+        // a 500) leaves the mod flagged + does NOT pin it (the next check
+        // retries).
+        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var importedAt = remoteUploadedAt.AddMonths(1);
+        var monthUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(UpdatedModId, monthUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        nexus.ModFilesThrows[UpdatedModId] = new NexusApiException(500, "server error");
+
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] = NexusContainer(
+            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // The reconciliation failure left the mod flagged.
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
+        Assert.False(result.RateLimited);
+        // NOT pinned (next check retries).
+        Assert.Null(repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
+    }
+
+    [Fact]
+    public async Task CheckAsync_reconciliation_rate_limit_stops_pass_and_sets_RateLimited()
+    {
+        // Two mods, both in the Month response + exceeding tolerance (both
+        // flagged by FlagFromMonth). The first mod's reconciliation clears the
+        // false positive (pinned); the second throws NexusRateLimitException.
+        // The pass stops: the second stays flagged + unpinned, RateLimited true.
+        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var importedAt = remoteUploadedAt.AddMonths(1);
+        var monthUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
+
+        var firstModId = UpdatedModId;   // 100 - reconciliation clears (false positive)
+        var secondModId = UnlistedModId; // 200 - throws NexusRateLimitException
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[]
+                {
+                    Update(firstModId, monthUpdate),
+                    Update(secondModId, monthUpdate),
+                },
+                NexusRateLimits.Unknown),
+        };
+        // First mod: files.json reports a MAIN file not newer than the imported
+        // version -> reconciliation clears the flag + pins.
+        nexus.ModFilesResponses[firstModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: remoteUploadedAt),
+            },
+            NexusRateLimits.Unknown);
+        // Second mod: reconciliation throws NexusRateLimitException.
+        nexus.ModFilesThrows[secondModId] = new NexusRateLimitException(429, NexusRateLimits.Unknown);
+
+        var firstContainer = NexusLatestContainer;
+        var secondContainer = Guid.NewGuid();
+
+        var repository = new FakeModRepository();
+        repository.Containers[firstContainer] = NexusContainer(
+            firstContainer, firstModId, "First Mod", importedAt, "1.0", remoteUploadedAt);
+        repository.Containers[secondContainer] = NexusContainer(
+            secondContainer, secondModId, "Second Mod", importedAt, "1.0", remoteUploadedAt);
+
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(firstContainer, new LatestPolicy()),
+                Entry(secondContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // The first mod was cleared; the second stays flagged (rate-limited
+        // before it could be reconciled).
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(secondContainer, flagged.ContainerId);
+        Assert.True(result.RateLimited);
+        // The first mod was pinned (reconciliation completed); the second was
+        // NOT (the rate-limit aborted before pinning).
+        Assert.Equal(monthUpdate.ToUnixTimeSeconds(),
+            repository.Get(firstContainer)!.ReconciledLatestFileUpdate);
+        Assert.Null(repository.Get(secondContainer)!.ReconciledLatestFileUpdate);
+        // Both mods were queried (the first cleared, the second threw).
+        Assert.Equal(new[] { firstModId, secondModId }, nexus.ListModFilesModIds);
+    }
+
     // ---- publishing + best-effort failure ---------------------------------
 
     [Fact]
@@ -700,18 +1123,21 @@ public sealed class UpdateCheckServiceTests
     }
 
     [Fact]
-    public async Task CheckThoroughAsync_skips_per_mod_lookup_for_mods_already_in_month_response()
+    public async Task CheckThoroughAsync_reconciles_in_month_mod_and_per_mod_looks_up_out_of_month_mod()
     {
-        // A mod the Month response already covered is NOT re-queried: the Month
-        // intersect handled it, so ListModFilesAsync is not called for it. A
-        // second mod (not in Month) IS queried. Proves the thorough pass
-        // complements the Month pass rather than duplicating it.
+        // The thorough path has two per-mod query phases: reconciliation (for
+        // Month-present mods that exceeded the tolerance) and the Month-missed
+        // walk (for mods NOT in the Month response). An in-Month mod is queried
+        // once by reconciliation (NOT by the Month-missed walk); an out-of-Month
+        // mod is queried once by the Month-missed walk. Neither is double-
+        // queried, proving the two phases complement rather than duplicate.
         var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var monthUpdate = importedAt.AddDays(1); // would flag the in-Month mod
+        var monthUpdate = importedAt.AddDays(1); // exceeds tolerance, flags the in-Month mod
 
         var inMonthModId = UpdatedModId; // 100
         var outOfMonthModId = UnlistedModId; // 200
-        var outOfMonthLatestMain = importedAt.AddMonths(2); // newer than imported
+        var inMonthLatestMain = importedAt.AddMonths(2);    // newer than imported: reconciliation confirms
+        var outOfMonthLatestMain = importedAt.AddMonths(2);  // newer than imported: per-mod flags
 
         var nexus = new FakeNexusClient
         {
@@ -719,8 +1145,14 @@ public sealed class UpdateCheckServiceTests
                 new[] { Update(inMonthModId, monthUpdate) },
                 NexusRateLimits.Unknown),
         };
-        // Only the out-of-Month mod stages a files response; the in-Month mod
-        // would throw if it were queried (proving it isn't).
+        // Both mods stage a files response: the in-Month mod for reconciliation,
+        // the out-of-Month mod for the Month-missed walk.
+        nexus.ModFilesResponses[inMonthModId] = new Response<ModFile[]>(
+            new[]
+            {
+                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: inMonthLatestMain),
+            },
+            NexusRateLimits.Unknown);
         nexus.ModFilesResponses[outOfMonthModId] = new Response<ModFile[]>(
             new[]
             {
@@ -746,10 +1178,11 @@ public sealed class UpdateCheckServiceTests
 
         var result = await service.CheckThoroughAsync(ProfileId);
 
-        // Both flag (in-Month via the intersect, out-of-Month via the lookup).
+        // Both flag (in-Month via reconciliation-confirmed, out-of-Month via the per-mod lookup).
         Assert.Equal(2, result.Updates.Count);
-        // Only the out-of-Month mod's files were queried.
-        Assert.Equal(new[] { outOfMonthModId }, nexus.ListModFilesModIds);
+        // Each mod is queried exactly once: the in-Month mod by reconciliation,
+        // the out-of-Month mod by the Month-missed walk. Neither is double-queried.
+        Assert.Equal(new[] { inMonthModId, outOfMonthModId }, nexus.ListModFilesModIds);
     }
 
     [Fact]
@@ -855,6 +1288,65 @@ public sealed class UpdateCheckServiceTests
         // The third mod was never queried (the walk stopped at the second).
         Assert.Equal(2, nexus.ListModFilesModIds.Count);
         Assert.DoesNotContain(thirdModId, nexus.ListModFilesModIds);
+    }
+
+    [Fact]
+    public async Task CheckThoroughAsync_skips_per_mod_walk_when_reconciliation_is_rate_limited()
+    {
+        // When ReconcileFlaggedAsync hits the rate limit mid-reconciliation, the
+        // Month-missed per-mod walk (FlagFromPerModLookupAsync) is skipped: it
+        // would issue a ListModFilesAsync call that immediately re-trips the
+        // limit, wasting one round-trip for no result. The in-Month mod stays
+        // flagged (reconciliation was aborted before it could clear the flag);
+        // the out-of-Month mod is never queried.
+        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var importedRemoteUploadedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var monthUpdate = importedRemoteUploadedAt.AddDays(1); // exceeds tolerance, flags the in-Month mod
+
+        var inMonthModId = UpdatedModId;     // 100 - in Month, flagged, reconciliation rate-limits
+        var outOfMonthModId = UnlistedModId; // 200 - NOT in Month, would be walked by the per-mod pass
+
+        var nexus = new FakeNexusClient
+        {
+            ModUpdatesResponse = new Response<ModUpdate[]>(
+                new[] { Update(inMonthModId, monthUpdate) },
+                NexusRateLimits.Unknown),
+        };
+        // The in-Month mod's reconciliation call throws the rate-limit exception,
+        // so ReconcileFlaggedAsync returns true (rate-limited) immediately.
+        nexus.ModFilesThrows[inMonthModId] = new NexusRateLimitException(
+            429, NexusRateLimits.Unknown);
+
+        var inMonthContainer = NexusLatestContainer;
+        var outOfMonthContainer = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[inMonthContainer] = NexusContainer(
+            inMonthContainer, inMonthModId, "InMonth Mod", importedAt, "1.0", importedRemoteUploadedAt);
+        repository.Containers[outOfMonthContainer] = NexusContainer(
+            outOfMonthContainer, outOfMonthModId, "OutOfMonth Mod", importedAt, "1.0", importedRemoteUploadedAt);
+
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(inMonthContainer, new LatestPolicy()),
+                Entry(outOfMonthContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckThoroughAsync(ProfileId);
+
+        // The in-Month mod stays flagged (reconciliation aborted before clearing it).
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(inMonthContainer, flagged.ContainerId);
+        Assert.True(result.RateLimited);
+        Assert.True(result.Thorough);
+        // Only the reconciliation call was made (mod 100). The per-mod walk was
+        // skipped, so the out-of-Month mod (200) was never queried: no wasted
+        // round-trip that would just re-trip the rate limit.
+        Assert.Equal(new[] { inMonthModId }, nexus.ListModFilesModIds);
+        Assert.DoesNotContain(outOfMonthModId, nexus.ListModFilesModIds);
     }
 
     [Fact]
@@ -1175,5 +1667,16 @@ public sealed class UpdateCheckServiceTests
             => throw new NotImplementedException();
         public void Rescan() => throw new NotImplementedException();
         public void Relocate(string newBasePath) => throw new NotImplementedException();
+
+        // Mirrors the production repo: rebuild the container with the new pin
+        // so the in-memory index reflects it (the next FlagFromMonth pin check
+        // reads ReconciledLatestFileUpdate off the container returned by Get).
+        public void SetReconciliation(Guid containerId, long? latestFileUpdate)
+        {
+            if (Containers.TryGetValue(containerId, out var c))
+            {
+                Containers[containerId] = c with { ReconciledLatestFileUpdate = latestFileUpdate };
+            }
+        }
     }
 }

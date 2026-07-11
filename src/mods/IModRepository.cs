@@ -23,8 +23,10 @@ namespace Modificus.Curator.Mods;
 /// never share.</para>
 /// <para>
 /// Registered via <c>AddMods()</c>; <c>ProfileService</c> depends on this
-/// for staging (the version-folder resolution seam). Concurrency is not
-/// coordinated (single-UI-thread assumption, unchanged from the prior store).</para>
+/// for staging (the version-folder resolution seam). The default implementation
+/// (<c>ModRepository</c>) synchronizes all public methods via an internal lock,
+/// so background-thread mutations (e.g. reconciliation writes from
+/// <c>UpdateCheckService</c>) are safe alongside UI-thread access.</para>
 /// </remarks>
 public interface IModRepository
 {
@@ -117,7 +119,8 @@ public interface IModRepository
     /// Integrations (the acquisition layer) owns Nexus metadata + passes it
     /// through; this seam does not know about Nexus.</param>
     /// <returns>The updated container (with the new/reused version entry
-    /// recorded).</returns>
+    /// recorded, and <see cref="ModContainer.ReconciledLatestFileUpdate"/>
+    /// cleared so the next update check re-evaluates the new version).</returns>
     /// <exception cref="KeyNotFoundException"><paramref name="containerId"/> is
     /// unknown.</exception>
     ModContainer AddVersion(
@@ -125,6 +128,22 @@ public interface IModRepository
         string versionString,
         Action<string> populateFolder,
         DateTimeOffset? remoteUploadedAt = null);
+
+    /// <summary>
+    /// Records (or clears) the <c>latest_file_update</c> timestamp this container
+    /// was last reconciled against during an update check. Used by
+    /// <c>UpdateCheckService</c> to avoid re-evaluating a mod whose Month-endpoint
+    /// timestamp hasn't changed since the last reconciliation. Persists to the
+    /// container's <c>container.json</c> manifest and updates the in-memory index.
+    /// Best-effort: a write failure is logged and swallowed (the check continues
+    /// with the in-memory value; the next check re-evaluates).
+    /// </summary>
+    /// <param name="containerId">The container to pin (or clear). A missing
+    /// container is a no-op (logged).</param>
+    /// <param name="latestFileUpdate">The raw Unix-seconds
+    /// <c>latest_file_update</c> from the Month response to pin, or <c>null</c>
+    /// to clear the pin.</param>
+    void SetReconciliation(Guid containerId, long? latestFileUpdate);
 
     /// <summary>
     /// Removes a version from the container's manifest + deletes its folder

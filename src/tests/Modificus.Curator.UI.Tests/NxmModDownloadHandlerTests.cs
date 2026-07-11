@@ -179,6 +179,37 @@ public sealed class NxmModDownloadHandlerTests
         Assert.Empty(acquisition.Dialogs.AlertCalls);
     }
 
+    [Fact]
+    public async Task HandleAsync_happy_path_invokes_refresh_with_the_acquired_container_id()
+    {
+        // The refresh callback is forwarded the container id (not just called)
+        // so the mod list can clear the stale UpdateAvailable flag for that
+        // specific container after an nxm install/reinstall.
+        var containerId = Guid.NewGuid();
+        var versionId = "version-folder-1234";
+        var acquisition = new FakeAcquisitionService
+        {
+            Config = AuthConfig(NexusAuthMethod.ApiKey),
+            Session = { ActiveProfileId = ProfileId },
+            NextResult = (containerId, versionId),
+        };
+        Guid? refreshedContainerId = null;
+        var handler = new NxmModDownloadHandler(
+            action => action(),
+            acquisition,
+            acquisition.Session,
+            acquisition.Profiles,
+            acquisition.Loader,
+            acquisition.Dialogs,
+            Localization,
+            NullLogger<NxmModDownloadHandler>.Instance,
+            refreshModList: id => refreshedContainerId = id);
+
+        await handler.HandleAsync(SampleUrl);
+
+        Assert.Equal(containerId, refreshedContainerId);
+    }
+
     // ---- error path --------------------------------------------------------
 
     [Fact]
