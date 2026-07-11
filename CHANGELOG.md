@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.4.0...v0.5.0) (2026-07-11)
+
+
+### Features
+
+* **integrations:** migrate update check to v2 GraphQL ([#77](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/77)) ([f292e46](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/f292e4692cf89d9a21db56fdab1aa39b771ec41a))
+
+
+### Bug Fixes
+
+* **integrations:** suppress false update flags from timestamp jitter ([#75](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/75)) ([8eed222](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/8eed222ce218c59647298ad90bfb3b7e32b26f76))
+
 ## [0.4.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.3.0...v0.4.0) (2026-07-10)
 
 
