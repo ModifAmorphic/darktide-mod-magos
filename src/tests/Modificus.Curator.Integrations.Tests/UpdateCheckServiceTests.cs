@@ -7,14 +7,14 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Modificus.Curator.Integrations.Tests;
 
 /// <summary>
-/// Exercises <see cref="UpdateCheckService"/> against canned Nexus responses
-/// and in-memory profile/repository fakes: the LatestPolicy + NexusSource
-/// filter, the one-API-call-per-check contract, the file-update vs.
-/// mod-activity timestamp distinction (via the fakes only ever populating
-/// <see cref="ModUpdate.LatestFileUpdate"/>), the rate-limit guard (including
-/// the all-zero <see cref="NexusRateLimits.Unknown"/> fallback), the no-auth
-/// short-circuit, the no-checkable-mods short-circuit, the best-effort failure
-/// path (API exception does not propagate), and the
+/// Exercises <see cref="UpdateCheckService"/> against canned v2 GraphQL
+/// responses and in-memory profile/repository fakes: the LatestPolicy +
+/// NexusSource filter, the one-API-call-per-check contract, the
+/// <see cref="ModUpdateStatus.ViewerUpdateAvailable"/> mapping (true flags,
+/// false + null do not), the rate-limit guard (thrown exception + header-based,
+/// including the all-zero <see cref="NexusRateLimits.Unknown"/> fallback), the
+/// no-auth short-circuit, the no-checkable-mods short-circuit, the best-effort
+/// failure path (API exception does not propagate), and the
 /// <see cref="IUpdateCheckService.LastResult"/> +
 /// <see cref="IUpdateCheckService.CheckCompleted"/> publishing contract.
 /// </summary>
@@ -32,44 +32,47 @@ public sealed class UpdateCheckServiceTests
     private const int UnlistedModId = 200;
     private const int PinnedModId = 300;
 
+    // Must match UpdateCheckService.GameId (Darktide = 4943).
+    private const int GameId = 4943;
+
     // ---- happy path + flagging --------------------------------------------
 
     [Fact]
-    public async Task CheckAsync_flags_only_nexus_latest_mods_with_newer_file_update()
+    public async Task CheckAsync_flags_mods_where_viewerUpdateAvailable_is_true()
     {
-        // Three mods in the profile:
-        //  (a) Nexus + Latest, in the API response with a newer file update -> flagged.
-        //  (b) Nexus + Latest, NOT in the API response -> not flagged.
-        //  (c) Nexus + Pinned, in the API response with a newer file update -> not flagged (pinned skipped).
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerUpdate = importedAt.AddDays(1);
-
+        // Three mods in the profile (all Nexus + Latest):
+        //  (a) viewerUpdateAvailable = true  -> flagged.
+        //  (b) viewerUpdateAvailable = true  -> flagged.
+        //  (c) viewerUpdateAvailable = false -> not flagged.
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
                 new[]
                 {
-                    Update(UpdatedModId, newerUpdate), // (a) matches + newer
-                    Update(PinnedModId, newerUpdate),  // (c) matches + newer, but pinned
+                    Status(UpdatedModId, viewerUpdateAvailable: true),
+                    Status(UnlistedModId, viewerUpdateAvailable: true),
+                    Status(PinnedModId, viewerUpdateAvailable: false),
                 },
                 NexusRateLimits.Unknown),
         };
 
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Updated Mod", importedAt, "1.0");
-        repository.Containers[NexusUnlistedContainer] =
-            NexusContainer(NexusUnlistedContainer, UnlistedModId, "Unlisted Mod", importedAt, "1.0");
-        repository.Containers[NexusPinnedContainer] =
-            NexusContainer(NexusPinnedContainer, PinnedModId, "Pinned Mod", importedAt, "1.0");
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Updated Mod", "1.0");
+        var secondContainer = Guid.NewGuid();
+        repository.Containers[secondContainer] =
+            NexusContainer(secondContainer, UnlistedModId, "Unlisted Mod", "2.0");
+        var thirdContainer = Guid.NewGuid();
+        repository.Containers[thirdContainer] =
+            NexusContainer(thirdContainer, PinnedModId, "Pinned Mod", "3.0");
 
         var profiles = new FakeProfileService
         {
             Mods = new[]
             {
                 Entry(NexusLatestContainer, new LatestPolicy()),
-                Entry(NexusUnlistedContainer, new LatestPolicy()),
-                Entry(NexusPinnedContainer, new PinnedPolicy("v1")),
+                Entry(secondContainer, new LatestPolicy()),
+                Entry(thirdContainer, new LatestPolicy()),
             },
         };
 
@@ -77,34 +80,69 @@ public sealed class UpdateCheckServiceTests
 
         var result = await service.CheckAsync(ProfileId);
 
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
-        Assert.Equal(UpdatedModId, flagged.ModId);
-        Assert.Equal("Updated Mod", flagged.ModName);
-        Assert.Equal("1.0", flagged.CurrentVersion);
-        Assert.Equal(newerUpdate, flagged.LatestUpdateAt);
+        Assert.Equal(2, result.Updates.Count);
+        Assert.Contains(result.Updates, u => u.ContainerId == NexusLatestContainer && u.ModId == UpdatedModId);
+        Assert.Contains(result.Updates, u => u.ContainerId == secondContainer && u.ModId == UnlistedModId);
+        Assert.DoesNotContain(result.Updates, u => u.ModId == PinnedModId);
         Assert.False(result.RateLimited);
 
         // Exactly 1 API call regardless of how many mods are in the profile.
-        Assert.Equal(1, nexus.ModUpdatesCallCount);
-        // The Darktide domain + Month window are passed through.
-        Assert.Equal("warhammer40kdarktide", nexus.LastGameDomain);
-        Assert.Equal(NexusPeriod.Month, nexus.LastPeriod);
+        Assert.Equal(1, nexus.GraphQlCallCount);
+        // The Darktide game id + the mod ids are passed through.
+        Assert.Equal(GameId, nexus.LastGameId);
+        Assert.Equal(new[] { UpdatedModId, UnlistedModId, PinnedModId }, nexus.LastModIds);
     }
 
     [Fact]
-    public async Task CheckAsync_with_empty_api_response_returns_empty_updates()
+    public async Task CheckAsync_returns_empty_when_no_mods_have_updates()
     {
-        // Mods exist but none appear in the API response -> nothing to flag.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        // All viewerUpdateAvailable = false (or null): nothing flags.
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[]
+                {
+                    Status(UpdatedModId, viewerUpdateAvailable: false),
+                    Status(UnlistedModId, viewerUpdateAvailable: null),
+                },
+                NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
+        var secondContainer = Guid.NewGuid();
+        repository.Containers[secondContainer] =
+            NexusContainer(secondContainer, UnlistedModId, "Mod 2", "2.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(NexusLatestContainer, new LatestPolicy()),
+                Entry(secondContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.Empty(result.Updates);
+        Assert.False(result.RateLimited);
+    }
+
+    [Fact]
+    public async Task CheckAsync_treats_null_viewerUpdateAvailable_as_no_update()
+    {
+        // A null viewerUpdateAvailable (server has no download record for the
+        // user, e.g. a manually imported mod) is treated as false: not flagged.
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: null) },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
@@ -114,72 +152,83 @@ public sealed class UpdateCheckServiceTests
         var result = await service.CheckAsync(ProfileId);
 
         Assert.Empty(result.Updates);
-        Assert.False(result.RateLimited);
     }
 
     [Fact]
-    public async Task CheckAsync_skips_pinned_mods_even_when_api_reports_update()
+    public async Task CheckAsync_flags_when_installed_version_differs_even_if_viewerUpdateAvailable_is_false()
     {
-        // A pinned mod whose ModId is in the API response (with a newer update)
-        // is NOT flagged. A second LatestPolicy + Nexus mod (NOT in the
-        // response) forces the API call to happen, so this test exercises the
-        // skip rather than the checkable-is-empty short-circuit.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerUpdate = importedAt.AddDays(1);
+        // viewerUpdateAvailable is false (the server's per-user download
+        // tracking doesn't reflect the local state: user installed an older
+        // version, uses multiple PCs, or imported manually). The version
+        // comparison catches this: installed "1.0" vs server "1.2.1" flags.
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(PinnedModId, newerUpdate) },
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: false, version: "1.2.1") },
                 NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
-        repository.Containers[NexusPinnedContainer] =
-            NexusContainer(NexusPinnedContainer, PinnedModId, "Pinned Mod", importedAt);
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Latest Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", "1.0");
         var profiles = new FakeProfileService
         {
-            Mods = new[]
-            {
-                Entry(NexusPinnedContainer, new PinnedPolicy("v1")),
-                Entry(NexusLatestContainer, new LatestPolicy()),
-            },
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
+    }
+
+    [Fact]
+    public async Task CheckAsync_does_not_flag_when_versions_match_and_viewerUpdateAvailable_is_false()
+    {
+        // Both signals agree: no update. viewerUpdateAvailable is false and the
+        // installed version matches the server's version.
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: false, version: "1.0") },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
         };
         var service = CreateService(nexus, profiles, repository);
 
         var result = await service.CheckAsync(ProfileId);
 
         Assert.Empty(result.Updates);
-        // The API WAS called (the Latest mod forced it), so the pinned mod's
-        // ModId WAS in the response and still was not flagged.
-        Assert.Equal(1, nexus.ModUpdatesCallCount);
     }
 
     [Fact]
-    public async Task CheckAsync_skips_untracked_mods_and_makes_single_api_call()
+    public async Task CheckAsync_does_not_flag_mods_missing_from_response()
     {
-        // A Nexus + Latest mod (would flag) PLUS an untracked mod. Only the
-        // Nexus one flags; the untracked one is never queried. The 1-API-call
-        // contract holds regardless of source mix.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerUpdate = importedAt.AddDays(1);
+        // The API returns fewer mods than expected (a UID did not resolve):
+        // the missing mod is simply not flagged (conservative).
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, newerUpdate) },
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: true) },
                 NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
-        repository.Containers[UntrackedContainer] =
-            NonNexusContainer(UntrackedContainer, new UntrackedSource(), "Untracked Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Found Mod", "1.0");
+        repository.Containers[NexusUnlistedContainer] =
+            NexusContainer(NexusUnlistedContainer, UnlistedModId, "Missing Mod", "2.0");
         var profiles = new FakeProfileService
         {
             Mods = new[]
             {
                 Entry(NexusLatestContainer, new LatestPolicy()),
-                Entry(UntrackedContainer, new LatestPolicy()),
+                Entry(NexusUnlistedContainer, new LatestPolicy()),
             },
         };
         var service = CreateService(nexus, profiles, repository);
@@ -188,60 +237,54 @@ public sealed class UpdateCheckServiceTests
 
         var flagged = Assert.Single(result.Updates);
         Assert.Equal(NexusLatestContainer, flagged.ContainerId);
-        Assert.Equal(1, nexus.ModUpdatesCallCount);
+        // The missing mod (UnlistedModId) was not flagged.
     }
 
     [Fact]
-    public async Task CheckAsync_skips_github_mods_and_makes_single_api_call()
+    public async Task CheckAsync_populates_LatestUpdateAt_from_updatedAt_field()
     {
-        // Analogous to the untracked test: a GitHub-sourced mod is skipped
-        // alongside the Nexus check. No GitHub code path is touched.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerUpdate = importedAt.AddDays(1);
+        // The v2 updatedAt field is surfaced as ModUpdateInfo.LatestUpdateAt
+        // for the UI's display context.
+        var updatedAt = new DateTimeOffset(2024, 6, 15, 12, 0, 0, TimeSpan.Zero);
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, newerUpdate) },
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: true, updatedAt) },
                 NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
-        repository.Containers[GitHubContainer] =
-            NonNexusContainer(GitHubContainer, new GitHubSource { Owner = "o", Repo = "r" }, "GitHub Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", "1.0");
         var profiles = new FakeProfileService
         {
-            Mods = new[]
-            {
-                Entry(NexusLatestContainer, new LatestPolicy()),
-                Entry(GitHubContainer, new LatestPolicy()),
-            },
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
         };
         var service = CreateService(nexus, profiles, repository);
 
         var result = await service.CheckAsync(ProfileId);
 
         var flagged = Assert.Single(result.Updates);
-        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
-        Assert.Equal(1, nexus.ModUpdatesCallCount);
+        Assert.Equal(updatedAt, flagged.LatestUpdateAt);
+        Assert.Equal("1.0", flagged.CurrentVersion);
+        Assert.Equal("Mod", flagged.ModName);
     }
 
     // ---- gating: no auth, no checkable mods --------------------------------
 
     [Fact]
-    public async Task CheckAsync_with_no_auth_returns_empty_without_calling_api()
+    public async Task CheckAsync_short_circuits_when_no_auth()
     {
         // AuthMethod.None -> short-circuit before the API call. Even though the
         // canned response WOULD flag a mod, the API is never hit.
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, DateTimeOffset.UtcNow) },
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: true) },
                 NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", DateTimeOffset.UtcNow.AddDays(-1));
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
@@ -252,23 +295,22 @@ public sealed class UpdateCheckServiceTests
 
         Assert.Empty(result.Updates);
         Assert.False(result.RateLimited);
-        Assert.Equal(0, nexus.ModUpdatesCallCount);
+        Assert.Equal(0, nexus.GraphQlCallCount);
     }
 
     [Fact]
-    public async Task CheckAsync_with_no_checkable_mods_returns_empty_without_calling_api()
+    public async Task CheckAsync_short_circuits_when_no_checkable_mods()
     {
         // All mods are pinned / untracked / github -> nothing to check -> the
-        // API is not called (the checkable list is empty before step 4).
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        // API is not called (the checkable list is empty).
         var nexus = new FakeNexusClient(); // unset; would serve an empty default if called
         var repository = new FakeModRepository();
         repository.Containers[NexusPinnedContainer] =
-            NexusContainer(NexusPinnedContainer, PinnedModId, "Pinned Mod", importedAt);
+            NexusContainer(NexusPinnedContainer, PinnedModId, "Pinned Mod", "1.0");
         repository.Containers[UntrackedContainer] =
-            NonNexusContainer(UntrackedContainer, new UntrackedSource(), "Untracked Mod", importedAt);
+            NonNexusContainer(UntrackedContainer, new UntrackedSource(), "Untracked Mod");
         repository.Containers[GitHubContainer] =
-            NonNexusContainer(GitHubContainer, new GitHubSource { Owner = "o", Repo = "r" }, "GitHub Mod", importedAt);
+            NonNexusContainer(GitHubContainer, new GitHubSource { Owner = "o", Repo = "r" }, "GitHub Mod");
         var profiles = new FakeProfileService
         {
             Mods = new[]
@@ -284,29 +326,73 @@ public sealed class UpdateCheckServiceTests
 
         Assert.Empty(result.Updates);
         Assert.False(result.RateLimited);
-        Assert.Equal(0, nexus.ModUpdatesCallCount);
+        Assert.Equal(0, nexus.GraphQlCallCount);
+    }
+
+    // ---- source / policy filter -------------------------------------------
+
+    [Fact]
+    public async Task CheckAsync_skips_pinned_and_untracked_and_github()
+    {
+        // A Nexus + Latest mod (would flag) PLUS a pinned Nexus mod, an untracked
+        // mod, and a GitHub mod. Only the Nexus + Latest one flags; the others
+        // are never sent to the API. The 1-API-call contract holds regardless
+        // of source/policy mix, and only the checkable mod's id is in the
+        // request.
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[]
+                {
+                    Status(UpdatedModId, viewerUpdateAvailable: true),
+                    Status(PinnedModId, viewerUpdateAvailable: true), // would flag, but pinned
+                },
+                NexusRateLimits.Unknown),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
+        repository.Containers[NexusPinnedContainer] =
+            NexusContainer(NexusPinnedContainer, PinnedModId, "Pinned Mod", "1.0");
+        repository.Containers[UntrackedContainer] =
+            NonNexusContainer(UntrackedContainer, new UntrackedSource(), "Untracked Mod");
+        repository.Containers[GitHubContainer] =
+            NonNexusContainer(GitHubContainer, new GitHubSource { Owner = "o", Repo = "r" }, "GitHub Mod");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(NexusLatestContainer, new LatestPolicy()),
+                Entry(NexusPinnedContainer, new PinnedPolicy("v1")),
+                Entry(UntrackedContainer, new LatestPolicy()),
+                Entry(GitHubContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
+        Assert.Equal(1, nexus.GraphQlCallCount);
+        // Only the checkable mod's id was sent (pinned/untracked/github excluded).
+        Assert.Equal(new[] { UpdatedModId }, nexus.LastModIds);
     }
 
     // ---- rate-limit handling ----------------------------------------------
 
     [Fact]
-    public async Task CheckAsync_reports_rate_limited_when_daily_remaining_is_zero()
+    public async Task CheckAsync_surfaces_rate_limited_when_client_throws_NexusRateLimitException()
     {
-        // DailyRemaining=0 with a real DailyLimit -> rate-limited. The per-mod
-        // comparison is skipped even though the one mod WOULD flag.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerUpdate = importedAt.AddDays(1);
+        // The client throws NexusRateLimitException (HTTP 429); the service
+        // surfaces it as a rate-limited result (not a generic failure).
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, newerUpdate) },
-                new NexusRateLimits(
-                    DailyLimit: 100, DailyRemaining: 0, DailyReset: null,
-                    HourlyLimit: 100, HourlyRemaining: 50, HourlyReset: null)),
+            GraphQlThrows = new NexusRateLimitException(429, NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
@@ -320,25 +406,48 @@ public sealed class UpdateCheckServiceTests
     }
 
     [Fact]
-    public async Task CheckAsync_reports_rate_limited_when_hourly_remaining_is_zero()
+    public async Task CheckAsync_surfaces_rate_limited_when_daily_remaining_is_zero()
     {
-        // Symmetric proof of the rate-limit guard's other window: HourlyRemaining=0
-        // with a real HourlyLimit -> rate-limited, even though DailyRemaining is
-        // healthy. The boolean expression is symmetric across both windows; this
-        // test pins the hourly half so a future edit that drops it is caught.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerUpdate = importedAt.AddDays(1);
+        // DailyRemaining=0 with a real DailyLimit -> rate-limited. The check
+        // short-circuits even though the one mod WOULD flag.
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, newerUpdate) },
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: true) },
+                new NexusRateLimits(
+                    DailyLimit: 100, DailyRemaining: 0, DailyReset: null,
+                    HourlyLimit: 100, HourlyRemaining: 50, HourlyReset: null)),
+        };
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.True(result.RateLimited);
+        Assert.Empty(result.Updates);
+    }
+
+    [Fact]
+    public async Task CheckAsync_surfaces_rate_limited_when_hourly_remaining_is_zero()
+    {
+        // Symmetric proof of the rate-limit guard's other window.
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: true) },
                 new NexusRateLimits(
                     DailyLimit: 100, DailyRemaining: 50, DailyReset: null,
                     HourlyLimit: 100, HourlyRemaining: 0, HourlyReset: null)),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
@@ -357,17 +466,15 @@ public sealed class UpdateCheckServiceTests
         // NexusRateLimits.Unknown (all zeros, headers absent) must NOT read as
         // rate-limited. A mod that would otherwise flag IS flagged (the > 0
         // guard on the limit prevents a false positive).
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerUpdate = importedAt.AddDays(1);
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, newerUpdate) },
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: true) },
                 NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
@@ -381,532 +488,41 @@ public sealed class UpdateCheckServiceTests
         Assert.Equal(NexusLatestContainer, flagged.ContainerId);
     }
 
-    // ---- RemoteUploadedAt vs ImportedAt comparison basis ------------------
+    // ---- best-effort failure -----------------------------------------------
 
     [Fact]
-    public async Task CheckAsync_uses_RemoteUploadedAt_and_flags_when_latest_file_is_newer()
+    public async Task CheckAsync_api_failure_returns_empty_and_does_not_propagate()
     {
-        // The operator's Power DI scenario: an older file is imported TODAY
-        // (ImportedAt = now) for a mod whose latest file was published in the
-        // past. The ImportedAt comparison would conclude "up to date" (now >
-        // any past upload); the RemoteUploadedAt comparison correctly flags
-        // the older install.
-        var publishedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var importedAt = publishedAt.AddMonths(6); // imported much later
-        var latestFileUpdate = publishedAt.AddDays(15); // a newer file exists
-
+        // A NexusApiException from CheckUpdatesGraphQlAsync is caught: the
+        // service returns an empty non-rate-limited result, raises
+        // CheckCompleted, and sets LastResult. The caller (fire-and-forget)
+        // never sees the throw.
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, latestFileUpdate) },
-                NexusRateLimits.Unknown),
+            GraphQlThrows = new NexusApiException(500, "server error"),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Power DI", importedAt, "1.1.19", publishedAt);
-
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
         };
         var service = CreateService(nexus, profiles, repository);
 
-        var result = await service.CheckAsync(ProfileId);
-
-        // ImportedAt > latestFileUpdate (would not flag under the old compare),
-        // but RemoteUploadedAt < latestFileUpdate, so the mod IS flagged.
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
-        Assert.Equal(latestFileUpdate, flagged.LatestUpdateAt);
-    }
-
-    [Fact]
-    public async Task CheckAsync_does_not_flag_when_RemoteUploadedAt_is_at_or_after_latest_file()
-    {
-        // The post-update scenario: a one-click update set the imported
-        // version's RemoteUploadedAt to the latest file's publish date. The
-        // next check must NOT re-flag (latest is not strictly newer than the
-        // installed file's publish date).
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var latestFileUpdate = importedAt.AddDays(1);
-        var remoteUploadedAt = latestFileUpdate; // same publish date = up to date
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, latestFileUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
+        var received = new List<UpdateCheckResult?>();
+        service.CheckCompleted += (_, r) => received.Add(r);
 
         var result = await service.CheckAsync(ProfileId);
 
-        Assert.Empty(result.Updates);
-    }
-
-    [Fact]
-    public async Task CheckAsync_falls_back_to_ImportedAt_when_RemoteUploadedAt_is_null()
-    {
-        // Versions imported before RemoteUploadedAt existed (or non-Nexus, though
-        // those are filtered out earlier) fall back to the ImportedAt comparison.
-        // A mod whose ImportedAt is older than the latest file IS flagged; one
-        // whose ImportedAt is newer is NOT. This preserves the prior behavior.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var latestFileUpdate = importedAt.AddDays(1);
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, latestFileUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        var repository = new FakeModRepository();
-        // RemoteUploadedAt omitted -> null.
-        repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod", importedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        // ImportedAt < latestFileUpdate -> flagged under the fallback compare.
-        Assert.Single(result.Updates);
-    }
-
-    // ---- tolerance + reconciliation + pinning -----------------------------
-
-    [Fact]
-    public async Task CheckAsync_does_not_flag_when_latest_file_update_is_within_tolerance_of_RemoteUploadedAt()
-    {
-        // The false-positive bug: the Month endpoint's latest_file_update can be
-        // 1+ seconds newer than the files.json uploaded_timestamp for the same
-        // upload. A jitter within the 10s tolerance (RemoteUploadedAt present)
-        // is suppressed + pinned, not flagged.
-        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var importedAt = remoteUploadedAt.AddMonths(1); // imported later (irrelevant to the compare)
-        var jitteredUpdate = remoteUploadedAt.AddSeconds(1); // 1s newer, within tolerance
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, jitteredUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        // Within tolerance: not flagged. No reconciliation needed (nothing flagged).
         Assert.Empty(result.Updates);
         Assert.False(result.RateLimited);
-        // The mod was pinned (tolerance-suppressed), so no ListModFilesAsync call.
-        Assert.Empty(nexus.ListModFilesModIds);
-        // The pin was persisted on the container.
-        Assert.Equal(jitteredUpdate.ToUnixTimeSeconds(),
-            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
+        Assert.Same(result, service.LastResult);
+        var single = Assert.Single(received);
+        Assert.Same(result, single);
     }
 
-    [Fact]
-    public async Task CheckAsync_reconciliation_clears_false_positive_when_LatestMain_is_not_newer()
-    {
-        // A mod whose latest_file_update is 93s newer than RemoteUploadedAt
-        // exceeds the 10s tolerance and is flagged. Reconciliation resolves the
-        // latest MAIN file via files.json (same endpoint as RemoteUploadedAt);
-        // when that file is NOT newer than the imported version, the flag is
-        // cleared (the Month jitter was a false positive, e.g. non-upload
-        // activity bumping latest_file_update).
-        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var importedAt = remoteUploadedAt.AddMonths(1);
-        var jitteredUpdate = remoteUploadedAt.AddSeconds(93); // exceeds 10s tolerance
-        // The files.json endpoint reports a MAIN file whose upload time matches
-        // the imported version (no newer file): the Month endpoint's 93s jitter
-        // was non-upload activity, not a real new file.
-        var latestMainUploaded = remoteUploadedAt;
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, jitteredUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
-            },
-            NexusRateLimits.Unknown);
-
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        // Flagged by FlagFromMonth (exceeds tolerance), then cleared by
-        // reconciliation (LatestMain not newer than RemoteUploadedAt).
-        Assert.Empty(result.Updates);
-        Assert.False(result.RateLimited);
-        // The reconciliation ran + pinned the mod.
-        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
-        Assert.Equal(jitteredUpdate.ToUnixTimeSeconds(),
-            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
-    }
-
-    [Fact]
-    public async Task CheckAsync_reconciliation_keeps_flag_when_LatestMain_is_genuinely_newer()
-    {
-        // A mod that exceeds the tolerance is flagged, then reconciliation
-        // confirms a genuine update (LatestMain.UploadedTimestamp strictly
-        // greater than RemoteUploadedAt). The flag stays + the mod is pinned.
-        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var importedAt = remoteUploadedAt.AddMonths(1);
-        var monthUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
-        var latestMainUploaded = remoteUploadedAt.AddDays(15); // genuinely newer
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, monthUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
-            },
-            NexusRateLimits.Unknown);
-
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        // Flagged + reconciliation confirmed: still flagged + pinned.
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
-        Assert.Equal(monthUpdate, flagged.LatestUpdateAt);
-        Assert.Equal(monthUpdate.ToUnixTimeSeconds(),
-            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
-    }
-
-    [Fact]
-    public async Task CheckAsync_skips_mod_whose_pin_matches_the_current_latest_file_update()
-    {
-        // A mod whose ReconciledLatestFileUpdate matches the Month response's
-        // latest_file_update is skipped entirely: no tolerance check, no per-mod
-        // call, no re-flag. Even though the Month timestamp would exceed the
-        // tolerance (and would flag + reconcile without the pin), the pin
-        // short-circuits the mod.
-        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var importedAt = remoteUploadedAt.AddMonths(1);
-        var jitteredUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, jitteredUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
-        // Pre-pin the container with the same latest_file_update the Month
-        // response will report (simulating a prior reconciliation).
-        repository.SetReconciliation(NexusLatestContainer, jitteredUpdate.ToUnixTimeSeconds());
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        // Pinned: not flagged, no per-mod call.
-        Assert.Empty(result.Updates);
-        Assert.Empty(nexus.ListModFilesModIds);
-    }
-
-    [Fact]
-    public async Task CheckAsync_second_check_skips_a_mod_pinned_by_the_first_check()
-    {
-        // After the first check pins a tolerance-suppressed mod, the second
-        // check (same Month response) skips it entirely: no tolerance check, no
-        // per-mod call. Proves the pin is read back from the repository on the
-        // next check (the FakeModRepository.SetReconciliation updates the
-        // in-memory container, mirroring the production repo).
-        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var importedAt = remoteUploadedAt.AddMonths(1);
-        var jitteredUpdate = remoteUploadedAt.AddSeconds(5); // within tolerance
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, jitteredUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        // First check: tolerance-suppressed + pinned. No per-mod call.
-        await service.CheckAsync(ProfileId);
-        Assert.Empty(nexus.ListModFilesModIds);
-        Assert.Equal(jitteredUpdate.ToUnixTimeSeconds(),
-            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
-
-        // Second check: the pin matches, so the mod is skipped entirely. The
-        // Month call runs again (1 call per check), but still no per-mod call.
-        await service.CheckAsync(ProfileId);
-
-        Assert.Empty(nexus.ListModFilesModIds);
-        Assert.Equal(2, nexus.ModUpdatesCallCount);
-    }
-
-    [Fact]
-    public async Task CheckAsync_second_check_carries_forward_flag_when_pin_matches_for_a_genuine_update()
-    {
-        // First check: the mod exceeds the tolerance, is flagged, then
-        // reconciliation confirms a genuine update (LatestMain is newer). The
-        // flag is kept + the pin is set to the Month latest_file_update.
-        // Second check: the pin matches (latest_file_update unchanged), so the
-        // mod is NOT re-evaluated. But the flag is CARRIED FORWARD from the
-        // first check's result: a genuine update stays flagged until the user
-        // updates (AddVersion clears the pin) or the author publishes new
-        // activity (latest_file_update changes). Without the carry-forward,
-        // rebuilding the flagged list from scratch would clear the flag.
-        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var importedAt = remoteUploadedAt.AddMonths(1);
-        var monthUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
-        var latestMainUploaded = remoteUploadedAt.AddDays(15); // genuinely newer
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, monthUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
-            },
-            NexusRateLimits.Unknown);
-
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        // First check: flagged + reconciled (genuine update) + pinned.
-        var first = await service.CheckAsync(ProfileId);
-        var firstFlagged = Assert.Single(first.Updates);
-        Assert.Equal(NexusLatestContainer, firstFlagged.ContainerId);
-        Assert.Equal(monthUpdate.ToUnixTimeSeconds(),
-            repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
-        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
-
-        // Second check: pin matches. The flag is carried forward (not cleared).
-        // No per-mod call (the pin short-circuits re-evaluation).
-        nexus.ListModFilesModIds.Clear();
-        var second = await service.CheckAsync(ProfileId);
-
-        var secondFlagged = Assert.Single(second.Updates);
-        Assert.Equal(NexusLatestContainer, secondFlagged.ContainerId);
-        Assert.Empty(nexus.ListModFilesModIds);
-        Assert.Equal(2, nexus.ModUpdatesCallCount);
-    }
-
-    [Fact]
-    public async Task CheckAsync_applies_no_tolerance_when_RemoteUploadedAt_is_null()
-    {
-        // The tolerance only applies when RemoteUploadedAt is present. When it's
-        // null (ImportedAt fallback), a strict > comparison is used: even a 1s
-        // jitter flags the mod (the ImportedAt basis has no fixed relationship
-        // to the remote publish date, so the tolerance would be unsound). The
-        // flag is then cleared by reconciliation (same-endpoint comparison).
-        var importedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var jitteredUpdate = importedAt.AddSeconds(1); // 1s newer
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, jitteredUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        // Reconciliation: the files.json endpoint reports a MAIN file NOT newer
-        // than importedAt, so the flag is cleared (the 1s jitter was a false
-        // positive). That reconciliation ran at all proves the strict > flagged
-        // it (tolerance would have suppressed it without a per-mod call).
-        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: importedAt),
-            },
-            NexusRateLimits.Unknown);
-
-        var repository = new FakeModRepository();
-        // RemoteUploadedAt omitted -> null.
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        // No tolerance: the 1s jitter flagged it (strict >), then reconciliation
-        // cleared it (LatestMain not newer than ImportedAt).
-        Assert.Empty(result.Updates);
-        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
-    }
-
-    [Fact]
-    public async Task CheckAsync_reconciliation_failure_keeps_mod_flagged_and_unpinned()
-    {
-        // A non-rate-limit, non-cancellation failure during reconciliation (e.g.
-        // a 500) leaves the mod flagged + does NOT pin it (the next check
-        // retries).
-        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var importedAt = remoteUploadedAt.AddMonths(1);
-        var monthUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(UpdatedModId, monthUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        nexus.ModFilesThrows[UpdatedModId] = new NexusApiException(500, "server error");
-
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", remoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        // The reconciliation failure left the mod flagged.
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
-        Assert.False(result.RateLimited);
-        // NOT pinned (next check retries).
-        Assert.Null(repository.Get(NexusLatestContainer)!.ReconciledLatestFileUpdate);
-    }
-
-    [Fact]
-    public async Task CheckAsync_reconciliation_rate_limit_stops_pass_and_sets_RateLimited()
-    {
-        // Two mods, both in the Month response + exceeding tolerance (both
-        // flagged by FlagFromMonth). The first mod's reconciliation clears the
-        // false positive (pinned); the second throws NexusRateLimitException.
-        // The pass stops: the second stays flagged + unpinned, RateLimited true.
-        var remoteUploadedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var importedAt = remoteUploadedAt.AddMonths(1);
-        var monthUpdate = remoteUploadedAt.AddSeconds(93); // exceeds tolerance
-
-        var firstModId = UpdatedModId;   // 100 - reconciliation clears (false positive)
-        var secondModId = UnlistedModId; // 200 - throws NexusRateLimitException
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[]
-                {
-                    Update(firstModId, monthUpdate),
-                    Update(secondModId, monthUpdate),
-                },
-                NexusRateLimits.Unknown),
-        };
-        // First mod: files.json reports a MAIN file not newer than the imported
-        // version -> reconciliation clears the flag + pins.
-        nexus.ModFilesResponses[firstModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: remoteUploadedAt),
-            },
-            NexusRateLimits.Unknown);
-        // Second mod: reconciliation throws NexusRateLimitException.
-        nexus.ModFilesThrows[secondModId] = new NexusRateLimitException(429, NexusRateLimits.Unknown);
-
-        var firstContainer = NexusLatestContainer;
-        var secondContainer = Guid.NewGuid();
-
-        var repository = new FakeModRepository();
-        repository.Containers[firstContainer] = NexusContainer(
-            firstContainer, firstModId, "First Mod", importedAt, "1.0", remoteUploadedAt);
-        repository.Containers[secondContainer] = NexusContainer(
-            secondContainer, secondModId, "Second Mod", importedAt, "1.0", remoteUploadedAt);
-
-        var profiles = new FakeProfileService
-        {
-            Mods = new[]
-            {
-                Entry(firstContainer, new LatestPolicy()),
-                Entry(secondContainer, new LatestPolicy()),
-            },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        // The first mod was cleared; the second stays flagged (rate-limited
-        // before it could be reconciled).
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(secondContainer, flagged.ContainerId);
-        Assert.True(result.RateLimited);
-        // The first mod was pinned (reconciliation completed); the second was
-        // NOT (the rate-limit aborted before pinning).
-        Assert.Equal(monthUpdate.ToUnixTimeSeconds(),
-            repository.Get(firstContainer)!.ReconciledLatestFileUpdate);
-        Assert.Null(repository.Get(secondContainer)!.ReconciledLatestFileUpdate);
-        // Both mods were queried (the first cleared, the second threw).
-        Assert.Equal(new[] { firstModId, secondModId }, nexus.ListModFilesModIds);
-    }
-
-    // ---- publishing + best-effort failure ---------------------------------
+    // ---- publishing --------------------------------------------------------
 
     [Fact]
     public async Task CheckAsync_publishes_result_via_LastResult_and_CheckCompleted()
@@ -914,15 +530,14 @@ public sealed class UpdateCheckServiceTests
         // Before the first check, LastResult is null. After a check, LastResult
         // is the returned result and CheckCompleted was raised exactly once
         // with that same result.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                Array.Empty<ModUpdateStatus>(), NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
@@ -941,55 +556,19 @@ public sealed class UpdateCheckServiceTests
         Assert.Same(result, single);
     }
 
-    [Fact]
-    public async Task CheckAsync_when_api_throws_returns_empty_and_does_not_propagate()
-    {
-        // A NexusApiException from ModUpdatesAsync is caught: the service
-        // returns an empty non-rate-limited result, raises CheckCompleted, and
-        // sets LastResult. The caller (fire-and-forget) never sees the throw.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesThrows = new NexusApiException(500, "server error"),
-        };
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var received = new List<UpdateCheckResult?>();
-        service.CheckCompleted += (_, r) => received.Add(r);
-
-        var result = await service.CheckAsync(ProfileId);
-
-        Assert.Empty(result.Updates);
-        Assert.False(result.RateLimited);
-        Assert.Same(result, service.LastResult);
-        var single = Assert.Single(received);
-        Assert.Same(result, single);
-    }
-
-    // ---- thorough vs month-only result flag --------------------------------
+    // ---- thorough vs non-thorough result flag ------------------------------
 
     [Fact]
     public async Task CheckAsync_returns_thorough_false()
     {
-        // The Month-only path stamps Thorough: false on every result branch
-        // (here the empty Month response short-circuits the intersect to empty,
-        // but Thorough is still false).
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                Array.Empty<ModUpdateStatus>(), NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
@@ -1004,18 +583,14 @@ public sealed class UpdateCheckServiceTests
     [Fact]
     public async Task CheckThoroughAsync_returns_thorough_true()
     {
-        // The thorough path stamps Thorough: true on every result branch (here
-        // the Month response is empty + no per-mod lookups are needed, but
-        // Thorough is still true).
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                Array.Empty<ModUpdateStatus>(), NexusRateLimits.Unknown),
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", importedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
@@ -1027,416 +602,46 @@ public sealed class UpdateCheckServiceTests
         Assert.True(result.Thorough);
     }
 
-    // ---- CheckThoroughAsync: the Numeric UI scenario ----------------------
-    //
-    // A Nexus+Latest mod whose latest MAIN file is OLDER than the Month window
-    // (so the Month response never lists it) but NEWER than the user's imported
-    // version. The Month-only check misses it; the thorough per-mod pass catches
-    // it via ListModFilesAsync.
-
     [Fact]
-    public async Task CheckThoroughAsync_flags_mod_outside_month_window_when_latest_main_file_is_newer_than_imported()
+    public async Task CheckThoroughAsync_same_as_CheckAsync()
     {
-        // The Numeric UI scenario: the mod was last updated on Nexus ~5 months
-        // ago, so it never appears in the Month response. The user has a year-old
-        // version imported. The thorough per-mod lookup resolves the latest MAIN
-        // file + compares its upload time against the imported version's
-        // RemoteUploadedAt, then flags it.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var importedRemoteUploadedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var latestMainUploaded = importedRemoteUploadedAt.AddMonths(1); // newer than imported
-
-        // Empty Month response: the mod is outside the window.
+        // Both CheckAsync and CheckThoroughAsync run the same v2 batch query
+        // and produce the same flagged set; they differ only in the Thorough
+        // flag. A mod with viewerUpdateAvailable=true flags under both.
         var nexus = new FakeNexusClient
         {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
-        };
-        // The per-mod lookup returns one MAIN file uploaded a month after the
-        // imported version.
-        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
-            },
-            NexusRateLimits.Unknown);
-
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Numeric UI", importedAt, "1.0", importedRemoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckThoroughAsync(ProfileId);
-
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
-        Assert.Equal(UpdatedModId, flagged.ModId);
-        Assert.Equal(latestMainUploaded, flagged.LatestUpdateAt);
-        Assert.True(result.Thorough);
-        Assert.False(result.RateLimited);
-        // The per-mod lookup was made exactly once for the one checkable mod
-        // NOT in the Month response.
-        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
-    }
-
-    [Fact]
-    public async Task CheckThoroughAsync_does_not_flag_when_latest_main_file_is_older_than_imported()
-    {
-        // The thorough pass's negative case: the latest MAIN file is older than
-        // (or equal to) the imported version's publish date. Nothing flags.
-        var importedAt = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
-        var importedRemoteUploadedAt = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
-        var latestMainUploaded = importedRemoteUploadedAt.AddMonths(-1); // older than imported
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
-        };
-        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: latestMainUploaded),
-            },
-            NexusRateLimits.Unknown);
-
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Numeric UI", importedAt, "1.0", importedRemoteUploadedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckThoroughAsync(ProfileId);
-
-        Assert.Empty(result.Updates);
-        Assert.True(result.Thorough);
-        Assert.False(result.RateLimited);
-        // The lookup still ran (the mod was not in the Month response).
-        Assert.Equal(new[] { UpdatedModId }, nexus.ListModFilesModIds);
-    }
-
-    [Fact]
-    public async Task CheckThoroughAsync_reconciles_in_month_mod_and_per_mod_looks_up_out_of_month_mod()
-    {
-        // The thorough path has two per-mod query phases: reconciliation (for
-        // Month-present mods that exceeded the tolerance) and the Month-missed
-        // walk (for mods NOT in the Month response). An in-Month mod is queried
-        // once by reconciliation (NOT by the Month-missed walk); an out-of-Month
-        // mod is queried once by the Month-missed walk. Neither is double-
-        // queried, proving the two phases complement rather than duplicate.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var monthUpdate = importedAt.AddDays(1); // exceeds tolerance, flags the in-Month mod
-
-        var inMonthModId = UpdatedModId; // 100
-        var outOfMonthModId = UnlistedModId; // 200
-        var inMonthLatestMain = importedAt.AddMonths(2);    // newer than imported: reconciliation confirms
-        var outOfMonthLatestMain = importedAt.AddMonths(2);  // newer than imported: per-mod flags
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(inMonthModId, monthUpdate) },
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: true) },
                 NexusRateLimits.Unknown),
         };
-        // Both mods stage a files response: the in-Month mod for reconciliation,
-        // the out-of-Month mod for the Month-missed walk.
-        nexus.ModFilesResponses[inMonthModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: inMonthLatestMain),
-            },
-            NexusRateLimits.Unknown);
-        nexus.ModFilesResponses[outOfMonthModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 60, categoryId: NexusModFiles.MainFileCategory, uploaded: outOfMonthLatestMain),
-            },
-            NexusRateLimits.Unknown);
-
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, inMonthModId, "InMonth Mod", importedAt);
-        var outOfMonthContainer = Guid.NewGuid();
-        repository.Containers[outOfMonthContainer] =
-            NexusContainer(outOfMonthContainer, outOfMonthModId, "OutOfMonth Mod", importedAt);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[]
-            {
-                Entry(NexusLatestContainer, new LatestPolicy()),
-                Entry(outOfMonthContainer, new LatestPolicy()),
-            },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckThoroughAsync(ProfileId);
-
-        // Both flag (in-Month via reconciliation-confirmed, out-of-Month via the per-mod lookup).
-        Assert.Equal(2, result.Updates.Count);
-        // Each mod is queried exactly once: the in-Month mod by reconciliation,
-        // the out-of-Month mod by the Month-missed walk. Neither is double-queried.
-        Assert.Equal(new[] { inMonthModId, outOfMonthModId }, nexus.ListModFilesModIds);
-    }
-
-    [Fact]
-    public async Task CheckThoroughAsync_skips_archived_and_non_main_files_in_latest_resolution()
-    {
-        // The latest-MAIN filter (NexusModFiles.LatestMain) excludes archived
-        // + non-MAIN entries. A mod whose newest file is archived, with an older
-        // non-archived MAIN file, resolves to the older MAIN file. If THAT file
-        // is older than the imported version, nothing flags.
-        var importedAt = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
-        var importedRemoteUploadedAt = new DateTimeOffset(2024, 6, 1, 0, 0, 0, TimeSpan.Zero);
-
-        var archivedMainUploaded = importedRemoteUploadedAt.AddMonths(1); // newer, but archived
-        var currentMainUploaded = importedRemoteUploadedAt.AddMonths(-1);  // older, not archived
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
-        };
-        nexus.ModFilesResponses[UpdatedModId] = new Response<ModFile[]>(
-            new[]
-            {
-                File(fileId: 70, categoryId: NexusModFiles.MainFileCategory, archived: true, uploaded: archivedMainUploaded),
-                File(fileId: 71, categoryId: NexusModFiles.MainFileCategory, archived: false, uploaded: currentMainUploaded),
-                File(fileId: 72, categoryId: 3, archived: false, uploaded: archivedMainUploaded.AddDays(1)), // miscellaneous, not MAIN
-            },
-            NexusRateLimits.Unknown);
-
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] = NexusContainer(
-            NexusLatestContainer, UpdatedModId, "Mod", importedAt, "1.0", importedRemoteUploadedAt);
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
         var profiles = new FakeProfileService
         {
             Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
         };
         var service = CreateService(nexus, profiles, repository);
 
-        var result = await service.CheckThoroughAsync(ProfileId);
+        var checkResult = await service.CheckAsync(ProfileId);
+        var thoroughResult = await service.CheckThoroughAsync(ProfileId);
 
-        // The archived MAIN (newer) is excluded; the current MAIN (older than
-        // imported) doesn't flag. The miscellaneous file is excluded too.
-        Assert.Empty(result.Updates);
-    }
-
-    [Fact]
-    public async Task CheckThoroughAsync_rate_limit_mid_pass_stops_and_returns_partial_results()
-    {
-        // Two mods, both outside the Month window. The first mod's
-        // ListModFilesAsync returns a newer MAIN file (flags); the second
-        // throws NexusRateLimitException. The pass stops + the result carries
-        // the first mod's flag + RateLimited: true. A third mod (which would
-        // also be queried) is never reached.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var importedRemoteUploadedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerMain = importedRemoteUploadedAt.AddMonths(1);
-
-        var firstModId = UpdatedModId;   // 100 - flagged before the rate-limit
-        var secondModId = UnlistedModId; // 200 - throws NexusRateLimitException
-        var thirdModId = PinnedModId;    // 300 - never reached
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
-        };
-        nexus.ModFilesResponses[firstModId] = new Response<ModFile[]>(
-            new[] { File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: newerMain) },
-            NexusRateLimits.Unknown);
-        nexus.ModFilesThrows[secondModId] = new NexusRateLimitException(
-            429, NexusRateLimits.Unknown);
-
-        var firstContainer = NexusLatestContainer;
-        var secondContainer = Guid.NewGuid();
-        var thirdContainer = Guid.NewGuid();
-
-        var repository = new FakeModRepository();
-        repository.Containers[firstContainer] = NexusContainer(
-            firstContainer, firstModId, "First Mod", importedAt, "1.0", importedRemoteUploadedAt);
-        repository.Containers[secondContainer] = NexusContainer(
-            secondContainer, secondModId, "Second Mod", importedAt, "1.0", importedRemoteUploadedAt);
-        repository.Containers[thirdContainer] = NexusContainer(
-            thirdContainer, thirdModId, "Third Mod", importedAt, "1.0", importedRemoteUploadedAt);
-
-        var profiles = new FakeProfileService
-        {
-            Mods = new[]
-            {
-                Entry(firstContainer, new LatestPolicy()),
-                Entry(secondContainer, new LatestPolicy()),
-                Entry(thirdContainer, new LatestPolicy()),
-            },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckThoroughAsync(ProfileId);
-
-        // Partial: only the first mod flagged before the rate-limit aborted.
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(firstContainer, flagged.ContainerId);
-        Assert.True(result.RateLimited);
-        Assert.True(result.Thorough);
-        // The third mod was never queried (the walk stopped at the second).
-        Assert.Equal(2, nexus.ListModFilesModIds.Count);
-        Assert.DoesNotContain(thirdModId, nexus.ListModFilesModIds);
-    }
-
-    [Fact]
-    public async Task CheckThoroughAsync_skips_per_mod_walk_when_reconciliation_is_rate_limited()
-    {
-        // When ReconcileFlaggedAsync hits the rate limit mid-reconciliation, the
-        // Month-missed per-mod walk (FlagFromPerModLookupAsync) is skipped: it
-        // would issue a ListModFilesAsync call that immediately re-trips the
-        // limit, wasting one round-trip for no result. The in-Month mod stays
-        // flagged (reconciliation was aborted before it could clear the flag);
-        // the out-of-Month mod is never queried.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var importedRemoteUploadedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var monthUpdate = importedRemoteUploadedAt.AddDays(1); // exceeds tolerance, flags the in-Month mod
-
-        var inMonthModId = UpdatedModId;     // 100 - in Month, flagged, reconciliation rate-limits
-        var outOfMonthModId = UnlistedModId; // 200 - NOT in Month, would be walked by the per-mod pass
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                new[] { Update(inMonthModId, monthUpdate) },
-                NexusRateLimits.Unknown),
-        };
-        // The in-Month mod's reconciliation call throws the rate-limit exception,
-        // so ReconcileFlaggedAsync returns true (rate-limited) immediately.
-        nexus.ModFilesThrows[inMonthModId] = new NexusRateLimitException(
-            429, NexusRateLimits.Unknown);
-
-        var inMonthContainer = NexusLatestContainer;
-        var outOfMonthContainer = Guid.NewGuid();
-        var repository = new FakeModRepository();
-        repository.Containers[inMonthContainer] = NexusContainer(
-            inMonthContainer, inMonthModId, "InMonth Mod", importedAt, "1.0", importedRemoteUploadedAt);
-        repository.Containers[outOfMonthContainer] = NexusContainer(
-            outOfMonthContainer, outOfMonthModId, "OutOfMonth Mod", importedAt, "1.0", importedRemoteUploadedAt);
-
-        var profiles = new FakeProfileService
-        {
-            Mods = new[]
-            {
-                Entry(inMonthContainer, new LatestPolicy()),
-                Entry(outOfMonthContainer, new LatestPolicy()),
-            },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckThoroughAsync(ProfileId);
-
-        // The in-Month mod stays flagged (reconciliation aborted before clearing it).
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(inMonthContainer, flagged.ContainerId);
-        Assert.True(result.RateLimited);
-        Assert.True(result.Thorough);
-        // Only the reconciliation call was made (mod 100). The per-mod walk was
-        // skipped, so the out-of-Month mod (200) was never queried: no wasted
-        // round-trip that would just re-trip the rate limit.
-        Assert.Equal(new[] { inMonthModId }, nexus.ListModFilesModIds);
-        Assert.DoesNotContain(outOfMonthModId, nexus.ListModFilesModIds);
-    }
-
-    [Fact]
-    public async Task CheckThoroughAsync_other_per_mod_failures_are_logged_and_skipped()
-    {
-        // A non-rate-limit, non-cancellation per-mod failure (e.g. a 500) is
-        // logged + skipped; the walk continues. The failing mod is NOT flagged;
-        // a later mod in the walk still is.
-        var importedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var importedRemoteUploadedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var newerMain = importedRemoteUploadedAt.AddMonths(1);
-
-        var failingModId = UpdatedModId;   // 100 - throws NexusApiException (not rate-limit)
-        var okModId = UnlistedModId;       // 200 - returns a newer MAIN file
-
-        var nexus = new FakeNexusClient
-        {
-            ModUpdatesResponse = new Response<ModUpdate[]>(
-                Array.Empty<ModUpdate>(), NexusRateLimits.Unknown),
-        };
-        nexus.ModFilesThrows[failingModId] = new NexusApiException(500, "server error");
-        nexus.ModFilesResponses[okModId] = new Response<ModFile[]>(
-            new[] { File(fileId: 50, categoryId: NexusModFiles.MainFileCategory, uploaded: newerMain) },
-            NexusRateLimits.Unknown);
-
-        var failingContainer = NexusLatestContainer;
-        var okContainer = Guid.NewGuid();
-
-        var repository = new FakeModRepository();
-        repository.Containers[failingContainer] = NexusContainer(
-            failingContainer, failingModId, "Failing Mod", importedAt, "1.0", importedRemoteUploadedAt);
-        repository.Containers[okContainer] = NexusContainer(
-            okContainer, okModId, "OK Mod", importedAt, "1.0", importedRemoteUploadedAt);
-
-        var profiles = new FakeProfileService
-        {
-            Mods = new[]
-            {
-                Entry(failingContainer, new LatestPolicy()),
-                Entry(okContainer, new LatestPolicy()),
-            },
-        };
-        var service = CreateService(nexus, profiles, repository);
-
-        var result = await service.CheckThoroughAsync(ProfileId);
-
-        // The failing mod was skipped; the OK mod flagged. No rate-limit.
-        var flagged = Assert.Single(result.Updates);
-        Assert.Equal(okContainer, flagged.ContainerId);
-        Assert.False(result.RateLimited);
-        Assert.True(result.Thorough);
-        // Both mods were queried (the walk continued past the failure).
-        Assert.Equal(2, nexus.ListModFilesModIds.Count);
-    }
-
-    [Fact]
-    public async Task CheckThoroughAsync_no_auth_short_circuits_with_thorough_true()
-    {
-        // The Month-call short-circuit (no auth) propagates to the thorough
-        // result too: the per-mod pass can't run without the byModId index, so
-        // the result is empty + Thorough: true (the thorough method was the
-        // entry point even though it short-circuited at the auth gate).
-        var nexus = new FakeNexusClient(); // never called
-        var repository = new FakeModRepository();
-        repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", DateTimeOffset.UtcNow);
-        var profiles = new FakeProfileService
-        {
-            Mods = new[] { Entry(NexusLatestContainer, new LatestPolicy()) },
-        };
-        var service = CreateService(nexus, profiles, repository, authMethod: NexusAuthMethod.None);
-
-        var result = await service.CheckThoroughAsync(ProfileId);
-
-        Assert.Empty(result.Updates);
-        Assert.True(result.Thorough);
-        Assert.False(result.RateLimited);
-        Assert.Equal(0, nexus.ModUpdatesCallCount);
-        Assert.Empty(nexus.ListModFilesModIds);
+        Assert.Single(checkResult.Updates);
+        Assert.Single(thoroughResult.Updates);
+        Assert.Equal(checkResult.Updates[0].ContainerId, thoroughResult.Updates[0].ContainerId);
+        Assert.False(checkResult.Thorough);
+        Assert.True(thoroughResult.Thorough);
+        // Both made their own API call (2 total).
+        Assert.Equal(2, nexus.GraphQlCallCount);
     }
 
     // ---- helpers + fakes ---------------------------------------------------
 
     /// <summary>
     /// Builds a Nexus-sourced <see cref="ModContainer"/> with a single
-    /// IsLatest version imported at <paramref name="importedAt"/>.
+    /// IsLatest version.
     /// </summary>
-    private static ModContainer NexusContainer(
-        Guid id, int modId, string name, DateTimeOffset importedAt, string version = "1.0",
-        DateTimeOffset? remoteUploadedAt = null) =>
+    private static ModContainer NexusContainer(Guid id, int modId, string name, string version) =>
         new()
         {
             Id = id,
@@ -1449,8 +654,7 @@ public sealed class UpdateCheckServiceTests
                     Folder = "v1",
                     VersionString = version,
                     IsLatest = true,
-                    ImportedAt = importedAt,
-                    RemoteUploadedAt = remoteUploadedAt,
+                    ImportedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero),
                 },
             },
         };
@@ -1459,8 +663,7 @@ public sealed class UpdateCheckServiceTests
     /// Builds a non-Nexus (untracked or github) <see cref="ModContainer"/> with
     /// a single IsLatest version. Used to prove non-Nexus sources are skipped.
     /// </summary>
-    private static ModContainer NonNexusContainer(
-        Guid id, ModSource source, string name, DateTimeOffset importedAt) =>
+    private static ModContainer NonNexusContainer(Guid id, ModSource source, string name) =>
         new()
         {
             Id = id,
@@ -1473,7 +676,7 @@ public sealed class UpdateCheckServiceTests
                     Folder = "v1",
                     VersionString = "1.0",
                     IsLatest = true,
-                    ImportedAt = importedAt,
+                    ImportedAt = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero),
                 },
             },
         };
@@ -1482,35 +685,28 @@ public sealed class UpdateCheckServiceTests
         new() { ContainerId = containerId, Enabled = true, Order = 0, Policy = policy };
 
     /// <summary>
-    /// Builds a <see cref="ModUpdate"/> for <paramref name="modId"/> whose
-    /// <see cref="ModUpdate.LatestFileUpdateUtc"/> equals
-    /// <paramref name="latestFileUpdateUtc"/>. Only the file-update timestamp
-    /// is populated (the mod-activity timestamp is left at zero), proving the
-    /// service reads file-update, not mod-activity.
+    /// Computes the UID the way the service + the client do:
+    /// <c>game_id * 2^32 + mod_id</c>.
     /// </summary>
-    private static ModUpdate Update(int modId, DateTimeOffset latestFileUpdateUtc) =>
-        new()
-        {
-            ModId = modId,
-            LatestFileUpdate = latestFileUpdateUtc.ToUnixTimeSeconds(),
-        };
+    private static long Uid(int modId) => (long)GameId * 4294967296L + modId;
 
     /// <summary>
-    /// Builds a <see cref="ModFile"/> with the given category / archive flag /
-    /// upload time (Unix seconds derived from <paramref name="uploaded"/>).
-    /// Used to stage per-mod <c>files.json</c> responses for the thorough pass.
+    /// Builds a <see cref="ModUpdateStatus"/> for <paramref name="modId"/> with
+    /// the given <paramref name="viewerUpdateAvailable"/> + optional
+    /// <paramref name="updatedAt"/> + <paramref name="version"/>. The version
+    /// defaults to "" so the version comparison is skipped unless a test
+    /// explicitly sets one.
     /// </summary>
-    private static ModFile File(
-        int fileId, int categoryId, DateTimeOffset uploaded, bool archived = false, string version = "1.0") =>
+    private static ModUpdateStatus Status(
+        int modId, bool? viewerUpdateAvailable, DateTimeOffset? updatedAt = null,
+        string version = "") =>
         new()
         {
-            FileId = fileId,
-            CategoryId = categoryId,
-            IsArchived = archived,
-            UploadedTimestamp = uploaded.ToUnixTimeSeconds(),
+            Uid = Uid(modId),
+            Name = "Mod " + modId,
             Version = version,
-            FileName = fileId + ".zip",
-            Name = "file " + fileId,
+            UpdatedAt = updatedAt,
+            ViewerUpdateAvailable = viewerUpdateAvailable,
         };
 
     /// <summary>
@@ -1532,60 +728,40 @@ public sealed class UpdateCheckServiceTests
     }
 
     /// <summary>
-    /// A configurable <see cref="INexusClient"/> stub. <see cref="ModUpdatesAsync"/>
-    /// is exercised by both check shapes; <see cref="ListModFilesAsync"/> is
-    /// exercised by the thorough pass. Other members throw. Tracks the call
-    /// counts + the args for the 1-call contract + domain/window assertions.
+    /// A configurable <see cref="INexusClient"/> stub. <see cref="CheckUpdatesGraphQlAsync"/>
+    /// is exercised by both check shapes. The v1 methods throw (the update
+    /// check no longer calls them). Tracks the call count + the args for the
+    /// 1-call contract + game-id/mod-ids assertions.
     /// </summary>
     private sealed class FakeNexusClient : INexusClient
     {
-        public Response<ModUpdate[]>? ModUpdatesResponse { get; set; }
-        public Exception? ModUpdatesThrows { get; set; }
-        public int ModUpdatesCallCount { get; private set; }
-        public string? LastGameDomain { get; private set; }
-        public NexusPeriod? LastPeriod { get; private set; }
+        public Response<ModUpdateStatus[]>? GraphQlResponse { get; set; }
+        public Exception? GraphQlThrows { get; set; }
+        public int GraphQlCallCount { get; private set; }
+        public int? LastGameId { get; private set; }
+        public List<int>? LastModIds { get; private set; }
 
-        // Per-mod files responses (keyed by mod id). A mod not in the
-        // dictionary returns an empty files list (no MAIN file -> nothing to
-        // flag). A mod in ModFilesThrows throws instead (used for the
-        // mid-pass rate-limit + the per-mod failure tests).
-        public Dictionary<int, Response<ModFile[]>> ModFilesResponses { get; } = new();
-        public Dictionary<int, Exception> ModFilesThrows { get; } = new();
-        public List<int> ListModFilesModIds { get; } = new();
-
-        public Task<Response<ModUpdate[]>> ModUpdatesAsync(
-            string gameDomain, NexusPeriod period, CancellationToken ct = default)
+        public Task<Response<ModUpdateStatus[]>> CheckUpdatesGraphQlAsync(
+            int gameId, IReadOnlyList<int> modIds, CancellationToken ct = default)
         {
-            ModUpdatesCallCount++;
-            LastGameDomain = gameDomain;
-            LastPeriod = period;
-            if (ModUpdatesThrows is not null)
+            GraphQlCallCount++;
+            LastGameId = gameId;
+            LastModIds = modIds.ToList();
+            if (GraphQlThrows is not null)
             {
-                return Task.FromException<Response<ModUpdate[]>>(ModUpdatesThrows);
+                return Task.FromException<Response<ModUpdateStatus[]>>(GraphQlThrows);
             }
             return Task.FromResult(
-                ModUpdatesResponse
-                    ?? new Response<ModUpdate[]>(Array.Empty<ModUpdate>(), NexusRateLimits.Unknown));
-        }
-
-        public Task<Response<ModFile[]>> ListModFilesAsync(
-            string gameDomain, int modId, CancellationToken ct = default)
-        {
-            ListModFilesModIds.Add(modId);
-            if (ModFilesThrows.TryGetValue(modId, out var ex))
-            {
-                return Task.FromException<Response<ModFile[]>>(ex);
-            }
-            if (ModFilesResponses.TryGetValue(modId, out var response))
-            {
-                return Task.FromResult(response);
-            }
-            return Task.FromResult(new Response<ModFile[]>(Array.Empty<ModFile>(), NexusRateLimits.Unknown));
+                GraphQlResponse
+                    ?? new Response<ModUpdateStatus[]>(Array.Empty<ModUpdateStatus>(), NexusRateLimits.Unknown));
         }
 
         public Task<Response<ValidateInfo>> ValidateAsync(CancellationToken ct = default)
             => throw new NotImplementedException();
         public Task<Response<OAuthUserInfo>> GetOAuthUserInfoAsync(CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public Task<Response<ModUpdate[]>> ModUpdatesAsync(
+            string gameDomain, NexusPeriod period, CancellationToken ct = default)
             => throw new NotImplementedException();
         public Task<Response<DownloadLink[]>> DownloadLinksAsync(
             string gameDomain, int modId, int fileId, CancellationToken ct = default)
@@ -1595,6 +771,9 @@ public sealed class UpdateCheckServiceTests
             string nxmKey, long expiresEpoch, CancellationToken ct = default)
             => throw new NotImplementedException();
         public Task<Response<ModInfo>> GetModInfoAsync(
+            string gameDomain, int modId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public Task<Response<ModFile[]>> ListModFilesAsync(
             string gameDomain, int modId, CancellationToken ct = default)
             => throw new NotImplementedException();
     }
@@ -1667,16 +846,5 @@ public sealed class UpdateCheckServiceTests
             => throw new NotImplementedException();
         public void Rescan() => throw new NotImplementedException();
         public void Relocate(string newBasePath) => throw new NotImplementedException();
-
-        // Mirrors the production repo: rebuild the container with the new pin
-        // so the in-memory index reflects it (the next FlagFromMonth pin check
-        // reads ReconciledLatestFileUpdate off the container returned by Get).
-        public void SetReconciliation(Guid containerId, long? latestFileUpdate)
-        {
-            if (Containers.TryGetValue(containerId, out var c))
-            {
-                Containers[containerId] = c with { ReconciledLatestFileUpdate = latestFileUpdate };
-            }
-        }
     }
 }

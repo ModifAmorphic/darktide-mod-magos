@@ -1,9 +1,10 @@
 namespace Modificus.Curator.Integrations;
 
 /// <summary>
-/// The Nexus Mods v1 REST API client. Surface: auth validation (one method per
-/// auth mode) + the endpoints the rest of the app calls through (mod updates,
-/// download links, mod-page metadata). Mirrors the existing
+/// The Nexus Mods API client. Surface: auth validation (one method per
+/// auth mode) + the endpoints the rest of the app calls through (v2 GraphQL
+/// update check, v1 REST download links, mod-page metadata, mod files).
+/// Mirrors the existing
 /// <see cref="IGitHubClient"/> shape: typed <c>HttpClient</c> via
 /// <c>AddHttpClient&lt;INexusClient, NexusClient&gt;</c>, auth applied per-request
 /// by the configured <see cref="INexusAuthMessageFactory"/>, and the parsed
@@ -52,8 +53,9 @@ public interface INexusClient
     /// <summary>
     /// Lists mods updated in the past <paramref name="period"/> for
     /// <paramref name="gameDomain"/>. Hits
-    /// <c>GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}</c>. The
-    /// one-call-per-game update check the update-check service builds on.
+    /// <c>GET /v1/games/{domain}/mods/updated.json?period={1d|1w|1m}</c>.
+    /// Retained on the v1 API surface; the update check no longer calls it
+    /// (it uses <see cref="CheckUpdatesGraphQlAsync"/>).
     /// </summary>
     Task<Response<ModUpdate[]>> ModUpdatesAsync(
         string gameDomain,
@@ -105,5 +107,35 @@ public interface INexusClient
     Task<Response<ModFile[]>> ListModFilesAsync(
         string gameDomain,
         int modId,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Queries the v2 GraphQL <c>modsByUid</c> endpoint for the update status of
+    /// multiple mods in a single API call. Computes UIDs from the game id + mod
+    /// id (<c>uid = game_id * 2^32 + mod_id</c>). Returns
+    /// <see cref="ModUpdateStatus"/> for each mod, carrying the server-computed
+    /// <see cref="ModUpdateStatus.ViewerUpdateAvailable"/> field (true if the mod
+    /// has been updated since the user last downloaded it).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Replaces the v1 <see cref="ModUpdatesAsync"/> Month-endpoint approach for
+    /// the update check. The v2 batch query covers all requested mods in one
+    /// call, regardless of when they were last updated (no Month window
+    /// limitation), and the server computes the update signal directly (no
+    /// client-side timestamp comparison, tolerance, or reconciliation).</para>
+    /// <para>
+    /// Auth + app-identification headers are the same as v1 (applied per-request
+    /// by the configured <see cref="INexusAuthMessageFactory"/>). Rate-limit
+    /// headers are parsed onto the returned <see cref="Response{T}"/> the same
+    /// way. Throws <see cref="NexusRateLimitException"/> on HTTP 429 / exhausted
+    /// rate-limit headers; <see cref="NexusApiException"/> on other failures
+    /// (including GraphQL-level errors in a 200 OK body).</para>
+    /// </remarks>
+    /// <param name="gameId">The Nexus game id (Darktide is 4943).</param>
+    /// <param name="modIds">The Nexus mod ids to check.</param>
+    Task<Response<ModUpdateStatus[]>> CheckUpdatesGraphQlAsync(
+        int gameId,
+        IReadOnlyList<int> modIds,
         CancellationToken ct = default);
 }

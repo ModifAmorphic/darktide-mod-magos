@@ -63,9 +63,8 @@ internal sealed class ModRepository : IModRepository
     // temp root). The DI constructor wires the real path-root comparison.
     private readonly Func<string, string, bool> _sameVolume;
 
-    // Serializes all public method access so a background-thread write (e.g.
-    // SetReconciliation from UpdateCheckService) cannot race a UI-thread write
-    // (e.g. AddVersion) on the in-memory index or the manifests. Coarse
+    // Serializes all public method access so a background-thread write cannot
+    // race a UI-thread write on the in-memory index or the manifests. Coarse
     // locking is acceptable: the operations are infrequent and the dictionaries
     // are small. The lock is reentrant (Monitor), so a public method that
     // delegates to another public method on the same thread (e.g.
@@ -286,29 +285,10 @@ internal sealed class ModRepository : IModRepository
                     versionString, containerId, folder);
             }
 
-            var updated = container with { Versions = versions, ReconciledLatestFileUpdate = null };
+            var updated = container with { Versions = versions };
             _byId[containerId] = updated;
             WriteContainer(updated, baseFolder);
             return updated;
-        }
-    }
-
-    /// <inheritdoc />
-    public void SetReconciliation(Guid containerId, long? latestFileUpdate)
-    {
-        lock (_sync)
-        {
-            if (!_byId.TryGetValue(containerId, out var container))
-            {
-                _logger.LogDebug(
-                    "SetReconciliation: container {Id} not found; no-op.", containerId);
-                return;
-            }
-
-            var baseFolder = EnsureBaseFolder();
-            var updated = container with { ReconciledLatestFileUpdate = latestFileUpdate };
-            _byId[containerId] = updated;
-            WriteContainer(updated, baseFolder);
         }
     }
 

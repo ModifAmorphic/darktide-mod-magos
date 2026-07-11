@@ -381,36 +381,37 @@ placement, and OS registration) is in
 ## Update check
 
 The `IUpdateCheckService` (Integrations) is the Nexus-only update check.
-On profile load it calls `ModUpdatesAsync("warhammer40kdarktide", Month)` once,
-intersects the response with the active profile's `LatestPolicy` +
-`NexusSource` mods, suppresses small cross-endpoint timestamp jitter via a 10s
-tolerance (the Month endpoint's `latest_file_update` and the per-mod
-`files.json` endpoint's `uploaded_timestamp` can disagree by 1+ seconds for the
-same upload), flags the remainder, then reconciles each flagged mod via a
-per-mod `ListModFilesAsync` same-endpoint comparison that clears false positives
-the Month jitter produced. The comparison is against the imported version's
-`RemoteUploadedAt` (the file-publish time, not mod-page activity, which would
-false-positive on comments), with an `ImportedAt` fallback for versions imported
-before that field existed. A reconciliation pin on each container
-(`ReconciledLatestFileUpdate`) records the `latest_file_update` it was last
-reconciled against, so a mod whose Month timestamp hasn't changed is skipped on
-the next check (cleared on `AddVersion`). `PinnedPolicy`, `UntrackedSource`, and
-`GitHubSource` mods are skipped. Rate-limit-aware: if the response reports an
-exhausted daily or hourly quota (and the limit was actually reported, guarding
-against the all-zero header-absent fallback), the result is flagged
-`RateLimited` and the mod-list UI surfaces a "check incomplete" indicator
-rather than "all up to date." The full rate-limiting strategy (what Curator
-observes, how it reacts, what it does not do, and what consumes the budget) is
-documented in [Nexus API rate limiting](nexus-rate-limiting.md).
+On profile load it calls the v2 GraphQL `modsByUid` batch query once (1 API call
+for all checkable mods), passing the UIDs of the active profile's `LatestPolicy` +
+`NexusSource` mods (uid = `game_id * 2^32 + mod_id`, Darktide game_id = 4943).
+The server returns the `viewerUpdateAvailable` field for each mod: a
+server-computed Boolean that is true if the mod has been updated since the viewer
+(current user) last downloaded it. This eliminates the v1 approach's
+Month-endpoint intersect, cross-endpoint timestamp tolerance, per-mod
+reconciliation, and reconciliation pinning: the server tracks the user's
+downloads and computes the signal directly. A `null` `viewerUpdateAvailable`
+(server has no download record, e.g. a manually imported mod) is treated as
+false (not flagged). `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods
+are skipped. Rate-limit-aware: if the client throws `NexusRateLimitException`
+(HTTP 429 / exhausted headers) or the response reports an exhausted daily or
+hourly quota (and the limit was actually reported, guarding against the all-zero
+header-absent fallback), the result is flagged `RateLimited` and the mod-list UI
+surfaces a "check incomplete" indicator rather than "all up to date." The full
+rate-limiting strategy (what Curator observes, how it reacts, what it does not
+do, and what consumes the budget) is documented in
+[Nexus API rate limiting](nexus-rate-limiting.md).
 
-The result (`UpdateCheckResult` with per-mod `ModUpdateInfo`) is published via
-`LastResult` + a `CheckCompleted` event for the mod-list badges to consume
-without re-awaiting. The check is fired fire-and-forget by `UpdateCheckRunner`
-(UI), which subscribes to `IProfileSession.PropertyChanged` filtered to
-`ActiveProfileId` (startup-with-restored-id + active-profile switch). The
-service itself has no UI; the mod-list UI consumes `LastResult` /
-`CheckCompleted` to render per-row "update available" badges + the per-mod
-Update button (which calls `IModAcquisitionService`). The public surface is in
+`CheckThoroughAsync` (the manual "check now" affordance) runs the same v2 batch
+query as `CheckAsync`; the two differ only in the result's `Thorough` flag (kept
+for the mod-list UI's result-surface contract). The result (`UpdateCheckResult`
+with per-mod `ModUpdateInfo`) is published via `LastResult` + a
+`CheckCompleted` event for the mod-list badges to consume without re-awaiting.
+The check is fired fire-and-forget by `UpdateCheckRunner` (UI), which subscribes
+to `IProfileSession.PropertyChanged` filtered to `ActiveProfileId`
+(startup-with-restored-id + active-profile switch). The service itself has no
+UI; the mod-list UI consumes `LastResult` / `CheckCompleted` to render per-row
+"update available" badges + the per-mod Update button (which calls
+`IModAcquisitionService`). The public surface is in
 [integrations reference](../reference/src/integrations.md).
 
 ## App self-update

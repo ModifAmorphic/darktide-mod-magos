@@ -21,8 +21,8 @@ public static class ServiceCollectionExtensions
     /// The acquisition service (download + extract + place orchestration over
     /// <see cref="INexusClient"/> + <see cref="IModImportService"/>) is a
     /// singleton; both the nxm download handler and the per-mod update
-    /// button resolve it. The update-check service (one-call Nexus
-    /// recently-updated query intersected with the active profile's
+    /// button resolve it. The update-check service (one-call v2 GraphQL
+    /// <c>modsByUid</c> batch query for the active profile's
     /// LatestPolicy + NexusSource mods) is a singleton; the mod-list view binds badges to
     /// its <see cref="IUpdateCheckService.LastResult"/> + subscribes to
     /// <see cref="IUpdateCheckService.CheckCompleted"/>.
@@ -143,8 +143,8 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers the Nexus update-check service. Orchestrates the one-call
-    /// recently-updated query against the active profile's LatestPolicy +
+    /// Registers the Nexus update-check service. Queries the v2 GraphQL
+    /// <c>modsByUid</c> batch endpoint for the active profile's LatestPolicy +
     /// NexusSource mods via <see cref="INexusClient"/> +
     /// <see cref="IModRepository"/> + <see cref="Profiles.IProfileService"/>.
     /// Singleton: holds the last result (<see cref="IUpdateCheckService.LastResult"/>)

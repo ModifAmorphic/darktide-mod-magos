@@ -218,10 +218,10 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
         var resolvedFileName = !string.IsNullOrWhiteSpace(fileName) ? fileName! : modId + ".zip";
 
         // The publish timestamp (Unix seconds on ModFile) becomes the imported
-        // version's RemoteUploadedAt, the basis for the update-check comparison.
-        // A zero timestamp (the wire default when the field is absent on every
-        // entry, e.g. a stub payload) is treated as "unknown" -> null, so the
-        // check falls back to ImportedAt rather than comparing against epoch.
+        // version's RemoteUploadedAt: provenance for the acquisition layer (when
+        // the file was published on Nexus). A zero timestamp (the wire default
+        // when the field is absent on every entry, e.g. a stub payload) is
+        // treated as "unknown" -> null.
         DateTimeOffset? remoteUploadedAt = (uploadedTimestamp is null or 0)
             ? null
             : DateTimeOffset.FromUnixTimeSeconds(uploadedTimestamp.Value);

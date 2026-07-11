@@ -3,39 +3,28 @@ using Modificus.Curator.Mods;
 namespace Modificus.Curator.Integrations;
 
 /// <summary>
-/// Checks a profile's Nexus-sourced mods for available updates. Two check
-/// shapes share the same <see cref="LastResult"/> / <see cref="CheckCompleted"/>
-/// surface: <see cref="CheckAsync"/> (fired on profile load + the periodic
-/// timer) and <see cref="CheckThoroughAsync"/> (the manual "check now"
-/// affordance, which also catches mods whose latest release predates the Month
-/// window). Both intersect the Nexus "recently updated" Month response with the
-/// profile's <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods,
-/// suppress small cross-endpoint timestamp jitter via a tolerance, flag the
-/// remainder, then reconcile each flagged mod via a per-mod
-/// <c>ListModFilesAsync</c> same-endpoint comparison that clears false
-/// positives. A reconciliation pin on each container records the
-/// <c>latest_file_update</c> it was last reconciled against, so a mod whose
-/// Month timestamp hasn't changed is skipped on the next check.
+/// Checks a profile's Nexus-sourced mods for available updates. Both check
+/// shapes (<see cref="CheckAsync"/> + <see cref="CheckThoroughAsync"/>) run the
+/// same v2 GraphQL <c>modsByUid</c> batch query (1 API call for all mods) and
+/// rely on the server-computed <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>
+/// field as the update signal: true if the mod has been updated since the user
+/// last downloaded it. They differ only in the result's
+/// <see cref="UpdateCheckResult.Thorough"/> flag (kept for the mod-list UI's
+/// result-surface contract).
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Scope.</b> Nexus-only: GitHub is out of v1 (no GitHub code
+/// <b>Scope.</b> Nexus-only: GitHub is out of scope (no GitHub code
 /// paths anywhere in the check), and Untracked mods have no remote to query.
 /// <see cref="PinnedPolicy"/> mods are frozen by definition, so they are skipped
 /// too. Only <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods are
 /// checked.</para>
 /// <para>
-/// <b>Two check shapes, one result surface.</b> Both shapes share the Month
-/// call, the tolerance-suppress + flag intersect, and the per-mod
-/// reconciliation of flagged mods (bounded by pinning: once a mod is
-/// reconciled, it is skipped until its Month timestamp changes or a new version
-/// is imported). The thorough check additionally makes one
-/// <c>ListModFilesAsync</c> call per profile mod NOT in the Month response (so a
-/// mod whose latest release predates the Month window, like one last updated
-/// several months ago, is still caught). The result's
-/// <see cref="UpdateCheckResult.Thorough"/> flag tells the UI which shape
-/// produced it, so the mod-list header can hint "recent updates only, click
-/// refresh for a complete check" after a non-thorough pass.</para>
+/// <b>One query, all mods.</b> The v2 <c>modsByUid</c> query takes a batch of
+/// mod UIDs (<c>game_id * 2^32 + mod_id</c>) and returns the update status for
+/// each in a single call. There is no Month-window limitation, no client-side
+/// timestamp comparison, no tolerance, and no per-mod reconciliation: the server
+/// tracks the user's downloads and computes the signal directly.</para>
 /// <para>
 /// <b>Best-effort, never throws to the caller.</b> The check is fire-and-forget;
 /// the UI layer fires it on profile load. A transient API failure, a missing
@@ -47,26 +36,12 @@ namespace Modificus.Curator.Integrations;
 public interface IUpdateCheckService
 {
     /// <summary>
-    /// The periodic check: queries the Nexus "recently updated" Month endpoint
-    /// once (one API call), intersects with the profile's
-    /// <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods, suppresses
-    /// small cross-endpoint timestamp jitter via a tolerance, flags the
-    /// remainder, then reconciles each flagged mod via a per-mod
-    /// <c>ListModFilesAsync</c> same-endpoint comparison that clears false
-    /// positives. Used by the periodic timer + the profile-load trigger. The
-    /// result has <see cref="UpdateCheckResult.Thorough"/> = <c>false</c>: mods
-    /// whose latest release predates the Month window are NOT caught here (use
-    /// <see cref="CheckThoroughAsync"/> for those).
+    /// The periodic check: queries the Nexus v2 GraphQL <c>modsByUid</c> batch
+    /// endpoint once (one API call for all checkable mods) and flags each mod
+    /// whose server-computed <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>
+    /// is true. Used by the periodic timer + the profile-load trigger. The
+    /// result has <see cref="UpdateCheckResult.Thorough"/> = <c>false</c>.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Reconciliation is bounded by pinning: once a mod is reconciled (found
-    /// up-to-date or genuinely flagged), its <c>latest_file_update</c> is
-    /// pinned on the container, so the next check skips it entirely until the
-    /// Month timestamp changes or a new version is imported. A rate-limited or
-    /// failed reconciliation leaves the mod flagged + unpinned (the next check
-    /// retries).</para>
-    /// </remarks>
     /// <param name="profileId">The profile whose mods to check.</param>
     /// <param name="ct">Cancellation token. Honored during the Nexus API call;
     /// <see cref="OperationCanceledException"/> propagates (cancellation is not
@@ -80,33 +55,18 @@ public interface IUpdateCheckService
     Task<UpdateCheckResult> CheckAsync(Guid profileId, CancellationToken ct = default);
 
     /// <summary>
-    /// The thorough check: does everything <see cref="CheckAsync"/> does (Month
-    /// call, tolerance-suppress + flag, per-mod reconciliation of flagged
-    /// mods), AND for each profile Nexus+Latest mod NOT in the Month response
-    /// calls <c>ListModFilesAsync</c> to resolve the latest MAIN / non-archived
-    /// file (category_id 1, newest by <see cref="ModFile.UploadedTimestamp"/>),
-    /// then compares that file's upload date against
-    /// <c>resolved.RemoteUploadedAt ?? resolved.ImportedAt</c>. Catches mods
-    /// whose latest release predates the Month window (a non-thorough check
-    /// misses them). Used by the manual "check now" affordance. The result has
-    /// <see cref="UpdateCheckResult.Thorough"/> = <c>true</c>.
-    /// <para>
-    /// Rate-limit-aware: if the Month call is rate-limited, the per-mod pass is
-    /// skipped + the result has <see cref="UpdateCheckResult.RateLimited"/> =
-    /// <c>true</c>. If a <c>ListModFilesAsync</c> call throws
-    /// <see cref="NexusRateLimitException"/> mid-pass (during reconciliation or
-    /// the Month-missed walk), the pass stops + returns what's flagged so far
-    /// with <see cref="UpdateCheckResult.RateLimited"/> = <c>true</c> (partial
-    /// results, not an empty result). Other per-mod failures are logged +
-    /// skipped (the pass continues; one mod's transient failure must not abort
-    /// the whole check).</para>
+    /// The thorough check. Runs the same v2 GraphQL <c>modsByUid</c> batch
+    /// query as <see cref="CheckAsync"/> (the v2 query covers all mods in one
+    /// call; there is no Month-only vs thorough distinction). Kept for
+    /// interface compatibility: the result has
+    /// <see cref="UpdateCheckResult.Thorough"/> = <c>true</c>, which the mod-list
+    /// UI uses to clear the "recent updates only" notice after a manual "check
+    /// now" action.
     /// </summary>
     /// <param name="profileId">The profile whose mods to check.</param>
     /// <param name="ct">Cancellation token. <see cref="OperationCanceledException"/>
-    /// propagates; other exceptions are caught + surfaced as an empty / partial
-    /// result.</param>
-    /// <returns>The check result (partial if a mid-pass rate-limit was hit).
-    /// Never throws for non-cancellation failures.</returns>
+    /// propagates; other exceptions are caught + surfaced as an empty result.</param>
+    /// <returns>The check result. Never throws for non-cancellation failures.</returns>
     Task<UpdateCheckResult> CheckThoroughAsync(Guid profileId, CancellationToken ct = default);
 
     /// <summary>
@@ -139,28 +99,27 @@ public interface IUpdateCheckService
 }
 
 /// <summary>
-/// The result of an update check: the mods with a potential update available,
-/// the check timestamp, whether the check was rate-limited, and whether it was
-/// the thorough per-mod pass.
+/// The result of an update check: the mods with an update available, the check
+/// timestamp, whether the check was rate-limited, and whether it was the
+/// thorough path.
 /// </summary>
-/// <param name="Updates">The mods with a potential update available (the
-/// API's latest file-update timestamp, or the latest MAIN file's upload time
-/// for the thorough pass's per-mod lookups, is newer than the imported
-/// version's date). May be empty (no updates, or the check was short-circuited
-/// by no auth / no checkable mods / a rate limit / an API failure).</param>
+/// <param name="Updates">The mods with an update available (the v2
+/// <c>viewerUpdateAvailable</c> field is true). May be empty (no updates, or the
+/// check was short-circuited by no auth / no checkable mods / a rate limit / an
+/// API failure).</param>
 /// <param name="CheckedAt">When the check ran (UTC).</param>
-/// <param name="RateLimited"><c>true</c> if the check was skipped (or aborted
-/// mid-pass) because the Nexus daily or hourly quota was reported exhausted.
-/// The mod-list view surfaces a "check incomplete" indicator rather than "all up to date"
-/// in this case, so the user understands the badges may not reflect the latest
+/// <param name="RateLimited"><c>true</c> if the check was skipped (or aborted)
+/// because the Nexus daily or hourly quota was reported exhausted. The mod-list
+/// view surfaces a "check incomplete" indicator rather than "all up to date" in
+/// this case, so the user understands the badges may not reflect the latest
 /// state.</param>
 /// <param name="Thorough"><c>true</c> if this result came from
 /// <see cref="IUpdateCheckService.CheckThoroughAsync"/> (the manual "check now"
-/// path that also catches mods outside the Month window); <c>false</c> if it
-/// came from the Month-only <see cref="IUpdateCheckService.CheckAsync"/>. The
-/// mod-list view uses this to hint "recent updates only, click refresh for a complete
-/// check" after a Month-only pass, so the user understands the badges may not
-/// reflect every available update.</param>
+/// path); <c>false</c> if it came from the periodic
+/// <see cref="IUpdateCheckService.CheckAsync"/>. Both paths run the same v2
+/// batch query (the query covers all mods regardless), so the flag no longer
+/// signals a coverage difference; it is kept for the mod-list UI's
+/// "recent updates only" notice contract (cleared after a thorough check).</param>
 public sealed record UpdateCheckResult(
     IReadOnlyList<ModUpdateInfo> Updates,
     DateTimeOffset CheckedAt,
@@ -180,9 +139,9 @@ public sealed record UpdateCheckResult(
 /// <param name="CurrentVersion">The currently imported version's display tag
 /// (from <see cref="ModVersion.VersionString"/>, resolved via
 /// <see cref="ModContainer.ResolveVersion"/> with a <see cref="LatestPolicy"/>).</param>
-/// <param name="LatestUpdateAt">The Nexus-reported latest file-update time
-/// (UTC), from <see cref="ModUpdate.LatestFileUpdateUtc"/>. The mod-list view may show
-/// this as "updated &lt;date&gt;" context.</param>
+/// <param name="LatestUpdateAt">The mod's last update time on Nexus (UTC),
+/// from the v2 <c>updatedAt</c> field. The mod-list view may show this as
+/// "updated &lt;date&gt;" context.</param>
 public sealed record ModUpdateInfo(
     Guid ContainerId,
     int ModId,

@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using Modificus.Curator.Config;
 using Modificus.Curator.General;
@@ -160,6 +162,68 @@ internal sealed class NexusClient : INexusClient
         return new Response<ModFile[]>(files, wrapped.RateLimits);
     }
 
+    /// <inheritdoc />
+    public async Task<Response<ModUpdateStatus[]>> CheckUpdatesGraphQlAsync(
+        int gameId,
+        IReadOnlyList<int> modIds,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(modIds);
+
+        // Compute UIDs: uid = game_id * 2^32 + mod_id. The GraphQL variable
+        // type is [ID!]! and the ID scalar is serialized as a string, so the
+        // UIDs are stringified for the variables object.
+        var uids = modIds
+            .Select(id => ((long)gameId * 4294967296L + id).ToString(CultureInfo.InvariantCulture))
+            .ToArray();
+
+        var body = new GraphQlRequest
+        {
+            Query = ModsByUidQuery,
+            Variables = new GraphQlVariables { Uids = uids },
+        };
+        var json = JsonSerializer.Serialize(body);
+
+        var uri = RelativeUri("v2/graphql");
+
+        // A content factory (not a single HttpContent instance) so the 401-retry
+        // path in SendRawAsync can create a fresh, unreadable body for the retry
+        // (HttpContent is single-use for sending).
+        Func<HttpContent> contentFactory = () =>
+        {
+            var content = new StringContent(json, Encoding.UTF8);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            return content;
+        };
+
+        using var response = await SendRawAsync(
+            HttpMethod.Post, uri, ct, isRetry: false, contentFactory).ConfigureAwait(false);
+        var payload = await ReadAsync<GraphQlResponse<ModsByUidData>>(response, ct).ConfigureAwait(false);
+        var limits = NexusRateLimitsParser.Parse(response);
+        LogRateLimits(uri, limits);
+
+        // A 200 OK can still carry GraphQL-level errors in the body. Surface
+        // them as a NexusApiException so the caller's best-effort catch handles
+        // them uniformly (the update check logs + returns an empty result).
+        if (payload.Errors is { Length: > 0 })
+        {
+            var message = string.Join("; ", payload.Errors.Select(e => e.Message));
+            _logger.LogError("Nexus GraphQL response carried errors: {Message}", message);
+            throw new NexusApiException((int)response.StatusCode, message);
+        }
+
+        var nodes = payload.Data?.ModsByUid?.Nodes ?? Array.Empty<ModUpdateStatus>();
+        return new Response<ModUpdateStatus[]>(nodes, limits);
+    }
+
+    /// <summary>
+    /// The <c>modsByUid</c> GraphQL query. Requests the update status fields for
+    /// a batch of mods by UID. Whitespace is insignificant in GraphQL, so the
+    /// query is kept on one line.
+    /// </summary>
+    private const string ModsByUidQuery =
+        "query($uids: [ID!]!) { modsByUid(uids: $uids) { nodes { uid name version updatedAt viewerUpdateAvailable viewerDownloaded } totalCount } }";
+
     // ---- core send (with 401-reactive refresh + retry once) ----------------
 
     /// <summary>
@@ -211,12 +275,18 @@ internal sealed class NexusClient : INexusClient
     /// the defensive backstop). The retry path skips the gate (the refresh just
     /// produced fresh credentials; if the factory reports not-authenticated
     /// again, the 401 will resurface).
+    /// <para>
+    /// <b>Request body.</b> <paramref name="contentFactory"/> is a factory (not
+    /// a single <see cref="HttpContent"/>) because <see cref="HttpContent"/> is
+    /// single-use for sending: the 401-retry path needs a fresh body. Null (the
+    /// default) sends a bodyless request (GET / DELETE / etc.).</para>
     /// </remarks>
     private async Task<HttpResponseMessage> SendRawAsync(
         HttpMethod method,
         Uri uri,
         CancellationToken ct,
-        bool isRetry)
+        bool isRetry,
+        Func<HttpContent>? contentFactory = null)
     {
         if (!isRetry && !await _auth.IsAuthenticatedAsync(ct).ConfigureAwait(false))
         {
@@ -225,6 +295,10 @@ internal sealed class NexusClient : INexusClient
 
         // Build + send the request. The factory owns auth + app headers.
         var request = await _auth.CreateAsync(method, uri, ct).ConfigureAwait(false);
+        if (contentFactory is not null)
+        {
+            request.Content = contentFactory();
+        }
         HttpResponseMessage response;
         try
         {
@@ -246,8 +320,10 @@ internal sealed class NexusClient : INexusClient
             {
                 // Refresh succeeded: recurse once with isRetry=true. A second 401
                 // surfaces as NexusApiException (the recursive call no longer
-                // hits this branch).
-                return await SendRawAsync(method, uri, ct, isRetry: true).ConfigureAwait(false);
+                // hits this branch). The content factory is forwarded so the
+                // retry gets a fresh request body.
+                return await SendRawAsync(method, uri, ct, isRetry: true, contentFactory)
+                    .ConfigureAwait(false);
             }
 
             // Refresh not possible / failed. The original 401 propagates as a
