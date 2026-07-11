@@ -490,6 +490,16 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             }
             var latestFileUpdate = update.LatestFileUpdate;
 
+            // Skip mods whose pin already matches this latest_file_update:
+            // they were carried forward by FlagFromMonth (already reconciled
+            // in a prior check). Reconciling them again would waste a per-mod
+            // API call.
+            if (container.ReconciledLatestFileUpdate == latestFileUpdate)
+            {
+                i++;
+                continue;
+            }
+
             Response<ModFile[]> files;
             try
             {
