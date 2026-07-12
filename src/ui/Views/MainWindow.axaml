@@ -140,7 +140,7 @@
     <views:ModListView Grid.Row="1" DataContext="{Binding ModList}" />
 
     <!-- Status strip: game-running indicator + the transient launch-status note
-         + the nxm handler status (Curator / not Curator / unavailable). -->
+         + the nxm handler status (enabled / disabled / unavailable). -->
     <Border Grid.Row="2"
             BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
             BorderThickness="0,1,0,0"
@@ -160,10 +160,20 @@
                    VerticalAlignment="Center"
                    Margin="12,0,0,0"
                    IsVisible="{Binding LaunchStatusNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        <!-- nxm handler indicator: green when Curator is the registered handler
+             (IsNxmEnabled), grey otherwise (covers not registered + no platform
+             registrar). Mirrors the game-running Ellipse pair directly above. -->
+        <Ellipse Width="11" Height="11" VerticalAlignment="Center"
+                 Margin="12,0,0,0"
+                 Fill="#22A06B"
+                 IsVisible="{Binding IsNxmEnabled}" />
+        <Ellipse Width="11" Height="11" VerticalAlignment="Center"
+                 Margin="12,0,0,0"
+                 Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                 IsVisible="{Binding !IsNxmEnabled}" />
         <TextBlock Text="{Binding NxmHandlerStatusText}"
                    FontSize="{DynamicResource AppStatusFontSize}" Opacity="0.8"
                    VerticalAlignment="Center"
-                   Margin="12,0,0,0"
                    ToolTip.Tip="{Binding NxmHandlerStatusTooltip}" />
         <!--
           App self-update notice: a dismissible pill in the status strip. Shown

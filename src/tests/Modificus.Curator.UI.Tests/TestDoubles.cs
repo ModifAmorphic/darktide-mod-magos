@@ -801,6 +801,28 @@ internal class FakeModRepository : IModRepository
         _byId[containerId] = updated;
     }
 
+    public ModContainer? RenameContainer(Guid containerId, string newName)
+    {
+        if (!_byId.TryGetValue(containerId, out var container))
+        {
+            return null;
+        }
+        if (string.Equals(container.Name, newName, StringComparison.Ordinal))
+        {
+            return container;
+        }
+        // Mirror production: keep the untracked-name index consistent for
+        // untracked containers; non-untracked identity is on the source record.
+        if (container.Source is UntrackedSource)
+        {
+            _untrackedByName.Remove(container.Name);
+            _untrackedByName[newName] = container.Id;
+        }
+        var updated = container with { Name = newName };
+        _byId[containerId] = updated;
+        return updated;
+    }
+
     public string GetVersionFolderPath(Guid containerId, string versionFolder) =>
         Path.Combine(_fakeRoot, containerId.ToString(), versionFolder);
 

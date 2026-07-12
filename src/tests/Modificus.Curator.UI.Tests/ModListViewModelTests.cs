@@ -893,6 +893,59 @@ public sealed class ModListViewModelTests
     }
 
     [Fact]
+    public void CheckCompleted_with_NamesChanged_refreshes_row_names_from_the_repo()
+    {
+        // The name sync piggybacks on the update check. When a result carries
+        // NamesChanged, the list refreshes each affected row's displayed name
+        // from the repository in place (no full Reload). The VM reads the new
+        // name back through the repo by container id.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var nexus = repo.Seed(new NexusSource { ModId = 8 }, "DMF", "1.0");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = nexus.Id, Order = 0, Policy = ModVersionPolicy.Latest });
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var updateCheck = new FakeUpdateCheckService();
+        var vm = TestDoubles.BuildModList(profiles, session, repo, updateCheck: updateCheck);
+        var row = Row(vm, "DMF");
+        Assert.Equal("DMF", row.Name);
+
+        // Simulate the check renaming the container in the repo (the production
+        // UpdateCheckService does this via RenameContainer) + signaling NamesChanged.
+        repo.RenameContainer(nexus.Id, "DMF Remastered");
+        updateCheck.RaiseCheckCompleted(new UpdateCheckResult(
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, false, Thorough: false, NamesChanged: true));
+
+        // The row's displayed name refreshed in place from the repo.
+        Assert.Equal("DMF Remastered", row.Name);
+    }
+
+    [Fact]
+    public void CheckCompleted_without_NamesChanged_leaves_row_names_untouched()
+    {
+        // A result without NamesChanged (the default) does not touch row names,
+        // even if the stored name has drifted: the refresh is gated on the flag.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var nexus = repo.Seed(new NexusSource { ModId = 8 }, "DMF", "1.0");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = nexus.Id, Order = 0, Policy = ModVersionPolicy.Latest });
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var updateCheck = new FakeUpdateCheckService();
+        var vm = TestDoubles.BuildModList(profiles, session, repo, updateCheck: updateCheck);
+        var row = Row(vm, "DMF");
+
+        repo.RenameContainer(nexus.Id, "DMF Remastered");
+        updateCheck.RaiseCheckCompleted(new UpdateCheckResult(
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, false, Thorough: false));
+
+        // The row name is NOT refreshed (NamesChanged defaults to false).
+        Assert.Equal("DMF", row.Name);
+    }
+
+    [Fact]
     public void ReloadAndClearUpdateFlag_clears_the_flag_despite_a_stale_LastResult()
     {
         // After an nxm install/reinstall, Reload alone would re-apply the stale
@@ -911,71 +964,6 @@ public sealed class ModListViewModelTests
         Assert.False(Row(vm, "DMF").UpdateAvailable);
         // Other rows are unaffected by the per-container clear.
         Assert.False(Row(vm, "SoundPack").UpdateAvailable);
-    }
-
-    // ---- thorough vs month-only: the IsRecentOnly / ShowRecentOnlyNotice ----
-
-    [Fact]
-    public void CheckCompleted_month_only_result_sets_IsRecentOnly_and_shows_the_notice()
-    {
-        // A Month-only (non-thorough) check that completed (not rate-limited)
-        // surfaces the "showing recent updates" notice so the user understands
-        // the badges reflect only the past month.
-        var (vm, _, _, uc, _, _) = BuildForUpdateFlow();
-        Assert.False(vm.IsRecentOnly); // no check yet
-
-        uc.RaiseCheckCompleted(new UpdateCheckResult(
-            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: false));
-
-        Assert.True(vm.IsRecentOnly);
-        Assert.True(vm.ShowRecentOnlyNotice);
-        Assert.NotEmpty(vm.RecentOnlyNoticeText);
-    }
-
-    [Fact]
-    public void CheckCompleted_thorough_result_clears_IsRecentOnly_and_hides_the_notice()
-    {
-        // A thorough check clears the notice: the badges now reflect a complete
-        // check, so the "showing recent updates" hint no longer applies.
-        var (vm, _, _, uc, _, _) = BuildForUpdateFlow();
-        // Stage a Month-only result first so IsRecentOnly is true.
-        uc.RaiseCheckCompleted(new UpdateCheckResult(
-            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: false));
-        Assert.True(vm.IsRecentOnly);
-
-        uc.RaiseCheckCompleted(new UpdateCheckResult(
-            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: true));
-
-        Assert.False(vm.IsRecentOnly);
-        Assert.False(vm.ShowRecentOnlyNotice);
-    }
-
-    [Fact]
-    public void CheckCompleted_rate_limited_result_hides_the_recent_only_notice()
-    {
-        // The rate-limit notice takes precedence: even if the prior check was
-        // Month-only, a rate-limited result suppresses ShowRecentOnlyNotice
-        // (the two notices never co-show). IsRateLimited drives the precedence.
-        var (vm, _, _, uc, _, _) = BuildForUpdateFlow();
-        uc.RaiseCheckCompleted(new UpdateCheckResult(
-            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: false));
-        Assert.True(vm.ShowRecentOnlyNotice);
-
-        uc.RaiseCheckCompleted(new UpdateCheckResult(
-            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: true, Thorough: false));
-
-        Assert.True(vm.IsRateLimited);
-        Assert.False(vm.ShowRecentOnlyNotice);
-    }
-
-    [Fact]
-    public void CheckCompleted_null_result_before_first_check_hides_the_recent_only_notice()
-    {
-        // Before any check lands (LastResult null), no notice shows: there is no
-        // "Month-only" result to hint about yet.
-        var (vm, _, _, _, _, _) = BuildForUpdateFlow();
-        Assert.False(vm.IsRecentOnly);
-        Assert.False(vm.ShowRecentOnlyNotice);
     }
 
     // ---- CheckForUpdatesNow: the IsCheckingNow affordance -------------------

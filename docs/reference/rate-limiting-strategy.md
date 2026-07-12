@@ -91,6 +91,18 @@ Tier 3 is additive: it only ever removes flags, never adds. Both check shapes
 the shared `RunCheckAsync`. See [integrations reference](src/integrations.md) for
 the per-step check flow.
 
+## Mod name sync (free, piggybacks on the batch)
+
+The same `modsByUid` batch query returns the current Nexus mod `name` for every
+id sent. The check compares each returned name to the container's stored
+`ModContainer.Name` and renames the container when they differ (the Nexus name
+wins; identity `Id` is unchanged). This covers EVERY Nexus-sourced mod in the
+profile, Latest AND Pinned, and adds zero extra API calls: the name rides along
+on the one batch query the check already makes. Pinned mods get name sync but
+are never flagged for an update (the flag logic stays Latest-only). When a check
+renames at least one container, the result carries `NamesChanged = true` so the
+mod-list UI refreshes the affected rows' displayed names in place.
+
 ## Budget
 
 Worst case for a determined user: 10 free plus 30 throttled manual refreshes is

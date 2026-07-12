@@ -123,7 +123,7 @@ public partial class ShellViewModel : ObservableObject
         _selectedProfile = ResolveActive();
 
         // Resolve the initial nxm handler status so the status strip paints the
-        // right label on startup (Curator / not Curator / unavailable).
+        // right label on startup (enabled / disabled / unavailable).
         RefreshNxmHandlerStatus();
 
         _session.PropertyChanged += OnSessionPropertyChanged;
@@ -226,13 +226,23 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(NxmHandlerStatusText))]
     [NotifyPropertyChangedFor(nameof(NxmHandlerStatusTooltip))]
+    [NotifyPropertyChangedFor(nameof(IsNxmEnabled))]
     private bool? _isNxmRegistered;
 
     /// <summary>
-    /// The status-strip label for the nxm handler state: "NXM: Curator" when
-    /// registered, "NXM: not Curator" when another program owns it, or "NXM:
-    /// unavailable" when there is no platform registrar. Localized; re-resolves
-    /// on a culture change.
+    /// Whether the green status-strip indicator should show for the nxm handler
+    /// state: <c>true</c> only when Curator is the registered OS handler. Both
+    /// the "not registered" (<c>false</c>) and "no platform registrar"
+    /// (<c>null</c>) states render the grey indicator, so this collapses the
+    /// tri-state <see cref="IsNxmRegistered"/> into the indicator's binary
+    /// visibility. Mirrors the game-running <see cref="IsGameRunning"/> pattern.
+    /// </summary>
+    public bool IsNxmEnabled => IsNxmRegistered == true;
+
+    /// <summary>
+    /// The status-strip label for the nxm handler state: enabled when Curator
+    /// is registered, disabled when it is not, or unavailable when there is no
+    /// platform registrar. Localized; re-resolves on a culture change.
     /// </summary>
     public string NxmHandlerStatusText =>
         IsNxmRegistered switch

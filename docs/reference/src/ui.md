@@ -460,7 +460,11 @@ free-refresh budget. See
 The runner never blocks on a check beyond the await the manual trigger opts
 into, never surfaces its result (the mod list reads
 `IUpdateCheckService.LastResult` and subscribes to `CheckCompleted`), and
-never lets an unobserved exception escape the threadpool task. A
+never lets an unobserved exception escape the threadpool task. When a result
+carries `NamesChanged` (the check renamed at least one Nexus container to its
+current Nexus name, piggybacking on the batch query at no extra API cost), the
+mod list refreshes each affected row's displayed name from the repository in
+place, without a full reload. A
 fire-and-forget `Task` whose only awaited operation throws must not surface
 that as an unobserved exception; `OperationCanceledException` is swallowed
 silently, anything else is logged.
@@ -641,6 +645,51 @@ failed binding collapses the button rather than showing it spuriously. The
 button's `IsEnabled` binds directly to the parent's pre-computed
 `IsUpdateEnabled` (a single `ReflectionBinding`, not a `MultiBinding`).
 
+## Behaviors
+
+Plain attached properties (no `Avalonia.Xaml.Interactivity` dependency) under
+`Modificus.Curator.UI.Behaviors`. Each is opt-in: set its `IsEnabled`
+attached property on the target control in XAML.
+
+### `EscapeClosesBehavior`
+
+The standard desktop "ESC dismisses the topmost modal" convention. When
+`IsEnabled="True"` on a `Window`, pressing ESC calls `Window.Close()` (the same
+path the shared `DialogTitleBar` close button takes), so a dialog's
+result/cancel contracts are unchanged, ESC is equivalent to clicking the
+title-bar X, and the key is marked handled so nothing else runs after the
+close. Other keys are ignored.
+
+```csharp
+public static class EscapeClosesBehavior
+{
+    public static readonly AttachedProperty<bool> IsEnabledProperty;
+    public static bool GetIsEnabled(Window element);
+    public static void SetIsEnabled(Window element, bool value);
+    internal static bool ShouldClose(Key key);   // pure: Key.Escape -> true
+}
+```
+
+Applied to the seven closeable modal dialogs: `ConfirmDialog`,
+`ImportModDialog`, `DiscoveryEscapeHatchDialog`, `IntegrationsWindow`,
+`ManageProfilesWindow`, `PreferencesWindow`, `SettingsWindow`. `ProgressDialog`
+(non-closeable by design, `DialogTitleBar.ShowClose="False"`) and the main
+window do not opt in, so ESC never dismisses a spinner or exits the app. ESC
+bubbles from focused children (TextBox, ComboBox) to the window; the
+Manage-profiles inline-edit boxes (`EditBox_KeyDown` / `AddBox_KeyDown`) mark
+ESC handled to cancel the in-flight edit first, so a second ESC is what closes
+the dialog while editing.
+
+The key decision is factored into the `internal static ShouldClose` pure helper
+so it is unit-testable without rendering a window; the KeyDown-to-Close wiring
+is rendered UI and covered by code inspection, not a rendered-control test.
+
+### `FocusOnVisible`
+
+When `IsEnabled="True"` on a `TextBox`, focuses it and selects all its text the
+moment it becomes visible. Used by the Manage-profiles editable list so the
+inline rename and "+ New profile" entry boxes grab focus on appearance.
+
 ## DI registration
 
 The composition root is `src/ui/CuratorComposition.cs` (a static
@@ -777,8 +826,8 @@ No backend library references the UI (the dependency direction is one-way).
   remove (with confirm), auto-sort (identity stub), the add flow (peek,
   collision hard-block, import, add-mod), `CheckCompleted` per-row state,
   `UpdateCommand` success / failure / one-at-a-time / premium gating,
-  `CheckForUpdatesNow`, `IsRateLimited` / `IsRecentOnly` /
-  `ShowRecentOnlyNotice` precedence.
+  `CheckForUpdatesNow`, `IsRateLimited`, and the `NamesChanged` in-place row
+  name refresh (refreshed when the flag is set, untouched when it is not).
 - **`PreferencesViewModelTests`** + **`PreferencesServiceTests`**: the
   Preferences dialog view model and the service that applies theme / font
   scale / language and persists.
@@ -820,6 +869,10 @@ No backend library references the UI (the dependency direction is one-way).
   games before auth / profile / acquisition), the auth + active-profile
   gates, the acquire / register / refresh flow, the error wiring (alert on
   failure), the UI-thread marshaling seam.
+- **`EscapeClosesBehaviorTests`**: the pure `ShouldClose` helper behind the
+  ESC-closes-dialogs behavior (true for `Key.Escape`, false for other keys).
+  The KeyDown-to-Close wiring is rendered UI and not covered by a
+  rendered-control test.
 
 The internal `NxmModDownloadHandler` implementation is visible to the test
 assembly via `InternalsVisibleTo` (the handler is constructed by the

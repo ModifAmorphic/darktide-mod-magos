@@ -30,7 +30,7 @@ dialogs, preferences, and i18n fit together.
 │  └─────────────────────────────────────────────────────────────────────┘ │
 │  ┌─ Content area ──────────────────────────────────────────────────────┐ │
 │  │ ModListView (the active profile's mod list; drag-and-drop target)   │ │
-│  │   header: title · recent-only / rate-limit notices · refresh ·      │ │
+│  │   header: title · rate-limit notice · refresh ·                  │ │
 │  │           auto-sort · Add split button (zip / folder)               │ │
 │  │   rows:   name · source badge + update marker · enabled · policy ·  │ │
 │  │           update button / progress · up · down · remove             │ │
@@ -272,15 +272,11 @@ threadpool thread and the handler iterates the UI-bound `Mods` collection.
 The application is idempotent and safe to call on every completion, including
 the no-auth, no-checkable-mods, and failure short circuits. Per-row
 `UpdateAvailable` is set by matching `LastResult.Updates` on `ContainerId`
-(indexed once into a `HashSet` for an O(1) per-row lookup). Two list-level
-flags also derive from the result:
+  (indexed once into a `HashSet` for an O(1) per-row lookup). One list-level
+  flag also derives from the result:
 
 - `IsRateLimited`: the last check was rate-limited. Drives the header
   "check incomplete" notice.
-- `IsRecentOnly`: the last check was Month-only and not thorough. Drives the
-  header "showing recent updates" notice. Suppressed while `IsRateLimited`
-  is set; the rate-limit notice takes precedence via
-  `ShowRecentOnlyNotice = !IsRateLimited && IsRecentOnly`.
 
 ### The premium gate
 

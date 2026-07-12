@@ -12,6 +12,7 @@
         MinWidth="440" MinHeight="360"
         CanResize="True"
         ShowInTaskbar="False"
+        behaviors:EscapeClosesBehavior.IsEnabled="True"
         WindowStartupLocation="CenterOwner">
 
   <!--

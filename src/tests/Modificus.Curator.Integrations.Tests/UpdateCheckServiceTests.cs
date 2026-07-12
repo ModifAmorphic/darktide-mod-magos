@@ -301,14 +301,14 @@ public sealed class UpdateCheckServiceTests
     }
 
     [Fact]
-    public async Task CheckAsync_short_circuits_when_no_checkable_mods()
+    public async Task CheckAsync_short_circuits_when_no_nexus_mods()
     {
-        // All mods are pinned / untracked / github -> nothing to check -> the
-        // API is not called (the checkable list is empty).
+        // No Nexus mods at all (only untracked + github) -> nothing to send in
+        // the batch -> the API is not called. (A profile with Pinned Nexus mods
+        // DOES run the batch for the name sync; that is covered by the name-sync
+        // tests.)
         var nexus = new FakeNexusClient(); // unset; would serve an empty default if called
         var repository = new FakeModRepository();
-        repository.Containers[NexusPinnedContainer] =
-            NexusContainer(NexusPinnedContainer, PinnedModId, "Pinned Mod", "1.0");
         repository.Containers[UntrackedContainer] =
             NonNexusContainer(UntrackedContainer, new UntrackedSource(), "Untracked Mod");
         repository.Containers[GitHubContainer] =
@@ -317,7 +317,6 @@ public sealed class UpdateCheckServiceTests
         {
             Mods = new[]
             {
-                Entry(NexusPinnedContainer, new PinnedPolicy("v1")),
                 Entry(UntrackedContainer, new LatestPolicy()),
                 Entry(GitHubContainer, new LatestPolicy()),
             },
@@ -334,13 +333,13 @@ public sealed class UpdateCheckServiceTests
     // ---- source / policy filter -------------------------------------------
 
     [Fact]
-    public async Task CheckAsync_skips_pinned_and_untracked_and_github()
+    public async Task CheckAsync_skips_untracked_and_github_but_sends_pinned_nexus_for_name_sync()
     {
         // A Nexus + Latest mod (would flag) PLUS a pinned Nexus mod, an untracked
-        // mod, and a GitHub mod. Only the Nexus + Latest one flags; the others
-        // are never sent to the API. The 1-API-call contract holds regardless
-        // of source/policy mix, and only the checkable mod's id is in the
-        // request.
+        // mod, and a GitHub mod. The Pinned Nexus mod rides along in the batch
+        // (its name syncs; Pinned mods are NOT flagged for updates). Untracked +
+        // GitHub are never sent. The 1-API-call contract holds, the batch carries
+        // both Nexus ids (Latest + Pinned), and only the Latest one flags.
         var nexus = new FakeNexusClient
         {
             GraphQlResponse = new Response<ModUpdateStatus[]>(
@@ -353,9 +352,9 @@ public sealed class UpdateCheckServiceTests
         };
         var repository = new FakeModRepository();
         repository.Containers[NexusLatestContainer] =
-            NexusContainer(NexusLatestContainer, UpdatedModId, "Nexus Mod", "1.0");
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod 100", "1.0");
         repository.Containers[NexusPinnedContainer] =
-            NexusContainer(NexusPinnedContainer, PinnedModId, "Pinned Mod", "1.0");
+            NexusContainer(NexusPinnedContainer, PinnedModId, "Mod 300", "1.0");
         repository.Containers[UntrackedContainer] =
             NonNexusContainer(UntrackedContainer, new UntrackedSource(), "Untracked Mod");
         repository.Containers[GitHubContainer] =
@@ -377,8 +376,12 @@ public sealed class UpdateCheckServiceTests
         var flagged = Assert.Single(result.Updates);
         Assert.Equal(NexusLatestContainer, flagged.ContainerId);
         Assert.Equal(1, nexus.GraphQlCallCount);
-        // Only the checkable mod's id was sent (pinned/untracked/github excluded).
-        Assert.Equal(new[] { UpdatedModId }, nexus.LastModIds);
+        // Both Nexus ids sent (Latest + Pinned); untracked/github excluded.
+        Assert.Equal(new[] { UpdatedModId, PinnedModId }, nexus.LastModIds);
+        // Names match the Status() helper's "Mod <id>" default -> no rename ->
+        // NamesChanged is false (the rename paths are covered by the name-sync
+        // tests below).
+        Assert.False(result.NamesChanged);
     }
 
     // ---- rate-limit handling ----------------------------------------------
@@ -940,6 +943,245 @@ public sealed class UpdateCheckServiceTests
         Assert.False(result.RateLimited);
     }
 
+    // ---- name sync (piggybacks on the batch query at zero extra cost) ------
+
+    [Fact]
+    public async Task CheckAsync_renames_a_nexus_mod_whose_name_differs_from_the_nexus_name()
+    {
+        // The batch response carries the current Nexus mod name for every id
+        // sent. A mod whose stored Name differs is renamed to match; the
+        // container's stored name updates + NamesChanged is true on the result.
+        const int modId = 500;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, version: "1.0", name: "New Author Title") },
+                NexusRateLimits.Unknown),
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Old Stale Name", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.True(result.NamesChanged);
+        Assert.Empty(result.Updates); // version matches -> not flagged
+        // The container was renamed to the Nexus name.
+        var rename = Assert.Single(repository.RenameCalls);
+        Assert.Equal(container, rename.ContainerId);
+        Assert.Equal("New Author Title", rename.NewName);
+        Assert.Equal("New Author Title", repository.Get(container)!.Name);
+    }
+
+    [Fact]
+    public async Task CheckAsync_does_not_rename_when_the_name_matches()
+    {
+        // A mod whose stored Name already equals the Nexus name is left alone;
+        // no rename call lands + NamesChanged is false.
+        const int modId = 501;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, version: "1.0", name: "Same Name") },
+                NexusRateLimits.Unknown),
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Same Name", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.False(result.NamesChanged);
+        Assert.Empty(repository.RenameCalls);
+        Assert.Equal("Same Name", repository.Get(container)!.Name);
+    }
+
+    [Fact]
+    public async Task CheckAsync_syncs_a_pinned_nexus_mod_name_without_flagging_it()
+    {
+        // A Pinned Nexus mod rides along in the batch for the name sync (the
+        // batch covers ALL NexusSource mods, Latest AND Pinned) but is NOT
+        // flagged for an update (Pinned mods are frozen version-wise). Its name
+        // syncs when it differs; the Latest-only flag logic is untouched.
+        const int modId = 502;
+        // viewerUpdateAvailable=true would flag a Latest mod; this one is Pinned
+        // so the flag logic skips it. The name still syncs.
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: true, version: "1.0", name: "Renamed By Author") },
+                NexusRateLimits.Unknown),
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Old Name", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new PinnedPolicy("v1")) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // NOT flagged (Pinned), but the batch ran (1 call) + the name synced.
+        Assert.Empty(result.Updates);
+        Assert.Equal(1, nexus.GraphQlCallCount);
+        Assert.True(result.NamesChanged);
+        Assert.Equal("Renamed By Author", repository.Get(container)!.Name);
+    }
+
+    [Fact]
+    public async Task CheckAsync_does_not_rename_when_the_response_name_is_empty()
+    {
+        // An empty (or null) status.Name triggers no rename: never clobber a
+        // stored name with an absent one.
+        const int modId = 503;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, version: "1.0", name: "") },
+                NexusRateLimits.Unknown),
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Existing Name", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.False(result.NamesChanged);
+        Assert.Empty(repository.RenameCalls);
+        Assert.Equal("Existing Name", repository.Get(container)!.Name);
+    }
+
+    [Fact]
+    public async Task CheckAsync_does_not_rename_a_mod_missing_from_the_response()
+    {
+        // A UID that did not resolve (the API returned no node for it) skips the
+        // name sync: there is no name to sync from.
+        const int modId = 504;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                Array.Empty<ModUpdateStatus>(), NexusRateLimits.Unknown),
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Kept Name", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.False(result.NamesChanged);
+        Assert.Empty(repository.RenameCalls);
+        Assert.Equal("Kept Name", repository.Get(container)!.Name);
+    }
+
+    [Fact]
+    public async Task CheckAsync_namesync_runs_after_flagging_so_flagged_modname_uses_the_pre_sync_name()
+    {
+        // The name sync runs AFTER the tier flag logic, so a mod that is BOTH
+        // flagged AND renamed carries its pre-sync name in ModUpdateInfo.ModName
+        // (the flag mapping captured the name before the rename). Pins the
+        // ordering: the tier logic is unchanged by the name sync.
+        const int modId = 505;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: true, version: "2.0", name: "New Name") },
+                NexusRateLimits.Unknown),
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Old Name", "1.0");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // Flagged (installed 1.0 vs server 2.0 + viewerUpdateAvailable=true) AND
+        // renamed. The flagged ModName is the PRE-sync name; the container's
+        // stored name is the new one.
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal("Old Name", flagged.ModName);
+        Assert.True(result.NamesChanged);
+        Assert.Equal("New Name", repository.Get(container)!.Name);
+    }
+
+    [Fact]
+    public async Task CheckAsync_namesync_one_failure_does_not_abort_the_rest()
+    {
+        // Two mods both need a rename; the repository throws on the first rename
+        // (simulated by removing the container mid-pass). The second rename
+        // still lands, and the result reflects only the rename that succeeded.
+        // This pins the defensive per-mod catch: one rename failure must not
+        // abort the pass or the check.
+        const int firstModId = 506;
+        const int secondModId = 507;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[]
+                {
+                    Status(firstModId, viewerUpdateAvailable: false, version: "1.0", name: "First New"),
+                    Status(secondModId, viewerUpdateAvailable: false, version: "1.0", name: "Second New"),
+                },
+                NexusRateLimits.Unknown),
+        };
+        var firstContainer = Guid.NewGuid();
+        var secondContainer = Guid.NewGuid();
+        var repository = new ThrowingRenameRepository();
+        repository.Containers[firstContainer] =
+            NexusContainer(firstContainer, firstModId, "First Old", "1.0");
+        repository.Containers[secondContainer] =
+            NexusContainer(secondContainer, secondModId, "Second Old", "1.0");
+        // The first rename throws (the container was removed before the call).
+        repository.ThrowOnRenameOf = firstContainer;
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(firstContainer, new LatestPolicy()),
+                Entry(secondContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // The check did not throw; the second rename landed; NamesChanged is
+        // true (at least one rename succeeded).
+        Assert.True(result.NamesChanged);
+        Assert.Equal("Second New", repository.Get(secondContainer)!.Name);
+    }
+
     // ---- DI activation (default clock param) ------------------------------
 
     [Fact]
@@ -1051,17 +1293,18 @@ public sealed class UpdateCheckServiceTests
     /// <summary>
     /// Builds a <see cref="ModUpdateStatus"/> for <paramref name="modId"/> with
     /// the given <paramref name="viewerUpdateAvailable"/> + optional
-    /// <paramref name="updatedAt"/> + <paramref name="version"/>. The version
-    /// defaults to "" so the version comparison is skipped unless a test
-    /// explicitly sets one.
+    /// <paramref name="updatedAt"/> + <paramref name="version"/> +
+    /// <paramref name="name"/>. The version + name default to "" / "Mod {id}"
+    /// so the version comparison + name sync are skipped unless a test
+    /// explicitly sets them.
     /// </summary>
     private static ModUpdateStatus Status(
         int modId, bool? viewerUpdateAvailable, DateTimeOffset? updatedAt = null,
-        string version = "") =>
+        string version = "", string? name = null) =>
         new()
         {
             Uid = Uid(modId),
-            Name = "Mod " + modId,
+            Name = name ?? "Mod " + modId,
             Version = version,
             UpdatedAt = updatedAt,
             ViewerUpdateAvailable = viewerUpdateAvailable,
@@ -1205,16 +1448,43 @@ public sealed class UpdateCheckServiceTests
 
     /// <summary>
     /// A configurable <see cref="IModRepository"/> stub. Only
-    /// <see cref="Get(Guid)"/> is exercised by the service; the other members
-    /// throw. Lookups are backed by an in-memory dictionary keyed by container
-    /// id.
+    /// <see cref="Get(Guid)"/> + <see cref="RenameContainer"/> are exercised by
+    /// the service; the other members throw. Lookups are backed by an in-memory
+    /// dictionary keyed by container id. <see cref="RenameContainer"/> updates
+    /// the in-memory container + records each call so the name-sync tests can
+    /// assert on it.
     /// </summary>
-    private sealed class FakeModRepository : IModRepository
+    private class FakeModRepository : IModRepository
     {
         public Dictionary<Guid, ModContainer> Containers { get; } = new();
 
+        /// <summary>
+        /// The (containerId, newName) pairs passed to
+        /// <see cref="RenameContainer"/>, in call order. Name-sync tests assert
+        /// on this to verify the right containers were renamed.
+        /// </summary>
+        public IReadOnlyList<(Guid ContainerId, string NewName)> RenameCalls { get; } = new List<(Guid, string)>();
+
         public ModContainer? Get(Guid containerId) =>
             Containers.TryGetValue(containerId, out var c) ? c : null;
+
+        public virtual ModContainer? RenameContainer(Guid containerId, string newName)
+        {
+            ((List<(Guid, string)>)RenameCalls).Add((containerId, newName));
+            if (!Containers.TryGetValue(containerId, out var container))
+            {
+                return null;
+            }
+
+            if (string.Equals(container.Name, newName, StringComparison.Ordinal))
+            {
+                return container;
+            }
+
+            var updated = container with { Name = newName };
+            Containers[containerId] = updated;
+            return updated;
+        }
 
         public IReadOnlyList<ModContainer> List() => throw new NotImplementedException();
         public ModContainer? FindBySource(ModSource source) => throw new NotImplementedException();
@@ -1232,5 +1502,25 @@ public sealed class UpdateCheckServiceTests
             => throw new NotImplementedException();
         public void Rescan() => throw new NotImplementedException();
         public void Relocate(string newBasePath) => throw new NotImplementedException();
+    }
+
+    /// <summary>
+    /// A <see cref="FakeModRepository"/> whose <see cref="RenameContainer"/>
+    /// throws for the container id in <see cref="ThrowOnRenameOf"/> (simulating a
+    /// rename failure the production path should never raise, to prove the
+    /// per-mod defensive catch keeps the rest of the pass alive).
+    /// </summary>
+    private sealed class ThrowingRenameRepository : FakeModRepository
+    {
+        public Guid? ThrowOnRenameOf { get; set; }
+
+        public override ModContainer? RenameContainer(Guid containerId, string newName)
+        {
+            if (containerId == ThrowOnRenameOf)
+            {
+                throw new InvalidOperationException("simulated rename failure");
+            }
+            return base.RenameContainer(containerId, newName);
+        }
     }
 }

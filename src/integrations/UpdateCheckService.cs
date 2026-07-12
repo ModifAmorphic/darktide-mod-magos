@@ -44,7 +44,7 @@ namespace Modificus.Curator.Integrations;
 /// (the periodic / profile-load path) and <see cref="CheckThoroughAsync"/> (the
 /// manual "check now" path) run the same v2 batch query; they differ only in
 /// the result's <see cref="UpdateCheckResult.Thorough"/> flag (kept for
-/// interface compatibility + the mod-list UI's result-surface contract).</para>
+/// interface compatibility).</para>
 /// <para>
 /// <b>Best-effort, never throws (except cancellation).</b> A transient API
 /// failure, a missing auth config, or an exhausted rate limit all surface as an
@@ -54,7 +54,13 @@ namespace Modificus.Curator.Integrations;
 /// so a cancelled check is not misreported as "no updates found".</para>
 /// <para>
 /// <b>Nexus-only.</b> GitHub-sourced mods are skipped alongside Untracked
-/// + Pinned. The service has no GitHub code paths anywhere (the
+/// (no remote to query). The update-FLAG logic (tiers 1/2/3) is scoped to
+/// <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods;
+/// <see cref="PinnedPolicy"/> mods are frozen version-wise and are never
+/// flagged. The name-sync pass covers EVERY <see cref="NexusSource"/> mod in
+/// the profile (Latest AND Pinned): the batch query already returns the name
+/// for free, so the sync piggybacks on it at zero extra API cost. The service
+/// has no GitHub code paths anywhere (the
 /// <see cref="IGitHubClient"/> is never touched).</para>
 /// </remarks>
 internal sealed class UpdateCheckService : IUpdateCheckService
@@ -190,12 +196,17 @@ internal sealed class UpdateCheckService : IUpdateCheckService
 
     /// <summary>
     /// The shared check logic for both <see cref="CheckAsync"/> + 
-    /// <see cref="CheckThoroughAsync"/>. Runs the auth gate, the checkable-mods
-    /// filter, the single v2 GraphQL batch query, the rate-limit gate, and the
-    /// three-tier update mapping (tier 1 <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>,
-    /// tier 2 mod-level version compare, tier 3 latest-file-version confirm), then
-    /// publishes the result with the given <paramref name="thorough"/> flag. Tier 3
-    /// only refines tier-2-only flags; both check shapes inherit it via this method.
+    /// <see cref="CheckThoroughAsync"/>. Runs the auth gate, the Nexus-mods
+    /// enumeration (Latest + Pinned), the single v2 GraphQL batch query (one
+    /// call for all Nexus mods), the rate-limit gate, the three-tier update
+    /// mapping scoped to the Latest subset (tier 1
+    /// <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>, tier 2 mod-level
+    /// version compare, tier 3 latest-file-version confirm), and a name-sync
+    /// pass over ALL Nexus mods that renames each container to match its current
+    /// Nexus mod name (piggybacks on the batch response at zero extra API cost),
+    /// then publishes the result with the given <paramref name="thorough"/> flag.
+    /// Tier 3 only refines tier-2-only flags (Latest subset); name sync covers
+    /// both Latest + Pinned. Both check shapes inherit both via this method.
     /// </summary>
     private async Task<UpdateCheckResult> RunCheckAsync(
         Guid profileId, bool thorough, CancellationToken ct)
@@ -211,21 +222,19 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             return Publish(EmptyResult(thorough));
         }
 
-        // 2. Profile mods + checkable filter. Let KeyNotFoundException propagate
+        // 2. Profile mods + the Nexus subset. Let KeyNotFoundException propagate
         //    if the profile id is unknown; the caller owns passing a valid id.
         var entries = _profiles.GetModList(profileId);
 
-        // Filter to checkable mods: LatestPolicy + NexusSource. Skip
-        // PinnedPolicy (frozen at a specific release), UntrackedSource (no
-        // remote to query), and GitHubSource (out of scope for the update check).
-        var checkable = new List<(ModListEntry Entry, ModContainer Container, NexusSource Nexus)>();
+        // Enumerate EVERY Nexus-sourced mod in the profile (Latest OR Pinned).
+        // The batch query is sent for this full set so both the update-flag
+        // logic AND the name-sync pass read their data from one call. Pinned
+        // mods ride along for name sync only (the flag logic below stays scoped
+        // to Latest). Skip UntrackedSource (no remote to query) + GitHubSource
+        // (out of scope for the update check).
+        var nexusMods = new List<(ModListEntry Entry, ModContainer Container, NexusSource Nexus)>();
         foreach (var entry in entries)
         {
-            if (entry.Policy is not LatestPolicy)
-            {
-                continue;
-            }
-
             var container = _repository.Get(entry.ContainerId);
             if (container is null)
             {
@@ -237,24 +246,36 @@ internal sealed class UpdateCheckService : IUpdateCheckService
                 continue;
             }
 
-            checkable.Add((entry, container, nexus));
+            nexusMods.Add((entry, container, nexus));
         }
 
-        if (checkable.Count == 0)
+        // The flaggable subset: Latest-only (Pinned mods are frozen version-wise
+        // and must NOT be flagged). Tier logic iterates this subset; name sync
+        // iterates the full nexusMods set.
+        var checkable = nexusMods
+            .Where(m => m.Entry.Policy is LatestPolicy)
+            .ToList();
+
+        if (nexusMods.Count == 0)
         {
+            // No Nexus mods at all (not even Pinned): nothing to flag + nothing
+            // to name-sync. A profile with only Pinned Nexus mods still runs the
+            // batch (for the name sync), so the gate is on nexusMods, not
+            // checkable.
             _logger.LogDebug(
-                "Update check skipped: no checkable Nexus+Latest mods in profile {Profile}.",
+                "Update check skipped: no Nexus mods in profile {Profile}.",
                 profileId);
             return Publish(EmptyResult(thorough));
         }
 
-        // 3. Query Nexus v2 GraphQL (1 call for all mods). Best-effort: a
-        //    non-cancellation failure surfaces as an empty result rather than
-        //    propagating to the fire-and-forget caller. Cancellation propagates
-        //    so a cancelled check is not misreported as "no updates found".
-        //    A NexusRateLimitException is surfaced specifically as a rate-limited
-        //    result (not a generic failure) so the UI can show "check incomplete".
-        var modIds = checkable.Select(c => c.Nexus.ModId).ToList();
+        // 3. Query Nexus v2 GraphQL (1 call for ALL Nexus mods, Latest + Pinned).
+        //    Best-effort: a non-cancellation failure surfaces as an empty result
+        //    rather than propagating to the fire-and-forget caller. Cancellation
+        //    propagates so a cancelled check is not misreported as "no updates
+        //    found". A NexusRateLimitException is surfaced specifically as a
+        //    rate-limited result (not a generic failure) so the UI can show
+        //    "check incomplete".
+        var modIds = nexusMods.Select(c => c.Nexus.ModId).ToList();
         Response<ModUpdateStatus[]> response;
         try
         {
@@ -393,6 +414,53 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             }
         }
 
+        // 7. Name sync: piggyback on the same batch response (zero extra API
+        //    calls). The v2 query returns the current Nexus mod name for every
+        //    id sent; each returned name is compared to the container's stored
+        //    Name and the container is renamed when they differ. Covers ALL
+        //    NexusSource mods (Latest AND Pinned); the Nexus name wins, identity
+        //    (Container.Id) is unchanged. An empty/null name triggers no rename,
+        //    and a missing node (a UID that did not resolve) skips the mod. One
+        //    rename failure (it should not throw, but defensively) does not
+        //    abort the rest of the pass or the check.
+        bool namesChanged = false;
+        foreach (var (_, container, nexus) in nexusMods)
+        {
+            var uid = (long)GameId * 4294967296L + nexus.ModId;
+            if (!byUid.TryGetValue(uid, out var status))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(status.Name))
+            {
+                continue;
+            }
+
+            if (string.Equals(status.Name, container.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                _repository.RenameContainer(container.Id, status.Name);
+                namesChanged = true;
+                _logger.LogInformation(
+                    "Synced container {Id} name '{Old}' -> '{New}' from Nexus.",
+                    container.Id, container.Name, status.Name);
+            }
+            catch (Exception ex)
+            {
+                // Defensive: RenameContainer should not throw, but a single
+                // failure must not abort the rest of the name-sync pass or the
+                // check. The stored name is left unchanged.
+                _logger.LogWarning(ex,
+                    "Name sync for container {Id} failed; leaving the stored name unchanged.",
+                    container.Id);
+            }
+        }
+
         _logger.LogInformation(
             "Update check for profile {Profile}: {Count} mod(s) flagged for update.",
             profileId, flagged.Count);
@@ -400,7 +468,8 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             flagged.Select(f => f.Info).ToList(),
             DateTimeOffset.UtcNow,
             RateLimited: false,
-            Thorough: thorough));
+            Thorough: thorough,
+            NamesChanged: namesChanged));
     }
 
     /// <summary>

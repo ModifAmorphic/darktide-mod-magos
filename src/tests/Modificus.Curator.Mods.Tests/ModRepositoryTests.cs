@@ -528,6 +528,114 @@ public sealed class ModRepositoryTests
         Assert.Empty(fx.Repo.Get(container.Id)!.Versions);
     }
 
+    // ---- RenameContainer ---------------------------------------------------
+
+    [Fact]
+    public void RenameContainer_updates_the_name_and_persists_it_to_the_manifest()
+    {
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 42 }, "Old Name");
+
+        var updated = fx.Repo.RenameContainer(container.Id, "New Author Title");
+
+        Assert.NotNull(updated);
+        Assert.Equal("New Author Title", updated!.Name);
+        // In-memory index reflects the new name.
+        Assert.Equal("New Author Title", fx.Repo.Get(container.Id)!.Name);
+        // The manifest on disk reflects the new name (reload reads container.json,
+        // not the in-memory index).
+        Assert.Equal("New Author Title", fx.Reload().Get(container.Id)!.Name);
+    }
+
+    [Fact]
+    public void RenameContainer_keeps_identity_and_does_not_move_the_directory()
+    {
+        // Identity (Id) is unchanged + the on-disk container directory (keyed by
+        // Id) does not move: only the Name field in the manifest changes.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 7 }, "Old");
+        var dirBefore = Path.Combine(fx.Folder, container.Id.ToString());
+        Assert.True(Directory.Exists(dirBefore));
+
+        var updated = fx.Repo.RenameContainer(container.Id, "New");
+
+        Assert.Equal(container.Id, updated!.Id);
+        Assert.Equal(dirBefore, Path.Combine(fx.Folder, updated.Id.ToString()));
+        Assert.True(Directory.Exists(dirBefore));
+        Assert.True(File.Exists(fx.ManifestPath(container.Id)));
+    }
+
+    [Fact]
+    public void RenameContainer_is_a_noop_when_the_name_already_matches()
+    {
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 9 }, "Same");
+
+        var result = fx.Repo.RenameContainer(container.Id, "Same");
+
+        Assert.NotNull(result);
+        Assert.Equal("Same", result!.Name);
+        // The returned reference is the unchanged container (same name); no error.
+        Assert.Equal("Same", fx.Repo.Get(container.Id)!.Name);
+    }
+
+    [Fact]
+    public void RenameContainer_returns_null_for_an_unknown_container()
+    {
+        using var fx = new RepoFixture();
+
+        Assert.Null(fx.Repo.RenameContainer(Guid.NewGuid(), "Whatever"));
+    }
+
+    [Fact]
+    public void RenameContainer_is_ordinal_case_sensitive()
+    {
+        // The name comparison is ordinal; a case-only difference is a rename.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 11 }, "WeaponTweaks");
+
+        var updated = fx.Repo.RenameContainer(container.Id, "weapontweaks");
+
+        Assert.Equal("weapontweaks", updated!.Name);
+        Assert.Equal("weapontweaks", fx.Repo.Get(container.Id)!.Name);
+    }
+
+    [Fact]
+    public void RenameContainer_keeps_the_untracked_name_index_consistent()
+    {
+        // Renaming an untracked container must update the untracked-name dedup
+        // index: FindUntrackedByName resolves the new name + NOT the old one.
+        using var fx = new RepoFixture();
+        var container = fx.Repo.CreateContainer(new UntrackedSource(), "OldUntracked");
+
+        fx.Repo.RenameContainer(container.Id, "NewUntracked");
+
+        Assert.Null(fx.Repo.FindUntrackedByName("OldUntracked"));
+        var found = fx.Repo.FindUntrackedByName("NewUntracked");
+        Assert.NotNull(found);
+        Assert.Equal(container.Id, found!.Id);
+    }
+
+    [Fact]
+    public void RenameContainer_on_a_nexus_container_does_not_touch_untracked_dedup()
+    {
+        // Nexus identity is the mod id, not the name: renaming a Nexus container
+        // must not register it in (or remove it from) the untracked-name index,
+        // and FindBySource still resolves it by mod id.
+        using var fx = new RepoFixture();
+        var nexus = fx.Repo.CreateContainer(new NexusSource { ModId = 55 }, "Nexus Old");
+
+        fx.Repo.RenameContainer(nexus.Id, "Nexus New");
+
+        // Still resolvable by mod id (identity unchanged).
+        var found = fx.Repo.FindBySource(new NexusSource { ModId = 55 });
+        Assert.NotNull(found);
+        Assert.Equal("Nexus New", found!.Name);
+        // Never registered under either name in the untracked index.
+        Assert.Null(fx.Repo.FindUntrackedByName("Nexus Old"));
+        Assert.Null(fx.Repo.FindUntrackedByName("Nexus New"));
+    }
+
     // ---- manifest round-trip + index rebuild ------------------------------
 
     [Fact]

@@ -421,13 +421,17 @@ updates and produces a result the mod-list badges consume. Two check shapes
 share the same `LastResult` / `CheckCompleted` surface: a periodic check (fired
 on profile load + the periodic timer) and a thorough check (the manual "check
 now" affordance). Both run the same v2 GraphQL `modsByUid` batch query (1 API
-call for all checkable mods) and flag a mod via three tiers: tier 1
+call for all Nexus mods) and flag a mod via three tiers: tier 1
 `viewerUpdateAvailable` (the server's authoritative signal), tier 2 a mod-level
 version compare, and tier 3 a latest-file-version confirmation that clears
 tier-2 false positives (scoped to tier-2-only flags, best-effort, cached). They
-differ only in the result's `Thorough` flag. GitHub is out of scope (no GitHub
-code paths anywhere); `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods
-are skipped (only `LatestPolicy` + `NexusSource` are checked).
+differ only in the result's `Thorough` flag. The same batch query also carries
+the current Nexus mod `name` for every id sent, so the check syncs each
+container's display name to its current Nexus name at zero extra API cost (this
+covers EVERY Nexus-sourced mod, Latest AND Pinned; the Nexus name wins, identity
+`Id` is unchanged). GitHub is out of scope (no GitHub code paths anywhere);
+`PinnedPolicy` mods are never flagged (only `LatestPolicy` + `NexusSource` are
+flagged), `UntrackedSource` and `GitHubSource` mods are not queried.
 
 ```csharp
 public interface IUpdateCheckService
@@ -442,7 +446,8 @@ public sealed record UpdateCheckResult(
     IReadOnlyList<ModUpdateInfo> Updates,
     DateTimeOffset CheckedAt,
     bool RateLimited,
-    bool Thorough);
+    bool Thorough,
+    bool NamesChanged = false);
 
 public sealed record ModUpdateInfo(
     Guid ContainerId,
@@ -453,19 +458,21 @@ public sealed record ModUpdateInfo(
 ```
 
 - `CheckAsync(profileId)`: the periodic check (see flow below). Queries the v2
-  GraphQL `modsByUid` batch endpoint (1 API call for all checkable mods) and
-  flags each mod via three tiers (tier 1 `viewerUpdateAvailable`, tier 2 a
-  mod-level version compare, tier 3 a latest-file-version confirmation that
-  clears tier-2-only false positives). The result has `Thorough = false`.
-  Best-effort, never throws for non-cancellation failures: a transient API
-  failure, missing auth, or exhausted rate limit all surface as an empty result.
-  Cancellation (`OperationCanceledException`) propagates, and a
-  `KeyNotFoundException` from `IProfileService.GetModList` (an unknown profile id)
-  propagates; the caller owns passing a valid id.
+  GraphQL `modsByUid` batch endpoint (1 API call for all Nexus mods) and
+  flags each Latest + Nexus mod via three tiers (tier 1
+  `viewerUpdateAvailable`, tier 2 a mod-level version compare, tier 3 a
+  latest-file-version confirmation that clears tier-2-only false positives).
+  After the tier logic, syncs every Nexus mod's display name to its current
+  Nexus name from the same batch response (Pinned mods included). The result
+  has `Thorough = false`. Best-effort, never throws for non-cancellation
+  failures: a transient API failure, missing auth, or exhausted rate limit all
+  surface as an empty result. Cancellation (`OperationCanceledException`)
+  propagates, and a `KeyNotFoundException` from `IProfileService.GetModList`
+  (an unknown profile id) propagates; the caller owns passing a valid id.
 - `CheckThoroughAsync(profileId)`: runs the same v2 batch query as
   `CheckAsync`; the two differ only in the result's `Thorough` flag (`true`
-  here). Kept for interface compatibility + the mod-list UI's result-surface
-  contract (the "check now" affordance clears the "recent updates only" notice).
+  here). Kept for interface compatibility; both paths run the same query, so
+  the flag no longer signals a coverage difference.
 - `LastResult`: the last check result, or null before the first check. Holds
   the most recent result regardless of which method produced it. The mod-list
   UI reads this to render badges without awaiting. Written under a lock
@@ -476,6 +483,11 @@ public sealed record ModUpdateInfo(
   `CheckAsync` / `CheckThoroughAsync` call (including the no-auth / rate-limited
   / failure short circuits) with the same result that was just set on
   `LastResult`.
+- `NamesChanged`: `true` when the name-sync pass renamed at least one
+  container. The mod-list UI refreshes the affected rows' displayed names in
+  place when this is set. Only the normal completion path can set it `true`;
+  the short-circuit paths (no auth, no Nexus mods, rate-limited, failure) leave
+  it `false`.
 
 The latest-MAIN filter (`NexusModFiles.LatestMain`, category_id 1 +
 non-archived, newest by `UploadedTimestamp`) is shared across two call sites:
@@ -494,18 +506,21 @@ the `Thorough` flag on the result).
    `None` -> return an empty result (no API call; the user hasn't configured
    Nexus).
 2. **Profile mods.** `IProfileService.GetModList(profileId)` -> the entries.
-3. **Filter to checkable mods.** For each entry, resolve the container via
-   `IModRepository.Get`. Keep only `LatestPolicy` + `NexusSource` entries. Skip
-   `PinnedPolicy`, `UntrackedSource`, `GitHubSource`. If none qualify -> empty
-   result (API not called).
-4. **Query Nexus v2 GraphQL (1 call).**
+3. **Enumerate the Nexus subset.** For each entry, resolve the container via
+   `IModRepository.Get`. Keep every `NexusSource` entry (Latest AND Pinned).
+   Skip `UntrackedSource` + `GitHubSource`. Derive a `checkable` subset filtered
+   to `LatestPolicy` (the flag logic is scoped to it; Pinned mods are frozen
+   version-wise and never flagged). If no Nexus mods at all -> empty result (API
+   not called). A profile with only Pinned Nexus mods still runs the batch (for
+   the name sync).
+4. **Query Nexus v2 GraphQL (1 call for ALL Nexus mods).**
    `INexusClient.CheckUpdatesGraphQlAsync(GameId, modIds, ct)` where `GameId`
-   is the Darktide constant `4943` + `modIds` is the checkable mods' Nexus mod
-   ids. The client computes UIDs (`uid = game_id * 2^32 + mod_id`), builds the
-   `modsByUid` GraphQL query, and POSTs to `/v2/graphql`. A
-   `NexusRateLimitException` is caught + surfaces as a rate-limited result. A
-   non-cancellation `Exception` is caught + surfaces as an empty result (the
-   check is best-effort). Cancellation propagates.
+   is the Darktide constant `4943` + `modIds` is EVERY Nexus mod's id (Latest +
+   Pinned), so Pinned ids ride along for the name sync. The client computes UIDs
+   (`uid = game_id * 2^32 + mod_id`), builds the `modsByUid` GraphQL query, and
+   POSTs to `/v2/graphql`. A `NexusRateLimitException` is caught + surfaces as a
+   rate-limited result. A non-cancellation `Exception` is caught + surfaces as an
+   empty result (the check is best-effort). Cancellation propagates.
 5. **Rate-limit gate (post-call).** From `response.RateLimits`: treat as
    rate-limited only when a limit was reported AND remaining is zero:
    `(DailyLimit > 0 && DailyRemaining <= 0) || (HourlyLimit > 0 && HourlyRemaining <= 0)`.
@@ -514,9 +529,9 @@ the `Thorough` flag on the result).
    gateways). If rate-limited -> return an empty result with `RateLimited = true`
    (the mod-list UI surfaces a "check incomplete" indicator).
 6. **Map results to flagged list (tiers 1 + 2).** Index the response nodes by
-   UID (`Dictionary<long, ModUpdateStatus>`). For each checkable mod, compute
-   its UID + look up the node. Flag the mod if **either** signal triggers, and
-   record which tier drove the flag: (a) `viewerUpdateAvailable == true`
+   UID (`Dictionary<long, ModUpdateStatus>`). For each CHECKABLE (Latest-only)
+   mod, compute its UID + look up the node. Flag the mod if **either** signal
+   triggers, and record which tier drove the flag: (a) `viewerUpdateAvailable == true`
    (tier 1, authoritative; server confirms an update since the user's last
    API-tracked download), or (b) the server's `version` string differs from the
    installed `VersionString` (tier 2, ordinal case-insensitive; catches cases
@@ -535,7 +550,14 @@ the `Thorough` flag on the result).
    session-scoped, so a repeat check for an unchanged mod makes zero extra
    calls. Tier 3 only ever removes flags; it never adds. Tier-1 flags are
    untouched. See [the update-detection tiers](../rate-limiting-strategy.md#update-detection-tiers).
-8. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
+8. **Name sync (free, piggybacks on the batch).** For EVERY Nexus mod (Latest +
+   Pinned), look up its node; if the node's `name` is non-empty and differs from
+   the container's stored `Name` (ordinal), rename the container via
+   `IModRepository.RenameContainer` (identity `Id` unchanged; the Nexus name
+   wins). An empty `name` or a missing node triggers no rename; one rename
+   failure (it should not throw, but defensively) does not abort the rest. Sets
+   `NamesChanged = true` on the result when at least one rename landed.
+9. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
    lock), return the result.
 
 ### UI wiring (`UpdateCheckRunner`)
@@ -645,17 +667,22 @@ view. No construction-time cycle.
 - **`UpdateCheckService`** against a fake `INexusClient` + a fake
   `IProfileService` + a fake `IModRepository` + the `FakeConfigLoader`: correct
   flagging (`viewerUpdateAvailable == true` flags, `false` + `null` do not),
-  `PinnedPolicy` / `UntrackedSource` / `GitHubSource` skipping, no-auth
-  short-circuit (no API call), no-checkable-mods short-circuit, rate-limit
-  guard (the `> 0` guard prevents a false positive on `NexusRateLimits.Unknown`,
+  `PinnedPolicy` (flag-wise) / `UntrackedSource` / `GitHubSource` skipping,
+  no-auth short-circuit (no API call), no-Nexus-mods short-circuit,
+  rate-limit guard (the `> 0` guard prevents a false positive on `NexusRateLimits.Unknown`,
   symmetric daily + hourly paths, + `NexusRateLimitException` surfacing),
   API-failure best-effort, the `LastResult` + `CheckCompleted` contract, the
-  `Thorough` flag on both methods, the 1-API-call-per-check contract, +
+  `Thorough` flag on both methods, the 1-API-call-per-check contract (the batch
+  covers ALL Nexus mods, Latest + Pinned), +
   `CheckThoroughAsync` producing the same results as `CheckAsync`. Mods missing
   from the response (a UID did not resolve) are not flagged (conservative). Tier
   3 is covered: the false-positive clear, the real-update keep, the tier-1 skip,
   the cache hit / invalidation on page-version change, and the failure-leaves
-  -flag path. The internal `NexusClient.CheckUpdatesGraphQlAsync` is covered
+  -flag path. Name sync is covered: a rename when the Nexus name differs (no
+  extra API call), no rename when the name matches or is empty/missing, a Pinned
+  mod synced but not flagged, the flag-uses-pre-sync-name ordering, and the
+  per-mod defensive catch (one rename failure does not abort the pass). The
+  internal `NexusClient.CheckUpdatesGraphQlAsync` is covered
   against canned HTTP responses: POST to `/v2/graphql`, UID computation from
   game id + mod ids, string + numeric UID deserialization, GraphQL-error
   surfacing (200 OK body

@@ -292,6 +292,58 @@ internal sealed class ModRepository : IModRepository
         }
     }
 
+    /// <inheritdoc />
+    public ModContainer? RenameContainer(Guid containerId, string newName)
+    {
+        ArgumentNullException.ThrowIfNull(newName);
+        lock (_sync)
+        {
+            if (!_byId.TryGetValue(containerId, out var container))
+            {
+                return null;
+            }
+
+            // No-op when the name is already current (ordinal). Avoids a
+            // pointless manifest rewrite on every name-sync pass for mods whose
+            // name has not drifted.
+            if (string.Equals(container.Name, newName, StringComparison.Ordinal))
+            {
+                return container;
+            }
+
+            var baseFolder = EnsureBaseFolder();
+            var updated = container with { Name = newName };
+            _byId[containerId] = updated;
+            WriteContainer(updated, baseFolder);
+
+            // Keep the untracked-name index consistent for untracked containers
+            // (their dedup key is the name). Nexus/GitHub identity is on the
+            // source record, so the index is not involved for those + stays
+            // untouched (the name-sync that drives this path targets Nexus
+            // containers, for which the index never held an entry).
+            if (container.Source is UntrackedSource)
+            {
+                _untrackedByName.Remove(container.Name);
+                // Mirror IndexUntrackedName: if newName is already held by a
+                // different untracked container (a hand-edit edge case), the
+                // index now points at this one and the other is reachable only
+                // via Get(id) + List(). Log so it is visible rather than silent.
+                if (_untrackedByName.TryGetValue(newName, out var collision) && collision != container.Id)
+                {
+                    _logger.LogWarning(
+                        "Duplicate untracked container name '{Name}' (ids {Prior} + {Current}); index points at {Current}.",
+                        newName, collision, container.Id, container.Id);
+                }
+                _untrackedByName[newName] = container.Id;
+            }
+
+            _logger.LogInformation(
+                "Renamed container {Id} '{Old}' -> '{New}'",
+                containerId, container.Name, newName);
+            return updated;
+        }
+    }
+
     /// <summary>
     /// Stages <paramref name="populateFolder"/>'s output into a temp directory
     /// that is a SIBLING of <paramref name="versionDir"/> (so the final swap is

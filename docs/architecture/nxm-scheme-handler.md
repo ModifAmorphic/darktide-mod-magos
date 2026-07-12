@@ -162,9 +162,10 @@ unregister path only releases Curator's own registration (it re-checks
 `IsRegistered()` before `Unregister()` so it never deletes another program's
 handler). The composition root never registers; `INxmHandlerRegistrar` is
 resolved lazily by the Integrations view model + the shell status strip. The
-main-window status strip surfaces the current state ("NXM: Curator" / "NXM: not
-Curator" / "NXM: unavailable") and refreshes after the Integrations dialog
-closes. No polling: the OS registration rarely changes out-of-band.
+main-window status strip surfaces the current state ("Nexus links: enabled" /
+"Nexus links: disabled" / "Nexus links: unavailable") and refreshes after the
+Integrations dialog closes. No polling: the OS registration rarely changes
+out-of-band.
 
 The handler-exe path is derived from `AppContext.BaseDirectory` plus the fixed
 handler assembly name. The handler ships as a sibling of the main Curator exe.
