@@ -409,6 +409,10 @@
     <value>Check for updates now</value>
     <comment>Tooltip on the refresh button in the mod-list header; clicking it fires an immediate update check for the active profile.</comment>
   </data>
+  <data name="ModList_ManualRefreshThrottled" xml:space="preserve">
+    <value>Rate limiting protection enabled. Manual refresh will be available again in {0}.</value>
+    <comment>Tooltip on the refresh button while the manual sliding-window throttle is active. {0} is the remaining cooldown formatted as m:ss (e.g. 1:30). Replaces the normal Check for updates now tooltip until the cooldown elapses.</comment>
+  </data>
   <data name="Update_FailedTitle" xml:space="preserve">
     <value>Update failed</value>
     <comment>Title of the modal alert shown when a per-mod one-click update fails.</comment>

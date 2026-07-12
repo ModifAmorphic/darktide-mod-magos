@@ -199,8 +199,10 @@ public partial class IntegrationsViewModel : ObservableObject
     /// The periodic update-check interval, in minutes, as the
     /// <c>NumericUpDown</c> sees it (decimal to match the control's Value type).
     /// Two-way bound; persisted on each user change via read-modify-save,
-    /// clamped to [1, 1440] on write. Loaded from
-    /// <c>NexusConfig.AutoUpdateCheckIntervalMinutes</c> on dialog open.
+    /// clamped to [<see cref="NexusConfig.MinAutoUpdateCheckIntervalMinutes"/>,
+    /// <see cref="NexusConfig.MaxAutoUpdateCheckIntervalMinutes"/>] on write.
+    /// Loaded from <c>NexusConfig.AutoUpdateCheckIntervalMinutes</c> on dialog
+    /// open.
     /// </summary>
     [ObservableProperty]
     private decimal? _autoUpdateCheckIntervalMinutes;
@@ -223,7 +225,9 @@ public partial class IntegrationsViewModel : ObservableObject
     /// <summary>
     /// Read-modify-saves the toggle + interval into the live config so the
     /// runner picks them up on its next tick. Best-effort (the ConfigLoader
-    /// swallows write failures); clamps the interval to [1, 1440] minutes + null
+    /// swallows write failures); clamps the interval to
+    /// [<see cref="NexusConfig.MinAutoUpdateCheckIntervalMinutes"/>,
+    /// <see cref="NexusConfig.MaxAutoUpdateCheckIntervalMinutes"/>] minutes + null
     /// defaults to 10. No-op while <c>_isLoadingAutoUpdate</c> is set.
     /// </summary>
     private void SaveAutoUpdateSettings()
@@ -236,7 +240,9 @@ public partial class IntegrationsViewModel : ObservableObject
         var config = _configLoader.Load();
         config.Integrations.Nexus.AutoUpdateCheckEnabled = AutoUpdateCheckEnabled;
         config.Integrations.Nexus.AutoUpdateCheckIntervalMinutes =
-            (int)Math.Clamp(AutoUpdateCheckIntervalMinutes ?? 10, 1, 1440);
+            (int)Math.Clamp(AutoUpdateCheckIntervalMinutes ?? 10,
+                NexusConfig.MinAutoUpdateCheckIntervalMinutes,
+                NexusConfig.MaxAutoUpdateCheckIntervalMinutes);
         _configLoader.Save(config);
     }
 

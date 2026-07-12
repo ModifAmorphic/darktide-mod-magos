@@ -9,6 +9,9 @@ Reference material, organized by category. Updated as we learn more.
   for the UI layer (the profile session, dialog service, preferences service,
   localization, the DMF prompt coordinator, the update-check runner,
   converters, DI registration).
+- [`rate-limiting-strategy.md`](rate-limiting-strategy.md): the proactive Nexus
+  API call-limiting mechanisms (manual sliding-window throttle, auto-check
+  interval floor, persisted interval gate) and the worst-case budget math.
 - [`release-strategy.md`](release-strategy.md): how Curator releases are
   produced, attested, scanned, and installed (release-please workflow,
   post-release AV/VT scan, PR gate, Linux installer, sandbox rehearsal).

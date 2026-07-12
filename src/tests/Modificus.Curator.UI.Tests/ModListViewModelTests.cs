@@ -1272,4 +1272,147 @@ public sealed class ModListViewModelTests
         Assert.Equal(42, Row(vm, "DMF").NexusModId);
         Assert.Null(Row(vm, "Local").NexusModId);
     }
+
+    // ---- manual-refresh throttle (countdown tooltip + disabled button) ------
+
+    /// <summary>
+    /// Builds a VM wired with a controllable runner clock (so the sliding-window
+    /// throttle is deterministic) + a captured countdown-timer tick (so the test
+    /// drives the 1-second tick directly, like the runner tests drive the
+    /// periodic tick). The runner is the real UpdateCheckRunner, driven into the
+    /// throttle state through CheckNowAsync (no production test-seam). Returns
+    /// the VM, the captured tick callback, and a setter for the runner's clock.
+    /// </summary>
+    private static (ModListViewModel Vm, Action Tick, Action<DateTimeOffset> SetClock)
+        BuildForThrottle()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var container = repo.Seed(new UntrackedSource(), "DMF", "1.0");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = container.Id, Order = 0 });
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+
+        var updateCheck = new FakeUpdateCheckService();
+        var now = DateTimeOffset.UtcNow;
+        Action? capturedTick = null;
+        var vm = TestDoubles.BuildModList(
+            profiles: profiles,
+            session: session,
+            repo: repo,
+            updateCheck: updateCheck,
+            getNow: () => now,
+            startCountdownTimer: t => capturedTick ??= t);
+        return (vm, () => capturedTick!.Invoke(), value => now = value);
+    }
+
+    /// <summary>
+    /// Drives the runner into the throttled state by firing 10 manual refreshes
+    /// through the VM's CheckForUpdatesNow command (advancing the runner clock
+    /// 1s before each so the timestamps are distinct but within 2 minutes of
+    /// each other). The 10th fire engages the throttle: RefreshManualRefreshThrottle
+    /// runs after the await + sees the count at 10.
+    /// </summary>
+    private static async Task DriveIntoThrottleAsync(
+        ModListViewModel vm, Action<DateTimeOffset> setClock)
+    {
+        var baseTime = DateTimeOffset.UtcNow;
+        for (var i = 0; i < 10; i++)
+        {
+            setClock(baseTime.AddSeconds(i));
+            await vm.CheckForUpdatesNowCommand.ExecuteAsync(null);
+        }
+    }
+
+    [Fact]
+    public async Task ManualRefreshThrottle_disables_the_button_when_the_budget_is_spent()
+    {
+        // After 10 manual refreshes, the sliding window is spent + the VM marks
+        // itself throttled: IsManualRefreshThrottled is true + IsRefreshEnabled
+        // is false (the button binds IsEnabled to it).
+        var (vm, _, setClock) = BuildForThrottle();
+        Assert.True(vm.IsRefreshEnabled); // not throttled at construction
+
+        await DriveIntoThrottleAsync(vm, setClock);
+
+        Assert.True(vm.IsManualRefreshThrottled);
+        Assert.False(vm.IsRefreshEnabled);
+    }
+
+    [Fact]
+    public async Task ManualRefreshThrottle_tooltip_shows_the_countdown_while_throttled()
+    {
+        // While throttled, the tooltip is the throttle string (not the normal
+        // "Check for updates now") and carries the operator's exact wording.
+        var (vm, _, setClock) = BuildForThrottle();
+        var normal = Localization["ModList_CheckNowTooltip"];
+        Assert.Equal(normal, vm.ManualRefreshTooltip);
+
+        await DriveIntoThrottleAsync(vm, setClock);
+
+        Assert.NotEqual(normal, vm.ManualRefreshTooltip);
+        Assert.Contains("Rate limiting protection enabled", vm.ManualRefreshTooltip);
+        Assert.Contains("Manual refresh will be available again in", vm.ManualRefreshTooltip);
+    }
+
+    [Fact]
+    public async Task ManualRefreshThrottle_countdown_tick_clears_when_cooldown_elapses()
+    {
+        // Driving the captured countdown tick re-evaluates the runner's
+        // NextManualRefreshAllowedAt. While throttled, the tick keeps the throttle
+        // string live; once the clock advances past the cooldown (the property
+        // returns null), the tick clears IsManualRefreshThrottled + restores the
+        // normal tooltip. The 10th timestamp is baseTime+9s, so the unlock is
+        // baseTime+2m9s; advancing to baseTime+3m is past it.
+        var (vm, tick, setClock) = BuildForThrottle();
+        var baseTime = DateTimeOffset.UtcNow;
+        await DriveIntoThrottleAsync(vm, setClock);
+        Assert.True(vm.IsManualRefreshThrottled);
+
+        // A tick while throttled keeps the throttle string live.
+        tick();
+        Assert.Contains("Rate limiting protection enabled", vm.ManualRefreshTooltip);
+
+        // Advance the runner's clock past the cooldown so the property clears.
+        setClock(baseTime.AddMinutes(3));
+        tick();
+
+        Assert.False(vm.IsManualRefreshThrottled);
+        Assert.True(vm.IsRefreshEnabled);
+        Assert.Equal(Localization["ModList_CheckNowTooltip"], vm.ManualRefreshTooltip);
+    }
+
+    [Fact]
+    public void ManualRefreshThrottle_normal_tooltip_is_the_check_now_resx_string()
+    {
+        // When not throttled (the default at construction), the tooltip is the
+        // normal "Check for updates now" resx string.
+        var (vm, _, _) = BuildForThrottle();
+
+        Assert.False(vm.IsManualRefreshThrottled);
+        Assert.Equal(Localization["ModList_CheckNowTooltip"], vm.ManualRefreshTooltip);
+    }
+
+    // ---- FormatRemaining (pure helper) -------------------------------------
+
+    [Theory]
+    [InlineData(0, "0:00")]
+    [InlineData(5, "0:05")]
+    [InlineData(65, "1:05")]
+    [InlineData(90, "1:30")]
+    [InlineData(120, "2:00")]
+    public void FormatRemaining_formats_a_timespan_as_m_ss(int seconds, string expected)
+    {
+        Assert.Equal(expected, ModListViewModel.FormatRemaining(TimeSpan.FromSeconds(seconds)));
+    }
+
+    [Fact]
+    public void FormatRemaining_clamps_a_negative_remaining_to_zero()
+    {
+        // A tick landing a hair past the unlock instant could yield a tiny
+        // negative; the helper clamps so the tooltip never shows a negative.
+        Assert.Equal("0:00", ModListViewModel.FormatRemaining(TimeSpan.FromSeconds(-5)));
+        Assert.Equal("0:00", ModListViewModel.FormatRemaining(TimeSpan.FromMilliseconds(-1)));
+    }
 }

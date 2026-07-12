@@ -2,6 +2,8 @@ using Modificus.Curator.Config;
 using Modificus.Curator.General;
 using Modificus.Curator.Mods;
 using Modificus.Curator.Profiles;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Modificus.Curator.Integrations.Tests;
@@ -635,7 +637,363 @@ public sealed class UpdateCheckServiceTests
         Assert.Equal(2, nexus.GraphQlCallCount);
     }
 
+    // ---- tier 3: latest-file-version confirmation -------------------------
+
+    [Fact]
+    public async Task CheckAsync_tier3_clears_tier2_false_positive_when_latest_file_matches_installed()
+    {
+        // The mod-page header version (1.9.1) lags the latest file (1.9.2), and the
+        // user has 1.9.2 installed. Tier 2 flags (1.9.2 != 1.9.1); tier 3 resolves
+        // the latest MAIN file (1.9.2) and clears the flag because 1.9.2 equals the
+        // installed version. This is the mod #1022-style false positive.
+        const int modId = 1022;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, version: "1.9.1") },
+                NexusRateLimits.Unknown),
+            ModFilesByModId =
+            {
+                [modId] = new[] { MainFile("1.9.2", uploadedTs: 10) },
+            },
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Laggy Header Mod", "1.9.2");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        Assert.Empty(result.Updates);
+        Assert.False(result.RateLimited);
+        // Tier 3 ran (one ListModFilesAsync call to confirm the false positive).
+        Assert.Equal(1, nexus.ListModFilesCallCount[modId]);
+    }
+
+    [Fact]
+    public async Task CheckAsync_tier3_keeps_flag_when_latest_file_differs_from_installed()
+    {
+        // Tier 2 flags (installed 1.9.1 != page 1.9.0). The latest MAIN file is
+        // 1.9.2, which differs from the installed 1.9.1, so tier 3 cannot clear it:
+        // a real update exists. The flag stays.
+        const int modId = 1023;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, version: "1.9.0") },
+                NexusRateLimits.Unknown),
+            ModFilesByModId =
+            {
+                [modId] = new[] { MainFile("1.9.2", uploadedTs: 10) },
+            },
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Real Update Mod", "1.9.1");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(container, flagged.ContainerId);
+        Assert.False(result.RateLimited);
+    }
+
+    [Fact]
+    public async Task CheckAsync_tier3_skips_tier1_flagged_mods()
+    {
+        // viewerUpdateAvailable == true is authoritative: even though the installed
+        // version (1.9.1) matches the latest file (1.9.1), which would clear a
+        // tier-2 flag, tier 1 keeps the mod flagged and tier 3 does not run on it.
+        const int modId = 1024;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: true, version: "1.9.0") },
+                NexusRateLimits.Unknown),
+            ModFilesByModId =
+            {
+                // Would clear a tier-2 flag (1.9.1 == installed), but tier 3 must
+                // never read it for this tier-1-flagged mod.
+                [modId] = new[] { MainFile("1.9.1", uploadedTs: 10) },
+            },
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Tier1 Mod", "1.9.1");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(container, flagged.ContainerId);
+        // Tier 3 was skipped: ListModFilesAsync was never called for this mod.
+        Assert.False(nexus.ListModFilesCallCount.ContainsKey(modId));
+    }
+
+    [Fact]
+    public async Task CheckAsync_tier3_cache_avoids_repeat_call_for_unchanged_mod()
+    {
+        // Two checks with the same (modId, pageVersion, updatedAt) for a tier-2-only
+        // flag. The first resolves + caches; the second hits the cache. Net: exactly
+        // one ListModFilesAsync call across both checks.
+        const int modId = 1025;
+        var updatedAt = new DateTimeOffset(2024, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, updatedAt, version: "1.9.1") },
+                NexusRateLimits.Unknown),
+            ModFilesByModId =
+            {
+                [modId] = new[] { MainFile("1.9.2", uploadedTs: 10) },
+            },
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Cached Mod", "1.9.2");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        await service.CheckAsync(ProfileId);
+        await service.CheckAsync(ProfileId);
+
+        Assert.Equal(1, nexus.ListModFilesCallCount[modId]);
+    }
+
+    [Fact]
+    public async Task CheckAsync_tier3_cache_invalidates_when_page_version_changes()
+    {
+        // First check resolves + caches. The second check observes a different page
+        // version (one of the cache-key components), so the key no longer matches
+        // and tier 3 re-resolves. The updatedAt component is held constant so only
+        // the page version invalidates.
+        const int modId = 1026;
+        var updatedAt = new DateTimeOffset(2024, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        var nexus = new FakeNexusClient
+        {
+            ModFilesByModId =
+            {
+                [modId] = new[] { MainFile("1.9.2", uploadedTs: 10) },
+            },
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Cache Invalidate Mod", "1.9.2");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        nexus.GraphQlResponse = new Response<ModUpdateStatus[]>(
+            new[] { Status(modId, viewerUpdateAvailable: false, updatedAt, version: "1.9.1") },
+            NexusRateLimits.Unknown);
+        await service.CheckAsync(ProfileId);
+        Assert.Equal(1, nexus.ListModFilesCallCount[modId]);
+
+        // Page version changed -> cache key differs -> re-resolve.
+        nexus.GraphQlResponse = new Response<ModUpdateStatus[]>(
+            new[] { Status(modId, viewerUpdateAvailable: false, updatedAt, version: "1.9.0") },
+            NexusRateLimits.Unknown);
+        await service.CheckAsync(ProfileId);
+        Assert.Equal(2, nexus.ListModFilesCallCount[modId]);
+    }
+
+    [Fact]
+    public async Task CheckAsync_tier3_cache_re_resolves_after_ttl_expires_on_unchanged_key()
+    {
+        // The tier-3 cache TTL backstop: even when the cache key (modId,
+        // pageVersion, updatedAt) is UNCHANGED, an entry older than 24h is
+        // re-resolved. This catches the rare case where an author uploads a new
+        // MAIN file without bumping the page version or the updated-at timestamp
+        // (the two observable key components). The injected clock drives the TTL
+        // age deterministically; without it the 24h wait is untestable.
+        const int modId = 1028;
+        var updatedAt = new DateTimeOffset(2024, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2024, 7, 1, 0, 0, 0, TimeSpan.Zero);
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, updatedAt, version: "1.9.1") },
+                NexusRateLimits.Unknown),
+            ModFilesByModId =
+            {
+                [modId] = new[] { MainFile("1.9.2", uploadedTs: 10) },
+            },
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "TTL Backstop Mod", "1.9.2");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository, getNow: () => now);
+
+        // First check: tier 2 flags (installed 1.9.2 != page 1.9.1); tier 3
+        // resolves the latest MAIN file (1.9.2) and clears the flag, caching the
+        // verdict at the injected clock's "now".
+        await service.CheckAsync(ProfileId);
+        Assert.Equal(1, nexus.ListModFilesCallCount[modId]);
+
+        // Advance the injected clock past the 24h TTL. The cache key (modId,
+        // pageVersion, updatedAt) is unchanged across both checks.
+        now = now + TimeSpan.FromHours(25);
+
+        // Second check: same key, but the entry is now older than the TTL, so
+        // tier 3 re-resolves despite the unchanged key.
+        await service.CheckAsync(ProfileId);
+        Assert.Equal(2, nexus.ListModFilesCallCount[modId]);
+    }
+
+    [Fact]
+    public async Task CheckAsync_tier3_failure_leaves_flag_and_does_not_fail_check()
+    {
+        // The tier-3 ListModFilesAsync call throws (network, rate-limit, any error).
+        // Tier 3 cannot confirm, so it leaves the mod flagged; the check itself does
+        // not fail and is not reported as rate-limited (the tier-1+2 baseline holds).
+        const int modId = 1027;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, version: "1.9.0") },
+                NexusRateLimits.Unknown),
+            ListModFilesThrows =
+            {
+                [modId] = new NexusApiException(500, "server error"),
+            },
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Tier3 Failure Mod", "1.9.1");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(container, flagged.ContainerId);
+        Assert.False(result.RateLimited);
+    }
+
+    [Fact]
+    public async Task CheckAsync_tier3_rate_limit_leaves_flag_and_does_not_promote_to_rate_limited()
+    {
+        // A NexusRateLimitException from tier 3's ListModFilesAsync is swallowed
+        // like any tier-3 failure: tier 3 cannot confirm, so the mod stays
+        // flagged, AND the check result's RateLimited flag stays false. A
+        // tier-3-only rate limit does NOT promote to the check-level signal (the
+        // tier-1+2 baseline holds). This pins the non-obvious design choice; the
+        // sibling failure test throws NexusApiException, this one throws the
+        // rate-limit subtype to prove the subtype is treated the same way.
+        const int modId = 1029;
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(modId, viewerUpdateAvailable: false, version: "1.9.0") },
+                NexusRateLimits.Unknown),
+            ListModFilesThrows =
+            {
+                [modId] = new NexusRateLimitException(429, NexusRateLimits.Unknown),
+            },
+        };
+        var container = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[container] =
+            NexusContainer(container, modId, "Tier3 Rate-Limited Mod", "1.9.1");
+        var profiles = new FakeProfileService
+        {
+            Mods = new[] { Entry(container, new LatestPolicy()) },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(container, flagged.ContainerId);
+        Assert.False(result.RateLimited);
+    }
+
+    // ---- DI activation (default clock param) ------------------------------
+
+    [Fact]
+    public void UpdateCheckService_resolves_from_DI_with_unregistered_optional_clock_param()
+    {
+        // The clock seam's last constructor parameter (Func<DateTimeOffset>?
+        // getNow = null) is intentionally NOT registered in DI. This proves the
+        // production registration (AddUpdateCheck's interface-to-impl
+        // AddSingleton<IUpdateCheckService, UpdateCheckService>) still activates:
+        // Microsoft.Extensions.DependencyInjection honors the parameter's
+        // default value for the unresolvable optional param, which the
+        // constructor turns into the UtcNow clock. If this ever stops resolving,
+        // the registration must switch to a factory delegate that passes
+        // getNow: null explicitly (the UpdateCheckRunner registration pattern).
+        var nexus = new FakeNexusClient();
+        var repository = new FakeModRepository();
+        var profiles = new FakeProfileService();
+        var configLoader = new FakeConfigLoader { Config = CuratorConfig.CreateDefault() };
+
+        var services = new ServiceCollection();
+        services.AddSingleton<INexusClient>(nexus);
+        services.AddSingleton<IProfileService>(profiles);
+        services.AddSingleton<IModRepository>(repository);
+        services.AddSingleton<IConfigLoader>(configLoader);
+        services.AddSingleton<ILogger<UpdateCheckService>>(NullLogger<UpdateCheckService>.Instance);
+        // Mirrors AddUpdateCheck (the interface-to-impl registration under test);
+        // the unregistered Func<DateTimeOffset>? param must fall back to its default.
+        services.AddSingleton<IUpdateCheckService, UpdateCheckService>();
+
+        using var provider = services.BuildServiceProvider();
+        var service = provider.GetRequiredService<IUpdateCheckService>();
+
+        Assert.NotNull(service);
+        Assert.IsType<UpdateCheckService>(service);
+    }
+
     // ---- helpers + fakes ---------------------------------------------------
+
+    /// <summary>
+    /// Builds a <see cref="ModFile"/> with the given version as a non-archived
+    /// MAIN file (category 1) uploaded at <paramref name="uploadedTs"/>. Tier 3
+    /// picks the newest MAIN by upload timestamp, so the caller controls which
+    /// file "wins" via <paramref name="uploadedTs"/>.
+    /// </summary>
+    private static ModFile MainFile(string version, long uploadedTs = 0) =>
+        new()
+        {
+            FileId = uploadedTs,
+            FileName = version + ".zip",
+            Name = version,
+            Version = version,
+            CategoryId = NexusModFiles.MainFileCategory,
+            UploadedTimestamp = uploadedTs,
+        };
 
     /// <summary>
     /// Builds a Nexus-sourced <see cref="ModContainer"/> with a single
@@ -712,19 +1070,22 @@ public sealed class UpdateCheckServiceTests
     /// <summary>
     /// Constructs the service with the given fakes + a <see cref="FakeConfigLoader"/>
     /// whose Nexus auth method is <paramref name="authMethod"/> (ApiKey by
-    /// default, so the auth gate passes and the API is reached).
+    /// default, so the auth gate passes and the API is reached). The optional
+    /// <paramref name="getNow"/> drives the tier-3 cache TTL clock for the TTL
+    /// re-resolve test; it defaults to null (the production UtcNow clock).
     /// </summary>
     private static UpdateCheckService CreateService(
         FakeNexusClient nexus,
         FakeProfileService profiles,
         FakeModRepository repository,
-        NexusAuthMethod authMethod = NexusAuthMethod.ApiKey)
+        NexusAuthMethod authMethod = NexusAuthMethod.ApiKey,
+        Func<DateTimeOffset>? getNow = null)
     {
         var config = CuratorConfig.CreateDefault();
         config.Integrations.Nexus.AuthMethod = authMethod;
         var configLoader = new FakeConfigLoader { Config = config };
         return new UpdateCheckService(
-            nexus, profiles, repository, configLoader, NullLogger<UpdateCheckService>.Instance);
+            nexus, profiles, repository, configLoader, NullLogger<UpdateCheckService>.Instance, getNow);
     }
 
     /// <summary>
@@ -740,6 +1101,15 @@ public sealed class UpdateCheckServiceTests
         public int GraphQlCallCount { get; private set; }
         public int? LastGameId { get; private set; }
         public List<int>? LastModIds { get; private set; }
+
+        // Tier-3 (latest-file-version confirmation) support. ListModFilesAsync is
+        // the per-tier-2-only-flagged-mod call the service makes to resolve the
+        // newest MAIN file. The response map is keyed by mod id; the throw map lets
+        // a test simulate a failure; the call counter backs the cache-avoidance +
+        // cache-invalidation assertions.
+        public Dictionary<int, ModFile[]> ModFilesByModId { get; } = new();
+        public Dictionary<int, Exception> ListModFilesThrows { get; } = new();
+        public Dictionary<int, int> ListModFilesCallCount { get; } = new();
 
         public Task<Response<ModUpdateStatus[]>> CheckUpdatesGraphQlAsync(
             int gameId, IReadOnlyList<int> modIds, CancellationToken ct = default)
@@ -775,7 +1145,23 @@ public sealed class UpdateCheckServiceTests
             => throw new NotImplementedException();
         public Task<Response<ModFile[]>> ListModFilesAsync(
             string gameDomain, int modId, CancellationToken ct = default)
-            => throw new NotImplementedException();
+        {
+            ListModFilesCallCount[modId] =
+                ListModFilesCallCount.TryGetValue(modId, out var c) ? c + 1 : 1;
+
+            if (ListModFilesThrows.TryGetValue(modId, out var ex))
+            {
+                return Task.FromException<Response<ModFile[]>>(ex);
+            }
+
+            if (!ModFilesByModId.TryGetValue(modId, out var files))
+            {
+                throw new NotImplementedException(
+                    $"No ModFiles configured for mod {modId}; set FakeNexusClient.ModFilesByModId.");
+            }
+
+            return Task.FromResult(new Response<ModFile[]>(files, NexusRateLimits.Unknown));
+        }
     }
 
     /// <summary>

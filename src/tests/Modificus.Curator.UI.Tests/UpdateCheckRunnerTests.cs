@@ -71,6 +71,39 @@ public sealed class UpdateCheckRunnerTests
         Assert.Empty(service.Calls);
     }
 
+    [Fact]
+    public async Task Start_is_suppressed_when_last_check_is_within_the_interval()
+    {
+        // The core "no call-per-launch" guarantee: a persisted
+        // LastUpdateCheckUtc within the configured interval suppresses the
+        // opening startup check. Then advancing the clock past the interval
+        // lets the periodic tick fire. This is what survives a rapid
+        // open/close loop without burning an API call per launch.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore();
+        var now = DateTimeOffset.UtcNow;
+        appState.LastUpdateCheckUtc = now; // a check "just fired" in a prior session
+        var (runner, tick) = BuildWithCapturedTick(
+            session, service, getNow: () => now, appState: appState);
+
+        runner.Start();
+        await Task.Delay(50);
+        Assert.Empty(service.Calls); // interval NOT elapsed -> no startup fire
+
+        // Tick while still within the interval -> still no fire.
+        tick();
+        await Task.Delay(50);
+        Assert.Empty(service.Calls);
+
+        // Advance past the default 10-minute interval -> the next tick fires.
+        now = now.AddMinutes(11);
+        tick();
+        await WaitAsync(() => service.CallCount == 1);
+        Assert.Equal(id, Assert.Single(service.Calls));
+    }
+
     // ---- profile-switch trigger --------------------------------------------
 
     [Fact]
@@ -106,6 +139,36 @@ public sealed class UpdateCheckRunnerTests
 
         await Task.Delay(50);
         Assert.Single(service.Calls); // still just the startup call
+    }
+
+    [Fact]
+    public async Task Switch_is_suppressed_within_interval_and_fires_once_it_elapses()
+    {
+        // Mirrors Start_is_suppressed_when_last_check_is_within_the_interval but
+        // via OnActiveProfileChanged: a recent persisted check suppresses the
+        // first switch; once the interval elapses, a second switch fires. This
+        // prevents rapid profile switching from burning calls in a session.
+        var firstId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        var session = new FakeProfileSession(); // null at start
+        var service = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore();
+        var now = DateTimeOffset.UtcNow;
+        appState.LastUpdateCheckUtc = now; // a check "just fired"
+        var runner = Build(session, service, getNow: () => now, appState: appState);
+        runner.Start();
+        await Task.Delay(50);
+        Assert.Empty(service.Calls); // no id at startup -> no startup fire
+
+        session.ActiveProfileId = firstId; // switch while within interval
+        await Task.Delay(50);
+        Assert.Empty(service.Calls); // interval NOT elapsed -> switch suppressed
+
+        // Advance past the default 10-minute interval -> the next switch fires.
+        now = now.AddMinutes(11);
+        session.ActiveProfileId = secondId;
+        await WaitAsync(() => service.CallCount == 1);
+        Assert.Equal(secondId, Assert.Single(service.Calls));
     }
 
     // ---- non-trigger -------------------------------------------------------
@@ -204,10 +267,12 @@ public sealed class UpdateCheckRunnerTests
     [Fact]
     public async Task Timer_tick_honors_a_runtime_interval_change_live()
     {
-        // The interval is read live on each tick. Set a 10-minute interval,
-        // advance 5 minutes (no fire), change the config to 4 minutes (which 5
-        // now exceeds), and tick -> fires. This is what makes a dialog change
-        // take effect without a restart.
+        // The interval is read live on each tick. With the default 10-minute
+        // interval, advance 5 minutes (no fire under 10), then lower the config
+        // to 5 minutes (the compliance floor) so the 5 elapsed minutes now meet
+        // it, and tick -> fires. This is what makes a dialog change take effect
+        // without a restart. (Both 10 and 5 are at/above the 5-minute floor, so
+        // neither is silently raised by the tick-time clamp.)
         var id = Guid.NewGuid();
         var session = new FakeProfileSession { ActiveProfileId = id };
         var configLoader = new FakeConfigLoader(); // default 10-minute interval
@@ -223,8 +288,42 @@ public sealed class UpdateCheckRunnerTests
         await Task.Delay(50);
         Assert.Single(service.Calls); // 5 < 10, no fire
 
-        // Lower the interval to 4 minutes; the 5 elapsed minutes now exceed it.
-        configLoader.Config.Integrations.Nexus.AutoUpdateCheckIntervalMinutes = 4;
+        // Lower the interval to 5 minutes (the floor); the 5 elapsed minutes now meet it.
+        configLoader.Config.Integrations.Nexus.AutoUpdateCheckIntervalMinutes = 5;
+        tick();
+        await WaitAsync(() => service.CallCount == 2);
+    }
+
+    [Fact]
+    public async Task Timer_tick_clamps_a_sub_floor_interval_up_to_the_floor()
+    {
+        // The tick-time Math.Max clamp is the compliance defense-in-depth: a
+        // sub-floor value that reached the runner (a hand-edited config, or a
+        // save path that skipped its own clamp) can never drive an API call
+        // faster than NexusConfig.MinAutoUpdateCheckIntervalMinutes. Configure a
+        // 1-minute interval (below that floor) and confirm the clamp raises it:
+        // no fire at 1 minute, fire at the clamped floor.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var configLoader = new FakeConfigLoader();
+        configLoader.Config.Integrations.Nexus.AutoUpdateCheckIntervalMinutes = 1;
+        var service = new FakeUpdateCheckService();
+        var now = DateTimeOffset.UtcNow;
+        var (runner, tick) = BuildWithCapturedTick(session, service, configLoader, () => now);
+
+        runner.Start();
+        await WaitAsync(() => service.CallCount == 1); // the startup fire (stamps _lastCheckAt)
+
+        // 1 minute elapsed: below the clamped floor, so the configured 1-minute
+        // interval must NOT fire here.
+        now = now.AddMinutes(1);
+        tick();
+        await Task.Delay(50);
+        Assert.Single(service.Calls);
+
+        // Advance to 5 minutes total since the last check (the clamped floor):
+        // the next tick fires.
+        now = now.AddMinutes(4);
         tick();
         await WaitAsync(() => service.CallCount == 2);
     }
@@ -288,6 +387,321 @@ public sealed class UpdateCheckRunnerTests
         Assert.Equal(new[] { id }, service.ThoroughCalls);
     }
 
+    [Fact]
+    public async Task CheckNow_bypasses_the_interval_gate()
+    {
+        // The manual trigger is user-initiated, so it bypasses the interval
+        // gate even when the interval has NOT elapsed. Seed the store
+        // with a recent check (so the gate is closed), Start() must skip its
+        // opening fire, but CheckNowAsync still fires the thorough check.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore();
+        var now = DateTimeOffset.UtcNow;
+        appState.LastUpdateCheckUtc = now; // gate closed
+        var runner = Build(session, service, getNow: () => now, appState: appState);
+
+        runner.Start();
+        await Task.Delay(50);
+        Assert.Empty(service.Calls); // startup suppressed by the gate
+
+        await runner.CheckNowAsync(); // manual bypass -> fires thorough
+
+        await WaitAsync(() => service.ThoroughCallCount == 1);
+        Assert.Equal(new[] { id }, service.ThoroughCalls);
+    }
+
+    // ---- manual sliding-window throttle ------------------------------------
+
+    // The manual "check now" path carries its own throttle (independent of the
+    // interval gate): 10 free refreshes per rolling hour, then 1 per 2 minutes
+    // until the window slides. These tests drive it deterministically via the
+    // injected getNow clock (no real-time delays). The clock is captured by the
+    // lambda so reassigning the local advances what the runner sees.
+
+    [Fact]
+    public async Task ManualRefresh_first_ten_fire_freely_and_throttle_stays_null_under_the_limit()
+    {
+        // The free budget is 10 per rolling hour. The first 10 manual refreshes
+        // all fire (CheckThoroughAsync called 10x); NextManualRefreshAllowedAt
+        // is null while the count is under 10 (the button stays enabled).
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var now = DateTimeOffset.UtcNow;
+        var runner = Build(session, service, getNow: () => now);
+
+        // Fire 9: each fires freely; the throttle stays null (count < 10).
+        for (var i = 0; i < 9; i++)
+        {
+            Assert.Null(runner.NextManualRefreshAllowedAt);
+            now = now.AddSeconds(1);
+            await runner.CheckNowAsync();
+        }
+        // After 9 in the window, still free (the 10th will be the last free one).
+        Assert.Null(runner.NextManualRefreshAllowedAt);
+
+        // The 10th fires too (count is 9 before it, < 10 -> allowed).
+        now = now.AddSeconds(1);
+        await runner.CheckNowAsync();
+
+        await WaitAsync(() => service.ThoroughCallCount == 10);
+        Assert.Equal(10, service.ThoroughCallCount);
+    }
+
+    [Fact]
+    public async Task ManualRefresh_eleventh_within_two_minutes_of_tenth_is_blocked()
+    {
+        // After the free budget is spent (10 in the window), an 11th within 2
+        // minutes of the most recent (the 10th) is BLOCKED: it does not fire,
+        // and NextManualRefreshAllowedAt is the absolute unlock instant
+        // (10thTimestamp + 2 minutes).
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var now = DateTimeOffset.UtcNow;
+        var runner = Build(session, service, getNow: () => now);
+
+        // Spend the free budget (10 fires), advancing 1s each so the 10th
+        // timestamp is known.
+        var tenthTimestamp = FireManualBudget(runner, ref now, 10);
+        await WaitAsync(() => service.ThoroughCallCount == 10);
+
+        // 11th, 30 seconds past the 10th (within the 2-minute cooldown): blocked.
+        now = tenthTimestamp.AddSeconds(30);
+        await runner.CheckNowAsync();
+        await Task.Delay(50);
+        Assert.Equal(10, service.ThoroughCallCount); // no 11th fire
+
+        // The unlock instant is the 10th + 2 minutes (deterministic via the
+        // injected clock).
+        Assert.Equal(tenthTimestamp.AddMinutes(2), runner.NextManualRefreshAllowedAt);
+    }
+
+    [Fact]
+    public async Task ManualRefresh_blocked_attempt_does_not_stamp_or_persist_the_last_check()
+    {
+        // A blocked attempt consumes nothing: no API call, no timestamp stamp,
+        // no persistence change. The shared last-check (the interval-gate
+        // timestamp) must stay at the value the 10th fire wrote.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore();
+        var now = DateTimeOffset.UtcNow;
+        var runner = Build(session, service, getNow: () => now, appState: appState);
+
+        var tenthTimestamp = FireManualBudget(runner, ref now, 10);
+        await WaitAsync(() => service.ThoroughCallCount == 10);
+        // The 10th fire stamped + persisted the shared last-check.
+        Assert.Equal(tenthTimestamp, appState.LastUpdateCheckUtc);
+
+        // 11th within the cooldown: blocked.
+        now = tenthTimestamp.AddSeconds(30);
+        await runner.CheckNowAsync();
+
+        // The persisted timestamp is UNCHANGED (the blocked attempt stamped
+        // nothing). This is the "stamps NEITHER" half of the contract: the
+        // sliding-window queue and the shared last-check are separate, and a
+        // blocked attempt touches neither.
+        Assert.Equal(tenthTimestamp, appState.LastUpdateCheckUtc);
+    }
+
+    [Fact]
+    public async Task ManualRefresh_after_two_minutes_past_the_tenth_fires_and_reschedules()
+    {
+        // Once 2 minutes elapse since the 10th, the next manual refresh is
+        // allowed again: it fires (the 11th), records its own timestamp, and
+        // NextManualRefreshAllowedAt reflects the new most-recent + 2 minutes.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var now = DateTimeOffset.UtcNow;
+        var runner = Build(session, service, getNow: () => now);
+
+        var tenthTimestamp = FireManualBudget(runner, ref now, 10);
+        await WaitAsync(() => service.ThoroughCallCount == 10);
+
+        // Advance past the 2-minute cooldown from the 10th.
+        var eleventhTimestamp = tenthTimestamp.AddMinutes(2).AddSeconds(5);
+        now = eleventhTimestamp;
+        await runner.CheckNowAsync();
+
+        await WaitAsync(() => service.ThoroughCallCount == 11);
+        Assert.Equal(11, service.ThoroughCallCount);
+
+        // The 11th recorded its timestamp, so the throttle reschedules from it
+        // (count is still >= 10: the window has not slid yet).
+        Assert.Equal(eleventhTimestamp.AddMinutes(2), runner.NextManualRefreshAllowedAt);
+    }
+
+    [Fact]
+    public async Task ManualRefresh_window_resets_after_one_hour_and_free_mode_resumes()
+    {
+        // Timestamps age out of the rolling 1-hour window; as the count drops
+        // under 10, free mode resumes. After advancing past 1 hour from the
+        // FIRST timestamp, the first is pruned (count 10 -> 9), the throttle
+        // clears, and a refresh fires freely.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var now = DateTimeOffset.UtcNow;
+        var runner = Build(session, service, getNow: () => now);
+
+        var firstTimestamp = now.AddSeconds(1); // the first fire's timestamp
+        FireManualBudget(runner, ref now, 10);
+        await WaitAsync(() => service.ThoroughCallCount == 10);
+        Assert.NotNull(runner.NextManualRefreshAllowedAt); // throttled (count 10)
+
+        // Advance past 1 hour from the first timestamp so it ages out of the
+        // window (count drops to 9, under the limit).
+        now = firstTimestamp + TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1);
+        Assert.Null(runner.NextManualRefreshAllowedAt); // free mode resumed
+
+        // A refresh fires freely now (the 11th, no longer blocked).
+        await runner.CheckNowAsync();
+        await WaitAsync(() => service.ThoroughCallCount == 11);
+        Assert.Equal(11, service.ThoroughCallCount);
+    }
+
+    [Fact]
+    public async Task ManualRefresh_throttle_is_independent_of_the_interval_gate()
+    {
+        // The sliding window gates ONLY the manual path. A throttled manual
+        // attempt (the 11th) is blocked, but the automatic triggers (startup,
+        // switch, periodic) still fire governed only by the interval gate. This
+        // is the "do NOT gate automatic triggers" contract.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var now = DateTimeOffset.UtcNow;
+        var (runner, tick) = BuildWithCapturedTick(session, service, getNow: () => now);
+
+        runner.Start();
+        await WaitAsync(() => service.CallCount == 1); // the startup auto fire (Month-only)
+
+        // Spend the manual free budget (10 fires) -> manual path now throttled.
+        FireManualBudget(runner, ref now, 10);
+        await WaitAsync(() => service.ThoroughCallCount == 10);
+
+        // 11th manual within the cooldown: blocked (thorough count stays 10).
+        now = now.AddSeconds(30);
+        await runner.CheckNowAsync();
+        Assert.Equal(10, service.ThoroughCallCount);
+
+        // A periodic tick past the interval still fires the auto (Month-only)
+        // path, unaffected by the manual throttle. The auto + manual paths are
+        // independent: the manual sliding window never gates the auto triggers.
+        now = now.AddMinutes(11); // past the default 10-minute interval
+        tick();
+        await WaitAsync(() => service.CallCount == 2); // 2nd auto call landed
+    }
+
+    [Fact]
+    public async Task ManualRefresh_window_persists_across_a_simulated_restart()
+    {
+        // The manual throttle's sliding window PERSISTS across restarts via
+        // IAppStateStore.ManualRefreshTimestamps, so a user who spends their 10
+        // free refreshes, closes the app, and reopens within the 1-hour window
+        // is STILL throttled (the 11th is blocked until the 2-minute cadence
+        // allows it). This test simulates a restart by building a SECOND runner
+        // reusing the SAME FakeAppStateStore (the persisted state the first
+        // runner wrote).
+        var id = Guid.NewGuid();
+        var service1 = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore();
+        var now = DateTimeOffset.UtcNow;
+
+        // Runner #1 (the first app session): spend the free budget (10 fires).
+        var session1 = new FakeProfileSession { ActiveProfileId = id };
+        var runner1 = Build(session1, service1, getNow: () => now, appState: appState);
+        var tenthTimestamp = FireManualBudget(runner1, ref now, 10);
+        await WaitAsync(() => service1.ThoroughCallCount == 10);
+
+        // The persist-on-fire path wrote the window to the shared store: 10
+        // entries, matching the 10 successful fires.
+        Assert.NotNull(appState.ManualRefreshTimestamps);
+        Assert.Equal(10, appState.ManualRefreshTimestamps!.Count);
+        Assert.True(appState.ManualRefreshSetCount >= 10);
+
+        // Simulate a restart: a NEW runner instance over the SAME persisted
+        // state, with the clock advanced only slightly (well within the
+        // 2-minute cooldown since the 10th fire, and well within the 1-hour
+        // window).
+        now = tenthTimestamp.AddSeconds(30);
+        var service2 = new FakeUpdateCheckService();
+        var session2 = new FakeProfileSession { ActiveProfileId = id };
+        var runner2 = Build(session2, service2, getNow: () => now, appState: appState);
+        runner2.Start();
+
+        // The throttle state survived the "restart": the second runner is
+        // throttled (NextManualRefreshAllowedAt is non-null, pointing at the
+        // 10th timestamp + 2 minutes).
+        Assert.NotNull(runner2.NextManualRefreshAllowedAt);
+        Assert.Equal(tenthTimestamp.AddMinutes(2), runner2.NextManualRefreshAllowedAt);
+
+        // The 11th manual refresh on the second runner is BLOCKED (does not
+        // fire): the free budget did not reset on reopen.
+        await runner2.CheckNowAsync();
+        await Task.Delay(50);
+        Assert.Equal(0, service2.ThoroughCallCount); // blocked -> no fire
+    }
+
+    [Fact]
+    public async Task ManualRefresh_window_ages_to_empty_after_a_long_restart()
+    {
+        // A restart longer than the 1-hour window yields an empty window (aged
+        // entries prune on the first access after the seed), restoring free
+        // mode. The persisted entries do not gate forever: the prune step on
+        // the first access drops anything older than ManualRefreshWindow.
+        var id = Guid.NewGuid();
+        var service1 = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore();
+        var now = DateTimeOffset.UtcNow;
+
+        var session1 = new FakeProfileSession { ActiveProfileId = id };
+        var runner1 = Build(session1, service1, getNow: () => now, appState: appState);
+        FireManualBudget(runner1, ref now, 10); // spend the budget
+        await WaitAsync(() => service1.ThoroughCallCount == 10);
+        Assert.NotNull(appState.ManualRefreshTimestamps);
+
+        // Simulate a restart 2 hours later: every persisted timestamp has aged
+        // out of the 1-hour window.
+        now = now.AddHours(2);
+        var service2 = new FakeUpdateCheckService();
+        var session2 = new FakeProfileSession { ActiveProfileId = id };
+        var runner2 = Build(session2, service2, getNow: () => now, appState: appState);
+        runner2.Start();
+
+        // Free mode resumed: not throttled, and a manual refresh fires.
+        Assert.Null(runner2.NextManualRefreshAllowedAt);
+        await runner2.CheckNowAsync();
+        await WaitAsync(() => service2.ThoroughCallCount == 1);
+    }
+
+    /// <summary>
+    /// Fires <paramref name="count"/> manual refreshes, advancing the captured
+    /// clock 1 second before each so the timestamps are distinct but all within
+    /// the 1-hour window (and within 2 minutes of each other for the cooldown
+    /// tests). Returns the last (most recent) timestamp enqueued.
+    /// </summary>
+    private static DateTimeOffset FireManualBudget(
+        UpdateCheckRunner runner, ref DateTimeOffset now, int count)
+    {
+        DateTimeOffset last = now;
+        for (var i = 0; i < count; i++)
+        {
+            now = now.AddSeconds(1);
+            last = now;
+            // CheckNowAsync is synchronous up to the thread-pool dispatch; the
+            // recording fake lands the call inside Task.Run. The caller awaits
+            // the count via WaitAsync after this helper returns.
+            _ = runner.CheckNowAsync();
+        }
+        return last;
+    }
+
     // ---- exception safety --------------------------------------------------
 
     [Fact]
@@ -297,6 +711,9 @@ public sealed class UpdateCheckRunnerTests
         // service is documented to self-catch, but the runner wraps it as
         // belt-and-suspenders). The throw must not escape the test thread,
         // and the runner must keep firing on the next switch (handler not dead).
+        // Note: the interval gate also covers the switch, so the second fire
+        // needs the clock advanced past the interval since the startup fire, so
+        // an injected controllable clock is used.
         var firstId = Guid.NewGuid();
         var secondId = Guid.NewGuid();
         var session = new FakeProfileSession { ActiveProfileId = firstId };
@@ -304,13 +721,18 @@ public sealed class UpdateCheckRunnerTests
         {
             ThrowOnCheck = new InvalidOperationException("boom"),
         };
-        var runner = Build(session, service);
+        var now = DateTimeOffset.UtcNow;
+        var runner = Build(session, service, getNow: () => now);
 
         // Start() and the switch both run on the test thread and must return
         // normally (the throw happens inside the thread-pool task, swallowed).
         runner.Start();
         await WaitAsync(() => service.CallCount == 1);
 
+        // Advance past the default 10-minute interval so the switch's interval
+        // gate opens; without this the gate would suppress the second
+        // fire (no call-per-launch on rapid triggers).
+        now = now.AddMinutes(11);
         session.ActiveProfileId = secondId; // would throw again; must not escape
 
         await WaitAsync(() => service.CallCount == 2);
@@ -318,6 +740,71 @@ public sealed class UpdateCheckRunnerTests
         // Both calls were recorded (recording happens before the throw, and the
         // handler survived the first failure to fire the second).
         Assert.Equal(new[] { firstId, secondId }, service.Calls);
+    }
+
+    // ---- last-check persistence -------------------------------------------
+
+    [Fact]
+    public async Task RunAsync_persists_last_check_timestamp_on_startup_fire()
+    {
+        // Every fire (auto + manual) stamps _lastCheckAt AND persists it via
+        // IAppStateStore.LastUpdateCheckUtc. Use an injected clock for an exact
+        // assertion: the persisted value equals the getNow value at fire time.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore();
+        var now = DateTimeOffset.UtcNow;
+        var runner = Build(session, service, getNow: () => now, appState: appState);
+
+        runner.Start();
+        await WaitAsync(() => service.CallCount == 1);
+
+        // The stamp is written synchronously in RunAsync BEFORE Task.Run, so it
+        // is set immediately after Start() returns the fire.
+        Assert.Equal(now, appState.LastUpdateCheckUtc);
+    }
+
+    [Fact]
+    public async Task RunAsync_persists_last_check_timestamp_on_manual_fire()
+    {
+        // The manual path also persists the shared last-check so the periodic
+        // clock backs off after it and the next auto trigger respects the
+        // interval from this manual fire.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore();
+        var now = DateTimeOffset.UtcNow;
+        var runner = Build(session, service, getNow: () => now, appState: appState);
+        runner.Start();
+        await WaitAsync(() => service.CallCount == 1); // startup stamps "now"
+
+        // Advance the clock + manual fire: the persisted timestamp updates to
+        // the new getNow value (the manual path persists too).
+        now = now.AddMinutes(1);
+        await runner.CheckNowAsync();
+
+        Assert.Equal(now, appState.LastUpdateCheckUtc);
+    }
+
+    [Fact]
+    public async Task Start_seeds_last_check_from_persisted_store_on_first_run()
+    {
+        // First-run / first-run-after-upgrade: the store reads null (no file or
+        // an old file without the field). The runner seeds _lastCheckAt to
+        // DateTimeOffset.MinValue, so the interval is treated as long elapsed
+        // and the opening startup check fires normally.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var appState = new FakeAppStateStore(); // LastUpdateCheckUtc stays null
+        var runner = Build(session, service, appState: appState);
+
+        runner.Start();
+
+        await WaitAsync(() => service.CallCount == 1);
+        Assert.Equal(id, Assert.Single(service.Calls));
     }
 
     // ---- helpers -----------------------------------------------------------
@@ -331,13 +818,16 @@ public sealed class UpdateCheckRunnerTests
         FakeProfileSession session,
         FakeUpdateCheckService service,
         FakeConfigLoader? configLoader = null,
-        Func<DateTimeOffset>? getNow = null)
+        Func<DateTimeOffset>? getNow = null,
+        FakeAppStateStore? appState = null)
     {
         configLoader ??= new FakeConfigLoader();
+        appState ??= new FakeAppStateStore();
         return new UpdateCheckRunner(
             session,
             service,
             configLoader,
+            appState,
             NullLogger<UpdateCheckRunner>.Instance,
             startTimer: null,
             getNow: getNow);
@@ -352,14 +842,17 @@ public sealed class UpdateCheckRunnerTests
         FakeProfileSession session,
         FakeUpdateCheckService service,
         FakeConfigLoader? configLoader = null,
-        Func<DateTimeOffset>? getNow = null)
+        Func<DateTimeOffset>? getNow = null,
+        FakeAppStateStore? appState = null)
     {
         configLoader ??= new FakeConfigLoader();
+        appState ??= new FakeAppStateStore();
         Action? tick = null;
         var runner = new UpdateCheckRunner(
             session,
             service,
             configLoader,
+            appState,
             NullLogger<UpdateCheckRunner>.Instance,
             startTimer: t => tick = t,
             getNow: getNow);

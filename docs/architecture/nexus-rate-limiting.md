@@ -1,9 +1,9 @@
 # Nexus API rate limiting
 
 Modificus Curator talks to the Nexus Mods v1 REST API under a per-user rate
-budget. This doc explains how Nexus's quota works, what Curator does to observe
-and react to it today, what it deliberately does not do, and the call patterns
-that consume the budget.
+budget. This doc explains how Nexus's quota works, how Curator observes and
+reacts to it, how it proactively limits its own calls, what it deliberately
+does not do, and the call patterns that consume the budget.
 
 ## The quota model
 
@@ -77,15 +77,32 @@ also caught + surfaced as `RateLimited = true`. The UI consumes this flag to
 show "check incomplete."
 
 Both paths react only after the call has consumed a unit or hit the wall.
-Nothing anticipates the wall.
+Curator complements these reactive paths with proactive call limiting.
+
+## How Curator proactively limits its calls
+
+Alongside the reactive paths, Curator caps its own API call rate before the
+wall through three mechanisms. The thresholds and named constants live in
+[the rate-limiting strategy reference](../reference/rate-limiting-strategy.md);
+the mechanisms:
+
+- **Manual sliding-window throttle.** The manual "check now" refresh carries its
+  own throttle that persists across restarts: a rolling free budget per hour,
+  then a per-refresh cooldown once spent. A blocked attempt makes no API call.
+  Owned by `UpdateCheckRunner`.
+- **Auto-check interval floor.** The user-configurable periodic-check interval
+  has a named minimum (5 minutes), enforced on save and at tick time. Owned by
+  `NexusConfig`.
+- **Persisted last-check interval gate.** Every automatic trigger (startup,
+  profile switch, periodic timer) shares one interval check against a
+  last-check timestamp persisted across restarts, so a rapid open/close loop
+  does not fire a call per launch. Owned by `IAppStateStore` and
+  `UpdateCheckRunner`.
 
 ## What Curator does not do
 
 Stated plainly, because the gaps matter as much as the handling:
 
-- **No proactive back-off.** No operation checks the last-known remaining before
-  making a call. The update check fires `CheckUpdatesGraphQlAsync` even if the
-  previous response showed remaining at 5.
 - **No low-remaining reaction.** Curator reacts at zero (the update-check flag)
   and at the hard wall (the exception). "Low but not zero" gets no throttle, no
   skip, no warning.
@@ -102,18 +119,23 @@ Stated plainly, because the gaps matter as much as the handling:
   as a terminal error for the operation; Curator does not wait for the reset
   window and retry.
 
-Net: Curator observes the rate window on every call and reacts to the wall, but it
-does not actively manage the budget or avoid the wall.
+Net: Curator observes the rate window on every call, proactively caps its own
+call rate, and reacts to the wall, but it does not steer by the reported
+remaining, surface the shared-budget framing to the user, or recover past the
+hard wall with a retry/backoff.
 
 ## What consumes the budget
 
 Only authenticated calls to `api.nexusmods.com` count. Per operation:
 
 - **Update check:** 1 `CheckUpdatesGraphQlAsync` call (the v2 GraphQL
-  `modsByUid` batch query) per profile load (app start with the restored
-  profile, plus each profile switch). The batch query covers all checkable mods
-  in one call, so the cost is constant regardless of how many mods are in the
-  profile.
+  `modsByUid` batch query) per check, plus up to `F` `ListModFilesAsync` calls on
+  a cold cache, where `F` is the count of tier-2-only-flagged mods (the
+  latest-file-confirmation tier). The batch query covers all checkable mods in
+  one call, so the base cost is constant regardless of profile size; the tier-3
+  calls are cached per (mod id, page version, updated-at) so a repeat check for
+  unchanged mods is back to one call. See
+  [the update-detection tiers](../reference/rate-limiting-strategy.md#update-detection-tiers).
 - **Mod acquisition (download):** about 3 calls per download
   (`DownloadLinksAsync` + `GetModInfoAsync` + `ListModFilesAsync`). This is
   parity with Vortex, which Nexus's help article cites at 3 calls per download.
@@ -126,12 +148,19 @@ Only authenticated calls to `api.nexusmods.com` count. Per operation:
   returned by `DownloadLinksAsync`, on a separate CDN host. Not an API call, not
   counted.
 
-So a typical session is a handful of check calls plus a few calls per download,
-essentially all user-initiated. The update check is the only automatic
-(non-user-initiated) call, and it fires once per profile load, not periodically.
+The update check is the only automatic Nexus call. It fires on startup, on
+profile switch, and on a periodic timer (default 10 minutes, floor 5), each
+interval-gated via a shared last-check timestamp persisted across restarts; the
+manual "check now" button is throttle-gated. See
+[the rate-limiting strategy](../reference/rate-limiting-strategy.md) for the
+thresholds. A typical session is a handful of these check calls plus a few
+calls per download.
 
 ## See also
 
+- [Nexus API rate-limiting strategy](../reference/rate-limiting-strategy.md):
+  the proactive call-limiting mechanisms (manual throttle, interval floor,
+  persisted interval gate) and the budget math.
 - [integrations reference](../reference/src/integrations.md): the
   `INexusClient` surface, the `Response<T>` and `NexusRateLimits` types, and the
   typed `NexusRateLimitException`.

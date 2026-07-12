@@ -421,11 +421,13 @@ updates and produces a result the mod-list badges consume. Two check shapes
 share the same `LastResult` / `CheckCompleted` surface: a periodic check (fired
 on profile load + the periodic timer) and a thorough check (the manual "check
 now" affordance). Both run the same v2 GraphQL `modsByUid` batch query (1 API
-call for all checkable mods) and rely on the server-computed
-`viewerUpdateAvailable` field as the update signal; they differ only in the
-result's `Thorough` flag. GitHub is out of scope (no GitHub code paths
-anywhere); `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods are
-skipped (only `LatestPolicy` + `NexusSource` are checked).
+call for all checkable mods) and flag a mod via three tiers: tier 1
+`viewerUpdateAvailable` (the server's authoritative signal), tier 2 a mod-level
+version compare, and tier 3 a latest-file-version confirmation that clears
+tier-2 false positives (scoped to tier-2-only flags, best-effort, cached). They
+differ only in the result's `Thorough` flag. GitHub is out of scope (no GitHub
+code paths anywhere); `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods
+are skipped (only `LatestPolicy` + `NexusSource` are checked).
 
 ```csharp
 public interface IUpdateCheckService
@@ -452,12 +454,14 @@ public sealed record ModUpdateInfo(
 
 - `CheckAsync(profileId)`: the periodic check (see flow below). Queries the v2
   GraphQL `modsByUid` batch endpoint (1 API call for all checkable mods) and
-  flags each mod whose server-computed `viewerUpdateAvailable` is true. The
-  result has `Thorough = false`. Best-effort, never throws for non-cancellation
-  failures: a transient API failure, missing auth, or exhausted rate limit all
-  surface as an empty result. Cancellation (`OperationCanceledException`)
-  propagates, and a `KeyNotFoundException` from `IProfileService.GetModList`
-  (an unknown profile id) propagates; the caller owns passing a valid id.
+  flags each mod via three tiers (tier 1 `viewerUpdateAvailable`, tier 2 a
+  mod-level version compare, tier 3 a latest-file-version confirmation that
+  clears tier-2-only false positives). The result has `Thorough = false`.
+  Best-effort, never throws for non-cancellation failures: a transient API
+  failure, missing auth, or exhausted rate limit all surface as an empty result.
+  Cancellation (`OperationCanceledException`) propagates, and a
+  `KeyNotFoundException` from `IProfileService.GetModList` (an unknown profile id)
+  propagates; the caller owns passing a valid id.
 - `CheckThoroughAsync(profileId)`: runs the same v2 batch query as
   `CheckAsync`; the two differ only in the result's `Thorough` flag (`true`
   here). Kept for interface compatibility + the mod-list UI's result-surface
@@ -474,9 +478,12 @@ public sealed record ModUpdateInfo(
   `LastResult`.
 
 The latest-MAIN filter (`NexusModFiles.LatestMain`, category_id 1 +
-non-archived, newest by `UploadedTimestamp`) is shared with
-`ModAcquisitionService.AcquireLatestNexusAsync`, so the per-mod update button
-resolves the same "latest release" the acquisition flow does.
+non-archived, newest by `UploadedTimestamp`) is shared across two call sites:
+`ModAcquisitionService.AcquireLatestNexusAsync` (the per-mod update button) and
+`UpdateCheckService`'s tier 3 (the latest-file-version confirmation of tier-2
+flags), so the update check and the download path agree on what "latest
+release" means. (`ModAcquisitionService.ResolveMetadataAsync` resolves a
+caller-supplied file id by linear lookup, not via `LatestMain`.)
 
 ### Check flow (`UpdateCheckService`)
 
@@ -506,16 +513,29 @@ the `Thorough` flag on the result).
    all-zero fallback when headers are absent, e.g. test stubs or non-rate-limited
    gateways). If rate-limited -> return an empty result with `RateLimited = true`
    (the mod-list UI surfaces a "check incomplete" indicator).
-6. **Map `viewerUpdateAvailable` to flagged list.** Index the response nodes by
+6. **Map results to flagged list (tiers 1 + 2).** Index the response nodes by
    UID (`Dictionary<long, ModUpdateStatus>`). For each checkable mod, compute
-   its UID + look up the node. If `viewerUpdateAvailable == true`, flag the mod
-   as a `ModUpdateInfo` (populated with `ContainerId`, `ModId`, `ModName`,
-   `CurrentVersion` from the resolved version, + `LatestUpdateAt` from the v2
-   `updatedAt` field). If `viewerUpdateAvailable` is `false` or `null` (server
-   has no download record for the user, e.g. a manually imported mod), do not
-   flag. If no node was returned for a UID (invalid id, removed mod), do not
-   flag (conservative).
-7. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
+   its UID + look up the node. Flag the mod if **either** signal triggers, and
+   record which tier drove the flag: (a) `viewerUpdateAvailable == true`
+   (tier 1, authoritative; server confirms an update since the user's last
+   API-tracked download), or (b) the server's `version` string differs from the
+   installed `VersionString` (tier 2, ordinal case-insensitive; catches cases
+   `viewerUpdateAvailable` misses: user installed an older version, uses
+   multiple PCs, or imported manually). If `viewerUpdateAvailable` is `false` or
+   `null` AND versions match (or either version is empty), do not flag. If no
+   node was returned for a UID (invalid id, removed mod), do not flag
+   (conservative).
+7. **Tier 3: latest-file-version confirmation.** For each mod flagged solely by
+   tier 2 (not tier 1), resolve the newest non-archived MAIN file via
+   `NexusModFiles.LatestMain` (the same filter the download path uses) + clear
+   the flag when that file's version equals the installed version (the
+   page-header `version` can lag the latest file). A different file version or
+   an unresolved / failed resolution leaves the flag. The resolved version is
+   cached per (mod id, page version, updated-at) with a 24h TTL, in memory and
+   session-scoped, so a repeat check for an unchanged mod makes zero extra
+   calls. Tier 3 only ever removes flags; it never adds. Tier-1 flags are
+   untouched. See [the update-detection tiers](../rate-limiting-strategy.md#update-detection-tiers).
+8. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
    lock), return the result.
 
 ### UI wiring (`UpdateCheckRunner`)
@@ -632,10 +652,13 @@ view. No construction-time cycle.
   API-failure best-effort, the `LastResult` + `CheckCompleted` contract, the
   `Thorough` flag on both methods, the 1-API-call-per-check contract, +
   `CheckThoroughAsync` producing the same results as `CheckAsync`. Mods missing
-  from the response (a UID did not resolve) are not flagged (conservative). The
-  internal `NexusClient.CheckUpdatesGraphQlAsync` is covered against canned HTTP
-  responses: POST to `/v2/graphql`, UID computation from game id + mod ids,
-  string + numeric UID deserialization, GraphQL-error surfacing (200 OK body
+  from the response (a UID did not resolve) are not flagged (conservative). Tier
+  3 is covered: the false-positive clear, the real-update keep, the tier-1 skip,
+  the cache hit / invalidation on page-version change, and the failure-leaves
+  -flag path. The internal `NexusClient.CheckUpdatesGraphQlAsync` is covered
+  against canned HTTP responses: POST to `/v2/graphql`, UID computation from
+  game id + mod ids, string + numeric UID deserialization, GraphQL-error
+  surfacing (200 OK body
   with errors), + rate-limit exception.
 
 The internal `NexusClient`, `NexusAuthService`, `NexusOAuthTokenStore`,

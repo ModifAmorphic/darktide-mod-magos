@@ -73,11 +73,30 @@ public sealed class NexusConfig
     public bool AutoUpdateCheckEnabled { get; set; } = true;
 
     /// <summary>
+    /// The minimum user-configurable value for
+    /// <see cref="AutoUpdateCheckIntervalMinutes"/>, in minutes. A Nexus API
+    /// acceptable-use compliance floor: at 5 minutes the periodic check tops
+    /// out at 288 calls/day, well within the daily budget. Applied on save (the
+    /// Integrations dialog) + at tick time (the runner) so a value below this is
+    /// always raised before it can drive an API call.
+    /// </summary>
+    public const int MinAutoUpdateCheckIntervalMinutes = 5;
+
+    /// <summary>
+    /// The maximum user-configurable value for
+    /// <see cref="AutoUpdateCheckIntervalMinutes"/>, in minutes (24 hours). Caps
+    /// the interval so the periodic check still fires at least once a day.
+    /// Applied on save (the Integrations dialog).
+    /// </summary>
+    public const int MaxAutoUpdateCheckIntervalMinutes = 1440;
+
+    /// <summary>
     /// The periodic update-check interval, in minutes. <c>10</c> by default. The
     /// runner ticks at a fixed fine granularity (1 minute) and fires a check
     /// when this much time has elapsed since the last check (startup, switch,
     /// periodic, or manual), so a runtime change here takes effect on the next
-    /// tick. Honored to a 1-minute granularity; values below 1 are clamped.
+    /// tick. Honored to a 1-minute granularity; values below
+    /// <see cref="MinAutoUpdateCheckIntervalMinutes"/> (5) are clamped.
     /// </summary>
     public int AutoUpdateCheckIntervalMinutes { get; set; } = 10;
 

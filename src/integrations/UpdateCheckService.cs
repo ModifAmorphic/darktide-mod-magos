@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Modificus.Curator.Config;
 using Modificus.Curator.General;
 using Modificus.Curator.Mods;
@@ -14,13 +15,30 @@ namespace Modificus.Curator.Integrations;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>One API call, all mods.</b> The v2 <c>modsByUid</c> query takes a batch
-/// of mod UIDs and returns the server-computed
+/// <b>One batch query, three-tier detection.</b> The v2 <c>modsByUid</c> query
+/// takes a batch of mod UIDs and returns the server-computed
 /// <see cref="ModUpdateStatus.ViewerUpdateAvailable"/> field for each: true if
 /// the mod has been updated since the viewer (current user) last downloaded it.
 /// This eliminates the v1 approach's Month-endpoint intersect, cross-endpoint
 /// timestamp tolerance, per-mod reconciliation, and reconciliation pinning. The
 /// server tracks the user's downloads and computes the signal directly.</para>
+/// <para>
+/// A mod is flagged when any of three tiers fire. <b>Tier 1:</b>
+/// <see cref="ModUpdateStatus.ViewerUpdateAvailable"/> is <c>true</c> (the
+/// server's authoritative "updated since you downloaded" signal). <b>Tier 2:</b>
+/// the installed file version differs from the mod-page header
+/// <see cref="ModUpdateStatus.Version"/> (catches older-version-installed,
+/// multi-PC, and manual-import cases the server's per-user tracking misses).
+/// <b>Tier 3:</b> latest-file-version confirmation, scoped to tier-2-only flags
+/// (tier 1 is authoritative and never second-guessed). It resolves the newest
+/// non-archived MAIN file via <see cref="NexusModFiles.LatestMain"/> (the same
+/// filter the download path uses) and clears the flag when that file's version
+/// equals the installed version. The mod-page header version can lag the latest
+/// file (the author bumps the file without updating the header), which is the
+/// false positive tier 2 produces; tier 3 confirms against the actual file.
+/// Best-effort and cached: a failure or an unresolved file leaves the flag, and
+/// the resolved version is cached per (mod id, page version, updated-at) so a
+/// repeat check for an unchanged mod makes zero extra calls.</para>
 /// <para>
 /// <b>Two check shapes, identical logic.</b> Both <see cref="CheckAsync"/>
 /// (the periodic / profile-load path) and <see cref="CheckThoroughAsync"/> (the
@@ -62,6 +80,17 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     private readonly ILogger<UpdateCheckService> _logger;
 
     /// <summary>
+    /// The clock, for testable tier-3 cache TTL math. Defaults to
+    /// <see cref="DateTimeOffset.UtcNow"/>; tests inject a controllable clock.
+    /// Only <see cref="ResolveLatestFileVersionAsync"/> reads this (the TTL age
+    /// check + the cache entry's <c>CachedAt</c> stamp, which feeds back into
+    /// the next age check). The result timestamps elsewhere are record-keeping
+    /// and read <see cref="DateTimeOffset.UtcNow"/> directly, unaffected by this
+    /// seam. Mirrors the <c>UpdateCheckRunner</c> clock seam.
+    /// </summary>
+    private readonly Func<DateTimeOffset> _getNow;
+
+    /// <summary>
     /// Guards the <see cref="LastResult"/> write + the
     /// <see cref="CheckCompleted"/> invocation so an event subscriber observes
     /// the result that was just published. See
@@ -76,18 +105,73 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     /// </remarks>
     private readonly object _publishLock = new();
 
+    /// <summary>
+    /// In-memory cache for tier 3 (latest-file-version confirmation), keyed on the
+    /// three batch-query signals that are free to observe: the mod id, the mod-page
+    /// header <see cref="ModUpdateStatus.Version"/>, and
+    /// <see cref="ModUpdateStatus.UpdatedAt"/>. Any observable mod-level change
+    /// invalidates the entry (the key no longer matches), so tier 3 re-resolves
+    /// automatically when the mod author bumps the page version or the updated-at
+    /// timestamp. A <see cref="LatestFileCacheTtl"/> backstop re-resolves even on
+    /// an unchanged key, for the rare case a new file is uploaded without ticking
+    /// either field. Session-scoped: not persisted to app-state.json.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="ConcurrentDictionary{TKey, TValue}"/> so overlapping checks
+    /// (a profile switch landing on a periodic tick) cannot corrupt it. A redundant
+    /// resolve under such an overlap is harmless: the cache simply takes the last
+    /// writer, and the redundant call is bounded by the small tier-2-only subset.
+    /// </remarks>
+    private readonly ConcurrentDictionary<LatestFileCacheKey, (string? LatestFileVersion, DateTimeOffset CachedAt)> _latestFileCache = new();
+
+    /// <summary>
+    /// The tier-3 cache TTL backstop. Even on an unchanged key (mod id + page
+    /// version + updated-at), an entry older than this is re-resolved so a new file
+    /// uploaded without a page-version or updated-at bump is eventually picked up.
+    /// 24 hours balances staleness against call savings.
+    /// </summary>
+    private static readonly TimeSpan LatestFileCacheTtl = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// The tier-3 cache key: the mod id + the two mod-page signals the batch query
+    /// already returns. Any change to either field invalidates the entry (the key
+    /// no longer matches), so tier 3 re-resolves automatically when the mod author
+    /// bumps the page version or the updated-at timestamp. The nullable
+    /// <see cref="UpdatedAt"/> compares null-equals-null, so two checks that both
+    /// observe a missing updated-at share an entry.
+    /// </summary>
+    private readonly record struct LatestFileCacheKey(
+        int ModId,
+        string PageVersion,
+        DateTimeOffset? UpdatedAt);
+
+    /// <param name="nexus">The Nexus v1/v2 client (the GraphQL batch query +
+    /// the per-mod file listing for tier 3).</param>
+    /// <param name="profiles">The profile service (for the active profile's mod
+    /// list).</param>
+    /// <param name="repository">The mod repository (to resolve installed
+    /// versions + containers).</param>
+    /// <param name="configLoader">Read live for the Nexus auth gate (AuthMethod.None
+    /// short-circuits before the API is touched).</param>
+    /// <param name="logger">Structured logger for best-effort failure paths.</param>
+    /// <param name="getNow">The clock, for testable tier-3 cache TTL math.
+    /// Defaults to <see cref="DateTimeOffset.UtcNow"/> when null (the production
+    /// path). DI supplies this default for the unregistered optional parameter;
+    /// tests inject a controllable clock to drive the TTL deterministically.</param>
     public UpdateCheckService(
         INexusClient nexus,
         IProfileService profiles,
         IModRepository repository,
         IConfigLoader configLoader,
-        ILogger<UpdateCheckService> logger)
+        ILogger<UpdateCheckService> logger,
+        Func<DateTimeOffset>? getNow = null)
     {
         _nexus = nexus ?? throw new ArgumentNullException(nameof(nexus));
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _getNow = getNow ?? (() => DateTimeOffset.UtcNow);
     }
 
     /// <inheritdoc />
@@ -108,8 +192,10 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     /// The shared check logic for both <see cref="CheckAsync"/> + 
     /// <see cref="CheckThoroughAsync"/>. Runs the auth gate, the checkable-mods
     /// filter, the single v2 GraphQL batch query, the rate-limit gate, and the
-    /// <see cref="ModUpdateStatus.ViewerUpdateAvailable"/> mapping, then
-    /// publishes the result with the given <paramref name="thorough"/> flag.
+    /// three-tier update mapping (tier 1 <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>,
+    /// tier 2 mod-level version compare, tier 3 latest-file-version confirm), then
+    /// publishes the result with the given <paramref name="thorough"/> flag. Tier 3
+    /// only refines tier-2-only flags; both check shapes inherit it via this method.
     /// </summary>
     private async Task<UpdateCheckResult> RunCheckAsync(
         Guid profileId, bool thorough, CancellationToken ct)
@@ -212,9 +298,12 @@ internal sealed class UpdateCheckService : IUpdateCheckService
                 Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: true, Thorough: thorough));
         }
 
-        // 5. Map viewerUpdateAvailable to the flagged list. Index the response
-        //    nodes by UID so the per-checkable-mod lookup is O(1). First
+        // 5. Map the batch response to the flagged list (tiers 1 + 2). Index the
+        //    response nodes by UID so the per-checkable-mod lookup is O(1). First
         //    occurrence wins: the API should not duplicate, but be defensive.
+        //    Each flag records whether it was driven by tier 1
+        //    (viewerUpdateAvailable) or tier 2 only (version mismatch); tier 3
+        //    (below) refines only the tier-2-only flags.
         var byUid = new Dictionary<long, ModUpdateStatus>();
         if (response.Data is not null)
         {
@@ -224,7 +313,7 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             }
         }
 
-        var flagged = new List<ModUpdateInfo>();
+        var flagged = new List<(ModUpdateInfo Info, ModUpdateStatus Node, bool Tier1Driven)>();
         foreach (var (entry, container, nexus) in checkable)
         {
             var uid = (long)GameId * 4294967296L + nexus.ModId;
@@ -239,38 +328,138 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             var resolved = container.ResolveVersion(new LatestPolicy());
             var installedVersion = resolved?.VersionString ?? string.Empty;
 
-            // Dual-signal update detection. viewerUpdateAvailable alone is
-            // insufficient: the server tracks a single per-user download
-            // timestamp (tied to the Nexus account, not the machine), so it
-            // returns false when the user installed an older version, uses
-            // multiple PCs with different local versions, or imported manually
-            // (no API-tracked download). The version comparison catches these
-            // by comparing the installed version directly against the server's
-            // current version. Either signal triggering is sufficient to flag.
-            bool hasUpdate = status.ViewerUpdateAvailable == true
-                || (!string.IsNullOrEmpty(status.Version)
-                    && !string.IsNullOrEmpty(installedVersion)
-                    && !string.Equals(installedVersion, status.Version,
-                        StringComparison.OrdinalIgnoreCase));
+            // Two-tier update detection (tier 3 refines tier-2-only flags after
+            // the loop). viewerUpdateAvailable alone is insufficient: the server
+            // tracks a single per-user download timestamp (tied to the Nexus
+            // account, not the machine), so it returns false when the user
+            // installed an older version, uses multiple PCs with different local
+            // versions, or imported manually (no API-tracked download). The
+            // version comparison (tier 2) catches these by comparing the
+            // installed version directly against the server's current page
+            // version. Either signal triggering is sufficient to flag.
+            bool tier1Driven = status.ViewerUpdateAvailable == true;
+            bool tier2Driven = !tier1Driven
+                && !string.IsNullOrEmpty(status.Version)
+                && !string.IsNullOrEmpty(installedVersion)
+                && !string.Equals(installedVersion, status.Version,
+                    StringComparison.OrdinalIgnoreCase);
 
-            if (!hasUpdate)
+            if (!tier1Driven && !tier2Driven)
             {
                 continue;
             }
 
-            flagged.Add(new ModUpdateInfo(
-                entry.ContainerId,
-                nexus.ModId,
-                container.Name,
-                installedVersion,
-                status.UpdatedAt));
+            flagged.Add((
+                new ModUpdateInfo(
+                    entry.ContainerId,
+                    nexus.ModId,
+                    container.Name,
+                    installedVersion,
+                    status.UpdatedAt),
+                status,
+                tier1Driven));
+        }
+
+        // 6. Tier 3: latest-file-version confirmation. For mods flagged solely by
+        //    the tier-2 version mismatch, resolve the newest non-archived MAIN file
+        //    (the same NexusModFiles.LatestMain filter the download path uses) and
+        //    clear the flag when that file's version equals the installed version.
+        //    The mod-page header version can lag the latest file (the author bumps
+        //    the file without updating the page header), which is exactly the false
+        //    positive tier 2 produces; tier 3 confirms against the actual file.
+        //    Tier-1 flags are untouched: viewerUpdateAvailable is authoritative and
+        //    tier 3 does not second-guess it. Tier 3 only ever removes entries from
+        //    flagged; it never adds. Calls run sequentially (the tier-2-only subset
+        //    F is small, so simplicity wins over bounded parallelism).
+        for (int i = flagged.Count - 1; i >= 0; i--)
+        {
+            var (info, node, tier1Driven) = flagged[i];
+            if (tier1Driven)
+            {
+                continue;
+            }
+
+            var latestFileVersion = await ResolveLatestFileVersionAsync(
+                info.ModId, node.Version, node.UpdatedAt, ct).ConfigureAwait(false);
+
+            // Equal file versions: the tier-2 flag was a false positive (the page
+            // header version lagged the latest file). Clear it. A different version
+            // (a real update) or an unresolved / failed resolution leaves the flag.
+            if (latestFileVersion is not null
+                && string.Equals(latestFileVersion, info.CurrentVersion,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                flagged.RemoveAt(i);
+            }
         }
 
         _logger.LogInformation(
             "Update check for profile {Profile}: {Count} mod(s) flagged for update.",
             profileId, flagged.Count);
         return Publish(new UpdateCheckResult(
-            flagged, DateTimeOffset.UtcNow, RateLimited: false, Thorough: thorough));
+            flagged.Select(f => f.Info).ToList(),
+            DateTimeOffset.UtcNow,
+            RateLimited: false,
+            Thorough: thorough));
+    }
+
+    /// <summary>
+    /// Resolves the latest MAIN file version for <paramref name="modId"/> for tier 3,
+    /// with an in-memory cache keyed on <see cref="LatestFileCacheKey"/>. A cache hit
+    /// within <see cref="LatestFileCacheTtl"/> returns the cached version without an
+    /// API call. A cache miss (or an expired entry) calls
+    /// <see cref="INexusClient.ListModFilesAsync"/> + <see cref="NexusModFiles.LatestMain"/>
+    /// and caches the resolved verdict.
+    /// </summary>
+    /// <returns>The latest MAIN file version, or <c>null</c> if the mod has no MAIN
+    /// file or the resolution failed. A null result means "cannot confirm": the caller
+    /// leaves the mod flagged. A failure (network, rate limit, any exception) is NOT
+    /// cached (a transient error should not pin the verdict for the TTL window); the
+    /// no-MAIN-file verdict IS cached so a mod that genuinely lacks a MAIN file is not
+    /// re-queried every check.</returns>
+    /// <remarks>
+    /// Cancellation (<see cref="OperationCanceledException"/>) propagates, matching the
+    /// rest of <see cref="RunCheckAsync"/>'s cancellation contract: a cancelled check is
+    /// not misreported as "no updates found".
+    /// </remarks>
+    private async Task<string?> ResolveLatestFileVersionAsync(
+        int modId, string pageVersion, DateTimeOffset? pageUpdatedAt, CancellationToken ct)
+    {
+        var key = new LatestFileCacheKey(modId, pageVersion, pageUpdatedAt);
+        var now = _getNow();
+
+        if (_latestFileCache.TryGetValue(key, out var cached)
+            && now - cached.CachedAt < LatestFileCacheTtl)
+        {
+            return cached.LatestFileVersion;
+        }
+
+        try
+        {
+            var files = await _nexus.ListModFilesAsync(GameDomain, modId, ct)
+                .ConfigureAwait(false);
+            var latest = NexusModFiles.LatestMain(files.Data);
+            var version = latest?.Version;
+            // Cache the resolved verdict (including null = no MAIN file) so an
+            // unchanged mod makes zero extra calls on the next check.
+            _latestFileCache[key] = (version, now);
+            return version;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: a tier-3 failure leaves the mod flagged (the tier-1+2
+            // baseline still holds). Do not fail the whole check and do not set the
+            // result's RateLimited flag. Not cached: a transient failure should not
+            // pin the verdict for the TTL window.
+            _logger.LogWarning(ex,
+                "Tier-3 latest-file resolution for mod {ModId} failed; leaving the mod flagged.",
+                modId);
+            return null;
+        }
     }
 
     /// <summary>

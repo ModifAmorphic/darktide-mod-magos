@@ -127,16 +127,21 @@
         (the per-mod pass that also catches mods outside the Month window) +
         drives the IsCheckingNow affordance while it runs. The result lands via
         the existing CheckCompleted subscription. Disabled while a thorough
-        check is in flight (IsCheckingNow) + an indeterminate progress spinner
-        replaces the refresh icon for the duration.
+        check is in flight (IsCheckingNow) OR while the manual sliding-window
+        throttle is active (IsRefreshEnabled covers both), and an indeterminate
+        progress spinner replaces the refresh icon for the duration. The tooltip
+        is the VM's ManualRefreshTooltip: the normal "check for updates now"
+        string normally, or the live m:ss countdown ("Rate limiting protection
+        enabled. Manual refresh will be available again in {time}.") while
+        throttled.
       -->
       <Panel Grid.Column="3" Margin="8,0,0,0" VerticalAlignment="Center">
         <Button Classes="icon"
                 Click="RefreshUpdates_Click"
-                IsEnabled="{Binding !IsCheckingNow}"
+                IsEnabled="{Binding IsRefreshEnabled}"
                 VerticalAlignment="Center"
                 IsVisible="{Binding !IsCheckingNow}"
-                ToolTip.Tip="{ReflectionBinding [ModList_CheckNowTooltip], Source={StaticResource Loc}}">
+                ToolTip.Tip="{Binding ManualRefreshTooltip}">
           <!-- Material "refresh" (24x24 source): drawn geometry, themed via the
                button foreground. -->
           <Path Width="16" Height="16" Stretch="Uniform"
