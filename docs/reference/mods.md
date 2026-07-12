@@ -430,7 +430,7 @@ profiles are dev-only at this point).
 
 ## See also
 
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md): the
-  [Mod repository](../../architecture/MODIFICUS-CURATOR.md#mod-repository) section.
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md): the
+  [Mod repository](../architecture/MODIFICUS-CURATOR.md#mod-repository) section.
 - [profiles](profiles.md): consumes `IModRepository` for staging (resolves each
   profile mod's policy to a version folder) + the startup prune.

@@ -150,7 +150,7 @@ public sealed record NexusRateLimits(
 one call to flag the result rate-limited when a window is exhausted; every other
 call just carries and logs them. For the full rate-limiting strategy (what Curator
 observes, how it reacts, what it does not do, and what consumes the budget), see
-[Nexus API rate limiting](../../architecture/nexus-rate-limiting.md).
+[Nexus API rate limiting](../architecture/nexus-rate-limiting.md).
 
 ### Key Nexus types
 
@@ -549,7 +549,7 @@ the `Thorough` flag on the result).
    cached per (mod id, page version, updated-at) with a 24h TTL, in memory and
    session-scoped, so a repeat check for an unchanged mod makes zero extra
    calls. Tier 3 only ever removes flags; it never adds. Tier-1 flags are
-   untouched. See [the update-detection tiers](../rate-limiting-strategy.md#update-detection-tiers).
+   untouched. See [the update-detection tiers](rate-limiting-strategy.md#update-detection-tiers).
 8. **Name sync (free, piggybacks on the batch).** For EVERY Nexus mod (Latest +
    Pinned), look up its node; if the node's `name` is non-empty and differs from
    the container's stored `Name` (ordinal), rename the container via
@@ -702,10 +702,10 @@ dotnet test src/modificus-curator.sln -c Release
 
 ## See also
 
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md) -- the
-  [Mod sources / integrations](../../architecture/MODIFICUS-CURATOR.md#mod-sources--integrations)
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md) -- the
+  [Mod sources / integrations](../architecture/MODIFICUS-CURATOR.md#mod-sources--integrations)
   section + the
-  [Nexus authentication](../../architecture/MODIFICUS-CURATOR.md#nexus-authentication)
+  [Nexus authentication](../architecture/MODIFICUS-CURATOR.md#nexus-authentication)
   subsection.
 - [config](config.md) -- the `GitHubConfig` + `NexusConfig` schemas.
 - [nxm](nxm.md) -- the `nxm://` scheme handler, including the no-op default

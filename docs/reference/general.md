@@ -184,7 +184,7 @@ dotnet test src/modificus-curator.sln -c Release
 
 ## See also
 
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md):
-  design; the [Composition & startup](../../architecture/MODIFICUS-CURATOR.md#composition--startup)
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md):
+  design; the [Composition & startup](../architecture/MODIFICUS-CURATOR.md#composition--startup)
   section.
 - [config](config.md): the `CuratorConfig` schema this library loads.

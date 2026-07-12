@@ -9,7 +9,7 @@ is also where the v1 Nexus API client is wired up; acquisition and
 update-checks both call through it.
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [integrations reference](../reference/src/integrations.md). This
+> [integrations reference](../reference/integrations.md). This
 > doc covers the architecture and the why.
 
 ## Architecture
@@ -225,7 +225,7 @@ v2 GraphQL:
 
 ## See also
 
-- [integrations reference](../reference/src/integrations.md):
+- [integrations reference](../reference/integrations.md):
   public surface, exact signatures, DI registration, testing.
 - [mod acquisition](mod-acquisition.md): the acquisition flow that calls the
   v1 client through the selected auth factory.

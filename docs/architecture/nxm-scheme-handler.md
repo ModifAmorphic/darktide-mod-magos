@@ -8,7 +8,7 @@ handler plugs into a seam exposed by this plumbing (see
 [mod acquisition](mod-acquisition.md)).
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [nxm reference](../reference/src/nxm.md). This doc covers the
+> [nxm reference](../reference/nxm.md). This doc covers the
 > architecture and the why.
 
 ## Architecture
@@ -212,7 +212,7 @@ Integrations would create a dependency cycle. See
 
 ## See also
 
-- [nxm reference](../reference/src/nxm.md): public surface, exact
+- [nxm reference](../reference/nxm.md): public surface, exact
   signatures, DI registration, testing.
 - [mod acquisition](mod-acquisition.md): the real handler that plugs into
   the mod-download seam shipped here.

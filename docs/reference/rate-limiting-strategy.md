@@ -88,7 +88,7 @@ best-effort refinement that costs extra calls only on the subset it targets.
 
 Tier 3 is additive: it only ever removes flags, never adds. Both check shapes
 (the periodic `CheckAsync` and the manual `CheckThoroughAsync`) inherit it via
-the shared `RunCheckAsync`. See [integrations reference](src/integrations.md) for
+the shared `RunCheckAsync`. See [integrations reference](integrations.md) for
 the per-step check flow.
 
 ## Mod name sync (free, piggybacks on the batch)
@@ -132,4 +132,4 @@ these proactive limits bound only Curator's own contribution.
 - [Nexus API rate limiting](../architecture/nexus-rate-limiting.md): the reactive
   handling (the `x-rl-*` observation, the 429/403 hard wall, the update-check
   `RateLimited` flag).
-- [The update check runner](src/ui.md): the `UpdateCheckRunner` surface.
+- [The update check runner](ui.md): the `UpdateCheckRunner` surface.

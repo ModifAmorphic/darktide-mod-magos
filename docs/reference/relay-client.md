@@ -189,8 +189,8 @@ dotnet run --project src/tests/Modificus.Curator.RelayClient.Tests -- launch <pr
 
 ## See also
 
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md) -- the
-  [Launch](../../architecture/MODIFICUS-CURATOR.md#launch) section (the Windows /
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md) -- the
+  [Launch](../architecture/MODIFICUS-CURATOR.md#launch) section (the Windows /
   Linux split, the `STEAM_COMPAT_*` constraint, the escape hatch).
 - [steam](steam.md) -- produces the `DiscoveryResult` this consumes.
 - [profiles](profiles.md) -- `PrepareModRoot` produces the `--mod-path` + `mods.lst`.

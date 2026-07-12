@@ -34,5 +34,5 @@ unmodified).
 - [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay): the
   runtime architecture (the Rust↔C Hybrid, the seam, the launcher flow,
   discovery, the mod loader).
-- `docs/reference/src/`: per-library API reference for the Modificus
+- `docs/reference/`: per-library API reference for the Modificus
   Curator backend libraries.

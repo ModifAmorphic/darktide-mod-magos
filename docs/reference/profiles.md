@@ -281,9 +281,9 @@ dotnet test src/modificus-curator.sln -c Release
 
 ## See also
 
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md) -- the
-  [Profiles](../../architecture/MODIFICUS-CURATOR.md#profiles) +
-  [Mod repository](../../architecture/MODIFICUS-CURATOR.md#mod-repository) sections.
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md) -- the
+  [Profiles](../architecture/MODIFICUS-CURATOR.md#profiles) +
+  [Mod repository](../architecture/MODIFICUS-CURATOR.md#mod-repository) sections.
 - [mods](mods.md) -- the unified mod repository + version-policy model.
 - [relay-client](relay-client.md) -- the launch façade that consumes
   `PrepareModRoot`.
