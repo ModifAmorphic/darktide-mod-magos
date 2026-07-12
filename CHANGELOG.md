@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.8.0...v0.9.0) (2026-07-12)
+
+
+### Features
+
+* **nexus:** persist and automatically install mod updates ([#94](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/94)) ([86596a9](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/86596a90ff11f8eccfaf7e69e9551901cffcfd51))
+
 ## [0.8.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.7.1...v0.8.0) (2026-07-12)
 
 
