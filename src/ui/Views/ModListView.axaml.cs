@@ -29,7 +29,7 @@ namespace Modificus.Curator.UI.Views;
 /// Windows-only feature in Avalonia 12.0.x.</para>
 /// <para><b>Drag-and-drop:</b> the content area has
 /// <c>DragDrop.AllowDrop="True"</c> + <c>Drop</c>/<c>DragOver</c> handlers. The
-    /// drop reads the files (folders AND archives, multi) via the sync
+/// drop reads the files (folders AND archives, multi) via the sync
 /// <c>TryGetFiles</c> extension on <see cref="DragEventArgs.DataTransfer"/> (an
 /// <c>IDataTransfer</c> in Avalonia 12.x, so the async variant is unavailable
 /// here), maps each to its local path, and forwards the list to the VM's add
