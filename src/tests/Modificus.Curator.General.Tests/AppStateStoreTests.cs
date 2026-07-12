@@ -383,6 +383,143 @@ public sealed class AppStateStoreTests
         Assert.EndsWith(System.IO.Path.Combine(expectedSegment, "app-state.json"), path);
     }
 
+    // ---- KnownUpdates (the persisted known-update snapshots) ---------------
+
+    [Fact]
+    public void KnownUpdates_is_null_when_file_is_missing()
+    {
+        var path = TempPath();
+        var store = new AppStateStore(path);
+
+        Assert.Null(store.KnownUpdates);
+    }
+
+    [Fact]
+    public void KnownUpdates_persists_and_round_trips_a_profile_scoped_map()
+    {
+        var path = TempPath();
+        var profileA = Guid.NewGuid();
+        var profileB = Guid.NewGuid();
+        var container = Guid.NewGuid();
+        var stamp = new DateTimeOffset(2025, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        try
+        {
+            var store = new AppStateStore(path);
+
+            store.KnownUpdates = new Dictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>
+            {
+                [profileA] = new[]
+                {
+                    new KnownUpdateSnapshot(profileA, container, 8, "1.0", stamp, stamp),
+                },
+                [profileB] = Array.Empty<KnownUpdateSnapshot>(),
+            };
+
+            // A fresh instance over the same file reads the persisted map.
+            var reloaded = new AppStateStore(path).KnownUpdates;
+            Assert.NotNull(reloaded);
+            Assert.True(reloaded.ContainsKey(profileA));
+            Assert.True(reloaded.ContainsKey(profileB));
+            var entry = Assert.Single(reloaded[profileA]);
+            Assert.Equal(container, entry.ContainerId);
+            Assert.Equal(8, entry.ModId);
+            Assert.Equal("1.0", entry.CurrentVersion);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public void Setting_KnownUpdates_preserves_the_other_three_fields()
+    {
+        // The no-clobber guarantee now covers four fields. Setting KnownUpdates
+        // must not wipe the others (the whole cached model is rewritten).
+        var path = TempPath();
+        var id = Guid.NewGuid();
+        var stamp = new DateTimeOffset(2025, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var window = new[] { stamp };
+        var known = new Dictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>
+        {
+            [id] = new[] { new KnownUpdateSnapshot(id, Guid.NewGuid(), 8, "1.0", stamp, null) },
+        };
+        try
+        {
+            var store = new AppStateStore(path);
+            store.ActiveProfileId = id;
+            store.LastUpdateCheckUtc = stamp;
+            store.ManualRefreshTimestamps = window;
+
+            store.KnownUpdates = known; // must NOT wipe the other three
+
+            Assert.Equal(id, store.ActiveProfileId);
+            Assert.Equal(stamp, store.LastUpdateCheckUtc);
+            Assert.Equal(window, store.ManualRefreshTimestamps);
+            Assert.Equal(known, store.KnownUpdates);
+
+            // And on disk: a fresh instance sees all four.
+            var reloaded = new AppStateStore(path);
+            Assert.Equal(id, reloaded.ActiveProfileId);
+            Assert.Equal(stamp, reloaded.LastUpdateCheckUtc);
+            Assert.NotNull(reloaded.KnownUpdates);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public void Old_state_file_without_KnownUpdates_loads_null_for_the_new_field()
+    {
+        // First-run-after-upgrade: an existing app-state.json from before this
+        // field existed deserializes KnownUpdates as null (System.Text.Json
+        // default for an absent nullable member). Existing fields still read.
+        var path = TempPath();
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(path)!;
+            Directory.CreateDirectory(dir);
+            var id = Guid.NewGuid();
+            File.WriteAllText(
+                path,
+                "{\"activeProfileId\":\"" + id + "\",\"lastUpdateCheckUtc\":\"2025-01-02T03:04:05+00:00\"}");
+
+            var store = new AppStateStore(path);
+
+            Assert.Null(store.KnownUpdates);
+            Assert.Equal(id, store.ActiveProfileId); // existing fields still read
+            Assert.NotNull(store.LastUpdateCheckUtc);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public void Setting_KnownUpdates_to_null_clears_it()
+    {
+        var path = TempPath();
+        var id = Guid.NewGuid();
+        try
+        {
+            var store = new AppStateStore(path);
+            store.KnownUpdates = new Dictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>
+            {
+                [id] = new[] { new KnownUpdateSnapshot(id, Guid.NewGuid(), 8, "1.0", DateTimeOffset.UtcNow, null) },
+            };
+            store.KnownUpdates = null;
+
+            Assert.Null(new AppStateStore(path).KnownUpdates);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
     private static string TempPath() =>
         System.IO.Path.Combine(Path.GetTempPath(), "curator-state-" + Guid.NewGuid(), "app-state.json");
 

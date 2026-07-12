@@ -67,5 +67,6 @@ public sealed class GeneralServiceCollectionExtensionsTests
         public Guid? ActiveProfileId { get; set; }
         public DateTimeOffset? LastUpdateCheckUtc { get; set; }
         public IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; }
+        public IReadOnlyDictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? KnownUpdates { get; set; }
     }
 }

@@ -32,13 +32,12 @@ public sealed class DmfPromptServiceTests
     /// Builds a coordinator + a tuple of its fakes so each test can seed +
     /// assert on the specific dependencies it cares about.
     /// </summary>
-    /// <param name="launchExternal">Optional spy for the browser-launcher seam
-    /// (production default uses <c>Process.Start</c> with
-    /// <c>UseShellExecute=true</c>). Tests that exercise the case-2 non-premium
-    /// browser-open path pass a recorder so they can assert on the URL; when
-    /// omitted, the production default is used (which would attempt a real
-    /// shell-open, so the case-2 non-premium tests should always pass
-    /// this).</param>
+    /// <param name="launchExternal">Optional spy for the browser-launcher seam.
+    /// When omitted the builder wires <see cref="TestLauncher.NoOp"/>, a harmless
+    /// recorder that NEVER shell-opens, so the case-2 non-premium browser path
+    /// can never reach the production <c>Process.Start</c> fallback. Tests that
+    /// exercise the case-2 non-premium browser-open path pass a recorder so they
+    /// can assert on the URL.</param>
     private static (DmfPromptService Service, FakeProfileService Profiles, FakeProfileSession Session,
         FakeModRepository Repo, FakeModAcquisitionService Acquisition, FakeNexusAuthService Auth,
         FakeConfigLoader Config, FakeDialogService Dialogs) Build(
@@ -59,9 +58,12 @@ public sealed class DmfPromptServiceTests
         auth ??= new FakeNexusAuthService();
         config ??= new FakeConfigLoader();
         dialogs ??= new FakeDialogService();
+        // SAFETY: an omitted launcher seam defaults to the harmless no-op
+        // recorder (never the production Process.Start fallback).
         var service = new DmfPromptService(
             profiles, session, repo, acquisition, auth, config, dialogs,
-            Localization, NullLogger<DmfPromptService>.Instance, nxmRegistrar, launchExternal);
+            Localization, NullLogger<DmfPromptService>.Instance, nxmRegistrar,
+            launchExternal ?? TestLauncher.NoOp);
         return (service, profiles, session, repo, acquisition, auth, config, dialogs);
     }
 

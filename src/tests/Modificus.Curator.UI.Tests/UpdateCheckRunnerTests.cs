@@ -353,6 +353,46 @@ public sealed class UpdateCheckRunnerTests
         Assert.Equal(new[] { id }, service.ThoroughCalls);
     }
 
+    // ---- automatic-update chaining (after each check) ---------------------
+
+    [Fact]
+    public async Task Run_chains_the_automatic_update_service_after_each_check_with_the_captured_result()
+    {
+        // The runner captures the exact result from the check invocation + hands
+        // it to the automatic-update service. A periodic fire lands one
+        // RunAfterCheckAsync call with the profile id.
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var autoUpdate = new FakeAutomaticUpdateService();
+        var runner = Build(session, service, autoUpdate: autoUpdate);
+        runner.Start();
+
+        await WaitAsync(() => autoUpdate.Calls.Count == 1);
+
+        var (result, profileId) = Assert.Single(autoUpdate.Calls);
+        Assert.Equal(id, profileId);
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task CheckNow_awaits_the_automatic_update_batch()
+    {
+        // The manual trigger awaits the runner's task, which now includes the
+        // automatic-update batch. So CheckNowAsync does not complete until the
+        // batch lands (the manual spinner stays active through installations).
+        var id = Guid.NewGuid();
+        var session = new FakeProfileSession { ActiveProfileId = id };
+        var service = new FakeUpdateCheckService();
+        var autoUpdate = new FakeAutomaticUpdateService();
+        var runner = Build(session, service, autoUpdate: autoUpdate);
+
+        await runner.CheckNowAsync();
+
+        // The batch ran (synchronously in the fake) before CheckNowAsync returned.
+        Assert.Single(autoUpdate.Calls);
+    }
+
     [Fact]
     public async Task CheckNow_is_a_noop_when_no_profile_is_active()
     {
@@ -819,15 +859,18 @@ public sealed class UpdateCheckRunnerTests
         FakeUpdateCheckService service,
         FakeConfigLoader? configLoader = null,
         Func<DateTimeOffset>? getNow = null,
-        FakeAppStateStore? appState = null)
+        FakeAppStateStore? appState = null,
+        FakeAutomaticUpdateService? autoUpdate = null)
     {
         configLoader ??= new FakeConfigLoader();
         appState ??= new FakeAppStateStore();
+        autoUpdate ??= new FakeAutomaticUpdateService();
         return new UpdateCheckRunner(
             session,
             service,
             configLoader,
             appState,
+            autoUpdate,
             NullLogger<UpdateCheckRunner>.Instance,
             startTimer: null,
             getNow: getNow);
@@ -843,16 +886,19 @@ public sealed class UpdateCheckRunnerTests
         FakeUpdateCheckService service,
         FakeConfigLoader? configLoader = null,
         Func<DateTimeOffset>? getNow = null,
-        FakeAppStateStore? appState = null)
+        FakeAppStateStore? appState = null,
+        FakeAutomaticUpdateService? autoUpdate = null)
     {
         configLoader ??= new FakeConfigLoader();
         appState ??= new FakeAppStateStore();
+        autoUpdate ??= new FakeAutomaticUpdateService();
         Action? tick = null;
         var runner = new UpdateCheckRunner(
             session,
             service,
             configLoader,
             appState,
+            autoUpdate,
             NullLogger<UpdateCheckRunner>.Instance,
             startTimer: t => tick = t,
             getNow: getNow);

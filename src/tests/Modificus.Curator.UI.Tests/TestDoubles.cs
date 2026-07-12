@@ -34,6 +34,11 @@ internal static class TestDoubles
     /// fires through the same fake the test asserts on. The dialog fake defaults
     /// to confirm=true (the Yes/No case 1 + 2 confirm) + a successful acquisition.
     /// </summary>
+    /// <param name="launchExternal">Optional external-launcher override. When
+    /// omitted the builder wires <see cref="TestLauncher.NoOp"/>, a harmless
+    /// recorder that NEVER shell-opens, so the case-2 non-premium browser path
+    /// can never reach the production <c>Process.Start</c> fallback. Pass a spy
+    /// to assert on the opened URL.</param>
     public static DmfPromptService BuildDmfPromptService(
         FakeProfileService? profiles = null,
         FakeProfileSession? session = null,
@@ -43,7 +48,8 @@ internal static class TestDoubles
         FakeConfigLoader? configLoader = null,
         FakeDialogService? dialogs = null,
         LocalizationService? localization = null,
-        FakeNxmHandlerRegistrar? nxmRegistrar = null)
+        FakeNxmHandlerRegistrar? nxmRegistrar = null,
+        Func<Uri, bool>? launchExternal = null)
     {
         profiles ??= Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -53,6 +59,9 @@ internal static class TestDoubles
         configLoader ??= new FakeConfigLoader();
         dialogs ??= new FakeDialogService();
         localization ??= new LocalizationService();
+        // SAFETY: an omitted launcher seam defaults to the harmless no-op
+        // recorder (never the production Process.Start fallback).
+        launchExternal ??= TestLauncher.NoOp;
         return new DmfPromptService(
             profiles,
             session,
@@ -63,7 +72,8 @@ internal static class TestDoubles
             dialogs,
             localization,
             NullLogger<DmfPromptService>.Instance,
-            nxmRegistrar);
+            nxmRegistrar,
+            launchExternal);
     }
 
     /// <summary>
@@ -72,6 +82,12 @@ internal static class TestDoubles
     /// so the add flow's reload joins the freshly imported source + version
     /// (mirrors the real import service's behavior).
     /// </summary>
+    /// <param name="launchExternal">Optional external-launcher override. When
+    /// omitted (the common case) the builder wires <see cref="TestLauncher.NoOp"/>,
+    /// a harmless recorder that NEVER shell-opens, so a non-Premium update click
+    /// or any other external-open path in a test can never reach the production
+    /// <c>Process.Start</c> fallback. Pass a custom recorder/spy to assert on the
+    /// opened URL.</param>
     public static ModListViewModel BuildModList(
         FakeProfileService? profiles = null,
         FakeProfileSession? session = null,
@@ -85,10 +101,14 @@ internal static class TestDoubles
         FakeNexusAuthService? auth = null,
         FakeConfigLoader? configLoader = null,
         FakeAppStateStore? appState = null,
+        FakeUpdateStateStore? updateState = null,
+        UpdateCoordinator? coordinator = null,
+        FakeAutomaticUpdateService? automaticUpdates = null,
         Action<Action>? invokeOnUi = null,
         Func<DateTimeOffset>? getNow = null,
         Action<Action>? startCountdownTimer = null,
-        Action? stopCountdownTimer = null)
+        Action? stopCountdownTimer = null,
+        Func<Uri, bool>? launchExternal = null)
     {
         profiles ??= Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -102,7 +122,30 @@ internal static class TestDoubles
         auth ??= new FakeNexusAuthService();
         configLoader ??= new FakeConfigLoader();
         appState ??= new FakeAppStateStore();
+        updateState ??= new FakeUpdateStateStore(profiles, repo);
+        coordinator ??= new UpdateCoordinator();
+        automaticUpdates ??= new FakeAutomaticUpdateService();
         invokeOnUi ??= static action => action();
+        // SAFETY: an omitted launcher seam defaults to the harmless no-op
+        // recorder (never the production Process.Start fallback). This is the
+        // test-safety guarantee that no UI test can shell-open the operator's
+        // browser, even when a path that triggers an external open is exercised.
+        launchExternal ??= TestLauncher.NoOp;
+        // Wire the state store + a record-profile-id tracker into the fake
+        // update-check service so RaiseCheckCompleted / CheckAsync record the
+        // result through the store (mirroring the real service's publish-time
+        // RecordResult). The record-profile-id follows the session's active
+        // profile so a direct RaiseCheckCompleted (no explicit profile arg)
+        // scopes to the right profile.
+        updateCheck.StateStore = updateState;
+        updateCheck.RecordProfileId = session.ActiveProfileId;
+        session.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == nameof(IProfileSession.ActiveProfileId))
+            {
+                updateCheck.RecordProfileId = session.ActiveProfileId;
+            }
+        };
         // The runner wires the manual CheckNow path; constructed with the
         // test's fakes + no periodic timer (the manual trigger does not depend
         // on the timer being started). An optional getNow lets the throttle
@@ -112,6 +155,7 @@ internal static class TestDoubles
             updateCheck,
             configLoader,
             appState,
+            automaticUpdates,
             NullLogger<UpdateCheckRunner>.Instance,
             startTimer: null,
             getNow: getNow);
@@ -126,12 +170,65 @@ internal static class TestDoubles
             updateCheck,
             acquisition,
             auth,
+            updateState,
             runner,
+            coordinator,
+            automaticUpdates,
             invokeOnUi,
             NullLogger<ModListViewModel>.Instance,
             startCountdownTimer,
-            stopCountdownTimer);
+            stopCountdownTimer,
+            launchExternal);
     }
+}
+
+/// <summary>
+/// The harmless default external-launcher shared by every UI test builder that
+/// can wire a launcher seam (<see cref="TestDoubles.BuildModList"/>,
+/// <see cref="TestDoubles.BuildDmfPromptService"/>, and the DmfPromptServiceTests
+/// Build helper). Records the URI into <see cref="Opens"/> (so a test can prove
+/// the seam ran) + returns <c>true</c> (success), NEVER shell-opening. This is
+/// the single test-safety guarantee that an omitted launcher seam can NEVER
+/// reach the production <c>Process.Start</c> fallback (which would open a real
+/// browser tab on the operator desktop).
+/// </summary>
+/// <remarks>
+/// A test that wants to assert on the opened URL either reads <see cref="Opens"/>
+/// (after <see cref="Reset"/>) when relying on the default, or passes its own
+/// recorder/spy to the builder (the per-call recorders in
+/// <c>ModListViewModelTests.BuildForRowAction</c> + the DmfPrompt case-2 tests
+/// do this). The default recorder is process-free: opening a URI records it in
+/// memory and nothing touches the OS shell.
+/// </remarks>
+internal static class TestLauncher
+{
+    private static readonly ConcurrentQueue<Uri> _opens = new();
+
+    /// <summary>
+    /// A snapshot of the URIs the no-op launcher was asked to open since the
+    /// last <see cref="Reset"/>. Tests assert on this to prove the default
+    /// builder seam handled the open (the production <c>Process.Start</c>
+    /// fallback would NOT record here, so a non-empty result proves the no-op
+    /// ran instead).
+    /// </summary>
+    public static IReadOnlyList<Uri> Opens => _opens.ToArray();
+
+    /// <summary>
+    /// Clears the recorded opens. Call at the start of a focused assertion so
+    /// earlier tests' recorder activity does not bleed in.
+    /// </summary>
+    public static void Reset() => _opens.Clear();
+
+    /// <summary>
+    /// The harmless default launcher: records the URI + returns <c>true</c>
+    /// (success), never shell-opening. Every UI test builder that can wire a
+    /// launcher seam defaults to this when the caller omits one.
+    /// </summary>
+    public static readonly Func<Uri, bool> NoOp = uri =>
+    {
+        _opens.Enqueue(uri);
+        return true;
+    };
 }
 
 /// <summary>
@@ -434,6 +531,122 @@ internal sealed class FakeAppStateStore : IAppStateStore
             ManualRefreshSetCount++;
         }
     }
+
+    /// <summary>
+    /// The persisted known-update snapshots keyed by profile id (read + written
+    /// directly by tests). Default <c>null</c> (no recorded state), mirroring a
+    /// fresh / first-run real store.
+    /// </summary>
+    public IReadOnlyDictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? KnownUpdates { get; set; }
+}
+
+/// <summary>
+/// In-memory <see cref="IUpdateStateStore"/> for the UI tests. Models the
+/// replacement + acknowledge + hydrate semantics over a per-profile set of
+/// flagged container ids so the mod-list VM tests can drive the persisted
+/// known-update state. The real store's self-healing filter is covered by the
+/// Integrations-layer tests; this fake does the simplest equivalent (return
+/// whatever was recorded for the profile).
+/// </summary>
+internal sealed class FakeUpdateStateStore : IUpdateStateStore
+{
+    private readonly Dictionary<Guid, HashSet<Guid>> _flagged = new();
+    private readonly FakeProfileService? _profiles;
+    private readonly FakeModRepository? _repository;
+
+    public FakeUpdateStateStore(FakeProfileService? profiles = null, FakeModRepository? repository = null)
+    {
+        _profiles = profiles;
+        _repository = repository;
+    }
+
+    /// <summary>The per-profile recorded calls (each entry: profileId + the
+    /// result). Tests assert on the outcome + the updates the store saw.</summary>
+    public IReadOnlyList<(Guid ProfileId, UpdateCheckResult Result)> RecordCalls { get; } = new List<(Guid, UpdateCheckResult)>();
+
+    /// <summary>The per-container acknowledge calls (profileId, containerId).</summary>
+    public IReadOnlyList<(Guid ProfileId, Guid ContainerId)> AcknowledgeCalls { get; } = new List<(Guid, Guid)>();
+
+    public void RecordResult(Guid profileId, UpdateCheckResult result)
+    {
+        ((List<(Guid, UpdateCheckResult)>)RecordCalls).Add((profileId, result));
+        if (result.Outcome == CheckOutcome.Success)
+        {
+            _flagged[profileId] = result.Updates.Select(u => u.ContainerId).ToHashSet();
+        }
+        else if (result.Outcome == CheckOutcome.NoNexusMods)
+        {
+            _flagged[profileId] = new HashSet<Guid>();
+        }
+        // NoAuth / RateLimited / Failed: preserve (no write).
+    }
+
+    public void AcknowledgeInstall(Guid profileId, Guid containerId)
+    {
+        ((List<(Guid, Guid)>)AcknowledgeCalls).Add((profileId, containerId));
+        if (_flagged.TryGetValue(profileId, out var set))
+        {
+            set.Remove(containerId);
+        }
+    }
+
+    public IReadOnlyCollection<Guid> GetKnownUpdateContainerIds(Guid profileId)
+    {
+        if (!_flagged.TryGetValue(profileId, out var set))
+        {
+            return Array.Empty<Guid>();
+        }
+
+        // Light self-heal: drop entries no longer in the profile or whose
+        // container is gone, mirroring the real store's filter closely enough
+        // for the VM tests that exercise it.
+        if (_profiles is not null)
+        {
+            var members = _profiles.GetModList(profileId).Select(e => e.ContainerId).ToHashSet();
+            set.RemoveWhere(id => !members.Contains(id));
+        }
+        if (_repository is not null)
+        {
+            set.RemoveWhere(id => _repository.Get(id) is null);
+        }
+        return set;
+    }
+
+    /// <summary>Test helper: seed a profile's flagged ids directly.</summary>
+    public void SeedFlagged(Guid profileId, params Guid[] containerIds) =>
+        _flagged[profileId] = containerIds.ToHashSet();
+}
+
+/// <summary>
+/// No-op <see cref="IAutomaticUpdateService"/> for the UI tests. Records
+/// <see cref="RunAfterCheckAsync"/> calls so the runner tests can assert the
+/// service was chained after a check; raises <see cref="UpdatesApplied"/> only
+/// when a test calls <see cref="RaiseUpdatesApplied"/>; raises
+/// <see cref="ModUpdateProgress"/> only when a test calls
+/// <see cref="RaiseModUpdateProgress"/>. Never installs anything.
+/// </summary>
+internal sealed class FakeAutomaticUpdateService : IAutomaticUpdateService
+{
+    public IReadOnlyList<(UpdateCheckResult Result, Guid ProfileId)> Calls { get; } = new List<(UpdateCheckResult, Guid)>();
+
+    public event EventHandler? UpdatesApplied;
+    public event EventHandler<ModUpdateProgressEventArgs>? ModUpdateProgress;
+
+    public Task RunAfterCheckAsync(UpdateCheckResult result, Guid profileId, CancellationToken ct = default)
+    {
+        ((List<(UpdateCheckResult, Guid)>)Calls).Add((result, profileId));
+        return Task.CompletedTask;
+    }
+
+    public void RaiseUpdatesApplied() => UpdatesApplied?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>
+    /// Raises <see cref="ModUpdateProgress"/> for <paramref name="containerId"/>
+    /// with the given <paramref name="isActive"/> state, simulating the
+    /// production service's per-mod progress signal.
+    /// </summary>
+    public void RaiseModUpdateProgress(Guid containerId, bool isActive) =>
+        ModUpdateProgress?.Invoke(this, new ModUpdateProgressEventArgs(containerId, isActive));
 }
 
 /// <summary>
@@ -1044,6 +1257,22 @@ internal sealed class FakeUpdateCheckService : IUpdateCheckService
     private readonly ConcurrentQueue<Guid> _calls = new();
     private readonly ConcurrentQueue<Guid> _thoroughCalls = new();
 
+    /// <summary>
+    /// Optional state store wired so <see cref="RaiseCheckCompleted"/> +
+    /// <see cref="CheckAsync"/> + <see cref="CheckThoroughAsync"/> mirror the
+    /// real service's RecordResult side-effect (the persisted known-update
+    /// state is the source of the per-row flags). BuildModList wires this; a
+    /// standalone construction leaves it null (the runner-only tests do not
+    /// need it).
+    /// </summary>
+    public IUpdateStateStore? StateStore { get; set; }
+
+    /// <summary>The profile id the next RecordResult should scope to (set by
+    /// the runner path; the direct-RaiseCheckCompleted path defers to the
+    /// active session via the VM). Tests that drive RaiseCheckCompleted set
+    /// this so the recorded state is scoped correctly.</summary>
+    public Guid? RecordProfileId { get; set; }
+
     /// <summary>The number of <see cref="CheckAsync"/> (Month-only) calls
     /// recorded so far. Thread-safe; safe to poll from the test thread while
     /// the runner fires on a thread-pool task.</summary>
@@ -1092,8 +1321,10 @@ internal sealed class FakeUpdateCheckService : IUpdateCheckService
         }
 
         LastResult ??= new UpdateCheckResult(
-            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: false);
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: false,
+            Outcome: CheckOutcome.Success);
 
+        Record(profileId, LastResult);
         // Mirror the real service's contract: CheckCompleted is raised exactly
         // once per call. Also keeps the event field used (CS0067).
         CheckCompleted?.Invoke(this, LastResult);
@@ -1111,7 +1342,9 @@ internal sealed class FakeUpdateCheckService : IUpdateCheckService
         }
 
         LastResult = new UpdateCheckResult(
-            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: true);
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: true,
+            Outcome: CheckOutcome.Success);
+        Record(profileId, LastResult);
         CheckCompleted?.Invoke(this, LastResult);
         return Task.FromResult(LastResult);
     }
@@ -1119,13 +1352,34 @@ internal sealed class FakeUpdateCheckService : IUpdateCheckService
     /// <summary>
     /// Sets <see cref="LastResult"/> + raises <see cref="CheckCompleted"/> so a
     /// test can simulate a check landing without invoking
-    /// <see cref="CheckAsync"/>/<see cref="CheckThoroughAsync"/>. The mod-list
-    /// VM's handler reads <see cref="LastResult"/> via ApplyUpdateCheckResult.
+    /// <see cref="CheckAsync"/>/<see cref="CheckThoroughAsync"/>. Also records
+    /// the result through the wired state store (when <see cref="RecordProfileId"/>
+    /// is set) so the mod-list VM's profile-scoped hydration reflects it,
+    /// mirroring the real service's publish-time RecordResult.
     /// </summary>
-    public void RaiseCheckCompleted(UpdateCheckResult? result)
+    public void RaiseCheckCompleted(UpdateCheckResult? result, Guid? profileId = null)
     {
         LastResult = result;
+        var scope = profileId ?? RecordProfileId;
+        if (scope is { } pid)
+        {
+            Record(pid, result);
+        }
         CheckCompleted?.Invoke(this, result);
+    }
+
+    private void Record(Guid profileId, UpdateCheckResult? result)
+    {
+        try
+        {
+            StateStore?.RecordResult(profileId, result ?? new UpdateCheckResult(
+                Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, false, false,
+                Outcome: CheckOutcome.Success));
+        }
+        catch
+        {
+            // Defensive: a recording failure must not break the test's event raise.
+        }
     }
 }
 
@@ -1178,6 +1432,11 @@ internal sealed class FakeNexusAuthService : INexusAuthService
     /// state.</summary>
     public NexusAuthState? State { get; set; } = new(NexusAuthMethod.OAuth, "tester", IsPremium: true);
 
+    /// <summary>The number of <see cref="GetCurrentStateAsync"/> calls, so tests
+    /// can assert the automatic-update service verifies Premium only when
+    /// gated.</summary>
+    public int GetCurrentStateCallCount { get; private set; }
+
     /// <inheritdoc />
     public event EventHandler? AuthStateChanged;
 
@@ -1188,8 +1447,11 @@ internal sealed class FakeNexusAuthService : INexusAuthService
     /// </summary>
     public void RaiseAuthStateChanged() => AuthStateChanged?.Invoke(this, EventArgs.Empty);
 
-    public Task<NexusAuthState?> GetCurrentStateAsync(CancellationToken ct = default) =>
-        Task.FromResult(State);
+    public Task<NexusAuthState?> GetCurrentStateAsync(CancellationToken ct = default)
+    {
+        GetCurrentStateCallCount++;
+        return Task.FromResult(State);
+    }
 
     public Task<NexusAuthResult> LoginWithOAuthAsync(CancellationToken ct = default) =>
         throw new NotImplementedException();

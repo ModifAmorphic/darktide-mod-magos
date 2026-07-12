@@ -1,27 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Modificus.Curator.UI.ViewModels"
-             xmlns:conv="using:Modificus.Curator.UI.Converters"
              x:Class="Modificus.Curator.UI.Views.ModListView"
              x:DataType="vm:ModListViewModel">
-
-  <!--
-    The active profile's mod list: header (title + rate-limit notice +
-    check-now refresh + auto-sort + Add split button) over a
-    scrollable row list, with owned empty states (no profile / no mods). The
-    whole content area is a drag-and-drop target (folders + archives), so mods can
-    be added by dropping as well as via the Add split button's archive + folder
-    pickers. Drag-and-drop is a Windows-only feature in Avalonia 12.0.x (XDND
-    lands in 12.1), surfaced via a hint in the no-mods empty state + the
-    content-area tooltip; the folder picker covers folder import on all
-    platforms. Row interactions route through code-behind handlers to the
-    parent VM's commands (the established ManageProfilesWindow pattern),
-    passing the row as CommandParameter.
-
-    Icons + markers are drawn <Path> geometry (Material 24x24 source) and
-    Ellipse, never Unicode glyphs, per AGENTS.md. The SplitButton's arrow is
-    built-in theme chrome, not an authored glyph.
-  -->
 
   <UserControl.Styles>
     <!-- Source badge: a subtle pill so it reads as metadata, not body text.
@@ -53,7 +34,39 @@
       <Setter Property="MinWidth" Value="0" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+    <!--
+      The stable Nexus Latest update-action button carries the "updateAction"
+      class IN ADDITION to "icon" so a disabled style can be scoped to it alone.
+      The button stays visible when no update is available (it is logically
+      disabled via UpdateActionEnabled); without this override the inherited
+      disabled foreground reads too close to the enabled icon buttons in Fluent.
+      The :disabled pseudo-class dims the whole button to 0.4 opacity, so the
+      no-update state is unmistakably subdued/grey. Scoped to updateAction only:
+      the move/remove icon buttons (which never take this class) are unaffected,
+      and the accent-blue ENABLED state is untouched (:disabled is inactive then).
+    -->
+    <Style Selector="Button.updateAction:disabled">
+      <Setter Property="Opacity" Value="0.4" />
+    </Style>
   </UserControl.Styles>
+
+  <!--
+    The active profile's mod list: header (title + rate-limit notice +
+    check-now refresh + auto-sort + Add split button) over a
+    scrollable row list, with owned empty states (no profile / no mods). The
+    whole content area is a drag-and-drop target (folders + archives), so mods can
+    be added by dropping as well as via the Add split button's archive + folder
+    pickers. Drag-and-drop is a Windows-only feature in Avalonia 12.0.x (XDND
+    lands in 12.1), surfaced via a hint in the no-mods empty state + the
+    content-area tooltip; the folder picker covers folder import on all
+    platforms. Row interactions route through code-behind handlers to the
+    parent VM's commands (the established ManageProfilesWindow pattern),
+    passing the row as CommandParameter.
+
+    Icons + markers are drawn <Path> geometry (Material 24x24 source) and
+    Ellipse, never Unicode glyphs, per AGENTS.md. The SplitButton's arrow is
+    built-in theme chrome, not an authored glyph.
+  -->
 
   <Grid RowDefinitions="Auto,*" Margin="20,12,20,12">
 
@@ -65,15 +78,14 @@
           ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto"
           IsVisible="{Binding HasActiveProfile}"
           Margin="0,0,0,8">
+      <!-- Title: the plain localized "Mods" label (no count; the row list itself
+           is the count). Bound to HeaderCountText so it live-refreshes on a
+           culture change (the VM re-fires the property). Sits in column 0,
+           immediately before the rate-limit notice + the refresh button. -->
       <TextBlock Grid.Column="0"
                  Text="{Binding HeaderCountText}"
                  FontSize="16" FontWeight="SemiBold"
                  VerticalAlignment="Center" />
-      <!--
-        Rate-limit notice: shown when the last update check was rate-limited
-        (the badges may not reflect every available update). A drawn warning
-        dot + the localized text; the tooltip carries the detail.
-      -->
       <Border Grid.Column="1"
               Classes="rateLimitedNotice"
               IsVisible="{Binding IsRateLimited}"
@@ -180,15 +192,17 @@
     </Grid>
 
     <!--
-      Content area: also the drag-and-drop target. The tooltip surfaces the
-      Windows-only note (XDND lands in Avalonia 12.1; Linux drops do not fire).
+      Content area: the drag-and-drop target (AllowDrop/Drop/DragOver stay here
+      so drag-and-drop behavior is unchanged). The drag-hint tooltip is NOT
+      attached here: this Grid is the ancestor of populated mod rows, so a
+      tooltip on it would surface while hovering rows. The tooltip is scoped to
+      the no-mods empty state below, where the hint is actually relevant.
       Empty states + the row list overlap; visibility selects which shows.
     -->
     <Grid Grid.Row="1"
           DragDrop.AllowDrop="True"
           DragDrop.Drop="OnDrop"
-          DragDrop.DragOver="OnDragOver"
-          ToolTip.Tip="{ReflectionBinding [ModList_DragDropHint], Source={StaticResource Loc}}">
+          DragDrop.DragOver="OnDragOver">
 
       <!-- Empty: no active profile. -->
       <TextBlock Text="{Binding EmptyNoProfileText}"
@@ -198,11 +212,15 @@
 
       <!--
         Empty: active profile but no mods yet. The drag-and-drop hint sits below
-        the message; small font + lowered opacity so it reads as a secondary cue.
-        (Drag-and-drop is a Windows-only feature; the folder picker covers Linux.)
+        the message as a small, low-opacity secondary cue, AND the same hint is
+        attached as this container's tooltip (scoped here, not on the content
+        Grid, so it does not appear while hovering populated rows). The no-profile
+        state does not carry the hint. (Drag-and-drop is a Windows-only feature;
+        the folder picker covers Linux.)
       -->
       <StackPanel IsVisible="{Binding IsEmptyNoMods}"
-                  HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                  HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                  ToolTip.Tip="{ReflectionBinding [ModList_DragDropHint], Source={StaticResource Loc}}">
         <TextBlock Text="{Binding EmptyNoModsText}"
                    HorizontalAlignment="Center"
                    Opacity="0.6" />
@@ -239,39 +257,25 @@
                              TextTrimming="CharacterEllipsis" />
 
                   <!--
-                    Update-available marker (left) + source badge (right). The
-                    marker is a drawn accent dot PLUS a HyperlinkButton to the
-                    mod's Nexus files tab, so the user's instinct to click the
-                    marker lands on the files page where the new release lives.
+                    Source badge area. The indeterminate progress affordance (shown
+                    only while this row's IsUpdating is true) sits immediately LEFT
+                    of the source-badge HyperlinkButton, occupying the former
+                    update-status area, so the row's update activity is visible
+                    without replacing the stable update-action button in column 4.
                     The badge is a HyperlinkButton styled as the pill; its
-                    NavigateUri is the row's SourceUrl (null for Untracked,
-                    which the HyperlinkButton treats as a no-op click). The
-                    marker's IsVisible is UpdateAvailable; the dot stays as a
-                    visual cue alongside the link.
+                    NavigateUri is the row's SourceUrl (null for Untracked, which
+                    the HyperlinkButton treats as a no-op click).
                   -->
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
                               Margin="8,0,0,0" VerticalAlignment="Center">
-                    <!-- Update-available marker: drawn accent dot + a
-                         HyperlinkButton to the mod's Nexus files tab. Both
-                         shown when the update check flagged this container.
-                         The dot is the visual cue; the link lands the user on
-                         the files page (a no-op for non-Nexus sources, which
-                         the update check never flags anyway). -->
-                    <StackPanel Orientation="Horizontal" Spacing="3"
-                                VerticalAlignment="Center"
-                                IsVisible="{Binding UpdateAvailable}">
-                      <Ellipse Width="7" Height="7"
-                               Fill="{DynamicResource SystemControlForegroundAccentBrush}"
-                               VerticalAlignment="Center" />
-                      <HyperlinkButton NavigateUri="{Binding UpdatePageUrl}"
-                                       Padding="0" Margin="0"
-                                       ToolTip.Tip="{ReflectionBinding [ModRow_UpdateAvailableTooltip], Source={StaticResource Loc}}">
-                        <TextBlock Text="{ReflectionBinding [ModRow_UpdateAvailable], Source={StaticResource Loc}}"
-                                   FontSize="11"
-                                   Foreground="{DynamicResource SystemControlForegroundAccentBrush}"
-                                   VerticalAlignment="Center" />
-                      </HyperlinkButton>
-                    </StackPanel>
+                    <!-- Indeterminate progress while a per-row update install
+                         runs. Visible only for the row whose IsUpdating is true.
+                         Placed left of the badge (where the old update-available
+                         marker used to begin). -->
+                    <ProgressBar Width="18" Height="18"
+                                 IsIndeterminate="True"
+                                 IsVisible="{Binding IsUpdating}"
+                                 VerticalAlignment="Center" />
                     <HyperlinkButton Classes="badge"
                                      NavigateUri="{Binding SourceUrl}"
                                      ToolTip.Tip="{ReflectionBinding [ModRow_SourceBadgeLinkTooltip], Source={StaticResource Loc}}">
@@ -321,43 +325,55 @@
                   </StackPanel>
 
                   <!--
-                    Per-mod Update button (premium-only, drawn download arrow) OR
-                    the indeterminate progress affordance while updating. The two
-                    share column 4: IsUpdating toggles which shows. The button's
-                    IsVisible is the conjunction of the row's CanShowUpdateButton
-                    (Nexus + Latest + UpdateAvailable + !IsUpdating) AND the
-                    parent ModListViewModel.IsPremiumUser (the premium gate). The
-                    parent walk uses ReflectionBinding because the ItemsControl's
-                    DataContext is statically object inside the row DataTemplate
-                    (compiled bindings cannot resolve IsPremiumUser through it);
-                    the row-local binding stays compiled. IsEnabled binds to the
-                    parent's IsUpdateEnabled (premium + no row updating = one at
-                    a time).
+                    The stable update-action cell. A fixed-width Panel reserves
+                    space on EVERY row (so later controls never shift when the
+                    button appears/disappears). For Nexus + Latest rows it holds
+                    the update button; for Pinned Nexus, GitHub, and Untracked
+                    rows the cell stays reserved but empty. The button stays
+                    visible even while a row is updating (it is disabled via
+                    UpdateActionEnabled); the indeterminate progress affordance
+                    moved to the source-badge area (column 1) so the action cell
+                    does not shift during start/end of an update.
+
+                    The button shows for Nexus + Latest rows regardless of
+                    account tier + regardless of whether an update is available.
+                    No update -> disabled, neutral/grey download arrow (inherits
+                    the disabled foreground + the updateAction :disabled style
+                    dims the whole button to 0.4 opacity so it is unmistakably
+                    subdued). Update available -> enabled, with the drawn
+                    download-arrow Path in accent blue. No animation/flashing, no
+                    Unicode icons. Premium click runs the existing in-app update;
+                    regular/unknown click opens the mod's Nexus files page (the
+                    row VM carries the click behavior; the tooltip distinguishes
+                    the cases).
                   -->
-                  <Panel Grid.Column="4" Margin="8,0,0,0" VerticalAlignment="Center">
-                    <Button Classes="icon"
+                  <Panel Grid.Column="4" Margin="8,0,0,0" VerticalAlignment="Center"
+                         MinWidth="28">
+                    <Button Classes="icon updateAction"
                             Click="Update_Click"
                             CommandParameter="{Binding}"
-                            IsEnabled="{ReflectionBinding DataContext.IsUpdateEnabled, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                            ToolTip.Tip="{ReflectionBinding [ModRow_UpdateTooltip], Source={StaticResource Loc}}">
-                      <Button.IsVisible>
-                        <MultiBinding Converter="{x:Static conv:BoolAllConverter.Instance}">
-                          <Binding Path="CanShowUpdateButton" />
-                          <ReflectionBinding Path="DataContext.IsPremiumUser"
-                                             RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
-                        </MultiBinding>
-                      </Button.IsVisible>
-                      <!-- Material "download" (24x24 source): drawn geometry. -->
-                      <Path Width="16" Height="16" Stretch="Uniform"
-                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                            Fill="{Binding $parent[Button].Foreground}"
-                            Data="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                            IsVisible="{Binding CanShowUpdateAction}"
+                            IsEnabled="{Binding UpdateActionEnabled}"
+                            ToolTip.Tip="{Binding UpdateActionTooltip}">
+                      <Panel>
+                        <!-- Neutral/grey download arrow (no update / disabled):
+                             inherits the button foreground; the updateAction
+                             :disabled style further dims the whole button to
+                             0.4 opacity so the no-update state is unmistakably
+                             subdued. -->
+                        <Path Width="16" Height="16" Stretch="Uniform"
+                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                              IsVisible="{Binding !UpdateAvailable}"
+                              Fill="{Binding $parent[Button].Foreground}"
+                              Data="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                        <!-- Accent-blue download arrow (update available). -->
+                        <Path Width="16" Height="16" Stretch="Uniform"
+                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                              IsVisible="{Binding UpdateAvailable}"
+                              Fill="{DynamicResource SystemControlForegroundAccentBrush}"
+                              Data="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                      </Panel>
                     </Button>
-                    <!-- Indeterminate progress while the update runs. -->
-                    <ProgressBar Width="18" Height="18"
-                                 IsIndeterminate="True"
-                                 IsVisible="{Binding IsUpdating}"
-                                 VerticalAlignment="Center" />
                   </Panel>
 
                   <!-- Move up (drawn up-chevron). -->

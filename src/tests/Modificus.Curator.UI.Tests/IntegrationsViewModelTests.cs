@@ -448,6 +448,84 @@ public sealed class IntegrationsViewModelTests
         Assert.Equal(30, configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckIntervalMinutes);
     }
 
+    // ---- automatic-updates (Premium opt-in) -------------------------------
+
+    [Fact]
+    public async Task AutomaticUpdates_defaults_false_and_round_trips_config()
+    {
+        var configLoader = new FakeConfigLoader();
+        var (vm, _, _, _) = await BuildAndRefresh(
+            state: new NexusAuthState(NexusAuthMethod.OAuth, "prem", IsPremium: true),
+            configLoader: configLoader);
+
+        Assert.False(vm.AutomaticUpdatesEnabled); // opt-in default
+
+        vm.AutomaticUpdatesEnabled = true;
+
+        Assert.Equal(1, configLoader.SaveCalls);
+        Assert.True(configLoader.LastSaved!.Integrations.Nexus.AutomaticUpdatesEnabled);
+        // And the persisted value reloads on a fresh open.
+        var (vm2, _, _, _) = await BuildAndRefresh(
+            state: new NexusAuthState(NexusAuthMethod.OAuth, "prem", IsPremium: true),
+            configLoader: configLoader);
+        Assert.True(vm2.AutomaticUpdatesEnabled);
+    }
+
+    [Fact]
+    public async Task AutomaticUpdates_is_independent_of_AutoUpdateCheckEnabled()
+    {
+        var configLoader = new FakeConfigLoader();
+        var (vm, _, _, _) = await BuildAndRefresh(
+            state: new NexusAuthState(NexusAuthMethod.OAuth, "prem", IsPremium: true),
+            configLoader: configLoader);
+
+        vm.AutomaticUpdatesEnabled = true;
+
+        // Turning OFF the periodic check must NOT clear the automatic-update
+        // setting (the two are independent; periodic checking off never disables
+        // automatic installation).
+        vm.AutoUpdateCheckEnabled = false;
+
+        Assert.True(configLoader.LastSaved!.Integrations.Nexus.AutomaticUpdatesEnabled);
+        Assert.False(configLoader.LastSaved.Integrations.Nexus.AutoUpdateCheckEnabled);
+    }
+
+    [Fact]
+    public async Task AutomaticUpdates_enabled_only_for_verified_premium_with_premium_required_tooltip()
+    {
+        // Regular account: visible, disabled, with the premium-required tooltip.
+        var (vmRegular, _, _, _) = await BuildAndRefresh(
+            state: new NexusAuthState(NexusAuthMethod.ApiKey, "free", IsPremium: false));
+        Assert.False(vmRegular.CanEditAutomaticUpdates);
+        Assert.Equal(
+            Localization["Integrations_AutomaticUpdatesPremiumRequired"],
+            vmRegular.AutomaticUpdatesTooltip);
+
+        // Verified Premium account: enabled, with the normal tooltip.
+        var (vmPremium, _, _, _) = await BuildAndRefresh(
+            state: new NexusAuthState(NexusAuthMethod.OAuth, "prem", IsPremium: true));
+        Assert.True(vmPremium.CanEditAutomaticUpdates);
+        Assert.Equal(
+            Localization["Integrations_AutomaticUpdatesTooltip"],
+            vmPremium.AutomaticUpdatesTooltip);
+    }
+
+    [Fact]
+    public async Task AutomaticUpdates_preserves_a_configured_true_when_premium_unavailable()
+    {
+        // A configured true value stays visible + checked even when the account
+        // is not verified Premium (the user may have let Premium lapse); runtime
+        // execution re-verifies before installing.
+        var configLoader = new FakeConfigLoader();
+        configLoader.Config.Integrations.Nexus.AutomaticUpdatesEnabled = true;
+        var (vm, _, _, _) = await BuildAndRefresh(
+            state: new NexusAuthState(NexusAuthMethod.ApiKey, "free", IsPremium: false),
+            configLoader: configLoader);
+
+        Assert.True(vm.AutomaticUpdatesEnabled); // preserved
+        Assert.False(vm.CanEditAutomaticUpdates); // but disabled (not premium)
+    }
+
     [Fact]
     public async Task Empty_interval_persists_as_default_and_clamps_above_max()
     {

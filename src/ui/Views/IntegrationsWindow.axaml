@@ -104,12 +104,17 @@
 
           <!-- ============== Update-check settings ==============
                A sub-section below the auth blocks: the periodic update-check
-               toggle + interval, persisted live. These are preference settings,
-               not credentials, so they live in the Integrations dialog (Nexus is
-               the only update source) and persist through the config loader the
-               dialog already uses. The NumericUpDown binds its Value (decimal?)
-               to the VM's AutoUpdateCheckIntervalMinutes; Minimum/Maximum/Increment
-               bound the input, FormatString hides the decimal tail. -->
+               toggle + interval, persisted live, plus the opt-in Premium
+               automatic-update installer toggle (independent of the periodic
+               check). These are preference settings, not credentials, so they
+               live in the Integrations dialog (Nexus is the only update source)
+               and persist through the config loader the dialog already uses. The
+               NumericUpDown binds its Value (decimal?) to the VM's
+               AutoUpdateCheckIntervalMinutes; Minimum/Maximum/Increment bound the
+               input, FormatString hides the decimal tail. The automatic-updates
+               checkbox is visible for every account but enabled only for a
+               verified Premium account (ShowOnDisabled surfaces the
+               Premium-required tooltip when disabled). -->
           <Separator Margin="0,4" />
           <StackPanel Spacing="8" Margin="0,4">
             <TextBlock Text="{Binding AutoUpdateHeader}"
@@ -129,6 +134,20 @@
                              MinWidth="100"
                              VerticalAlignment="Center" />
             </StackPanel>
+            <!-- Premium opt-in automatic installation. Visible for every account;
+                 enabled only when CanEditAutomaticUpdates (verified Premium).
+                 ShowOnDisabled keeps the Premium-required tooltip reachable while
+                 the checkbox is disabled. A configured true value is preserved
+                 (stays checked) even when Premium becomes unavailable; runtime
+                 execution re-verifies Premium before installing. -->
+            <CheckBox IsChecked="{Binding AutomaticUpdatesEnabled, Mode=TwoWay}"
+                      IsEnabled="{Binding CanEditAutomaticUpdates}"
+                      ToolTip.Tip="{Binding AutomaticUpdatesTooltip}"
+                      ToolTip.ShowOnDisabled="True"
+                      VerticalAlignment="Center">
+              <TextBlock Text="{Binding AutomaticUpdatesLabel}"
+                         VerticalAlignment="Center" />
+            </CheckBox>
           </StackPanel>
 
           <!-- ============== NXM download links ==============

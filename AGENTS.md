@@ -34,10 +34,12 @@ game-binary constraints now live with the runtime, in
   The app is user-usable:
   create profiles, import mods (folder/archive, Nexus/GitHub/Untracked), manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
-  (discovery paths + mod-repo location), and launch modded Darktide. Premium
-  users additionally get per-mod one-click update on the mod list; non-premium
-  users see the source-badge link + the update marker + the existing nxm
-  download flow. The first time Nexus auth is configured, or whenever a new
+  (discovery paths + mod-repo location), and launch modded Darktide. Every
+  Nexus Latest row shows a stable update-action button (disabled + neutral when
+  no update, enabled + accent when flagged); a Premium click installs in-app,
+  a regular/unknown click opens the mod's Nexus files page. Premium users can
+  additionally opt into automatic flagged-update installation after each check.
+  The first time Nexus auth is configured, or whenever a new
   profile is created + set active without DMF in it, a modal prompt offers to
   add/download DMF (Darktide Mod Framework, Nexus mod 8). The Launcher is a
   stub. Backend libraries: Profiles,
@@ -101,42 +103,72 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           independent of the interval gate); registered + started
                           best-effort from CuratorComposition);
                           the mod-list update UI per-row update
-                          signal + per-mod update button. `ModListViewModel` subscribes
-                          to `IUpdateCheckService.CheckCompleted` (per-row
-                          `UpdateAvailable` from `LastResult.Updates` matched by
-                          ContainerId, list-level `IsRateLimited` notice), reads
+                          signal + per-mod update action. `ModListViewModel` subscribes
+                          to `IUpdateCheckService.CheckCompleted` and reads the
+                          profile-scoped `IUpdateStateStore` (persisted in
+                          `IAppStateStore.KnownUpdates` / app-state.json, so a
+                          restart inside the interval gate shows prior flags
+                          before any API call) for per-row `UpdateAvailable`
+                          (matched by ContainerId) + the list-level `IsRateLimited`
+                          notice (the latter still from the in-memory LastResult,
+                          session-only), reads
                           `INexusAuthService.GetCurrentStateAsync` once at construction
-                          for the premium gate (`IsPremiumUser`, no mid-session refresh),
-                          and exposes an async `UpdateCommand(row)` that calls
-                          `IModAcquisitionService.AcquireLatestNexusAsync` (premium-only,
-                          one-at-a-time via `AnyRowUpdating`) + an async
-                          `CheckForUpdatesNowCommand` that awaits the runner's
+                          for the per-row premium behavior (`IsPremiumUser` pushed
+                          down to rows; no mid-session refresh),
+                          and exposes an async `UpdateCommand(row)` that branches on
+                          premium: Premium acquires the global `UpdateCoordinator`
+                          (one install at a time, shared with the automatic updater)
+                          then calls
+                          `IModAcquisitionService.AcquireLatestNexusAsync` +
+                          `AcknowledgeUpdateAndReload` (clears the persisted
+                          known-update entry, no extra API check); regular/unknown
+                          opens the mod's Nexus files page via a testable
+                          external-launcher seam (fallback alert on failure).
+                          `CheckForUpdatesNowCommand` awaits the runner's
                           thorough check (driving an `IsCheckingNow` spinner on
-                          the header refresh button) and drives the manual
+                          the header refresh button; the await now also covers the
+                          chained automatic-update batch) and drives the manual
                           sliding-window throttle's countdown tooltip + disabled
-                          button via the runner's `NextManualRefreshAllowedAt`). The view's source badge
-                          is a `HyperlinkButton` to the mod's remote page, a drawn
-                          `<Ellipse>` + a `HyperlinkButton` to the mod's Nexus
-                          files tab (`?tab=files`) marks flagged rows, a drawn
-                          download-arrow Update button + indeterminate
-                          `ProgressBar` (toggled by `IsUpdating`) live in a new
-                          row column, and the rate-limit notice
-                          sits in the header. `ModItemViewModel` carries the
-                          INPC state + derived `SourceUrl`/`UpdatePageUrl`/
-                          `IsNexusLatest`/`CanShowUpdateButton`/`NexusModId`; a
-                          `BoolAllConverter` (ui/Converters/) ANDs the row's
-                          `CanShowUpdateButton` with the list VM's
-                          `IsPremiumUser` for the button's `IsVisible`
-                          MultiBinding.                           The check is split by trigger:
+                          button via the runner's `NextManualRefreshAllowedAt`).
+                          The view's source badge
+                          is a `HyperlinkButton` to the mod's remote page; the
+                          stable update-action cell is a fixed-width `Panel`
+                          reserved on every row holding a drawn download-arrow
+                          button + indeterminate `ProgressBar` (toggled by
+                          `IsUpdating`). The button shows for Nexus + Latest rows
+                          regardless of tier (disabled + neutral when no update,
+                          enabled + accent-blue arrow when flagged); Pinned/GitHub/
+                          Untracked rows keep the reserved cell but no button. The
+                          rate-limit notice sits in the header. `ModItemViewModel`
+                          carries the INPC state + derived `SourceUrl`/`UpdatePageUrl`/
+                          `IsNexusLatest`/`CanShowUpdateAction`/
+                          `UpdateActionEnabled`/`UpdateActionTooltip`/`NexusModId`;
+                          `IsPremiumUser` + `AnyRowUpdating` are pushed down so the
+                          per-row enabled state + tooltip recompute without a parent
+                          walk. The `UpdateCoordinator` (ui/Session/) is the
+                          single one-install-at-a-time gate shared with the
+                          `IAutomaticUpdateService` (ui/Session/), the opt-in
+                          Premium automatic installer chained after each check from
+                          `UpdateCheckRunner` (captures the exact result, gates on
+                          authoritative Success + updates + AutomaticUpdatesEnabled
+                          + active profile + a fresh Premium verify, installs
+                          sequentially under the coordinator, isolates per-mod
+                          failures into one summary alert, acknowledges on success,
+                          stops on profile switch, raises UpdatesApplied so the list
+                          VM reloads, raises ModUpdateProgress per mod so the
+                          row-level spinner tracks the currently installing row).                           The check is split by trigger:
                           `IUpdateCheckService.CheckAsync` (the v2 GraphQL
                           `modsByUid` batch query, 1 API call for all mods)
                           fires on profile load + the periodic timer, both
                           interval-gated; `IUpdateCheckService.CheckThoroughAsync`
                           (same v2 batch query; the two differ only in the result's
                           `Thorough` flag) fires on the manual "check now" button
-                          under its own sliding-window throttle; both share
-                          `LastResult`/`CheckCompleted`, distinguished by the
-                          result's `Thorough` flag);
+                          under its own sliding-window throttle; both record their
+                          authoritative outcome through the `IUpdateStateStore`
+                          (Success replaces/clears, NoNexusMods clears, no-auth/
+                          rate-limit/failed preserve) + share `LastResult`/
+                          `CheckCompleted`, distinguished by the result's
+                          `Thorough` + `Outcome` flags);
                           the app self-update service
                           `IAppUpdateService` (ui/AppUpdate/) with its
                           conditional `VelopackAppUpdateService` (real impl,
@@ -238,12 +270,13 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           dialog). Bracketing the swap under `_syncing` makes
                           those events no-ops)
   general/              Modificus.Curator.General -- cross-cutting infra (logging bootstrap,
-                          config loader, app-state store (active profile id +
-                          last update-check timestamp + manual-refresh throttle
-                          window), AddGeneral() DI ext)
+                        config loader, app-state store (active profile id +
+                        last update-check timestamp + manual-refresh throttle
+                        window + profile-scoped known-update snapshots), AddGeneral() DI ext)
   config/               Modificus.Curator.Config -- the CuratorConfig schema + defaults (POCO),
                         including the NexusConfig slot under Integrations
-                        (AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs)
+                        (AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs,
+                        AutomaticUpdatesEnabled opt-in Premium auto-install)
                         + the AppUpdatesConfig slot (CheckOnStartup, gates the
                         automatic startup self-update check)
   profiles/             Modificus.Curator.Profiles -- profile data model, persistence,
@@ -348,8 +381,17 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         UpdateCheckResult.NamesChanged signals the UI to refresh row
                         names in place);
                         rate-limit-aware with the all-zero Unknown guard +
-                        NexusRateLimitException surfacing; LastResult +
-                        CheckCompleted event for the mod-list badges;
+                        NexusRateLimitException surfacing; carries an explicit
+                        `CheckOutcome` (Success/NoAuth/NoNexusMods/RateLimited/
+                        Failed) so authoritative success is distinguishable +
+                        records each result through the `IUpdateStateStore`
+                        (the profile-scoped known-update persistence rules over
+                        `IAppStateStore.KnownUpdates`: Success replaces/clears,
+                        NoNexusMods clears, no-auth/rate-limit/failed preserve,
+                        hydration self-heals removed/pinned/source-changed/
+                        version-changed entries, AcknowledgeInstall clears a
+                        single entry on a successful version change);
+                        LastResult + CheckCompleted event for the mod-list;
                         Integrations references Profiles, acyclic, for
                         IProfileService.GetModList)
   steam/                Modificus.Curator.Steam -- Steam + Darktide + Proton discovery
@@ -388,6 +430,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         launches Curator (no args) + retries the pipe ~250ms/30s, then delivers.
   tests/
     Modificus.Curator.General.Tests/         xUnit tests for the general library
+                                          (incl. the AppStateStore KnownUpdates round-trip +
+                                          old-file-without-field compatibility)
     Modificus.Curator.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
     Modificus.Curator.Mods.Tests/      xUnit tests for the mod repository + import
     Modificus.Curator.Integrations.Tests/    xUnit tests for the GitHub Releases client
@@ -402,6 +446,12 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                           + the UpdateCheckService (Nexus-only
                                           update check against a fake INexusClient +
                                           fake IProfileService + fake IModRepository)
+                                          + the UpdateStateStore (the profile-scoped
+                                          known-update persistence rules: success
+                                          replaces/clears, failed/no-auth/rate-limited
+                                          preserve, no-Nexus-mods clears, acknowledge,
+                                          + the hydration self-heal for removed/pinned/
+                                          source-changed/version-changed entries)
     Modificus.Curator.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Modificus.Curator.RelayClient.Tests/ xUnit tests for the launch façade (dual-purpose:
                                             `dotnet test` = xUnit; `dotnet run` = composition smoke harness)
@@ -410,9 +460,16 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             persist, switch-blocked-while-running; dialog via
                                             an injectable IDialogService seam; + the
                                             NxmModDownloadHandler auth/profile gates + error
-                                            wiring + the mod-list update flow: CheckCompleted
-                                            per-row state, UpdateCommand success/failure +
-                                            one-at-a-time + premium gating + SourceUrl resolution;
+                                            wiring + the mod-list update flow: profile-scoped
+                                            known-update persistence/hydration, the stable
+                                            per-row update action (no-update disabled, flagged
+                                            accent, Premium install, regular/unknown files-page
+                                            open, launcher failure alert, unsupported rows),
+                                            UpdateCommand premium/regular branches + one-at-a-time
+                                            via the UpdateCoordinator + acknowledgement + the
+                                            automatic-update setting + the AutomaticUpdateService
+                                            gating/sequencing/isolation/concurrency/profile-switch
+                                            + SourceUrl resolution;
                                             + the DmfPromptService (the three DMF cases, the
                                             new-profile + auth-configured triggers, the
                                             ask-once auth flag, the decline path, and the

@@ -90,7 +90,8 @@ public sealed class ConfigLoader : IConfigLoader
 
 Persists **runtime application state**: values that capture "where the app left
 off" rather than user system settings. Kept deliberately narrow: the active
-profile id and the last update-check timestamp. A separate file (not
+profile id, the last update-check timestamp, the manual-refresh throttle window,
+and the persisted known-update snapshots. A separate file (not
 `CuratorConfig`) holds it so the settings schema stays pure (system settings
 vs. runtime state).
 
@@ -100,7 +101,12 @@ public interface IAppStateStore
     Guid? ActiveProfileId { get; set; }                        // set persists immediately
     DateTimeOffset? LastUpdateCheckUtc { get; set; }           // set persists immediately
     IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; } // set persists immediately
+    IReadOnlyDictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? KnownUpdates { get; set; } // set persists immediately
 }
+
+public sealed record KnownUpdateSnapshot(
+    Guid ProfileId, Guid ContainerId, int ModId,
+    string CurrentVersion, DateTimeOffset CheckedAt, DateTimeOffset? LatestUpdateAt);
 
 public sealed class AppStateStore : IAppStateStore
 {
@@ -111,7 +117,8 @@ public sealed class AppStateStore : IAppStateStore
 ```
 
 - File: `<app-data>/app-state.json`
-  (`{ "ActiveProfileId": "<guid>" | null, "LastUpdateCheckUtc": "<iso-8601>" | null, "ManualRefreshTimestamps": [ "<iso-8601>", ... ] | null }`),
+  (`{ "ActiveProfileId": ..., "LastUpdateCheckUtc": ..., "ManualRefreshTimestamps": ...,
+  "KnownUpdates": { "<profile-guid>": [ { ...snapshot... }, ... ] } | null }`),
   derived from `AppPaths.AppDataDir` the same way `ConfigLoader` derives its
   config path.
 - JSON is handled with `System.Text.Json` directly (read + write);
@@ -121,14 +128,27 @@ public sealed class AppStateStore : IAppStateStore
   whole on every change, so assigning one property never clobbers the others.
 - **First-run safe:** a missing or corrupt file never throws; `get` just
   returns `null`. Writes are best-effort (runtime state is non-critical; a
-  persistence failure is swallowed rather than crashing the app).
+  persistence failure is swallowed rather than crashing the app). An old file
+  written before a field existed deserializes that field as `null`, so a first
+  run after upgrade sees no recorded value and the consumers seed cleanly.
 - Used by `IProfileSession` (the active-profile authority) to restore the active
-  profile on construction and persist it on changes, and by
-  `UpdateCheckRunner` to seed and persist the last update-check timestamp (so the
-  interval gate survives a close/reopen) and to seed and persist the manual
-  throttle's sliding-window timestamps (`ManualRefreshTimestamps`, so the manual
-  free-refresh budget survives a close/reopen). The shell and the Manage dialog
-  read the active id through the session; they do not touch this store.
+  profile on construction and persist it on changes, by `UpdateCheckRunner` to
+  seed and persist the last update-check timestamp (so the interval gate
+  survives a close/reopen) and the manual throttle's sliding-window timestamps
+  (`ManualRefreshTimestamps`, so the manual free-refresh budget survives a
+  close/reopen), and by the Integrations-layer `IUpdateStateStore` to persist
+  profile-scoped known-update snapshots (`KnownUpdates`, so a restart inside the
+  interval gate shows prior update flags before any API call). The shell and the
+  Manage dialog read the active id through the session; they do not touch this
+  store.
+
+`KnownUpdateSnapshot` is a plain serializable DTO (no domain behavior) so the
+General library can persist it without depending on the Integrations
+update-check domain. The Integrations `IUpdateStateStore` owns the rules (when to
+record, when to clear, how to filter on hydration); this record is the persisted
+shape. Each field exists to identify the flagged mod and invalidate stale
+knowledge after a local version change without re-querying Nexus. Display names
+are not persisted (they continue to come from repository persistence).
 
 ## DI registration
 

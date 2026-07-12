@@ -366,10 +366,14 @@ path without launching a real browser. The default uses `Process.Start` with
 
 The UI-layer glue between `IProfileSession` (the active-profile authority)
 and `IUpdateCheckService` (the Integrations update check). The check itself
-is backend-only; this runner owns when the UI fires it. The check flags mods via
-three tiers (the server's `viewerUpdateAvailable`, a mod-level version compare,
-and a latest-file-version confirmation that clears tier-2 false positives
-against the actual latest file); see
+is backend-only; this runner owns when the UI fires it. After each check
+completes, the runner captures the exact result (not a potentially raced
+`LastResult`) and chains the `IAutomaticUpdateService` (the opt-in Premium
+automatic installer) on the captured UI context, so a manual CheckNow keeps
+its spinner active through the installations. The check flags mods via three
+tiers (the server's `viewerUpdateAvailable`, a mod-level version compare, and a
+latest-file-version confirmation that clears tier-2 false positives against the
+actual latest file); see
 [the update-detection tiers](rate-limiting-strategy.md#update-detection-tiers).
 
 ```csharp
@@ -382,6 +386,7 @@ public sealed class UpdateCheckRunner
         IUpdateCheckService updateCheck,
         IConfigLoader configLoader,
         IAppStateStore appState,
+        IAutomaticUpdateService autoUpdate,
         ILogger<UpdateCheckRunner> logger,
         Action<Action>? startTimer = null,
         Func<DateTimeOffset>? getNow = null);
@@ -615,35 +620,88 @@ failures; the runner wraps the call in its own try/catch as belt-and-suspenders
 `ConfigureAwait(false)` is used only inside its `Task.Run` block, the narrow
 documented exception to the UI-layer rule for explicit background-task code.
 
-## Converters
+## The update coordinator + automatic-update service
 
-### `BoolAllConverter`
+### `UpdateCoordinator`
 
-A multi-value converter that ANDs every bound value (treating non-bool, null,
-and `AvaloniaProperty.UnsetValue` values as false). A `MarkupExtension` so it
-can be used as `{Converters:BoolAllConverter}` in AXAML; a stateless shared
-instance is exposed as `Instance`.
+Coordinates mod-update installs so only one runs at a time globally, shared
+between the manual per-row update action (`ModListViewModel`'s Update command)
+and the automatic Premium updater (`IAutomaticUpdateService`). Keeps a manual
+click and an automatic batch from installing the same mod concurrently without
+relying on per-VM flags.
 
 ```csharp
-public class BoolAllConverter : MarkupExtension, IMultiValueConverter
+public sealed class UpdateCoordinator
 {
-    public object Convert(IList<object?> values, Type targetType, object? parameter, CultureInfo culture);
-    public override object ProvideValue(IServiceProvider serviceProvider) => Instance;
-    public static readonly BoolAllConverter Instance = new();
+    public bool IsBusy { get; }
+    public event EventHandler? BusyChanged;
+
+    public bool TryAcquire(out IDisposable? scope);   // non-blocking (manual path)
+    public Task<IDisposable> AcquireAsync(CancellationToken ct = default); // awaiting (auto path)
 }
 ```
 
-Used for the per-row Update button's `IsVisible`, which combines list-level
-state (the parent `ModListViewModel.IsPremiumUser`) with row-level state
-(`CanShowUpdateButton`, itself the conjunction of `IsNexusLatest`,
-`UpdateAvailable`, and `!IsUpdating`): a single Avalonia compiled binding
-cannot express a cross-VM conjunction through an `ItemsControl` row
-`DataTemplate`, so the view binds all the inputs to a `MultiBinding` over
-this converter. A bound false short-circuits the result to false; a non-bool
-binding result (null, `UnsetValue`, or any non-bool) also returns false so a
-failed binding collapses the button rather than showing it spuriously. The
-button's `IsEnabled` binds directly to the parent's pre-computed
-`IsUpdateEnabled` (a single `ReflectionBinding`, not a `MultiBinding`).
+- `IsBusy`: flips on acquire + release and raises `BusyChanged` (on the
+  acquiring/releasing thread). `ModListViewModel` subscribes, marshals to the
+  UI thread, and pushes the flag down to each row so the per-row enabled state
+  reflects "one install at a time" without each row polling.
+- `TryAcquire`: non-blocking. The manual path uses it; a second click while an
+  install runs is a clean no-op.
+- `AcquireAsync`: awaiting. The automatic batch uses it per mod; the runner
+  serializes the batch, so this is uncontended in practice, but the coordinator
+  is the single mutual-exclusion point across both paths.
+
+### `IAutomaticUpdateService`
+
+The opt-in Premium automatic mod-update installer. Chained directly from
+`UpdateCheckRunner` after a check completes (the runner captures the exact
+result, not a potentially raced `LastResult`), it sequentially installs flagged
+updates for the active profile's Nexus Latest mods when the user has enabled it
+AND a fresh Premium verification passes. Independent of
+`ModListViewModel` (to avoid the existing ModListViewModel -> UpdateCheckRunner
+dependency becoming circular) and shares the `UpdateCoordinator` with the manual
+update action.
+
+```csharp
+public interface IAutomaticUpdateService
+{
+    event EventHandler? UpdatesApplied;
+    event EventHandler<ModUpdateProgressEventArgs>? ModUpdateProgress;
+    Task RunAfterCheckAsync(UpdateCheckResult result, Guid profileId, CancellationToken ct = default);
+}
+
+public sealed record ModUpdateProgressEventArgs(Guid ContainerId, bool IsActive);
+```
+
+- `RunAfterCheckAsync`: gates on the result's outcome being authoritative
+  `Success` with updates, `NexusConfig.AutomaticUpdatesEnabled` being on, the
+  active profile still matching, and a fresh `GetCurrentStateAsync` returning
+  `IsPremium == true` (the Premium request fires ONLY when the gates pass, so
+  an empty result or a disabled setting costs no extra API call). Then installs
+  sequentially, one at a time under the coordinator. Per-mod revalidation gates
+  each entry (membership / policy / source / version still match); a profile
+  switch stops the whole batch; per-mod failures are isolated. A successful
+  install acknowledges/clears its known-update entry immediately. A batch with
+  failures surfaces one aggregated localized alert; a fully successful batch is
+  silent beyond the per-mod progress indication. `UpdatesApplied` is raised when
+  at least one install succeeded so `ModListViewModel` can reload the list (new
+  versions + cleared flags) without the service depending on it.
+- `UpdatesApplied`: raised (on the caller's thread) when at least one install in
+  the last batch succeeded. `ModListViewModel` subscribes and reloads.
+- `ModUpdateProgress`: raised per mod (on the caller's thread) with
+  `IsActive == true` immediately before the acquisition attempt and
+  `IsActive == false` from the per-mod finally block (success, failure, or
+  cancellation). Deterministic start/stop ordering per sequential item.
+  `ModListViewModel` subscribes, marshals to the UI thread, finds the row by
+  `ContainerId`, and sets its `IsUpdating` so the row-level spinner (left of the
+  Nexus badge) tracks the currently installing mod. An event for a row no longer
+  present (after a profile switch / reload) is ignored, so a mid-batch switch
+  never leaves a stale spinner.
+
+This is independent of `NexusConfig.AutoUpdateCheckEnabled`: periodic checking
+being off never disables automatic installation (startup + switch + manual
+checks still drive it), and changing the periodic-check toggle never clears a
+configured `true` here.
 
 ## Behaviors
 
@@ -710,12 +768,14 @@ services.AddSingleton<LocalizationService>();
 services.AddSingleton<IPreferencesService, PreferencesService>();
 services.AddSingleton<MainWindow>();
 services.AddSingleton<Action<Action>>(_ => action => Dispatcher.UIThread.Post(action));
+services.AddSingleton<UpdateCoordinator>();                 // one-install-at-a-time gate
+services.AddSingleton<IAutomaticUpdateService, AutomaticUpdateService>(); // Premium auto-installer
 services.AddSingleton<ModListViewModel>();
 services.AddSingleton(sp => new ShellViewModel(/* … incl. IAppUpdateService, Action<Action> */,
                                               sp.GetService<INxmHandlerRegistrar>()));
 services.AddSingleton<IDialogService>(sp => new DialogService(/* … incl. IAppUpdateService, Action<Action>,
-                                                                sp.GetService<INxmHandlerRegistrar>() */));
-services.AddSingleton(sp => new UpdateCheckRunner(/* … */, StartUpdateCheckPolling));
+                                                               sp.GetService<INxmHandlerRegistrar>() */));
+services.AddSingleton(sp => new UpdateCheckRunner(/* … incl. IAutomaticUpdateService, StartUpdateCheckPolling */));
 #if CURATOR_VELOPACK
 services.AddSingleton<IAppUpdateService>(sp => new VelopackAppUpdateService(
     sp.GetRequiredService<IConfigLoader>(),

@@ -144,12 +144,63 @@ public interface IUpdateCheckService
 /// avoiding a full list reload. Only the normal completion path can set this
 /// <c>true</c>; the short-circuit paths (no auth, no Nexus mods, rate-limited,
 /// failure) leave it <c>false</c>.</param>
+/// <param name="Outcome">The authoritative outcome of the check, distinguishing a
+/// real API success from the short-circuit / failure paths. <see cref="CheckOutcome.Success"/>
+/// is the only outcome that may replace persisted known-update state; every other
+/// outcome preserves it. Used by the automatic-update service to gate execution
+/// (only a real success with updates starts installs).</param>
 public sealed record UpdateCheckResult(
     IReadOnlyList<ModUpdateInfo> Updates,
     DateTimeOffset CheckedAt,
     bool RateLimited,
     bool Thorough,
-    bool NamesChanged = false);
+    bool NamesChanged = false,
+    CheckOutcome Outcome = CheckOutcome.Failed);
+
+/// <summary>
+/// The authoritative outcome of an update check, distinguishing a real API
+/// success from the short-circuit + failure paths. The mod-list view + the
+/// automatic-update service use this to decide whether a result may replace
+/// persisted known-update state and whether to act on it.
+/// </summary>
+public enum CheckOutcome
+{
+    /// <summary>
+    /// A default for a hand-built result with no outcome set. Treated as
+    /// non-authoritative (preserves prior state, starts no automatic install),
+    /// matching the failure paths.
+    /// </summary>
+    Failed,
+
+    /// <summary>
+    /// The check queried the API + completed normally. This is the ONLY outcome
+    /// that authoritatively replaces a profile's known-update state (including
+    /// clearing it when the API reports no updates). The automatic-update service
+    /// may run after a success that found updates.
+    /// </summary>
+    Success,
+
+    /// <summary>
+    /// No Nexus auth is configured, so the API was never called. Prior known
+    /// updates are preserved (the user may have signed out; what was flagged
+    /// before is still the best knowledge).
+    /// </summary>
+    NoAuth,
+
+    /// <summary>
+    /// The profile has no Nexus mods at all, so the API was never called. Local
+    /// state proves there can be no applicable Nexus update, so the profile's
+    /// known-update state is cleared (this is the one short-circuit that clears).
+    /// </summary>
+    NoNexusMods,
+
+    /// <summary>
+    /// The check was rate-limited (the API call threw a rate-limit exception, or
+    /// the response headers reported an exhausted window). Prior known updates are
+    /// preserved; the mod-list view surfaces a "check incomplete" notice.
+    /// </summary>
+    RateLimited,
+}
 
 /// <summary>
 /// One mod flagged by an update check. Mirrors the identifying fields the

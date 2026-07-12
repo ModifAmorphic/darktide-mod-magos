@@ -26,3 +26,30 @@ internal sealed class FakeConfigLoader : IConfigLoader
         LastSaved = config;
     }
 }
+
+/// <summary>
+/// In-memory <see cref="IAppStateStore"/> for the update-check + update-state
+/// tests. Only <see cref="KnownUpdates"/> is exercised by the update path; the
+/// other three members are no-op stubs kept to satisfy the interface.
+/// </summary>
+internal sealed class FakeAppStateStore : IAppStateStore
+{
+    public Dictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? KnownUpdatesData { get; set; }
+    public int KnownUpdatesSetCount { get; private set; }
+
+    public Guid? ActiveProfileId { get; set; }
+    public DateTimeOffset? LastUpdateCheckUtc { get; set; }
+    public IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; }
+
+    IReadOnlyDictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? IAppStateStore.KnownUpdates
+    {
+        get => KnownUpdatesData;
+        set
+        {
+            KnownUpdatesData = value is null
+                ? null
+                : new Dictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>(value);
+            KnownUpdatesSetCount++;
+        }
+    }
+}

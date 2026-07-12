@@ -89,7 +89,7 @@ public static class CuratorComposition
             sp.GetRequiredService<IDialogService>(),
             sp.GetRequiredService<LocalizationService>(),
             sp.GetRequiredService<ILogger<NxmModDownloadHandler>>(),
-            refreshModList: containerId => sp.GetRequiredService<ModListViewModel>().ReloadAndClearUpdateFlag(containerId)));
+            refreshModList: containerId => sp.GetRequiredService<ModListViewModel>().AcknowledgeUpdateAndReload(containerId)));
 
         // UI surface. MainWindow is a singleton: the desktop lifetime installs
         // the resolved instance as desktop.MainWindow, and DialogService resolves
@@ -113,6 +113,16 @@ public static class CuratorComposition
         // (the event fires on a threadpool thread; the handler iterates the
         // UI-bound Mods collection). Production wires Dispatcher.UIThread.Post.
         services.AddSingleton<Action<Action>>(_ => action => Dispatcher.UIThread.Post(action));
+        // The global install coordinator: shared between the manual per-row update
+        // action and the automatic Premium updater so only one install runs at a
+        // time. Singleton: holds the single-slot semaphore for the app lifetime.
+        services.AddSingleton<UpdateCoordinator>();
+        // The opt-in Premium automatic mod-update installer. Chained from the
+        // update-check runner after each check; independent of ModListViewModel
+        // (to avoid the ModListViewModel -> UpdateCheckRunner dependency becoming
+        // circular) but raises UpdatesApplied so the list VM reloads after a
+        // batch.
+        services.AddSingleton<IAutomaticUpdateService, AutomaticUpdateService>();
         // The manual-refresh countdown timer seams (the throttle's live m:ss
         // tooltip). Production manages a single 1-second DispatcherTimer, created
         // lazily on first start, with Tick wired once; Start/Stop control whether
@@ -145,7 +155,10 @@ public static class CuratorComposition
                 sp.GetRequiredService<IUpdateCheckService>(),
                 sp.GetRequiredService<IModAcquisitionService>(),
                 sp.GetRequiredService<INexusAuthService>(),
+                sp.GetRequiredService<IUpdateStateStore>(),
                 sp.GetRequiredService<UpdateCheckRunner>(),
+                sp.GetRequiredService<UpdateCoordinator>(),
+                sp.GetRequiredService<IAutomaticUpdateService>(),
                 sp.GetRequiredService<Action<Action>>(),
                 sp.GetRequiredService<ILogger<ModListViewModel>>(),
                 startCountdownTimer,
@@ -202,6 +215,7 @@ public static class CuratorComposition
             sp.GetRequiredService<IUpdateCheckService>(),
             sp.GetRequiredService<IConfigLoader>(),
             sp.GetRequiredService<IAppStateStore>(),
+            sp.GetRequiredService<IAutomaticUpdateService>(),
             sp.GetRequiredService<ILogger<UpdateCheckRunner>>(),
             StartUpdateCheckPolling));
 

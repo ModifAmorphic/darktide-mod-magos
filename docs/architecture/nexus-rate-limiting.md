@@ -16,11 +16,13 @@ from two rolling windows:
 
 The remaining counts and reset times for both windows come back on every
 response in the `x-rl-*` headers (`x-rl-daily-limit`, `x-rl-daily-remaining`,
-`x-rl-daily-reset`, and the matching `x-rl-hourly-*` trio). The standard
-free-tier limits are 2000/hour and 20000/day (per Nexus's
-[rate-limit help article](https://help.nexusmods.com/article/105-i-have-reached-a-daily-or-hourly-limit-api-requests-have-been-consumed-rate-limit-exceeded-what-does-this-mean));
-premium accounts get higher limits. Curator does not hardcode these numbers. It
-reads them from the headers.
+`x-rl-daily-reset`, and the matching `x-rl-hourly-*` trio). Nexus publishes a
+daily limit of 20,000 requests, with requests throttled to 500 per hour once
+the daily limit is reached (per Nexus's
+[rate-limit help article](https://help.nexusmods.com/article/105-i-have-reached-a-daily-or-hourly-limit-api-requests-have-been-consumed-rate-limit-exceeded-what-does-this-mean)).
+The article does not document a separate Premium tier, and the live per-window
+limits may differ by account and over time, so Curator does not hardcode these
+numbers. It reads them from the headers.
 
 **The budget is the user's, not Curator's.** The same daily and hourly quota is
 shared across everything the user has hitting the Nexus API on their key:
@@ -142,6 +144,16 @@ Only authenticated calls to `api.nexusmods.com` count. Per operation:
 - **Mod acquisition (download):** about 3 calls per download
   (`DownloadLinksAsync` + `GetModInfoAsync` + `ListModFilesAsync`). This is
   parity with Vortex, which Nexus's help article cites at 3 calls per download.
+  This covers the manual per-row Premium update, the automatic Premium
+  installer (one download per flagged mod, when opted in), and the `nxm://`
+  handler's downloads. The automatic installer chains after an authoritative
+  check that found updates, so its downloads ride on a check that already ran
+  (no separate check call per install).
+- **Premium verification (automatic installer):** the automatic-update service
+  makes one `GetCurrentStateAsync` call per batch, ONLY when an authoritative
+  check found updates AND `AutomaticUpdatesEnabled` is on. An empty result or a
+  disabled setting costs no extra call. The DMF prompt makes a similar
+  per-prompt verify call on its download branch.
 - **API-key validate:** 1 call (`ValidateAsync`), only when the user validates
   an API key in the Integrations dialog.
 - **OAuth userinfo:** on `users.nexusmods.com` (a separate host, the OIDC
