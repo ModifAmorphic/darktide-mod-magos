@@ -89,14 +89,17 @@ public sealed class ConfigLoader : IConfigLoader
 ### `IAppStateStore` / `AppStateStore`
 
 Persists **runtime application state**: values that capture "where the app left
-off" rather than user system settings. Kept deliberately narrow: the only state
-today is the last-chosen active profile. A separate file (not `CuratorConfig`)
-holds it so the settings schema stays pure (system settings vs. runtime state).
+off" rather than user system settings. Kept deliberately narrow: the active
+profile id and the last update-check timestamp. A separate file (not
+`CuratorConfig`) holds it so the settings schema stays pure (system settings
+vs. runtime state).
 
 ```csharp
 public interface IAppStateStore
 {
-    Guid? ActiveProfileId { get; set; }   // set persists immediately
+    Guid? ActiveProfileId { get; set; }                        // set persists immediately
+    DateTimeOffset? LastUpdateCheckUtc { get; set; }           // set persists immediately
+    IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; } // set persists immediately
 }
 
 public sealed class AppStateStore : IAppStateStore
@@ -108,17 +111,24 @@ public sealed class AppStateStore : IAppStateStore
 ```
 
 - File: `<app-data>/app-state.json`
-  (`{ "ActiveProfileId": "<guid>" | null }`), derived from `AppPaths.AppDataDir`
-  the same way `ConfigLoader` derives its config path.
+  (`{ "ActiveProfileId": "<guid>" | null, "LastUpdateCheckUtc": "<iso-8601>" | null, "ManualRefreshTimestamps": [ "<iso-8601>", ... ] | null }`),
+  derived from `AppPaths.AppDataDir` the same way `ConfigLoader` derives its
+  config path.
 - JSON is handled with `System.Text.Json` directly (read + write);
   `Microsoft.Extensions.Configuration` is binding-oriented and read-only, the
   wrong fit for a tiny writable state file.
+- The full state model is cached in memory after the first read and written
+  whole on every change, so assigning one property never clobbers the others.
 - **First-run safe:** a missing or corrupt file never throws; `get` just
   returns `null`. Writes are best-effort (runtime state is non-critical; a
   persistence failure is swallowed rather than crashing the app).
 - Used by `IProfileSession` (the active-profile authority) to restore the active
-  profile on construction and persist it on changes. The shell and the Manage
-  dialog read the active id through the session; they do not touch this store.
+  profile on construction and persist it on changes, and by
+  `UpdateCheckRunner` to seed and persist the last update-check timestamp (so the
+  interval gate survives a close/reopen) and to seed and persist the manual
+  throttle's sliding-window timestamps (`ManualRefreshTimestamps`, so the manual
+  free-refresh budget survives a close/reopen). The shell and the Manage dialog
+  read the active id through the session; they do not touch this store.
 
 ## DI registration
 

@@ -87,6 +87,8 @@ public partial class ModListViewModel : ObservableObject
     private readonly UpdateCheckRunner _updateCheckRunner;
     private readonly ILogger<ModListViewModel> _logger;
     private readonly Action<Action> _invokeOnUi;
+    private readonly Action<Action>? _startCountdownTimer;
+    private readonly Action? _stopCountdownTimer;
 
     /// <summary>
     /// Creates the list VM, subscribes to the session (reload on active-profile
@@ -109,7 +111,9 @@ public partial class ModListViewModel : ObservableObject
         INexusAuthService auth,
         UpdateCheckRunner updateCheckRunner,
         Action<Action> invokeOnUi,
-        ILogger<ModListViewModel> logger)
+        ILogger<ModListViewModel> logger,
+        Action<Action>? startCountdownTimer = null,
+        Action? stopCountdownTimer = null)
     {
         _profiles = profiles;
         _session = session;
@@ -124,10 +128,17 @@ public partial class ModListViewModel : ObservableObject
         _updateCheckRunner = updateCheckRunner;
         _logger = logger;
         _invokeOnUi = invokeOnUi ?? throw new ArgumentNullException(nameof(invokeOnUi));
+        _startCountdownTimer = startCountdownTimer;
+        _stopCountdownTimer = stopCountdownTimer;
 
         _session.PropertyChanged += OnSessionPropertyChanged;
         _localization.PropertyChanged += OnCultureChanged;
         _updateCheck.CheckCompleted += OnUpdateCheckCompleted;
+
+        // The refresh button's tooltip defaults to the normal "check now"
+        // string. When the manual sliding-window throttle engages, the countdown
+        // owns the tooltip (RefreshManualRefreshThrottle / OnCountdownTick).
+        ManualRefreshTooltip = _localization["ModList_CheckNowTooltip"];
 
         // Read the Nexus premium state once at construction. Fire-and-forget:
         // GetCurrentStateAsync hits the network, so blocking the (UI-thread)
@@ -240,7 +251,30 @@ public partial class ModListViewModel : ObservableObject
     /// finally block on success or failure (no stuck state).
     /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsRefreshEnabled))]
     private bool _isCheckingNow;
+
+    /// <summary>
+    /// Whether the manual sliding-window throttle is currently blocking the
+    /// refresh button (the runner's free 10/hour budget is spent + the 2-minute
+    /// cooldown has not elapsed). Set by <see cref="RefreshManualRefreshThrottle"/>
+    /// after each manual attempt + re-evaluated on each countdown tick. Drives
+    /// <see cref="IsRefreshEnabled"/> (the button disables) + the countdown
+    /// tooltip (<see cref="ManualRefreshTooltip"/>).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsRefreshEnabled))]
+    private bool _isManualRefreshThrottled;
+
+    /// <summary>
+    /// The refresh button's tooltip. The normal "Check for updates now" string
+    /// when not throttled; the live countdown string ("Rate limiting protection
+    /// enabled. Manual refresh will be available again in {m:ss}.") while
+    /// throttled. Updated each second by the countdown tick. Bound to the
+    /// button's <c>ToolTip.Tip</c>.
+    /// </summary>
+    [ObservableProperty]
+    private string _manualRefreshTooltip;
 
     /// <summary>
     /// Whether the per-row Update buttons are enabled: the user is premium AND
@@ -250,6 +284,17 @@ public partial class ModListViewModel : ObservableObject
     /// negating a deep path across a parent walk (compiled-binding limitation).
     /// </summary>
     public bool IsUpdateEnabled => IsPremiumUser && !AnyRowUpdating;
+
+    /// <summary>
+    /// Whether the manual "check now" refresh button is enabled: NOT while a
+    /// thorough check is in flight (<see cref="IsCheckingNow"/>) AND NOT while
+    /// the manual sliding-window throttle is blocking (<see cref="IsManualRefreshThrottled"/>).
+    /// A single computed property so the view binds the button's IsEnabled to
+    /// one source (mirrors <see cref="IsUpdateEnabled"/>); its dependencies each
+    /// carry <c>[NotifyPropertyChangedFor(nameof(IsRefreshEnabled))]</c> so the
+    /// binding re-evaluates when either flips.
+    /// </summary>
+    public bool IsRefreshEnabled => !IsCheckingNow && !IsManualRefreshThrottled;
 
     /// <summary>
     /// The localized split-button label for the current <see cref="AddMode"/>
@@ -327,6 +372,14 @@ public partial class ModListViewModel : ObservableObject
         OnPropertyChanged(nameof(AddModeLabel));
         OnPropertyChanged(nameof(RateLimitedNoticeText));
         OnPropertyChanged(nameof(RecentOnlyNoticeText));
+        // When not throttled, the refresh tooltip re-resolves to the normal
+        // resx string (the culture changed, so the localized value changed).
+        // When throttled, the countdown tick owns the tooltip and re-renders it
+        // with the new culture's throttle string on the next tick.
+        if (!IsManualRefreshThrottled)
+        {
+            ManualRefreshTooltip = _localization["ModList_CheckNowTooltip"];
+        }
         foreach (var row in Mods)
         {
             row.Refresh();
@@ -659,13 +712,16 @@ public partial class ModListViewModel : ObservableObject
     /// <see cref="IUpdateCheckService.CheckCompleted"/> subscription re-applies
     /// the result to the rows when it lands. The command is a no-op (via the
     /// runner) when no profile is active; a second click while one is in flight
-    /// is a no-op (the <see cref="IsCheckingNow"/> guard).
+    /// is a no-op (the <see cref="IsCheckingNow"/> guard). After the await,
+    /// <see cref="RefreshManualRefreshThrottle"/> re-evaluates the runner's
+    /// sliding-window throttle so the button disables + the countdown tooltip
+    /// engages when the manual path is rate-limited.
     /// </summary>
     [RelayCommand]
     private async Task CheckForUpdatesNow()
     {
         // Re-entrancy guard: a second click while a thorough check is running is
-        // a no-op (the button's IsEnabled is also bound to !IsCheckingNow, but
+        // a no-op (the button's IsEnabled is also bound to IsRefreshEnabled, but
         // the guard makes a programmatic call safe too).
         if (IsCheckingNow)
         {
@@ -680,11 +736,98 @@ public partial class ModListViewModel : ObservableObject
             // synchronously. The runner's Task.Run dispatches the actual check
             // to a thread-pool task; we only await its completion here.
             await _updateCheckRunner.CheckNowAsync();
+            // Re-evaluate the manual throttle after every attempt (a fire that
+            // spent the free budget engages the countdown; a blocked attempt
+            // also lands here as CompletedTask with the throttle active). Stays
+            // on the UI thread (no ConfigureAwait above).
+            RefreshManualRefreshThrottle();
         }
         finally
         {
             IsCheckingNow = false;
         }
+    }
+
+    // ---- manual-refresh throttle (countdown tooltip + disabled button) -------
+
+    /// <summary>
+    /// Re-reads <see cref="UpdateCheckRunner.NextManualRefreshAllowedAt"/> and
+    /// applies the throttle state to <see cref="IsManualRefreshThrottled"/>,
+    /// <see cref="ManualRefreshTooltip"/>, and the countdown timer. Called after
+    /// every <c>CheckForUpdatesNow</c> attempt. When throttled, starts the
+    /// 1-second countdown timer (which re-evaluates via <see cref="OnCountdownTick"/>
+    /// until the cooldown elapses). When not throttled, stops the timer and
+    /// restores the normal tooltip.
+    /// </summary>
+    private void RefreshManualRefreshThrottle()
+    {
+        var next = _updateCheckRunner.NextManualRefreshAllowedAt;
+        if (next is null)
+        {
+            IsManualRefreshThrottled = false;
+            _stopCountdownTimer?.Invoke();
+            ManualRefreshTooltip = _localization["ModList_CheckNowTooltip"];
+            return;
+        }
+
+        IsManualRefreshThrottled = true;
+        // Production's start delegate is idempotent (no-op if already running),
+        // so invoking it on every throttled re-eval is safe.
+        _startCountdownTimer?.Invoke(OnCountdownTick);
+        ManualRefreshTooltip = BuildThrottleTooltip(next.Value);
+    }
+
+    /// <summary>
+    /// The 1-second countdown tick callback (production wires a
+    /// <c>DispatcherTimer</c>; tests invoke the captured callback directly).
+    /// Re-reads <see cref="UpdateCheckRunner.NextManualRefreshAllowedAt"/>: when
+    /// the cooldown has elapsed (null), clears the throttle, stops the timer,
+    /// and restores the normal tooltip; otherwise recomputes the remaining time
+    /// and updates the tooltip.
+    /// </summary>
+    private void OnCountdownTick()
+    {
+        var next = _updateCheckRunner.NextManualRefreshAllowedAt;
+        if (next is null)
+        {
+            IsManualRefreshThrottled = false;
+            _stopCountdownTimer?.Invoke();
+            ManualRefreshTooltip = _localization["ModList_CheckNowTooltip"];
+            return;
+        }
+
+        ManualRefreshTooltip = BuildThrottleTooltip(next.Value);
+    }
+
+    /// <summary>
+    /// Formats the throttle tooltip from the absolute unlock instant: resolves
+    /// the localized throttle template with the remaining time formatted as
+    /// <c>m:ss</c>. The remaining time is a COSMETIC computation for the tooltip
+    /// only (the throttle enforcement is entirely in the runner, testable via
+    /// the injected clock), so this uses <see cref="DateTimeOffset.UtcNow"/>
+    /// directly and keeps the VM clock-free.
+    /// </summary>
+    private string BuildThrottleTooltip(DateTimeOffset nextAllowedAt)
+    {
+        var remaining = nextAllowedAt - DateTimeOffset.UtcNow;
+        return _localization.Format("ModList_ManualRefreshThrottled", FormatRemaining(remaining));
+    }
+
+    /// <summary>
+    /// Formats a remaining <see cref="TimeSpan"/> as <c>m:ss</c> (e.g.
+    /// <c>1:30</c>, <c>0:05</c>, <c>2:00</c>). Clamps negative values (a tick
+    /// landing a hair past the unlock instant) to zero so the tooltip never
+    /// shows a negative. Pure + culture-free (manual integer math, no
+    /// format-string separators), so it is independently unit-testable.
+    /// </summary>
+    internal static string FormatRemaining(TimeSpan remaining)
+    {
+        if (remaining < TimeSpan.Zero)
+        {
+            remaining = TimeSpan.Zero;
+        }
+        var totalSeconds = (int)remaining.TotalSeconds;
+        return $"{totalSeconds / 60}:{totalSeconds % 60:D2}";
     }
 
     /// <summary>

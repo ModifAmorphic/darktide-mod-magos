@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Linq;
+using Modificus.Curator.Config;
 using Modificus.Curator.General;
 using Modificus.Curator.Integrations;
 using Microsoft.Extensions.Logging;
@@ -24,11 +26,47 @@ namespace Modificus.Curator.UI.Session;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The periodic timer is the only gated trigger.</b> Profile-load (startup +
-/// switch) and <see cref="CheckNowAsync"/> always fire regardless of the
-/// <c>AutoUpdateCheckEnabled</c> toggle; only the periodic timer respects it.
-/// The toggle is read live on each tick so a runtime change in the Integrations
-/// dialog takes effect without a restart.</para>
+/// <b>The interval gate covers every automatic trigger.</b> Startup,
+/// active-profile switch, and the periodic timer all gate on
+/// <see cref="IntervalElapsed"/>: a check fires only when the configured
+/// interval (clamped to the compliance floor) has elapsed since the last fire.
+/// This prevents a rapid open/close loop from burning an API call per launch
+/// and prevents rapid profile switching from burning calls in a session. The
+/// <c>AutoUpdateCheckEnabled</c> toggle is ADDITIONAL and gates ONLY the
+/// periodic timer (startup + switch fire regardless of the toggle, subject to
+/// the interval gate); the toggle is read live on each tick so a runtime change
+/// in the Integrations dialog takes effect without a restart. The manual
+/// <see cref="CheckNowAsync"/> bypasses the interval gate entirely (user
+/// initiated); it still stamps the shared last-check so the periodic clock
+/// backs off after it. The manual path also carries its own separate throttle
+/// (a sliding window, see below) so a rapid-click loop on the refresh button
+/// cannot burn the Nexus budget on its own.</para>
+/// <para>
+/// <b>The manual sliding-window throttle.</b> Independent of the interval gate,
+/// the manual "check now" path tracks its own rolling 1-hour window of
+/// successful refresh timestamps: the first <see cref="FreeManualRefreshLimit"/>
+/// (10) manual refreshes in the window fire freely (no cooldown); once those are
+/// spent the path throttles to one per <see cref="ManualRefreshThrottleInterval"/>
+/// (2 minutes) until enough timestamps age out of the window for free mode to
+/// resume. As timestamps age past 1 hour they drop out, the count falls under
+/// the limit, and free mode resumes (automatic, via the prune step). A blocked
+/// attempt consumes nothing: no API call, no timestamp stamp, no persistence
+/// change. The window PERSISTS across restarts via
+/// <see cref="IAppStateStore.ManualRefreshTimestamps"/> (seeded at
+/// <see cref="Start"/>, written back on every successful fire), so closing and
+/// reopening the app does not reset the free-refresh budget. Worst case for a
+/// determined user: 10 free + 30 throttled = 40 manual calls/hour, plus ~12
+/// automatic calls at the 5-minute floor = ~52/hour, about 10.4% of the 500/hour
+/// Nexus budget.</para>
+/// <para>
+/// <b>Last-check persisted across restarts.</b> The shared last-check timestamp
+/// is seeded from <see cref="IAppStateStore.LastUpdateCheckUtc"/> at
+/// <see cref="Start"/> and stamped back to it on every fire (auto + manual). So
+/// the interval gate survives a close/reopen: a check that fired moments ago in
+/// a prior session suppresses this session's opening check. The write is
+/// best-effort (the store swallows failures); a missing or old state file seeds
+/// <c>null</c>, the runner treats that as <see cref="DateTimeOffset.MinValue"/>,
+/// and the opening check fires normally.</para>
 /// <para>
 /// <b>Interval honored to the tick granularity.</b> The timer ticks at a fixed
 /// fine interval (<see cref="TickInterval"/>, 1 minute) and fires a check when
@@ -44,10 +82,10 @@ namespace Modificus.Curator.UI.Session;
 /// not await them. The manual trigger's <see cref="Task"/> IS awaited by the
 /// list VM's <c>CheckForUpdatesNow</c> command, but only so the command can
 /// toggle <c>IsCheckingNow</c> off in its finally block; the check itself still
-/// runs on a thread-pool task + never blocks the UI thread. Either way, Stage
-/// 5 reads <see cref="IUpdateCheckService.LastResult"/> + subscribes to
-/// <see cref="IUpdateCheckService.CheckCompleted"/> to render badges without
-/// awaiting.</para>
+/// runs on a thread-pool task + never blocks the UI thread. Either way, the
+/// mod-list view model reads <see cref="IUpdateCheckService.LastResult"/> +
+/// subscribes to <see cref="IUpdateCheckService.CheckCompleted"/> to render
+/// badges without awaiting.</para>
 /// <para>
 /// <b>Belt-and-suspenders exception handling.</b>
 /// <see cref="IUpdateCheckService.CheckAsync"/> /
@@ -78,28 +116,75 @@ public sealed class UpdateCheckRunner
     /// The periodic timer's fixed tick granularity. The user-configured interval
     /// (<c>AutoUpdateCheckIntervalMinutes</c>) is honored to this granularity:
     /// the runner fires when that much time has elapsed since the last check,
-    /// checked on each tick. One minute is the finest interval the user can
-    /// configure, so this matches the smallest meaningful setting without
-    /// burning cycles on sub-minute polling.
+    /// checked on each tick. Five minutes is the finest interval the user can
+    /// configure (the compliance floor,
+    /// <see cref="NexusConfig.MinAutoUpdateCheckIntervalMinutes"/>), so a 1-minute
+    /// tick resolves it exactly without burning cycles on sub-minute polling.
     /// </summary>
     public static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(1);
 
     private readonly IProfileSession _session;
     private readonly IUpdateCheckService _updateCheck;
     private readonly IConfigLoader _configLoader;
+    private readonly IAppStateStore _appState;
     private readonly ILogger<UpdateCheckRunner> _logger;
     private readonly Action<Action>? _startTimer;
     private readonly Func<DateTimeOffset> _getNow;
 
     // The last time any check fired (startup, switch, periodic, or manual).
-    // Written + read on the UI thread only (the timer tick, session property
-    // changes, and CheckNow all run on the UI thread; FireAndForget assigns
-    // this before dispatching the thread-pool task), so no synchronization.
+    // Seeded from the persisted IAppStateStore.LastUpdateCheckUtc at Start();
+    // stamped in-memory + persisted on every fire (auto + manual). Written +
+    // read on the UI thread only (the timer tick, session property changes, and
+    // CheckNow all run on the UI thread; RunAsync assigns this before
+    // dispatching the thread-pool task), so no synchronization.
     private DateTimeOffset _lastCheckAt = DateTimeOffset.MinValue;
+
+    // ---- the manual sliding-window throttle (CheckNowAsync's own gate) ------
+
+    /// <summary>
+    /// The free manual-refresh budget per rolling hour. The first this many
+    /// manual "check now" refreshes in <see cref="ManualRefreshWindow"/> fire
+    /// immediately (no cooldown); once spent the path drops to one per
+    /// <see cref="ManualRefreshThrottleInterval"/> until the window slides.
+    /// </summary>
+    private const int FreeManualRefreshLimit = 10;
+
+    /// <summary>
+    /// The sliding window over which the free manual-refresh budget is counted.
+    /// Timestamps older than this are pruned, so the window slides and free mode
+    /// resumes once enough entries age out.
+    /// </summary>
+    private static readonly TimeSpan ManualRefreshWindow = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// The minimum interval between manual refreshes once the free budget is
+    /// exhausted: one per this interval until the window slides enough for free
+    /// mode to resume.
+    /// </summary>
+    private static readonly TimeSpan ManualRefreshThrottleInterval = TimeSpan.FromMinutes(2);
+
+    // Successful manual-refresh timestamps within the rolling 1-hour window.
+    // Enqueued in CheckNowAsync when a manual refresh is allowed; pruned from
+    // the front on every access (NextManualRefreshAllowedAt / CanRefreshManually)
+    // as they age past ManualRefreshWindow. UI-thread only: CheckNowAsync and
+    // the property getter run on the UI thread (the button click routes through
+    // the list VM's CheckForUpdatesNow, and the VM's countdown reads the
+    // property), so no synchronization. PERSISTS across restarts via
+    // IAppStateStore.ManualRefreshTimestamps: seeded from the store at Start()
+    // (the first access prunes entries aged past the 1-hour window), and written
+    // back on every successful manual fire. SEPARATE from the shared
+    // _lastCheckAt / IAppStateStore.LastUpdateCheckUtc interval-gate timestamp:
+    // a successful manual fire stamps BOTH (the queue + the shared timestamp via
+    // RunAsync); a blocked attempt stamps NEITHER.
+    private readonly Queue<DateTimeOffset> _manualRefreshTimes = new();
 
     /// <param name="session">The active-profile authority (fires on load + switch).</param>
     /// <param name="updateCheck">The Integrations update check entry point.</param>
-    /// <param name="configLoader">Read live for the periodic toggle + interval.</param>
+    /// <param name="configLoader">Read live for the periodic toggle + the interval gate.</param>
+    /// <param name="appState">Persists
+    /// <see cref="IAppStateStore.LastUpdateCheckUtc"/> (the interval-gate
+    /// timestamp) and <see cref="IAppStateStore.ManualRefreshTimestamps"/>
+    /// (the manual throttle's sliding window) across restarts.</param>
     /// <param name="logger">Structured logger for swallowed exceptions.</param>
     /// <param name="startTimer">Starts the periodic tick. Production wires this
     /// to a <c>DispatcherTimer</c> (UI thread); tests pass null and invoke the
@@ -110,6 +195,7 @@ public sealed class UpdateCheckRunner
         IProfileSession session,
         IUpdateCheckService updateCheck,
         IConfigLoader configLoader,
+        IAppStateStore appState,
         ILogger<UpdateCheckRunner> logger,
         Action<Action>? startTimer = null,
         Func<DateTimeOffset>? getNow = null)
@@ -117,6 +203,7 @@ public sealed class UpdateCheckRunner
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _updateCheck = updateCheck ?? throw new ArgumentNullException(nameof(updateCheck));
         _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
+        _appState = appState ?? throw new ArgumentNullException(nameof(appState));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _startTimer = startTimer;
         _getNow = getNow ?? (() => DateTimeOffset.UtcNow);
@@ -124,9 +211,11 @@ public sealed class UpdateCheckRunner
 
     /// <summary>
     /// Subscribes to the session's active-profile changes, starts the periodic
-    /// tick, and fires an opening check if a profile was already restored at
-    /// startup. Called once from the composition root after the provider is
-    /// built (best-effort: failures are logged + swallowed by the caller, never
+    /// tick, seeds the last-check timestamp and the manual throttle's sliding
+    /// window from the persisted store, and fires an opening check if a profile
+    /// was already restored at startup AND the configured interval has elapsed.
+    /// Called once from the composition root after the provider is built
+    /// (best-effort: failures are logged + swallowed by the caller, never
     /// blocking app startup).
     /// </summary>
     /// <remarks>
@@ -134,17 +223,43 @@ public sealed class UpdateCheckRunner
     /// session's constructor (before this runner starts), so there is no
     /// <see cref="INotifyPropertyChanged.PropertyChanged"/> event for the
     /// restore itself. The opening check is fired explicitly here when an id is
-    /// already present; subsequent switches flow through
-    /// <see cref="OnActiveProfileChanged"/>.</remarks>
+    /// already present AND the interval gate is open; subsequent switches flow
+    /// through <see cref="OnActiveProfileChanged"/>.</remarks>
     public void Start()
     {
+        // Seed the shared last-check from the persisted store FIRST, before the
+        // timer starts, so the interval gate survives a close/reopen (a check
+        // that fired moments ago in a prior session suppresses this session's
+        // opening check) and any timer implementation, even one that ticks
+        // synchronously on start, sees the persisted value rather than the field
+        // initializer. A missing / old / corrupt state file reads null, which
+        // floors to MinValue, so the first run after upgrade (or a brand-new
+        // install) fires normally.
+        _lastCheckAt = _appState.LastUpdateCheckUtc ?? DateTimeOffset.MinValue;
+
+        // Seed the manual throttle's sliding window from the persisted store so
+        // a close/reopen cannot reset the free-refresh budget. The first access
+        // (NextManualRefreshAllowedAt / CanRefreshManually) prunes entries aged
+        // past the 1-hour window, so a restart longer than an hour yields an
+        // empty window automatically (free mode resumes). A missing / old /
+        // corrupt state file reads null, which yields an empty queue (no
+        // throttle history).
+        if (_appState.ManualRefreshTimestamps is { } seed)
+        {
+            foreach (var ts in seed)
+            {
+                _manualRefreshTimes.Enqueue(ts);
+            }
+        }
+
         _session.PropertyChanged += OnActiveProfileChanged;
         _startTimer?.Invoke(OnTimerTick);
 
         // Startup-with-last-profile: the session restores the persisted active
         // id in its constructor, before this runner starts. Fire the opening
-        // check explicitly so the restored profile gets checked too.
-        if (_session.ActiveProfileId is Guid id)
+        // check explicitly (subject to the interval gate) so the
+        // restored profile gets checked when enough time has elapsed.
+        if (_session.ActiveProfileId is Guid id && IntervalElapsed())
         {
             FireAndForget(id);
         }
@@ -156,30 +271,129 @@ public sealed class UpdateCheckRunner
     /// pass that also catches mods outside the Month window), awaitable so the
     /// caller (the list VM's <c>CheckForUpdatesNow</c> command) can drive an
     /// <c>IsCheckingNow</c> affordance while it runs. No-op (returns
-    /// <see cref="Task.CompletedTask"/>) when no profile is active. Resets the
-    /// periodic clock (the shared <c>_lastCheckAt</c>) so the next periodic tick
-    /// respects the configured interval from this check.
+    /// <see cref="Task.CompletedTask"/>) when no profile is active.
+    /// <b>Bypasses the interval gate</b> (user-initiated), but carries its own
+    /// separate throttle (the manual sliding window, see the class remarks) and
+    /// still stamps the shared last-check + persists it so the periodic clock
+    /// backs off after it and the next auto trigger respects the configured
+    /// interval from this check.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The manual sliding-window throttle gates this path on top of (independent
+    /// of) the interval gate: the first <see cref="FreeManualRefreshLimit"/> (10)
+    /// manual refreshes in the rolling 1-hour window fire freely; once spent, the
+    /// path throttles to one per <see cref="ManualRefreshThrottleInterval"/>
+    /// (2 minutes). A throttled attempt is a silent no-op: it returns
+    /// <see cref="Task.CompletedTask"/> WITHOUT firing, WITHOUT recording a
+    /// timestamp, and WITHOUT stamping <c>_lastCheckAt</c> / persisting. The VM
+    /// reads <see cref="NextManualRefreshAllowedAt"/> after the await to drive the
+    /// countdown tooltip + the button's disabled state.</para>
+    /// </remarks>
     /// <returns>A <see cref="Task"/> that completes when the thorough check
-    /// finishes (success or failure). Never faults: the inner try/catch swallows
-    /// the check's exceptions (mirrors the fire-and-forget path's exception
-    /// safety). The caller awaits it to drive an <c>IsCheckingNow</c> spinner;
-    /// it carries no result (the result lands via
+    /// finishes (success or failure), or <see cref="Task.CompletedTask"/> when
+    /// throttled or no profile is active. Never faults: the inner try/catch
+    /// swallows the check's exceptions (mirrors the fire-and-forget path's
+    /// exception safety). The caller awaits it to drive an
+    /// <c>IsCheckingNow</c> spinner; it carries no result (the result lands via
     /// <see cref="IUpdateCheckService.CheckCompleted"/>).</returns>
     public Task CheckNowAsync()
     {
-        if (_session.ActiveProfileId is Guid id)
+        if (_session.ActiveProfileId is not Guid id)
         {
-            return RunAsync(id, thorough: true);
+            return Task.CompletedTask;
         }
-        return Task.CompletedTask;
+
+        var now = _getNow();
+        if (!CanRefreshManually(now))
+        {
+            // Throttled: a blocked attempt consumes nothing (no API call, no
+            // timestamp stamp, no persistence change). The VM reads
+            // NextManualRefreshAllowedAt to drive the countdown tooltip + the
+            // disabled button.
+            return Task.CompletedTask;
+        }
+
+        // Allowed: record the timestamp into the sliding window, persist the
+        // updated window, then proceed to the existing thorough path (which
+        // stamps the shared _lastCheckAt + persists it). The two timestamps are
+        // separate by design. The snapshot is taken at enqueue time (the queue
+        // is already pruned, because CanRefreshManually pruned it first), so it
+        // holds exactly the live window. Best-effort (the store swallows write
+        // failures), same as the LastUpdateCheckUtc write.
+        _manualRefreshTimes.Enqueue(now);
+        _appState.ManualRefreshTimestamps = _manualRefreshTimes.ToArray();
+        return RunAsync(id, thorough: true);
     }
 
     /// <summary>
-    /// The periodic tick. Reads the config live (toggle + interval), gates on an
+    /// The absolute instant the next manual refresh becomes allowed, or
+    /// <c>null</c> when the manual path is not throttled (under the free limit,
+    /// or the 2-minute cooldown has elapsed). Computed via the injected
+    /// <c>_getNow</c> clock so it is deterministic in tests. The single source of
+    /// truth for both the refresh button's enable state and the countdown
+    /// tooltip: the list VM reads this on every manual attempt (after the await)
+    /// and on each 1-second countdown tick.
+    /// </summary>
+    /// <remarks>
+    /// Prunes the window first (so aged timestamps drop out + the count reflects
+    /// the current window), then applies the free/throttled decision. A
+    /// non-null result is strictly in the future; the cooldown having elapsed
+    /// returns null (allowed now).</remarks>
+    public DateTimeOffset? NextManualRefreshAllowedAt
+    {
+        get
+        {
+            var now = _getNow();
+            PruneManualRefreshTimes(now);
+            if (_manualRefreshTimes.Count < FreeManualRefreshLimit)
+            {
+                return null;
+            }
+            var nextAllowed = _manualRefreshTimes.Last() + ManualRefreshThrottleInterval;
+            return now >= nextAllowed ? null : nextAllowed;
+        }
+    }
+
+    /// <summary>
+    /// True when a manual refresh is allowed right now: under the free limit, or
+    /// (once spent) the 2-minute cooldown since the most recent manual refresh
+    /// has elapsed. Prunes the window first so the decision reflects the current
+    /// count.
+    /// </summary>
+    private bool CanRefreshManually(DateTimeOffset now)
+    {
+        PruneManualRefreshTimes(now);
+        if (_manualRefreshTimes.Count < FreeManualRefreshLimit)
+        {
+            return true;
+        }
+        return now >= _manualRefreshTimes.Last() + ManualRefreshThrottleInterval;
+    }
+
+    /// <summary>
+    /// Dequeues manual-refresh timestamps older than the 1-hour window. The
+    /// clock is monotonic so the queue stays chronological; this drops aged
+    /// entries from the front so the window slides and free mode resumes once
+    /// enough entries age out.
+    /// </summary>
+    private void PruneManualRefreshTimes(DateTimeOffset now)
+    {
+        var cutoff = now - ManualRefreshWindow;
+        while (_manualRefreshTimes.Count > 0 && _manualRefreshTimes.Peek() < cutoff)
+        {
+            _manualRefreshTimes.Dequeue();
+        }
+    }
+
+    /// <summary>
+    /// The periodic tick. Reads the toggle live (the toggle gates ONLY the
+    /// periodic timer; startup + switch are toggle-independent), gates on an
     /// active profile, and fires a check only when the configured interval has
-    /// elapsed since the last check. Skipped entirely (no check, no clock reset)
-    /// when the toggle is off or no profile is active.
+    /// elapsed since the last check (the shared <see cref="IntervalElapsed"/>
+    /// gate, which startup, switch, and the periodic timer all use). Skipped entirely (no
+    /// check, no clock reset) when the toggle is off, no profile is active, or
+    /// the interval has not elapsed.
     /// </summary>
     /// <remarks>
     /// Runs on the UI thread (production wires a <c>DispatcherTimer</c>); tests
@@ -198,10 +412,7 @@ public sealed class UpdateCheckRunner
             return;
         }
 
-        var intervalMinutes = nexus.AutoUpdateCheckIntervalMinutes < 1
-            ? 1
-            : nexus.AutoUpdateCheckIntervalMinutes;
-        if (_getNow() - _lastCheckAt < TimeSpan.FromMinutes(intervalMinutes))
+        if (!IntervalElapsed(nexus))
         {
             return;
         }
@@ -212,9 +423,11 @@ public sealed class UpdateCheckRunner
     /// <summary>
     /// The <see cref="IProfileSession.PropertyChanged"/> handler. Fires a check
     /// only for an <see cref="IProfileSession.ActiveProfileId"/> change to a
-    /// non-null id; ignores every other property (notably
-    /// <see cref="IProfileSession.IsRunning"/>, which the polling timer drives
-    /// every few seconds).
+    /// non-null id AND when the interval gate is open; ignores every
+    /// other property (notably <see cref="IProfileSession.IsRunning"/>, which
+    /// the polling timer drives every few seconds). Toggle-independent: the
+    /// <c>AutoUpdateCheckEnabled</c> toggle gates only the periodic timer, so a
+    /// switch fires regardless of the toggle when the interval has elapsed.
     /// </summary>
     private void OnActiveProfileChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -227,19 +440,39 @@ public sealed class UpdateCheckRunner
             return;
         }
 
-        if (_session.ActiveProfileId is Guid newId)
+        if (_session.ActiveProfileId is Guid newId && IntervalElapsed())
         {
             FireAndForget(newId);
         }
     }
 
     /// <summary>
+    /// True when the configured interval (clamped to the compliance floor
+    /// <see cref="NexusConfig.MinAutoUpdateCheckIntervalMinutes"/>) has elapsed
+    /// since the last check fired. Read live from config so a runtime change in
+    /// the Integrations dialog takes effect without a restart. Shared across
+    /// startup, switch, AND the periodic timer so the three automatic triggers
+    /// honor one gate (the manual <see cref="CheckNowAsync"/> bypasses it).
+    /// </summary>
+    /// <param name="nexus">When the caller already read the live Nexus config
+    /// (<see cref="OnTimerTick"/>), pass it to avoid a second read; otherwise
+    /// the helper reads it itself.</param>
+    private bool IntervalElapsed(NexusConfig? nexus = null)
+    {
+        nexus ??= _configLoader.Load().Integrations.Nexus;
+        var intervalMinutes = Math.Max(
+            NexusConfig.MinAutoUpdateCheckIntervalMinutes,
+            nexus.AutoUpdateCheckIntervalMinutes);
+        return _getNow() - _lastCheckAt >= TimeSpan.FromMinutes(intervalMinutes);
+    }
+
+    /// <summary>
     /// Fires <see cref="IUpdateCheckService.CheckAsync"/> (Month-only) on a
     /// thread-pool task and discards the returned <see cref="Task"/>. Used by
-    /// the periodic + profile-load triggers (the cheap path). Never blocks the
-    /// caller; never leaks an unobserved exception. Also stamps the shared
-    /// <c>_lastCheckAt</c> so the periodic timer respects the configured
-    /// interval from this check.
+    /// the startup + switch + periodic triggers (the cheap path). Never blocks
+    /// the caller; never leaks an unobserved exception. Also stamps the shared
+    /// <c>_lastCheckAt</c> (+ persists it) so the interval gate
+    /// backs off after this fire.
     /// </summary>
     private void FireAndForget(Guid profileId) => _ = RunAsync(profileId, thorough: false);
 
@@ -269,11 +502,12 @@ public sealed class UpdateCheckRunner
     /// </remarks>
     private async Task RunAsync(Guid profileId, bool thorough)
     {
-        // Shared across every trigger: the periodic timer computes the
-        // elapsed-since-last-check from this stamp. Set BEFORE dispatching so
-        // the periodic tick cannot double-fire between this assignment and the
-        // thread-pool task's actual start.
+        // Shared across every trigger: the periodic timer, startup, and
+        // switch all compute the elapsed-since-last-check from this stamp. Set BEFORE dispatching so a concurrent tick or switch cannot
+        // double-fire between this assignment and the thread-pool task's actual
+        // start. Persisted best-effort so the gate survives a close/reopen.
         _lastCheckAt = _getNow();
+        _appState.LastUpdateCheckUtc = _lastCheckAt;
 
         try
         {

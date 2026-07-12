@@ -65,5 +65,7 @@ public sealed class GeneralServiceCollectionExtensionsTests
     private sealed class CustomAppStateStore : IAppStateStore
     {
         public Guid? ActiveProfileId { get; set; }
+        public DateTimeOffset? LastUpdateCheckUtc { get; set; }
+        public IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; }
     }
 }

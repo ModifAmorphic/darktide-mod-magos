@@ -5,13 +5,36 @@ namespace Modificus.Curator.General;
 
 /// <summary>
 /// Default <see cref="IAppStateStore"/>. Loads + saves a single JSON file at
-/// <c>&lt;app-data&gt;/app-state.json</c> (<c>{ "ActiveProfileId": "&lt;guid&gt;" | null }</c>).
-/// The app-data dir is derived the same way <see cref="ConfigLoader"/> derives
-/// its config path (both via <see cref="AppPaths.AppDataDir"/>). JSON is handled
-/// with <see cref="JsonSerializer"/> (direct, read+write) rather than
+/// <c>&lt;app-data&gt;/app-state.json</c> (<c>{ "ActiveProfileId": "&lt;guid&gt;" | null,
+/// "LastUpdateCheckUtc": "&lt;iso-8601&gt;" | null,
+/// "ManualRefreshTimestamps": [ "&lt;iso-8601&gt;", ... ] | null }</c>). The app-data dir is derived
+/// the same way <see cref="ConfigLoader"/> derives its config path (both via
+/// <see cref="AppPaths.AppDataDir"/>). JSON is handled with
+/// <see cref="JsonSerializer"/> (direct, read+write) rather than
 /// <c>Microsoft.Extensions.Configuration</c>. The latter is binding-oriented and
 /// read-only; a tiny writable state file is the wrong fit for it.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Cached model, written whole.</b> The store holds the deserialized
+/// <see cref="StateModel"/> in memory (loaded lazily on first access) and
+/// rewrites the WHOLE model on every property assignment. This keeps the three
+/// properties independent: setting <see cref="ActiveProfileId"/> preserves a
+/// previously written <see cref="LastUpdateCheckUtc"/> and
+/// <see cref="ManualRefreshTimestamps"/> and vice versa (a naive per-field save
+/// would clobber the others on every write). The store is a DI singleton for the
+/// app lifetime and is the sole writer of the file, so an in-memory cache is the
+/// honest model.</para>
+/// <para><b>First-run safe:</b> a missing or corrupt state file never throws;
+/// the cache just seeds as defaults (<c>null</c> / <c>null</c> / <c>null</c>).
+/// Writes are best-effort; runtime app-state is non-critical, so a persistence
+/// failure (unwritable dir, full disk) is swallowed rather than crashing the app
+/// mid-interaction. An old file without <see cref="LastUpdateCheckUtc"/> or
+/// <see cref="ManualRefreshTimestamps"/> deserializes those fields as
+/// <c>null</c> (System.Text.Json default for an absent nullable member), so a
+/// first run after upgrade sees no recorded timestamp and the runner seeds its
+/// interval floor / an empty manual window.</para>
+/// </remarks>
 public sealed class AppStateStore : IAppStateStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -20,6 +43,9 @@ public sealed class AppStateStore : IAppStateStore
     };
 
     private readonly string _path;
+    // The lazily-loaded, sole-writer cache. Mutated under _sync (see below).
+    private StateModel? _cache;
+    private readonly object _sync = new();
 
     /// <summary>
     /// Creates a store for <paramref name="path"/>; <c>null</c> resolves to
@@ -36,36 +62,85 @@ public sealed class AppStateStore : IAppStateStore
     /// <inheritdoc />
     public Guid? ActiveProfileId
     {
-        get => Load();
-        set => Save(value);
+        get => Load().ActiveProfileId;
+        set => Mutate(m => m.ActiveProfileId = value);
+    }
+
+    /// <inheritdoc />
+    public DateTimeOffset? LastUpdateCheckUtc
+    {
+        get => Load().LastUpdateCheckUtc;
+        set => Mutate(m => m.LastUpdateCheckUtc = value);
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps
+    {
+        get => Load().ManualRefreshTimestamps;
+        set => Mutate(m => m.ManualRefreshTimestamps = value is null
+            ? null
+            : new List<DateTimeOffset>(value));
     }
 
     /// <summary>The conventional state-file location: <c>&lt;app-data&gt;/app-state.json</c>.</summary>
     public static string DefaultStatePath() =>
         System.IO.Path.Combine(AppPaths.AppDataDir, "app-state.json");
 
-    private Guid? Load()
+    /// <summary>
+    /// Lazily loads + caches the model. First-run safe: a missing or corrupt
+    /// file seeds the cache as a fresh <see cref="StateModel"/> (all fields
+    /// null) rather than throwing.
+    /// </summary>
+    private StateModel Load()
     {
-        // First-run safe: missing or corrupt file → null, never throws.
-        try
+        // Defensive lock: all current writers live on the UI thread
+        // (ProfileSession's active-id setter + UpdateCheckRunner's check
+        // stamp), so writes do not race in practice. The lock keeps the
+        // lazy-init + the cache read/write atomic if a future background
+        // writer is introduced, and the cost (an uncontended monitor enter)
+        // is negligible for a state file touched a handful of times per
+        // session.
+        lock (_sync)
         {
-            if (!File.Exists(_path))
+            if (_cache is not null)
             {
-                return null;
+                return _cache;
             }
 
-            var json = File.ReadAllText(_path);
-            var model = JsonSerializer.Deserialize<StateModel>(json, JsonOptions);
-            return model?.ActiveProfileId;
-        }
-        catch
-        {
-            // Missing/corrupt/permission-denied: treat as "no state recorded."
-            return null;
+            StateModel? model = null;
+            try
+            {
+                if (File.Exists(_path))
+                {
+                    var json = File.ReadAllText(_path);
+                    model = JsonSerializer.Deserialize<StateModel>(json, JsonOptions);
+                }
+            }
+            catch
+            {
+                // Missing/corrupt/permission-denied: treat as "no state recorded."
+            }
+
+            return _cache = model ?? new StateModel();
         }
     }
 
-    private void Save(Guid? value)
+    /// <summary>
+    /// Applies <paramref name="apply"/> to the cached model + persists the WHOLE
+    /// cached model. Best-effort: a write failure is swallowed (the in-memory
+    /// value still holds).
+    /// </summary>
+    private void Mutate(Action<StateModel> apply)
+    {
+        lock (_sync)
+        {
+            var model = Load();
+            apply(model);
+            Save(model);
+        }
+    }
+
+    private void Save(StateModel model)
     {
         // Best-effort: runtime app-state is non-critical, so a persistence
         // failure must not crash the app mid-interaction.
@@ -77,17 +152,20 @@ public sealed class AppStateStore : IAppStateStore
                 Directory.CreateDirectory(dir);
             }
 
-            var json = JsonSerializer.Serialize(new StateModel { ActiveProfileId = value }, JsonOptions);
+            var json = JsonSerializer.Serialize(model, JsonOptions);
             File.WriteAllText(_path, json);
         }
         catch
         {
-            // Swallow: the app keeps working without persisted state.
+            // Swallow: the app keeps working off the in-memory cache without
+            // persisted state.
         }
     }
 
     private sealed class StateModel
     {
         public Guid? ActiveProfileId { get; set; }
+        public DateTimeOffset? LastUpdateCheckUtc { get; set; }
+        public List<DateTimeOffset>? ManualRefreshTimestamps { get; set; }
     }
 }

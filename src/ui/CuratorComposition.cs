@@ -113,7 +113,44 @@ public static class CuratorComposition
         // (the event fires on a threadpool thread; the handler iterates the
         // UI-bound Mods collection). Production wires Dispatcher.UIThread.Post.
         services.AddSingleton<Action<Action>>(_ => action => Dispatcher.UIThread.Post(action));
-        services.AddSingleton<ModListViewModel>();
+        // The manual-refresh countdown timer seams (the throttle's live m:ss
+        // tooltip). Production manages a single 1-second DispatcherTimer, created
+        // lazily on first start, with Tick wired once; Start/Stop control whether
+        // it runs (mirrors StartUpdateCheckPolling's established timer pattern).
+        // The start delegate is idempotent: a second start while the timer is
+        // running is a no-op (DispatcherTimer.Start is safe to re-call, and the
+        // Tick handler is wired exactly once). Composition happens on the UI
+        // thread during app startup, so the DispatcherTimer affinity is correct.
+        services.AddSingleton(sp =>
+        {
+            DispatcherTimer? countdownTimer = null;
+            Action<Action> startCountdownTimer = tick =>
+            {
+                if (countdownTimer is null)
+                {
+                    countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                    countdownTimer.Tick += (_, _) => tick();
+                }
+                countdownTimer.Start();
+            };
+            Action stopCountdownTimer = () => countdownTimer?.Stop();
+            return new ModListViewModel(
+                sp.GetRequiredService<IProfileService>(),
+                sp.GetRequiredService<IProfileSession>(),
+                sp.GetRequiredService<IModRepository>(),
+                sp.GetRequiredService<IModImportService>(),
+                sp.GetRequiredService<IModOrderResolver>(),
+                sp.GetRequiredService<IDialogService>(),
+                sp.GetRequiredService<LocalizationService>(),
+                sp.GetRequiredService<IUpdateCheckService>(),
+                sp.GetRequiredService<IModAcquisitionService>(),
+                sp.GetRequiredService<INexusAuthService>(),
+                sp.GetRequiredService<UpdateCheckRunner>(),
+                sp.GetRequiredService<Action<Action>>(),
+                sp.GetRequiredService<ILogger<ModListViewModel>>(),
+                startCountdownTimer,
+                stopCountdownTimer);
+        });
         services.AddSingleton(sp => new ShellViewModel(
             sp.GetRequiredService<IProfileService>(),
             sp.GetRequiredService<IProfileSession>(),
@@ -146,13 +183,17 @@ public static class CuratorComposition
                 sp.GetRequiredService<ILoggerFactory>()));
 
         // The UI-layer glue that fires an update check
-        // (IUpdateCheckService, registered above via AddIntegrations) whenever a
-        // profile becomes active (startup + active-profile switch), and a
-        // periodic check while a profile stays active (the toggle + interval
-        // are read live from config). Subscribes to IProfileSession.PropertyChanged
-        // for switches + fires the opening check for the restored active id.
-        // Started after the provider is built (see StartUpdateCheck); best-effort,
-        // never blocks startup. Singleton: owns the session subscription for the
+        // (IUpdateCheckService, registered above via AddIntegrations) on the
+        // automatic triggers: startup (when a profile is restored),
+        // active-profile switch, and a periodic timer. All three share one
+        // shared interval gate (read live from config) so a rapid
+        // open/close loop or rapid profile switching cannot burn API calls;
+        // the gate's last-check timestamp is persisted via IAppStateStore so
+        // it survives a close/reopen. The toggle gates only the periodic
+        // timer. Subscribes to IProfileSession.PropertyChanged for switches
+        // + fires the opening check for the restored active id. Started after
+        // the provider is built (see StartUpdateCheck); best-effort, never
+        // blocks startup. Singleton: owns the session subscription for the
         // app lifetime. The periodic timer is wired to a DispatcherTimer (the
         // established ProfileSession pattern); the runner takes the timer-start
         // delegate as a seam so it stays unit-testable.
@@ -160,6 +201,7 @@ public static class CuratorComposition
             sp.GetRequiredService<IProfileSession>(),
             sp.GetRequiredService<IUpdateCheckService>(),
             sp.GetRequiredService<IConfigLoader>(),
+            sp.GetRequiredService<IAppStateStore>(),
             sp.GetRequiredService<ILogger<UpdateCheckRunner>>(),
             StartUpdateCheckPolling));
 

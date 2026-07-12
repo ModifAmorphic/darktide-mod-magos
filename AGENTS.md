@@ -88,9 +88,17 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           AddNxm() in CuratorComposition;
                           `UpdateCheckRunner` (ui/Session/) the
                           UI-layer glue that fires `IUpdateCheckService.CheckAsync`
-                          fire-and-forget on profile load (startup-with-restored-id
-                          + active-profile switch via IProfileSession.PropertyChanged
-                          filtered to ActiveProfileId), registered + started
+                          fire-and-forget on the three automatic triggers
+                          (startup-with-restored-id + active-profile switch via
+                          IProfileSession.PropertyChanged filtered to
+                          ActiveProfileId + a periodic timer), all interval-gated
+                          via a shared last-check persisted to
+                          `IAppStateStore.LastUpdateCheckUtc` (so a close/reopen
+                          loop does not fire a call per launch); the
+                          `AutoUpdateCheckEnabled` toggle gates ONLY the periodic
+                          timer, and the manual `CheckNowAsync` carries its own
+                          sliding-window throttle (10 free/hour then 1/2min,
+                          independent of the interval gate); registered + started
                           best-effort from CuratorComposition);
                           the mod-list update UI per-row update
                           signal + per-mod update button. `ModListViewModel` subscribes
@@ -107,7 +115,9 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           one-at-a-time via `AnyRowUpdating`) + an async
                           `CheckForUpdatesNowCommand` that awaits the runner's
                           thorough check (driving an `IsCheckingNow` spinner on
-                          the header refresh button). The view's source badge
+                          the header refresh button) and drives the manual
+                          sliding-window throttle's countdown tooltip + disabled
+                          button via the runner's `NextManualRefreshAllowedAt`). The view's source badge
                           is a `HyperlinkButton` to the mod's remote page, a drawn
                           `<Ellipse>` + a `HyperlinkButton` to the mod's Nexus
                           files tab (`?tab=files`) marks flagged rows, a drawn
@@ -120,15 +130,16 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           `BoolAllConverter` (ui/Converters/) ANDs the row's
                           `CanShowUpdateButton` with the list VM's
                           `IsPremiumUser` for the button's `IsVisible`
-                          MultiBinding. The check is split by trigger:
+                          MultiBinding.                           The check is split by trigger:
                           `IUpdateCheckService.CheckAsync` (the v2 GraphQL
                           `modsByUid` batch query, 1 API call for all mods)
-                          fires on profile load + the periodic timer;
-                          `IUpdateCheckService.CheckThoroughAsync` (same v2
-                          batch query; the two differ only in the result's
-                          `Thorough` flag) fires on the manual "check
-                          now" button; both share `LastResult`/`CheckCompleted`,
-                          distinguished by the result's `Thorough` flag);
+                          fires on profile load + the periodic timer, both
+                          interval-gated; `IUpdateCheckService.CheckThoroughAsync`
+                          (same v2 batch query; the two differ only in the result's
+                          `Thorough` flag) fires on the manual "check now" button
+                          under its own sliding-window throttle; both share
+                          `LastResult`/`CheckCompleted`, distinguished by the
+                          result's `Thorough` flag);
                           the app self-update service
                           `IAppUpdateService` (ui/AppUpdate/) with its
                           conditional `VelopackAppUpdateService` (real impl,
@@ -220,7 +231,9 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           dialog). Bracketing the swap under `_syncing` makes
                           those events no-ops)
   general/              Modificus.Curator.General -- cross-cutting infra (logging bootstrap,
-                          config loader, app-state store, AddGeneral() DI ext)
+                          config loader, app-state store (active profile id +
+                          last update-check timestamp + manual-refresh throttle
+                          window), AddGeneral() DI ext)
   config/               Modificus.Curator.Config -- the CuratorConfig schema + defaults (POCO),
                         including the NexusConfig slot under Integrations
                         (AuthMethod {None,OAuth,ApiKey}, ApiKey, OAuth tokens, base URLs)
@@ -475,8 +488,9 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   mod-source provenance model `ModSource`
   (`UntrackedSource`/`NexusSource`/`GitHubSource`) + `ModSourceParser`; the
   local-import service `IModImportService`). **General** carries cross-cutting
-  infra: logging, `ConfigLoader`, and `AppStateStore` (the active-profile id,
-  persisted to `app-state.json`). The UI includes the shell + profile
+  infra: logging, `ConfigLoader`, and `AppStateStore` (the active-profile id +
+  last update-check timestamp + manual-refresh throttle window, persisted to
+  `app-state.json`). The UI includes the shell + profile
   management (with an `IProfileSession` (ui/) as the single authority for the
   active profile, the switch-block gate, and the live running-state), global
   Preferences + i18n infrastructure, the mod-list UI (view mods with

@@ -464,14 +464,25 @@ public sealed class IntegrationsViewModelTests
     }
 
     [Fact]
-    public async Task Interval_below_one_clamps_to_one()
+    public async Task Interval_below_floor_clamps_to_floor()
     {
+        // Values below the 5-minute compliance floor (here 0) clamp up to
+        // NexusConfig.MinAutoUpdateCheckIntervalMinutes on save.
         var configLoader = new FakeConfigLoader();
         var (vm, _, _, _) = await BuildAndRefresh(state: null, configLoader: configLoader);
 
         vm.AutoUpdateCheckIntervalMinutes = 0m;
 
-        Assert.Equal(1, configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckIntervalMinutes);
+        Assert.Equal(
+            NexusConfig.MinAutoUpdateCheckIntervalMinutes,
+            configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckIntervalMinutes);
+
+        // A value above zero but still below the floor (3) also clamps up.
+        vm.AutoUpdateCheckIntervalMinutes = 3m;
+
+        Assert.Equal(
+            NexusConfig.MinAutoUpdateCheckIntervalMinutes,
+            configLoader.LastSaved!.Integrations.Nexus.AutoUpdateCheckIntervalMinutes);
     }
 
     // ---- nxm handler registration -----------------------------------------

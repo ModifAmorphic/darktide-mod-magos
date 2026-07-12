@@ -377,9 +377,12 @@ public sealed class UpdateCheckRunner
         IProfileSession session,
         IUpdateCheckService updateCheck,
         IConfigLoader configLoader,
+        IAppStateStore appState,
         ILogger<UpdateCheckRunner> logger,
         Action<Action>? startTimer = null,
         Func<DateTimeOffset>? getNow = null);
+
+    public DateTimeOffset? NextManualRefreshAllowedAt { get; }
 
     public void Start();
     public Task CheckNowAsync();
@@ -391,35 +394,64 @@ public sealed class UpdateCheckRunner
   (`CuratorConfig.Nexus.AutoUpdateCheckIntervalMinutes`) is honored to this
   granularity: the runner fires when that much time has elapsed since the
   last check, checked on each tick.
-- `Start()`: subscribes to the session's active-profile changes, starts the
-  periodic tick, and fires an opening check if a profile was already
-  restored at startup. Called once from the composition root after the
-  provider is built (best-effort: failures are logged and swallowed, never
-  blocking startup).
+- `Start()`: seeds the last-check timestamp
+  (`IAppStateStore.LastUpdateCheckUtc`) and the manual throttle's sliding window
+  (`IAppStateStore.ManualRefreshTimestamps`) from the persisted store,
+  subscribes to the session's active-profile changes, starts the periodic tick,
+  and fires an opening check only when a profile was already restored at startup
+  AND the configured interval has elapsed. Called once from the composition root
+  after the provider is built (best-effort: failures are logged and swallowed,
+  never blocking startup).
 - `CheckNowAsync()`: the manual "check now" trigger (the mod-list header
   refresh button). Fires an immediate thorough check for the active profile
   (`IUpdateCheckService.CheckThoroughAsync`, the per-mod pass that also
   catches mods outside the Month window). Awaitable so the caller (the list
   VM's `CheckForUpdatesNow` command) can drive an `IsCheckingNow` affordance
   while it runs. No-op (returns `Task.CompletedTask`) when no profile is
-  active. Resets the periodic clock.
+  active. Bypasses the interval gate but carries its own sliding-window
+  throttle (10 free refreshes per rolling hour, then one per 2 minutes); a
+  throttled attempt is a silent no-op (no API call, no timestamp stamp). The
+  list VM reads `NextManualRefreshAllowedAt` for the countdown tooltip and the
+  disabled button. Resets the shared periodic clock.
 
 The four triggers:
 
 | Trigger | Check shape | Awaited? | Gated? |
 | --- | --- | --- | --- |
-| Startup (restored active id) | Month-only `CheckAsync` | no (fire-and-forget) | no |
-| Active-profile switch | Month-only `CheckAsync` | no (fire-and-forget) | no |
-| Periodic timer | Month-only `CheckAsync` | no (fire-and-forget) | yes (`AutoUpdateCheckEnabled` + interval) |
-| Manual "check now" | Thorough `CheckThoroughAsync` | yes (caller drives spinner) | no |
+| Startup (restored active id) | Month-only `CheckAsync` | no (fire-and-forget) | yes (interval) |
+| Active-profile switch | Month-only `CheckAsync` | no (fire-and-forget) | yes (interval) |
+| Periodic timer | Month-only `CheckAsync` | no (fire-and-forget) | yes (toggle + interval) |
+| Manual "check now" | Thorough `CheckThoroughAsync` | yes (caller drives spinner) | yes (sliding window) |
 
-The periodic timer is the only gated trigger. Profile-load (startup plus
-switch) and `CheckNowAsync` always fire regardless of the toggle; only the
-periodic timer respects it. The toggle and interval are read live on each
-tick so a runtime change in the Integrations dialog takes effect without a
-restart. The last-check timestamp is shared across every trigger, so a
-manual or profile-load check resets the periodic clock (no double-fire
-right after a switch).
+Every automatic trigger (startup, switch, and periodic) is interval-gated: a
+check fires only when the configured interval has elapsed since the last check
+of any kind. The `AutoUpdateCheckEnabled` toggle gates only the periodic timer;
+startup and switch fire regardless of the toggle (when the interval has
+elapsed), and `CheckNowAsync` always fires (it is user-initiated and bypasses
+the interval gate). The toggle and interval are read live on each tick so a
+runtime change in the Integrations dialog takes effect without a restart.
+
+The last-check timestamp is persisted to `app-state.json`
+(`IAppStateStore.LastUpdateCheckUtc`) and seeded at `Start()`, so the interval
+gate survives a close/reopen: a check that fired moments ago in a prior session
+suppresses this session's opening check, and a rapid open/close loop does not
+fire a call per launch. Every fire (automatic or manual) re-stamps the
+timestamp, so a manual or profile-load check also resets the periodic clock (no
+double-fire right after a switch).
+
+The manual "check now" path layers its own sliding-window throttle on top of
+(independent of) the interval gate: the first 10 manual refreshes in a rolling
+1-hour window fire freely, then the path throttles to one per 2 minutes until
+timestamps age out of the window and free mode resumes. A blocked attempt is a
+silent no-op (no API call, no timestamp stamp). The list VM reads
+`NextManualRefreshAllowedAt` on every manual attempt and on each 1-second
+countdown tick to drive the disabled button and the `m:ss` countdown tooltip
+("Rate limiting protection enabled. Manual refresh will be available again in
+{time}."). The window persists across restarts via `app-state.json`
+(`IAppStateStore.ManualRefreshTimestamps`), seeded at `Start()` and written back
+on every successful fire, so closing and reopening the app does not reset the
+free-refresh budget. See
+[the rate-limiting strategy](../rate-limiting-strategy.md) for the thresholds.
 
 The runner never blocks on a check beyond the await the manual trigger opts
 into, never surfaces its result (the mod list reads

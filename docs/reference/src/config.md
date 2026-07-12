@@ -81,6 +81,9 @@ public sealed class GitHubConfig
 
 public sealed class NexusConfig
 {
+    public const int MinAutoUpdateCheckIntervalMinutes = 5;
+    public const int MaxAutoUpdateCheckIntervalMinutes = 1440;
+
     public string BaseUrl { get; set; } = "https://api.nexusmods.com";
     public string OAuthBaseUrl { get; set; } = "https://users.nexusmods.com";
     public NexusAuthMethod AuthMethod { get; set; } = NexusAuthMethod.None;
@@ -137,8 +140,13 @@ Nexus fields:
   now" button always run regardless. Read live on each timer tick, so a dialog
   change takes effect without a restart.
 - `AutoUpdateCheckIntervalMinutes`: the periodic update-check interval, in
-  minutes. `10` by default. Honored to a 1-minute granularity; values below 1
+  minutes. `10` by default. Honored to a 1-minute granularity; values below 5
   are clamped.
+- `MinAutoUpdateCheckIntervalMinutes` / `MaxAutoUpdateCheckIntervalMinutes`:
+  named policy bounds (5 / 1440 minutes) for `AutoUpdateCheckIntervalMinutes`,
+  applied on save (the Integrations dialog) + at tick time (the runner). The
+  5-minute floor is a Nexus API acceptable-use compliance measure (at 5 minutes
+  the periodic check tops out at 288 calls/day).
 - `DmfAuthPromptShown`: gates the DMF (Darktide Mod Framework) install prompt
   that fires the first time Nexus auth transitions from `None` to configured.
   `false` by default; the DMF prompt coordinator flips it to `true` after

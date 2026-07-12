@@ -211,7 +211,7 @@
               <TextBlock Text="{Binding AutoUpdateIntervalLabel}"
                          VerticalAlignment="Center" />
               <NumericUpDown Value="{Binding AutoUpdateCheckIntervalMinutes, Mode=TwoWay}"
-                             Minimum="1" Maximum="1440" Increment="1"
+                             Minimum="5" Maximum="1440" Increment="1"
                              FormatString="0"
                              MinWidth="100"
                              VerticalAlignment="Center" />

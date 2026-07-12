@@ -84,7 +84,11 @@ internal static class TestDoubles
         FakeModAcquisitionService? acquisition = null,
         FakeNexusAuthService? auth = null,
         FakeConfigLoader? configLoader = null,
-        Action<Action>? invokeOnUi = null)
+        FakeAppStateStore? appState = null,
+        Action<Action>? invokeOnUi = null,
+        Func<DateTimeOffset>? getNow = null,
+        Action<Action>? startCountdownTimer = null,
+        Action? stopCountdownTimer = null)
     {
         profiles ??= Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -97,15 +101,20 @@ internal static class TestDoubles
         acquisition ??= new FakeModAcquisitionService();
         auth ??= new FakeNexusAuthService();
         configLoader ??= new FakeConfigLoader();
+        appState ??= new FakeAppStateStore();
         invokeOnUi ??= static action => action();
         // The runner wires the manual CheckNow path; constructed with the
         // test's fakes + no periodic timer (the manual trigger does not depend
-        // on the timer being started).
+        // on the timer being started). An optional getNow lets the throttle
+        // tests drive the sliding window deterministically.
         var runner = new UpdateCheckRunner(
             session,
             updateCheck,
             configLoader,
-            NullLogger<UpdateCheckRunner>.Instance);
+            appState,
+            NullLogger<UpdateCheckRunner>.Instance,
+            startTimer: null,
+            getNow: getNow);
         return new ModListViewModel(
             profiles,
             session,
@@ -119,7 +128,9 @@ internal static class TestDoubles
             auth,
             runner,
             invokeOnUi,
-            NullLogger<ModListViewModel>.Instance);
+            NullLogger<ModListViewModel>.Instance,
+            startCountdownTimer,
+            stopCountdownTimer);
     }
 }
 
@@ -366,6 +377,34 @@ internal sealed class FakeAppStateStore : IAppStateStore
     public int SetCount { get; private set; }
     public Guid? ActiveProfileId { get; set; } = null;
 
+    /// <summary>
+    /// The last property written via the <see cref="IAppStateStore.LastUpdateCheckUtc"/>
+    /// setter (the public <see cref="LastUpdateCheckUtc"/> is the raw value; the
+    /// explicit-interface setter records the write). Mirrors
+    /// <see cref="SetCount"/> for the active-id path so tests can assert the
+    /// runner persisted a timestamp.
+    /// </summary>
+    public int LastUpdateCheckSetCount { get; private set; }
+
+    /// <summary>The raw last-check timestamp value (read + written directly by
+    /// tests; the explicit-interface setter bumps <see cref="LastUpdateCheckSetCount"/>).</summary>
+    public DateTimeOffset? LastUpdateCheckUtc { get; set; } = null;
+
+    /// <summary>
+    /// The manual throttle's sliding-window timestamps (read + written directly
+    /// by tests; the explicit-interface setter bumps
+    /// <see cref="ManualRefreshSetCount"/>). Default <c>null</c> (no throttle
+    /// history recorded), mirroring a fresh / first-run real store.
+    /// </summary>
+    public IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; } = null;
+
+    /// <summary>
+    /// The number of times the <see cref="IAppStateStore.ManualRefreshTimestamps"/>
+    /// setter was invoked, so tests can assert the runner persisted the window on
+    /// a manual fire.
+    /// </summary>
+    public int ManualRefreshSetCount { get; private set; }
+
     Guid? IAppStateStore.ActiveProfileId
     {
         get => ActiveProfileId;
@@ -373,6 +412,26 @@ internal sealed class FakeAppStateStore : IAppStateStore
         {
             ActiveProfileId = value;
             SetCount++;
+        }
+    }
+
+    DateTimeOffset? IAppStateStore.LastUpdateCheckUtc
+    {
+        get => LastUpdateCheckUtc;
+        set
+        {
+            LastUpdateCheckUtc = value;
+            LastUpdateCheckSetCount++;
+        }
+    }
+
+    IReadOnlyList<DateTimeOffset>? IAppStateStore.ManualRefreshTimestamps
+    {
+        get => ManualRefreshTimestamps;
+        set
+        {
+            ManualRefreshTimestamps = value;
+            ManualRefreshSetCount++;
         }
     }
 }
