@@ -99,10 +99,16 @@ every OS-specific input + platform seam is injected:
   own platform steps on top.
 - `ISteamRegistryReader` -- reads the Windows registry for the Steam install path
   (`GetSteamPath()` → `HKCU\Software\Valve\Steam\SteamPath`, or null if
-  unreadable). Abstracted so the Windows discoverer's registry resolution is
-  mockable on Linux CI. The production `SteamRegistryReader` is Windows-only
-  (annotated `[SupportedOSPlatform("windows")]`) and is registered **only on
-  Windows** -- on Linux it is intentionally absent so resolving it fails fast.
+  unreadable) and **normalizes it at the read boundary**: Steam's cross-platform
+  client stores the value Unix-style (lowercase drive + forward slashes, e.g.
+  `c:/program files (x86)/steam`), so the reader uppercases the leading drive
+  letter and swaps `/` → `\` (via the platform-neutral
+  `SteamPathNormalizer.NormalizeWindowsPath`) so the returned path is always
+  native Windows form regardless of how Steam wrote it. Idempotent. Abstracted so
+  the Windows discoverer's registry resolution is mockable on Linux CI. The
+  production `SteamRegistryReader` is Windows-only (annotated
+  `[SupportedOSPlatform("windows")]`) and is registered **only on Windows** -- on
+  Linux it is intentionally absent so resolving it fails fast.
 - `IProcessLookup` -- `IsRunning(processName)`; two production implementations,
   selected once at DI time from the host OS (see [Cross-platform notes](#cross-platform-notes)).
 
@@ -307,6 +313,7 @@ no-op).
 selection (`ProtonSelectionTests`), the `libraryfolders.vdf` parser
 (`LibraryFoldersVdfTests`), game-running detection (`GameRunningTests`,
 `ArgvMatchTests` -- the latter pinning the `MatchesArgv0` backslash normalization),
+the `SteamPathNormalizer` pure helper (`SteamPathNormalizationTests`),
 the `AddSteam` DI wiring (the `TryAdd` overrides, the `ISteamDiscoverer`
 selection by `SteamDiscoveryOptions.Platform`, and the platform `IProcessLookup`
 selection), and the `SteamService.Discover()` validate + heal + persist

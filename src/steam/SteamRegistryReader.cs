@@ -27,7 +27,11 @@ internal sealed class SteamRegistryReader : ISteamRegistryReader
     {
         try
         {
-            return Registry.GetValue(SteamSubKey, SteamPathValue, null) as string;
+            // Steam stores SteamPath Unix-style (lowercase drive + forward
+            // slashes, e.g. c:/program files (x86)/steam). Normalize to native
+            // Windows form at the read boundary so the raw value never escapes.
+            var raw = Registry.GetValue(SteamSubKey, SteamPathValue, null) as string;
+            return SteamPathNormalizer.NormalizeWindowsPath(raw);
         }
         catch (SecurityException)
         {

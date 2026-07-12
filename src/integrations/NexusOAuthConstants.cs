@@ -1,19 +1,20 @@
 namespace Modificus.Curator.Integrations;
 
 /// <summary>
-/// Build-time constants for the Nexus OAuth flow. The <c>client_id</c> is an
-/// identifier we choose, not a registered secret: RFC 8252 loopback redirects
-/// require no client registration with the OAuth provider. MO2 ships
-/// <c>"modorganizer2"</c>, NMA ships <c>"nma"</c>; Curator ships
-/// <c>"modificus-curator"</c>.
+/// Build-time constants for the Nexus OAuth flow. The <c>client_id</c> is the
+/// SSO identifier Nexus issues when the application is registered for public
+/// use: per their API Acceptable Use Policy, a public-facing app is registered
+/// by contacting support with a testing build, after which Nexus issues a
+/// "slug" for the SSO, and that slug is the client_id. Until Curator is
+/// registered, <c>"modificus-curator"</c> is a development placeholder (live
+/// authorize will not recognize it); the API-key path is the validated auth
+/// method in the meantime, and OAuth is exercised against stubbed endpoints.
 /// </summary>
 /// <remarks>
-/// <b>This is a build-time constant, not config and not an env var.</b> Modificus
-/// Curator has no env-var pattern (config is file-based via
-/// <see cref="General.IConfigLoader"/>); introducing one just for the client_id
-/// is unjustified. MO2's <c>MO2_NEXUS_CLIENT_ID</c> env override is their
-/// pattern, not ours; do not copy it. If the client_id ever needs to change,
-/// that is a code change.
+/// <b>This is a build-time constant, not config and not an env var.</b> When
+/// Nexus issues the slug at registration, it lands here as a code change.
+/// Modificus Curator has no env-var pattern (config is file-based via
+/// <see cref="General.IConfigLoader"/>).
 /// </remarks>
 internal static class NexusOAuthConstants
 {
