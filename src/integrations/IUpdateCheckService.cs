@@ -6,11 +6,15 @@ namespace Modificus.Curator.Integrations;
 /// Checks a profile's Nexus-sourced mods for available updates. Both check
 /// shapes (<see cref="CheckAsync"/> + <see cref="CheckThoroughAsync"/>) run the
 /// same v2 GraphQL <c>modsByUid</c> batch query (1 API call for all mods) and
-/// rely on the server-computed <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>
-/// field as the update signal: true if the mod has been updated since the user
-/// last downloaded it. They differ only in the result's
-/// <see cref="UpdateCheckResult.Thorough"/> flag (kept for the mod-list UI's
-/// result-surface contract).
+/// flag a mod via three tiers: tier 1 the server-computed
+/// <see cref="ModUpdateStatus.ViewerUpdateAvailable"/> field (true if the mod has
+/// been updated since the user last downloaded it), tier 2 a mod-level version
+/// compare (the installed version vs the mod-page header version), and tier 3 a
+/// latest-file-version confirmation scoped to tier-2-only flags (resolves the
+/// newest MAIN file + clears the flag when it matches the installed version;
+/// best-effort + cached). Tier 1 is authoritative and never second-guessed. The
+/// two shapes differ only in the result's <see cref="UpdateCheckResult.Thorough"/>
+/// flag (kept for the mod-list UI's result-surface contract).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -37,10 +41,12 @@ public interface IUpdateCheckService
 {
     /// <summary>
     /// The periodic check: queries the Nexus v2 GraphQL <c>modsByUid</c> batch
-    /// endpoint once (one API call for all checkable mods) and flags each mod
-    /// whose server-computed <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>
-    /// is true. Used by the periodic timer + the profile-load trigger. The
-    /// result has <see cref="UpdateCheckResult.Thorough"/> = <c>false</c>.
+    /// endpoint once (one API call for all checkable mods) and flags each mod via
+    /// three tiers (tier 1 <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>,
+    /// tier 2 a mod-level version compare, tier 3 a best-effort latest-file-version
+    /// confirmation that clears tier-2-only false positives). Used by the periodic
+    /// timer + the profile-load trigger. The result has
+    /// <see cref="UpdateCheckResult.Thorough"/> = <c>false</c>.
     /// </summary>
     /// <param name="profileId">The profile whose mods to check.</param>
     /// <param name="ct">Cancellation token. Honored during the Nexus API call;
@@ -103,8 +109,9 @@ public interface IUpdateCheckService
 /// timestamp, whether the check was rate-limited, and whether it was the
 /// thorough path.
 /// </summary>
-/// <param name="Updates">The mods with an update available (the v2
-/// <c>viewerUpdateAvailable</c> field is true). May be empty (no updates, or the
+/// <param name="Updates">The mods with an update available (flagged by any of the
+/// three tiers: tier 1 <c>viewerUpdateAvailable</c>, tier 2 a version mismatch, or
+/// a tier-2-only flag tier 3 could not clear). May be empty (no updates, or the
 /// check was short-circuited by no auth / no checkable mods / a rate limit / an
 /// API failure).</param>
 /// <param name="CheckedAt">When the check ran (UTC).</param>

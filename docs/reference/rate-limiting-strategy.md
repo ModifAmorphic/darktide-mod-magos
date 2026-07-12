@@ -62,11 +62,51 @@ after it.
 Owned by `IAppStateStore` (the persisted timestamp) and `UpdateCheckRunner` (the
 gate).
 
+## Update-detection tiers
+
+The update check flags a mod when any of three tiers fire. The first two come
+from the single `modsByUid` batch query (no extra calls); the third is a
+best-effort refinement that costs extra calls only on the subset it targets.
+
+- **Tier 1: `viewerUpdateAvailable`.** The server's authoritative "updated since
+  the viewer last downloaded" signal. True flags the mod.
+- **Tier 2: mod-level version compare.** The installed file version vs the
+  mod-page header `version` field. A mismatch flags the mod (catches
+  older-version-installed, multi-PC, and manual-import cases the server's
+  per-user tracking misses).
+- **Tier 3: latest-file-version confirmation.** Scoped to mods flagged solely by
+  tier 2 (tier 1 is authoritative and untouched). It resolves the newest
+  non-archived MAIN file via `NexusModFiles.LatestMain` (the same filter the
+  download path uses) and clears the flag when that file's version equals the
+  installed version. This clears the tier-2 false positive where a mod author's
+  page-header `version` lags their latest file (the header says 1.9.1 but the
+  latest file is 1.9.2, and the user has 1.9.2 installed). A different file
+  version (a real update) or an unresolved / failed resolution leaves the flag.
+  The resolved version is cached per (mod id, page version, updated-at) with a
+  24h TTL backstop, in memory and session-scoped, so a repeat check for an
+  unchanged mod makes zero extra calls.
+
+Tier 3 is additive: it only ever removes flags, never adds. Both check shapes
+(the periodic `CheckAsync` and the manual `CheckThoroughAsync`) inherit it via
+the shared `RunCheckAsync`. See [integrations reference](src/integrations.md) for
+the per-step check flow.
+
 ## Budget
 
 Worst case for a determined user: 10 free plus 30 throttled manual refreshes is
 40 manual calls per hour, plus roughly 12 automatic calls at the 5-minute floor
 is roughly 52 per hour, about 10.4% of the 500/hour Nexus budget.
+
+The tier-3 confirmation is additive to each check: a cold-cache check makes
+`1 + F` calls, where `F` is the count of tier-2-only-flagged mods (the batch
+query plus one file-listing call per tier-2-only flag). A warm cache drops the
+per-mod calls back to zero, so a repeat check for unchanged mods is back to the
+single batch call. `F` is bounded by the profile's Nexus + Latest mod count and
+is typically small (only the mods whose page-header version differs from the
+installed file version). Because the tier-3 cache is in-memory and
+session-scoped (not persisted across restarts), the cold cost re-pays on the
+first check after each app restart; a user who closes and reopens frequently
+re-pays the `1 + F` spike on the first check of each session.
 
 The Nexus daily budget is 20,000/day (resets 00:00 GMT) and the hourly budget is
 500/hour (resets each hour), per API key or OAuth token. The budget is the

@@ -129,9 +129,13 @@ hard wall with a retry/backoff.
 Only authenticated calls to `api.nexusmods.com` count. Per operation:
 
 - **Update check:** 1 `CheckUpdatesGraphQlAsync` call (the v2 GraphQL
-  `modsByUid` batch query) per check. The batch query covers all checkable mods
-  in one call, so the cost is constant regardless of how many mods are in the
-  profile.
+  `modsByUid` batch query) per check, plus up to `F` `ListModFilesAsync` calls on
+  a cold cache, where `F` is the count of tier-2-only-flagged mods (the
+  latest-file-confirmation tier). The batch query covers all checkable mods in
+  one call, so the base cost is constant regardless of profile size; the tier-3
+  calls are cached per (mod id, page version, updated-at) so a repeat check for
+  unchanged mods is back to one call. See
+  [the update-detection tiers](../reference/rate-limiting-strategy.md#update-detection-tiers).
 - **Mod acquisition (download):** about 3 calls per download
   (`DownloadLinksAsync` + `GetModInfoAsync` + `ListModFilesAsync`). This is
   parity with Vortex, which Nexus's help article cites at 3 calls per download.

@@ -318,6 +318,16 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         `VersionString` the mod is also flagged (catches older-
                         version-installed, multi-PC, + manual-import cases the
                         server's per-user download tracking misses);
+                        a tier-3 latest-file-version confirmation refines
+                        tier-2-only flags: it resolves the newest non-archived
+                        MAIN file via NexusModFiles.LatestMain (the same filter
+                        the download path uses) + clears the flag when that file
+                        version equals the installed version (the page-header
+                        version can lag the latest file), is best-effort +
+                        cached per (mod id, page version, updated-at) with a 24h
+                        TTL (in-memory, session-scoped), + only ever removes
+                        flags (tier-1 viewerUpdateAvailable is authoritative +
+                        untouched);
                         rate-limit-aware with the all-zero Unknown guard +
                         NexusRateLimitException surfacing; LastResult +
                         CheckCompleted event for the mod-list badges;

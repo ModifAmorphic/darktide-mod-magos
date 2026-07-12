@@ -366,7 +366,11 @@ path without launching a real browser. The default uses `Process.Start` with
 
 The UI-layer glue between `IProfileSession` (the active-profile authority)
 and `IUpdateCheckService` (the Integrations update check). The check itself
-is backend-only; this runner owns when the UI fires it.
+is backend-only; this runner owns when the UI fires it. The check flags mods via
+three tiers (the server's `viewerUpdateAvailable`, a mod-level version compare,
+and a latest-file-version confirmation that clears tier-2 false positives
+against the actual latest file); see
+[the update-detection tiers](../rate-limiting-strategy.md#update-detection-tiers).
 
 ```csharp
 public sealed class UpdateCheckRunner

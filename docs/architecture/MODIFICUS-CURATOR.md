@@ -398,7 +398,16 @@ catches cases `viewerUpdateAvailable` misses: the user installed an older
 version, uses multiple PCs with different local versions, or imported manually
 (all share the same root cause: the server's per-user download tracking doesn't
 reflect the local machine's state). Either signal triggering is sufficient to
-flag. `PinnedPolicy`, `UntrackedSource`, and `GitHubSource` mods
+flag. A third tier refines tier-2-only flags: it resolves the newest
+non-archived MAIN file via `NexusModFiles.LatestMain` (the same filter the
+download path uses) and clears the flag when that file's version equals the
+installed version. The mod-page header `version` can lag the latest file (the
+author bumps the file without updating the header), which is the false positive
+tier 2 produces; tier 3 confirms against the actual file. It is best-effort
+(a failure or an unresolved file leaves the flag) and cached per (mod id, page
+version, updated-at) with a 24h TTL, in memory and session-scoped. Tier-1 flags
+(`viewerUpdateAvailable`) are authoritative and untouched. `PinnedPolicy`,
+`UntrackedSource`, and `GitHubSource` mods
 are skipped. Rate-limit-aware: if the client throws `NexusRateLimitException`
 (HTTP 429 / exhausted headers) or the response reports an exhausted daily or
 hourly quota (and the limit was actually reported, guarding against the all-zero
