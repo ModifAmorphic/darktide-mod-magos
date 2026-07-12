@@ -328,8 +328,8 @@ dotnet test src/modificus-curator.sln -c Release
 
 ## See also
 
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md) -- the
-  [Launch](../../architecture/MODIFICUS-CURATOR.md#launch) section (the Linux
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md) -- the
+  [Launch](../architecture/MODIFICUS-CURATOR.md#launch) section (the Linux
   discovery + escape-hatch + fail-fast design).
 - [relay-client](relay-client.md) -- consumes `DiscoveryResult` to invoke
   the launcher.

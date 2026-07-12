@@ -138,7 +138,7 @@ clobber a pre-registered mock.
 load order, per-mod policies) live with the profile, not in the global config.
 
 Per-library public surfaces -- interfaces, key types, exact DI registrations --
-are documented under [Reference -- Modificus Curator](../reference/src/).
+are documented under [Reference -- Modificus Curator](../reference/).
 
 ## The Relay contract Curator consumes
 
@@ -344,7 +344,7 @@ is an explicit user action from the Integrations dialog (Curator only handles
 Darktide `nxm://` downloads). Full detail (the two-process model, the cold-start
 path, single-instance enforcement, pipe-bind behavior, OS registration, and URL
 routing) is in [nxm:// scheme handler architecture](nxm-scheme-handler.md); the
-public surface is in [nxm reference](../reference/src/nxm.md).
+public surface is in [nxm reference](../reference/nxm.md).
 
 ## Nexus authentication
 
@@ -359,7 +359,7 @@ with 401-reactive refresh. Full detail (the loopback flow, the Integrations
 dialog, auth-factory selection, token persistence, the OAuth client_id, rate
 limits, and the v1 endpoints) is in
 [Nexus authentication architecture](nexus-authentication.md); the public surface
-is in [integrations reference](../reference/src/integrations.md).
+is in [integrations reference](../reference/integrations.md).
 
 ## Mod acquisition
 
@@ -376,7 +376,7 @@ errors via `ShowAlertAsync`. The per-mod update button calls the same service.
 Full detail (the acquisition flow, the handler checks, the UI-assembly
 placement, and OS registration) is in
 [mod acquisition architecture](mod-acquisition.md); the public surface is in
-[integrations reference](../reference/src/integrations.md).
+[integrations reference](../reference/integrations.md).
 
 ## Update check
 
@@ -428,7 +428,7 @@ to `IProfileSession.PropertyChanged` filtered to `ActiveProfileId`
 UI; the mod-list UI consumes `LastResult` / `CheckCompleted` to render per-row
 "update available" badges + the per-mod Update button (which calls
 `IModAcquisitionService`). The public surface is in
-[integrations reference](../reference/src/integrations.md).
+[integrations reference](../reference/integrations.md).
 
 ## App self-update
 
@@ -442,7 +442,7 @@ out of scope (it keeps the manual install script). Full detail (the
 engine-neutral `IAppUpdateService`, the conditional Velopack/no-op split, the
 startup-only check, the threading discipline, and the lifecycle interaction)
 is in [app auto-update architecture](app-auto-update.md); the public surface
-is in [UI reference](../reference/src/ui.md).
+is in [UI reference](../reference/ui.md).
 
 ## Mod list (main view)
 

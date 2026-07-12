@@ -291,7 +291,7 @@ dotnet test src/modificus-curator.sln -c Release
 
 ## See also
 
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md): the
-  [Configuration](../../architecture/MODIFICUS-CURATOR.md#configuration) section.
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md): the
+  [Configuration](../architecture/MODIFICUS-CURATOR.md#configuration) section.
 - [general](general.md): the loader that binds this schema (and writes it back).
 - `src/config.example.json`: the sample file.

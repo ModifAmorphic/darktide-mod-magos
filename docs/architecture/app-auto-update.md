@@ -14,7 +14,7 @@ Linux stays on its manual install script:
 Curator does not package Velopack's Linux (AppImage) output there.
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [UI reference](../reference/src/ui.md). This doc covers the architecture and
+> [UI reference](../reference/ui.md). This doc covers the architecture and
 > the why.
 
 ## Architecture
@@ -454,7 +454,7 @@ Then verify:
 
 ## See also
 
-- [UI reference](../reference/src/ui.md): `IAppUpdateService` and
+- [UI reference](../reference/ui.md): `IAppUpdateService` and
   `AppUpdateInfo` public surface, `AppUpdateCheckRunner`, DI registration.
 - [UI architecture](ui-architecture.md): where the self-update notice and the
   Settings "Updates" section sit in the shell, and the shared `Action<Action>`

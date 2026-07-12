@@ -548,7 +548,7 @@ dotnet run   --project src/ui --configuration Release   # app shell window
 
 - `docs/architecture/` -- the Modificus Curator architecture (component model,
   the Relay contract Curator consumes, profiles, launch).
-- `docs/reference/src/` -- per-library API reference for the Modificus
+- `docs/reference/` -- per-library API reference for the Modificus
   Curator backend libraries.
 - [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay) --
   Modificus Relay (architecture, build, game-binary reference, mod
@@ -651,9 +651,9 @@ affects repo structure, build, architecture, or ops, update:
 - **Component-dir `README.md`** (e.g. `src/README.md`): for
   build/dev detail under that component; ensure the root links to it.
 - **`docs/architecture/`** for any architecture change.
-- **`docs/reference/src/`**: per-library API reference. When a Modificus
+- **`docs/reference/`**: per-library API reference. When a Modificus
   Curator library's public surface, key types, or DI registration changes,
-  update its `docs/reference/src/<library>.md` in the same PR.
+  update its `docs/reference/<library>.md` in the same PR.
 
 Then ensure the Modificus Curator build + tests pass
 (`dotnet build`/`dotnet test src/modificus-curator.sln`). **Outdated

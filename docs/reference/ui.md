@@ -370,7 +370,7 @@ is backend-only; this runner owns when the UI fires it. The check flags mods via
 three tiers (the server's `viewerUpdateAvailable`, a mod-level version compare,
 and a latest-file-version confirmation that clears tier-2 false positives
 against the actual latest file); see
-[the update-detection tiers](../rate-limiting-strategy.md#update-detection-tiers).
+[the update-detection tiers](rate-limiting-strategy.md#update-detection-tiers).
 
 ```csharp
 public sealed class UpdateCheckRunner
@@ -455,7 +455,7 @@ countdown tick to drive the disabled button and the `m:ss` countdown tooltip
 (`IAppStateStore.ManualRefreshTimestamps`), seeded at `Start()` and written back
 on every successful fire, so closing and reopening the app does not reset the
 free-refresh budget. See
-[the rate-limiting strategy](../rate-limiting-strategy.md) for the thresholds.
+[the rate-limiting strategy](rate-limiting-strategy.md) for the thresholds.
 
 The runner never blocks on a check beyond the await the manual trigger opts
 into, never surfaces its result (the mod list reads
@@ -488,7 +488,7 @@ under a lock together with the `UpdateStateChanged` event. The download and
 apply steps are user-initiated and DO surface their failures (a checksum
 mismatch or a locked-file error is something the user needs to see), so they
 propagate from those two methods. See
-[app auto-update architecture](../../architecture/app-auto-update.md) for the
+[app auto-update architecture](../architecture/app-auto-update.md) for the
 Windows-only scope, the update source, and the lifecycle interaction.
 
 ```csharp
@@ -759,7 +759,7 @@ Key wiring notes:
   resolved by the IPC router, by which point all dependencies are
   registered). MS DI resolves the last registration for an interface, so
   this supersedes the no-op default registered inside `AddNxm()`. See
-  [nxm reference](nxm.md) + [mod acquisition](../../architecture/mod-acquisition.md).
+  [nxm reference](nxm.md) + [mod acquisition](../architecture/mod-acquisition.md).
 - `UpdateCheckRunner.Start()` and `AppUpdateCheckRunner.Start()` are called
   after the provider is built (best-effort; a wiring failure is logged and
   swallowed, never blocks startup).
@@ -885,13 +885,13 @@ dotnet test src/modificus-curator.sln -c Release
 
 ## See also
 
-- [UI architecture](../../architecture/ui-architecture.md): the shell
+- [UI architecture](../architecture/ui-architecture.md): the shell
   layout, the profile session, the mod list, the update UI, the DMF prompt,
   and the dialog / preferences / i18n design.
-- [App auto-update architecture](../../architecture/app-auto-update.md): the
+- [App auto-update architecture](../architecture/app-auto-update.md): the
   Windows-only self-update flow behind `IAppUpdateService` (Velopack), the
   startup-only check, and the lifecycle interaction.
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md): the
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md): the
   high-level tie-together (component model, the Relay contract Curator
   consumes, profiles, launch).
 - [integrations](integrations.md): the `INexusAuthService`,

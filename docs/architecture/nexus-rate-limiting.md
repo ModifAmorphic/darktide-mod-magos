@@ -164,7 +164,7 @@ calls per download.
 - [Nexus API rate-limiting strategy](../reference/rate-limiting-strategy.md):
   the proactive call-limiting mechanisms (manual throttle, interval floor,
   persisted interval gate) and the budget math.
-- [integrations reference](../reference/src/integrations.md): the
+- [integrations reference](../reference/integrations.md): the
   `INexusClient` surface, the `Response<T>` and `NexusRateLimits` types, and the
   typed `NexusRateLimitException`.
 - [Nexus authentication](nexus-authentication.md): the API-key and OAuth auth

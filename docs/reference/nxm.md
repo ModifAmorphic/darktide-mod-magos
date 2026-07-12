@@ -490,8 +490,8 @@ dotnet publish src/nxm-handler -c Release     # stripped native binary
 
 ## See also
 
-- [Modificus Curator architecture](../../architecture/MODIFICUS-CURATOR.md): the
-  [nxm:// scheme handler](../../architecture/MODIFICUS-CURATOR.md#nxm-scheme-handler)
+- [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md): the
+  [nxm:// scheme handler](../architecture/MODIFICUS-CURATOR.md#nxm-scheme-handler)
   section.
 - [integrations](integrations.md): the GitHub Releases client + the Nexus
   client/auth + the acquisition service that plugs the real mod-download

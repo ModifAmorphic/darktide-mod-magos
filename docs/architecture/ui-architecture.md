@@ -15,7 +15,7 @@ the app self-update surfaces, how the DMF install prompt fires, and how
 dialogs, preferences, and i18n fit together.
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [UI reference](../reference/src/ui.md). This doc covers the
+> [UI reference](../reference/ui.md). This doc covers the
 > architecture and the why.
 
 ## Architecture
@@ -524,7 +524,7 @@ dismiss an in-flight operation.
 
 ## See also
 
-- [UI reference](../reference/src/ui.md): public surface, exact
+- [UI reference](../reference/ui.md): public surface, exact
   signatures, and DI registration for the UI layer.
 - [Modificus Curator architecture](MODIFICUS-CURATOR.md): the high-level
   tie-together (component model, the Relay contract, profiles, launch).

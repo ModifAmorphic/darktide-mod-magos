@@ -13,7 +13,7 @@ bar, no notification system, no download-history panel. On success, the mod
 appears in the profile's mod list.
 
 > Public surface, exact signatures, and DI registration are documented in the
-> [integrations reference](../reference/src/integrations.md). This
+> [integrations reference](../reference/integrations.md). This
 > doc covers the architecture and the why.
 
 ## Architecture
@@ -209,7 +209,7 @@ link.
 
 ## See also
 
-- [integrations reference](../reference/src/integrations.md):
+- [integrations reference](../reference/integrations.md):
   `IModAcquisitionService` public surface, the acquisition flow, the
   `NxmModDownloadHandler`, DI registration, testing.
 - [nxm:// scheme handler](nxm-scheme-handler.md): the plumbing that
