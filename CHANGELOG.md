@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.6.0...v0.7.0) (2026-07-12)
+
+
+### Features
+
+* **ui:** release UI pass (mod-list cleanup, name sync, NXM status, ESC) ([#84](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/84)) ([225e11b](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/225e11b9851c8b95ab4704e0ebb6a748ff654f4a))
+
 ## [0.6.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.5.0...v0.6.0) (2026-07-12)
 
 
