@@ -108,7 +108,8 @@
         enabled. Manual refresh will be available again in {time}.") while
         throttled.
       -->
-      <Panel Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center">
+      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"
+                  Margin="8,0,0,0" VerticalAlignment="Center">
         <Button Classes="icon"
                 Click="RefreshUpdates_Click"
                 IsEnabled="{Binding IsRefreshEnabled}"
@@ -122,14 +123,14 @@
                 Data="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
         </Button>
         <!-- Indeterminate progress while the thorough check runs (multiple API
-             calls, a few seconds). Overlays the refresh button (which stays
-             visible but disabled) via the IsCheckingNow-toggled IsVisible on
-             the spinner. -->
+             calls, a few seconds). Sits beside the (visible but disabled)
+             refresh button; IsVisible=False collapses it out of layout when no
+             check is running so the button stands alone. -->
         <ProgressBar Width="18" Height="18"
                      IsIndeterminate="True"
                      IsVisible="{Binding IsCheckingNow}"
                      VerticalAlignment="Center" />
-      </Panel>
+      </StackPanel>
       <!--
         Auto-sort toggle. Intentionally hidden (IsVisible="False"): the real
         dependency-driven IModOrderResolver lands later. The wiring (the
