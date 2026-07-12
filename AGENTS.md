@@ -254,7 +254,10 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
   mods/          Modificus.Curator.Mods -- the unified mod repository
                         (IModRepository: UUID containers per (source, identity),
                         opaque-ID version subfolders, per-container container.json
-                        manifests, in-memory index rebuilt from a scan, PruneUnreferenced
+                        manifests, in-memory index rebuilt from a scan,
+                        RenameContainer (display-label rename; identity Id +
+                        on-disk directory unchanged; keeps the untracked-name
+                        index consistent for untracked containers), PruneUnreferenced
                         GC at startup) + the version-policy model (ModVersionPolicy:
                         PinnedPolicy/LatestPolicy; PinnedPolicy pins by VersionId, a foreign
                         key to ModVersion.Folder, so the repo is the sole source of truth for
@@ -325,6 +328,15 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         TTL (in-memory, session-scoped), + only ever removes
                         flags (tier-1 viewerUpdateAvailable is authoritative +
                         untouched);
+                        the batch covers EVERY NexusSource mod (Latest AND Pinned),
+                        but Pinned mods are never flagged (the tier flag logic is
+                        Latest-only); the same batch query also returns the current
+                        Nexus mod `name` for every id sent, so a name-sync pass
+                        after the tier logic renames each container whose stored
+                        Name has drifted to match its current Nexus name at zero
+                        extra API cost (the Nexus name wins; identity Id unchanged;
+                        UpdateCheckResult.NamesChanged signals the UI to refresh row
+                        names in place);
                         rate-limit-aware with the all-zero Unknown guard +
                         NexusRateLimitException surfacing; LastResult +
                         CheckCompleted event for the mod-list badges;

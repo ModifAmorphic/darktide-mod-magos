@@ -893,6 +893,59 @@ public sealed class ModListViewModelTests
     }
 
     [Fact]
+    public void CheckCompleted_with_NamesChanged_refreshes_row_names_from_the_repo()
+    {
+        // The name sync piggybacks on the update check. When a result carries
+        // NamesChanged, the list refreshes each affected row's displayed name
+        // from the repository in place (no full Reload). The VM reads the new
+        // name back through the repo by container id.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var nexus = repo.Seed(new NexusSource { ModId = 8 }, "DMF", "1.0");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = nexus.Id, Order = 0, Policy = ModVersionPolicy.Latest });
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var updateCheck = new FakeUpdateCheckService();
+        var vm = TestDoubles.BuildModList(profiles, session, repo, updateCheck: updateCheck);
+        var row = Row(vm, "DMF");
+        Assert.Equal("DMF", row.Name);
+
+        // Simulate the check renaming the container in the repo (the production
+        // UpdateCheckService does this via RenameContainer) + signaling NamesChanged.
+        repo.RenameContainer(nexus.Id, "DMF Remastered");
+        updateCheck.RaiseCheckCompleted(new UpdateCheckResult(
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, false, Thorough: false, NamesChanged: true));
+
+        // The row's displayed name refreshed in place from the repo.
+        Assert.Equal("DMF Remastered", row.Name);
+    }
+
+    [Fact]
+    public void CheckCompleted_without_NamesChanged_leaves_row_names_untouched()
+    {
+        // A result without NamesChanged (the default) does not touch row names,
+        // even if the stored name has drifted: the refresh is gated on the flag.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var nexus = repo.Seed(new NexusSource { ModId = 8 }, "DMF", "1.0");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = nexus.Id, Order = 0, Policy = ModVersionPolicy.Latest });
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var updateCheck = new FakeUpdateCheckService();
+        var vm = TestDoubles.BuildModList(profiles, session, repo, updateCheck: updateCheck);
+        var row = Row(vm, "DMF");
+
+        repo.RenameContainer(nexus.Id, "DMF Remastered");
+        updateCheck.RaiseCheckCompleted(new UpdateCheckResult(
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, false, Thorough: false));
+
+        // The row name is NOT refreshed (NamesChanged defaults to false).
+        Assert.Equal("DMF", row.Name);
+    }
+
+    [Fact]
     public void ReloadAndClearUpdateFlag_clears_the_flag_despite_a_stale_LastResult()
     {
         // After an nxm install/reinstall, Reload alone would re-apply the stale

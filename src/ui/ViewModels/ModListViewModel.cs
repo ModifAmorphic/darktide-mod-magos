@@ -374,8 +374,11 @@ public partial class ModListViewModel : ObservableObject
     /// <summary>
     /// Reads <see cref="IUpdateCheckService.LastResult"/> and applies it to the
     /// list: sets <see cref="IsRateLimited"/> + per-row
-    /// <see cref="ModItemViewModel.UpdateAvailable"/> (matched by container id).
-    /// Called on <see cref="IUpdateCheckService.CheckCompleted"/> + at the end
+    /// <see cref="ModItemViewModel.UpdateAvailable"/> (matched by container id),
+    /// and, when the check renamed any container (the name-sync piggybacks on
+    /// the batch query), refreshes each affected row's displayed name from the
+    /// repository in place (no full reload). Called on
+    /// <see cref="IUpdateCheckService.CheckCompleted"/> + at the end
     /// of <see cref="Reload"/> (so a freshly rebuilt list picks up the last
     /// result without waiting for the next check).
     /// </summary>
@@ -387,6 +390,23 @@ public partial class ModListViewModel : ObservableObject
         if (Mods.Count == 0)
         {
             return;
+        }
+
+        // If the check renamed any containers, refresh each row's displayed name
+        // from the repository in place rather than a full Reload (the rest of the
+        // row's state is current). Targeted per-row so unrelated rows are not
+        // rebuilt.
+        if (result?.NamesChanged == true)
+        {
+            foreach (var row in Mods)
+            {
+                var currentName = _repo.Get(row.ContainerId)?.Name;
+                if (currentName is not null
+                    && !string.Equals(currentName, row.Name, StringComparison.Ordinal))
+                {
+                    row.Name = currentName;
+                }
+            }
         }
 
         // Index the flagged container ids once for an O(1) per-row lookup (the

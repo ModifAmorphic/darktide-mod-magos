@@ -134,7 +134,10 @@ Only authenticated calls to `api.nexusmods.com` count. Per operation:
   latest-file-confirmation tier). The batch query covers all checkable mods in
   one call, so the base cost is constant regardless of profile size; the tier-3
   calls are cached per (mod id, page version, updated-at) so a repeat check for
-  unchanged mods is back to one call. See
+  unchanged mods is back to one call. The batch also returns the current Nexus
+  mod `name` for every id sent; the check renames each container whose stored
+  name has drifted at zero extra API cost (the name rides along on the one
+  batch query). See
   [the update-detection tiers](../reference/rate-limiting-strategy.md#update-detection-tiers).
 - **Mod acquisition (download):** about 3 calls per download
   (`DownloadLinksAsync` + `GetModInfoAsync` + `ListModFilesAsync`). This is

@@ -62,9 +62,12 @@ public partial class ModItemViewModel : ObservableObject
     /// <summary>
     /// The container's display name (joined from the repository by the parent);
     /// shown in the row + used in the remove-confirm message. Empty when the
-    /// container is missing.
+    /// container is missing. Settable + observable so the parent can refresh it
+    /// in place after a check that renamed the container (the name-sync result),
+    /// without rebuilding the row.
     /// </summary>
-    public string Name { get; }
+    [ObservableProperty]
+    private string _name;
 
     /// <summary>
     /// Where this mod came from (Untracked / Nexus / GitHub), joined from the
@@ -306,7 +309,7 @@ public partial class ModItemViewModel : ObservableObject
     {
         _localization = localization;
         ContainerId = containerId;
-        Name = name;
+        _name = name;
         Source = source;
         ActualVersion = actualVersion;
         _enabled = enabled;

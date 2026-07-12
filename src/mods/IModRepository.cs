@@ -128,6 +128,25 @@ public interface IModRepository
         DateTimeOffset? remoteUploadedAt = null);
 
     /// <summary>
+    /// Renames a container's display label (the on-disk
+    /// <c>container.json</c> <c>Name</c> field) and persists the manifest.
+    /// Identity (<see cref="ModContainer.Id"/>) is unchanged: the on-disk
+    /// container directory is keyed by <see cref="ModContainer.Id"/>, so it does
+    /// not move. No-op + returns <c>null</c> when the container is unknown, and a
+    /// no-op returning the unchanged container when the stored name already
+    /// equals <paramref name="newName"/> (ordinal). For an
+    /// <see cref="UntrackedSource"/> container the untracked-name index is kept
+    /// consistent (the old name key is dropped, the new one recorded); for other
+    /// sources the index is untouched (Nexus/GitHub identity is on the source
+    /// record, not the name).
+    /// </summary>
+    /// <param name="containerId">The target container.</param>
+    /// <param name="newName">The new display name.</param>
+    /// <returns>The updated container, or <c>null</c> when the container id is
+    /// unknown.</returns>
+    ModContainer? RenameContainer(Guid containerId, string newName);
+
+    /// <summary>
     /// Removes a version from the container's manifest + deletes its folder
     /// (idempotent: a missing container or folder is a no-op). If the removed
     /// version carried <see cref="ModVersion.IsLatest"/>, the newest remaining

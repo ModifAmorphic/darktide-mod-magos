@@ -460,7 +460,11 @@ free-refresh budget. See
 The runner never blocks on a check beyond the await the manual trigger opts
 into, never surfaces its result (the mod list reads
 `IUpdateCheckService.LastResult` and subscribes to `CheckCompleted`), and
-never lets an unobserved exception escape the threadpool task. A
+never lets an unobserved exception escape the threadpool task. When a result
+carries `NamesChanged` (the check renamed at least one Nexus container to its
+current Nexus name, piggybacking on the batch query at no extra API cost), the
+mod list refreshes each affected row's displayed name from the repository in
+place, without a full reload. A
 fire-and-forget `Task` whose only awaited operation throws must not surface
 that as an unobserved exception; `OperationCanceledException` is swallowed
 silently, anything else is logged.
@@ -777,7 +781,8 @@ No backend library references the UI (the dependency direction is one-way).
   remove (with confirm), auto-sort (identity stub), the add flow (peek,
   collision hard-block, import, add-mod), `CheckCompleted` per-row state,
   `UpdateCommand` success / failure / one-at-a-time / premium gating,
-  `CheckForUpdatesNow`, `IsRateLimited`.
+  `CheckForUpdatesNow`, `IsRateLimited`, and the `NamesChanged` in-place row
+  name refresh (refreshed when the flag is set, untouched when it is not).
 - **`PreferencesViewModelTests`** + **`PreferencesServiceTests`**: the
   Preferences dialog view model and the service that applies theme / font
   scale / language and persists.

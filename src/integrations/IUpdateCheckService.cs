@@ -20,9 +20,20 @@ namespace Modificus.Curator.Integrations;
 /// <para>
 /// <b>Scope.</b> Nexus-only: GitHub is out of scope (no GitHub code
 /// paths anywhere in the check), and Untracked mods have no remote to query.
-/// <see cref="PinnedPolicy"/> mods are frozen by definition, so they are skipped
-/// too. Only <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods are
-/// checked.</para>
+/// <see cref="PinnedPolicy"/> mods are frozen version-wise, so they are never
+/// flagged for an update. The update-FLAG logic (tiers 1/2/3) is scoped to the
+/// <see cref="LatestPolicy"/> + <see cref="NexusSource"/> subset. The name-sync
+/// pass (below) covers EVERY <see cref="NexusSource"/> mod in the profile,
+/// Latest OR Pinned, since the batch query already returns the name for free
+/// and the sync piggybacks on it at zero extra API cost.</para>
+/// <para>
+/// <b>Name sync.</b> The same batch query returns the current Nexus mod
+/// <c>name</c> for every id sent. After the tier logic, each returned name is
+/// compared to the container's stored <see cref="ModContainer.Name"/> and the
+/// container is renamed when they differ (the Nexus name wins; identity
+/// <see cref="ModContainer.Id"/> is unchanged). The result's
+/// <see cref="UpdateCheckResult.NamesChanged"/> flag signals the UI to refresh
+/// row names after a check that renamed at least one container.</para>
 /// <para>
 /// <b>One query, all mods.</b> The v2 <c>modsByUid</c> query takes a batch of
 /// mod UIDs (<c>game_id * 2^32 + mod_id</c>) and returns the update status for
@@ -105,8 +116,9 @@ public interface IUpdateCheckService
 
 /// <summary>
 /// The result of an update check: the mods with an update available, the check
-/// timestamp, whether the check was rate-limited, and whether it was the
-/// thorough path.
+/// timestamp, whether the check was rate-limited, whether it was the
+/// thorough path, and whether the name-sync pass renamed at least one container
+/// (so the UI can refresh the displayed names without a full reload).
 /// </summary>
 /// <param name="Updates">The mods with an update available (flagged by any of the
 /// three tiers: tier 1 <c>viewerUpdateAvailable</c>, tier 2 a version mismatch, or
@@ -125,11 +137,19 @@ public interface IUpdateCheckService
 /// <see cref="IUpdateCheckService.CheckAsync"/>. Both paths run the same v2
 /// batch query (the query covers all mods regardless), so the flag no longer
 /// signals a coverage difference; it is kept for interface compatibility.</param>
+/// <param name="NamesChanged"><c>true</c> when the name-sync pass (which
+/// piggybacks on the batch query at no extra API cost) renamed at least one
+/// Nexus-sourced container to match its current Nexus mod name. The mod-list
+/// view refreshes the affected rows' displayed names in place when this is set,
+/// avoiding a full list reload. Only the normal completion path can set this
+/// <c>true</c>; the short-circuit paths (no auth, no Nexus mods, rate-limited,
+/// failure) leave it <c>false</c>.</param>
 public sealed record UpdateCheckResult(
     IReadOnlyList<ModUpdateInfo> Updates,
     DateTimeOffset CheckedAt,
     bool RateLimited,
-    bool Thorough);
+    bool Thorough,
+    bool NamesChanged = false);
 
 /// <summary>
 /// One mod flagged by an update check. Mirrors the identifying fields the

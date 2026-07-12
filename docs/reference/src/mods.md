@@ -31,6 +31,7 @@ public interface IModRepository
     ModContainer? FindUntrackedByName(string name);   // Untracked identity is the container Name
     ModContainer CreateContainer(ModSource source, string name);
     ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder, DateTimeOffset? remoteUploadedAt = null);
+    ModContainer? RenameContainer(Guid containerId, string newName);   // display label only; Id unchanged, directory does not move
     void RemoveVersion(Guid containerId, string versionFolder);
     void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
     string GetVersionFolderPath(Guid containerId, string versionFolder);  // derived, never stored
@@ -67,6 +68,15 @@ public interface IModRepository
   is non-destructive (the old version survives a mid-extraction CRC/I/O
   failure). Orphan temps from a process crash are swept at each `AddVersion` +
   at index build (`RebuildIndex`).
+- `RenameContainer(containerId, newName)`: renames the container's display
+  label (the on-disk `container.json` `Name` field) + persists the manifest.
+  Identity `Id` is unchanged: the on-disk container directory is keyed by `Id`,
+  so it does not move. No-op returning the unchanged container when the stored
+  name already equals `newName` (ordinal); returns `null` when the container id
+  is unknown. For an `UntrackedSource` container the untracked-name index is
+  kept consistent; for other sources the index is untouched (Nexus/GitHub
+  identity is on the source record, not the name). Driven by the update-check
+  name sync (Nexus containers).
 - `RemoveVersion(containerId, versionFolder)`: idempotent. Promotes the newest
   remaining version to `IsLatest` if the removed one carried it.
 - `PruneUnreferenced(referenced)`: GC. Drops every `(containerId, versionFolder)`
