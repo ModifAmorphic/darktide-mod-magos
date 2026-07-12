@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.5.0...v0.6.0) (2026-07-12)
+
+
+### Features
+
+* **ui:** add proactive Nexus API rate limiting ([#81](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/81)) ([1c6b783](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/1c6b78346027ddc239b6dace299f5f40ce20e0df))
+
+
+### Bug Fixes
+
+* **ci:** use camelCase field names in update-manifest gh cli queries ([#79](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/79)) ([3d1b31d](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/3d1b31df3986ec7d82e587f97a32375e4579a833))
+
 ## [0.5.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.4.0...v0.5.0) (2026-07-11)
 
 
