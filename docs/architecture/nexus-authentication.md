@@ -175,18 +175,18 @@ localization through the existing `LocalizationService`.
 
 ## OAuth client_id
 
-`NexusOAuthConstants.ClientId` is the build-time const `"modificus-curator"` (a
-plain descriptive string; MO2 ships `"modorganizer2"`, NMA ships `"nma"`). It
-is **not config and not an env var**. Curator has no env-var pattern (config is
-file-based via `IConfigLoader`); introducing one just for the client_id is
-unjustified. RFC 8252 loopback redirects require no client registration.
+`NexusOAuthConstants.ClientId` is the build-time const `"modificus-curator"`,
+a **development placeholder**. Per Nexus's API Acceptable Use Policy, a
+public-facing application is registered by contacting support with a testing
+build; Nexus then issues a "slug" for the SSO, and that slug becomes the
+client_id. It is **not config and not an env var** (Curator has no env-var
+pattern; config is file-based via `IConfigLoader`); the slug lands as a code
+change at registration.
 
-**Registration with Nexus is pending for live OAuth.** The client_id string is
-chosen and shipped; end-to-end live OAuth depends on Nexus-side recognition of
-the client (the loopback flow itself works regardless, since RFC 8252 loopback
-redirects require no client registration, but the live authorize endpoint does
-not currently recognize the client). API key is the validated path; OAuth is
-implemented and tested against stubbed endpoints.
+**Registration with Nexus is pending for live OAuth.** Until then the live
+authorize endpoint will not recognize the client; the API-key path is the
+validated auth method, and OAuth is implemented and tested against stubbed
+endpoints.
 
 ## App-identification headers and rate limits
 
