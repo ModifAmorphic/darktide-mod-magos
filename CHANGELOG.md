@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.7.0...v0.7.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **steam:** normalize the registry-read install path for Windows ([f1acafa](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/f1acafa87dd0f4babba577e38825b0881afdc9b3))
+* **steam:** normalize the registry-read install path for Windows ([#88](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/88)) ([f1acafa](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/f1acafa87dd0f4babba577e38825b0881afdc9b3))
+
 ## [0.7.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.6.0...v0.7.0) (2026-07-12)
 
 
