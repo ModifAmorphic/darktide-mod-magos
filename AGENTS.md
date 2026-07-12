@@ -215,7 +215,17 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           closes it on completion; `DialogTitleBar.ShowClose`
                           (a new styled property) hides the spinner's close
                           button so the user cannot dismiss an in-flight
-                          download). The shell's `ManageProfiles` command
+                          download). Modal dialogs close on ESC via the opt-in
+                          attached behavior `EscapeClosesBehavior.IsEnabled`
+                          (ui/Behaviors/, applied per-dialog; ESC calls
+                          `Window.Close()`, the same path as the title-bar X so
+                          result/cancel contracts are unchanged): applied to
+                          ConfirmDialog, ImportModDialog,
+                          DiscoveryEscapeHatchDialog, IntegrationsWindow,
+                          ManageProfilesWindow, PreferencesWindow, SettingsWindow;
+                          ProgressDialog (non-closeable) + the main window opt
+                          out, so ESC never dismisses a spinner or exits the app.
+                          The shell's `ManageProfiles` command
                           brackets its `Profiles = ...` swap + `SelectedProfile
                           = ResolveActive()` re-sync under `_syncing = true`:
                           replacing the dropdown's `ItemsSource` causes the

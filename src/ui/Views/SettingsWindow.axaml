@@ -3,6 +3,7 @@
         xmlns:vm="using:Modificus.Curator.UI.ViewModels"
         xmlns:views="using:Modificus.Curator.UI.Views"
         xmlns:settings="using:Modificus.Curator.UI.Settings"
+        xmlns:behaviors="using:Modificus.Curator.UI.Behaviors"
         x:Class="Modificus.Curator.UI.Views.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
         Title="{ReflectionBinding [Settings_Title], Source={StaticResource Loc}}"
@@ -12,6 +13,7 @@
         MinWidth="480" MinHeight="460"
         CanResize="True"
         ShowInTaskbar="False"
+        behaviors:EscapeClosesBehavior.IsEnabled="True"
         WindowStartupLocation="CenterOwner">
 
   <!--
