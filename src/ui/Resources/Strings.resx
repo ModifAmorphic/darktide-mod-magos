@@ -377,17 +377,17 @@
     <value>Open this mod's source page</value>
     <comment>Tooltip on the source badge when it doubles as a link to the mod's remote page (Nexus mod page or GitHub repo).</comment>
   </data>
-  <data name="ModRow_UpdateAvailableTooltip" xml:space="preserve">
-    <value>An update is available for this mod</value>
-    <comment>Tooltip on the drawn marker next to the source badge when the update check flagged this container.</comment>
-  </data>
-  <data name="ModRow_UpdateAvailable" xml:space="preserve">
-    <value>Update available</value>
-    <comment>Readable text label next to the drawn dot on a flagged row's source badge, so the marker is discoverable without hovering the tooltip.</comment>
-  </data>
-  <data name="ModRow_UpdateTooltip" xml:space="preserve">
+  <data name="ModRow_UpdateTooltipInstall" xml:space="preserve">
     <value>Update this mod to the latest release</value>
-    <comment>Tooltip on the per-row Update button (premium-only; re-downloads + re-extracts the latest MAIN file).</comment>
+    <comment>Tooltip on the stable update-action button for a Premium user when an update is available (click installs directly).</comment>
+  </data>
+  <data name="ModRow_UpdateTooltipOpenFiles" xml:space="preserve">
+    <value>An update is available. Open the Nexus files page to download it</value>
+    <comment>Tooltip on the stable update-action button for a regular or unknown Premium user when an update is available (click opens the files page; Premium is required for a direct install).</comment>
+  </data>
+  <data name="ModRow_UpdateTooltipNoUpdate" xml:space="preserve">
+    <value>Up to date</value>
+    <comment>Tooltip on the stable update-action button when no update is available (the button is disabled).</comment>
   </data>
   <data name="ModList_RateLimited" xml:space="preserve">
     <value>Update check limited</value>
@@ -412,6 +412,22 @@
   <data name="Update_FailedMessage" xml:space="preserve">
     <value>Could not update '{0}'.</value>
     <comment>Prefix of the per-mod update-failure alert body. {0} is the mod's display name. The error detail follows.</comment>
+  </data>
+  <data name="ModList_OpenFilesFailedTitle" xml:space="preserve">
+    <value>Could not open the files page</value>
+    <comment>Title of the alert shown when the regular-user update action (open the Nexus files page) fails to launch the browser.</comment>
+  </data>
+  <data name="ModList_OpenFilesFailedMessage" xml:space="preserve">
+    <value>Could not open the Nexus files page for '{0}'. Visit it manually: {1}</value>
+    <comment>Body of the launcher-failure alert. {0} is the mod's display name; {1} is the files-page URL (for manual copy).</comment>
+  </data>
+  <data name="ModList_AutoUpdateFailedTitle" xml:space="preserve">
+    <value>Some automatic updates failed</value>
+    <comment>Title of the aggregated alert shown when one or more automatic-update installs failed during a batch.</comment>
+  </data>
+  <data name="ModList_AutoUpdateFailedSummary" xml:space="preserve">
+    <value>Could not automatically update: {0}</value>
+    <comment>Body of the aggregated automatic-update failure alert. {0} is the comma-separated list of failed mod names.</comment>
   </data>
 
   <!-- ============================================================ -->
@@ -789,6 +805,18 @@
   <data name="Integrations_AutoUpdateInterval" xml:space="preserve">
     <value>Interval (minutes)</value>
     <comment>Label next to the periodic update-check interval input in the Integrations dialog.</comment>
+  </data>
+  <data name="Integrations_AutomaticUpdates" xml:space="preserve">
+    <value>Install updates automatically (Premium)</value>
+    <comment>Label next to the opt-in automatic mod-update installation toggle in the Integrations dialog. Premium-only.</comment>
+  </data>
+  <data name="Integrations_AutomaticUpdatesTooltip" xml:space="preserve">
+    <value>When on, flagged Nexus mod updates are installed automatically after a check runs. Only verified Premium accounts can enable this.</value>
+    <comment>Tooltip on the automatic-updates toggle when the account is verified Premium.</comment>
+  </data>
+  <data name="Integrations_AutomaticUpdatesPremiumRequired" xml:space="preserve">
+    <value>Automatic installation requires a verified Premium Nexus account.</value>
+    <comment>Tooltip on the automatic-updates toggle when the account is regular or unverified (shown via ShowOnDisabled while the checkbox is disabled).</comment>
   </data>
   <data name="Integrations_NxmHeader" xml:space="preserve">
     <value>Nexus download links</value>

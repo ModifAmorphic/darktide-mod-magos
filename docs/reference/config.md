@@ -91,6 +91,7 @@ public sealed class NexusConfig
     public NexusOAuthTokens? OAuth { get; set; }                 // used when AuthMethod == OAuth
     public bool AutoUpdateCheckEnabled { get; set; } = true;
     public int AutoUpdateCheckIntervalMinutes { get; set; } = 10;
+    public bool AutomaticUpdatesEnabled { get; set; }            // opt-in Premium auto-install, default false
     public bool DmfAuthPromptShown { get; set; }
 }
 
@@ -147,6 +148,16 @@ Nexus fields:
   applied on save (the Integrations dialog) + at tick time (the runner). The
   5-minute floor is a Nexus API acceptable-use compliance measure (at 5 minutes
   the periodic check tops out at 288 calls/day).
+- `AutomaticUpdatesEnabled`: whether Premium accounts have flagged mod updates
+  installed automatically after an update check runs. `false` by default
+  (opt-in). Independent of `AutoUpdateCheckEnabled`: turning this on never
+  requires periodic checking to be on (startup + switch + manual checks still
+  drive it), and changing the periodic-check toggle never clears a configured
+  `true` here. Runtime execution additionally requires a fresh verified Premium
+  account, so a configured `true` is preserved (stays checked + visible but
+  disabled in the Integrations dialog) if Premium later becomes unavailable,
+  while no automatic install runs. Surfaced as a checkbox in the Integrations
+  "Update checks" section, enabled only for a verified Premium account.
 - `DmfAuthPromptShown`: gates the DMF (Darktide Mod Framework) install prompt
   that fires the first time Nexus auth transitions from `None` to configured.
   `false` by default; the DMF prompt coordinator flips it to `true` after

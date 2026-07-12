@@ -32,8 +32,8 @@ dialogs, preferences, and i18n fit together.
 │  │ ModListView (the active profile's mod list; drag-and-drop target)   │ │
 │  │   header: title · rate-limit notice · refresh ·                  │ │
 │  │           auto-sort · Add split button (archive / folder)           │ │
-│  │   rows:   name · source badge + update marker · enabled · policy ·  │ │
-│  │           update button / progress · up · down · remove             │ │
+│  │   rows:   name · progress + source badge · enabled · policy ·        │ │
+│  │           update-action cell (button) · up · down · remove            │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 │  ┌─ Status strip ──────────────────────────────────────────────────────┐ │
 │  │ Drawn Ellipse (running / stopped) · GameRunningText · LaunchStatusNote│ │
@@ -255,87 +255,120 @@ the `CommandParameter`. This mirrors the established
 
 ## The update UI
 
-The mod list consumes `IUpdateCheckService` for update badges and the
-per-mod update button. The check itself lives in Integrations (see
-[mod acquisition](mod-acquisition.md) and
+The mod list consumes `IUpdateCheckService` + `IUpdateStateStore` for update
+flags and the per-row update-action button. The check itself lives in
+Integrations (see [mod acquisition](mod-acquisition.md) and
 [Nexus API rate limiting](nexus-rate-limiting.md)); the UI only fires it,
-reads its result, and renders.
+reads the persisted state, and renders.
 
-### Reading the result
+### Reading the result (profile-scoped + persisted)
 
-`ModListViewModel.OnUpdateCheckCompleted` re-applies
-`IUpdateCheckService.LastResult` to the rows. The handler is marshaled to the
-UI thread via an injected `invokeOnUi` seam (`Dispatcher.UIThread.Post` in
-production) because `CheckCompleted` fires on the check's completing
-threadpool thread and the handler iterates the UI-bound `Mods` collection.
+Per-row update flags are the profile-scoped known-update state held in
+`IUpdateStateStore` (backed by `IAppStateStore.KnownUpdates` in
+`app-state.json`), NOT the single in-memory `IUpdateCheckService.LastResult`.
+The check service records each authoritative outcome through the store at
+publish time; `ModListViewModel` reads the store on reload, on profile switch,
+after an acknowledgement, and on `CheckCompleted`. So a restart inside the
+interval gate shows prior flags before any API call, and a result from one
+profile never bleeds into another.
 
-The application is idempotent and safe to call on every completion, including
-the no-auth, no-checkable-mods, and failure short circuits. Per-row
-`UpdateAvailable` is set by matching `LastResult.Updates` on `ContainerId`
-  (indexed once into a `HashSet` for an O(1) per-row lookup). One list-level
-  flag also derives from the result:
+`ModListViewModel.OnUpdateCheckCompleted` re-hydrates from the store (the store
+was just updated by the check service). The handler is marshaled to the UI
+thread via an injected `invokeOnUi` seam (`Dispatcher.UIThread.Post` in
+production) because `CheckCompleted` fires on the check's completing threadpool
+thread and the handler iterates the UI-bound `Mods` collection. The application
+is idempotent. One list-level flag still derives from the in-memory last result:
 
 - `IsRateLimited`: the last check was rate-limited. Drives the header
-  "check incomplete" notice.
+  "check incomplete" notice. (This is a transient session-only signal; it does
+  not need to persist and it must not erase known flags.)
 
 ### The premium gate
 
 `IsPremiumUser` is read once at construction via
-`INexusAuthService.GetCurrentStateAsync()`, fire-and-forget. The read hits
+`INexusAuthService.GetCurrentStateAsync()`, fire-and-forget, and pushed down to
+each row so the per-row tooltip and click behavior reflect it. The read hits
 the network, so blocking the UI-thread constructor on it would stall startup;
 the result lands sub-second and flips the flag. There is no mid-session
 refresh (re-checking on Integrations dialog close would burn an API call each
-time; a user signing in mid-session needs a restart for the buttons to
-appear).
+time; a user signing in mid-session needs a restart for the click behavior to
+switch to in-app install).
 
 ### The per-mod Update command
 
-`Update(row)` is premium-only and one-at-a-time:
+`Update(row)` branches on the verified Premium state:
 
-- Defense: no-op when there is no active profile, another update is in flight
-  (`AnyRowUpdating`), the row is not Nexus plus Latest (`IsNexusLatest`), no
-  update is flagged (`UpdateAvailable`), the user is not premium
-  (`IsPremiumUser`), or the row has no `NexusModId`.
-- Sets `AnyRowUpdating` and `row.IsUpdating`, then calls
+- **Premium:** `UpdatePremiumAsync` acquires the global `UpdateCoordinator`
+  (one install at a time, shared with the automatic updater; a second click
+  while an install runs is a clean no-op), then calls
   `IModAcquisitionService.AcquireLatestNexusAsync(gameDomain, modId)` (the
   premium / auth-only path). The repository's `AddVersion` extracts into a
-  sibling temp and atomically swaps on success, so a mid-update failure
-  leaves the existing version intact.
-- On success: reload so the new version and the fresh `ImportedAt` show, then
-  clear the row's marker immediately (the stale `LastResult` would re-flag
-  it), then fire a fresh check so the stale result is replaced.
-- On failure: a user-facing alert.
-- The finally block clears `row.IsUpdating` and `AnyRowUpdating` (no stuck
-  state).
+  sibling temp and atomically swaps on success, so a mid-update failure leaves
+  the existing version intact. On success it acknowledges the install
+  (`IUpdateStateStore.AcknowledgeInstall`, clearing the persisted known-update
+  entry immediately, with no extra API check) and reloads. On failure it
+  surfaces a user-facing alert. The finally block clears `row.IsUpdating` and
+  releases the coordinator.
+- **Regular / unknown:** `OpenFilesPage` opens the mod's Nexus files page in
+  the user's browser via an injectable external-launcher seam. A launch failure
+  surfaces a user-facing fallback alert (with the URL for manual copy) rather
+  than being swallowed.
+
+Defense: no-op when there is no active profile, the row is not Nexus plus
+Latest (`IsNexusLatest`), no update is flagged (`UpdateAvailable`), or the row
+has no `NexusModId`.
+
+### The automatic-update service
+
+`IAutomaticUpdateService` is chained directly from `UpdateCheckRunner` after
+each check completes (the runner captures the exact result, not a potentially
+raced `LastResult`). It runs only when the result's outcome is authoritative
+`Success` with updates, `NexusConfig.AutomaticUpdatesEnabled` is on, the active
+profile still matches, and a fresh `GetCurrentStateAsync` returns
+`IsPremium == true` (the Premium request fires ONLY when the gates pass). It
+installs sequentially under the `UpdateCoordinator`; per-mod revalidation gates
+each entry, a profile switch stops the batch, per-mod failures are isolated and
+aggregated into one alert, successful installs acknowledge immediately, and a
+fully successful batch is silent beyond the per-mod progress indication. The
+service raises `ModUpdateProgress` per mod (active=true before the acquisition,
+active=false from the per-mod finally) so `ModListViewModel` can show the
+spinner on the currently installing row; it reloads after the batch via the
+service's `UpdatesApplied` event.
 
 ### The manual "check now" affordance
 
 `CheckForUpdatesNow` routes through `UpdateCheckRunner.CheckNowAsync()` so the
 runner stays the single owner of "fire a check" logic and uses the thorough
-path (`IUpdateCheckService.CheckThoroughAsync`) that also catches mods outside
-the Month window. `IsCheckingNow` is set before the await and cleared in the
-finally block; it drives the header refresh button's enabled state and an
-indeterminate `ProgressBar` that replaces the refresh icon for the duration.
-The existing `CheckCompleted` subscription re-applies the result when it
-lands.
+path (`IUpdateCheckService.CheckThoroughAsync`). `IsCheckingNow` is set before
+the await and cleared in the finally block; it drives the header refresh
+button's enabled state and an indeterminate `ProgressBar`. The await now also
+covers the chained `IAutomaticUpdateService` batch, so the manual spinner stays
+active through the installations. The existing `CheckCompleted` subscription
+re-hydrates from the store when the result lands.
 
 ### View affordances
 
 - The source badge is a `HyperlinkButton` styled as a pill, with
   `NavigateUri` set to the row's `SourceUrl` (the mod's remote page; null for
-  untracked, which the `HyperlinkButton` treats as a no-op click).
-- The update-available marker is a drawn `<Ellipse>` plus a `HyperlinkButton`
-  to the mod's Nexus files tab (`UpdatePageUrl`, the mod page with
-  `?tab=files`), so the user's instinct to click the marker lands on the
-  files page where the new release lives. Both show only when
-  `UpdateAvailable` is set.
-- The per-mod Update button is a drawn download-arrow `<Path>` plus an
-  indeterminate `ProgressBar` (toggled by `IsUpdating`). The button's
-  `IsVisible` is a `MultiBinding` over `BoolAllConverter` that ANDs the row's
-  `CanShowUpdateButton` (`IsNexusLatest && UpdateAvailable && !IsUpdating`)
-  with the parent's `IsPremiumUser`. The button's `IsEnabled` binds directly
-  to the parent's pre-computed `IsUpdateEnabled` (`IsPremiumUser &&
-  !AnyRowUpdating`).
+  untracked, which the `HyperlinkButton` treats as a no-op click). Immediately
+  left of the badge, an indeterminate `ProgressBar` (visible only while the
+  row's `IsUpdating` is true) shows per-row update activity in the former
+  update-status area.
+- The stable update-action cell is a fixed-width `Panel` reserved on every row
+  so later controls never shift. For Nexus + Latest rows it holds the
+  update-action button; for Pinned Nexus, GitHub, and Untracked rows the cell
+  stays reserved but empty. The button shows for Nexus + Latest rows regardless
+  of account tier and regardless of whether an update is available, and it
+  stays visible while a row is updating (disabled via `UpdateActionEnabled`,
+  which includes `!IsUpdating`); the progress affordance lives in the
+  source-badge area, so the action cell never shifts during start/end of an
+  update. No update: disabled, neutral download arrow, "Up to date" tooltip.
+  Update available: enabled, accent-blue download arrow, with the tooltip
+  distinguishing Premium install vs. open files page. The button's `IsVisible`
+  binds to the row's `CanShowUpdateAction` (`IsNexusLatest`) and `IsEnabled` to
+  `UpdateActionEnabled` (`UpdateAvailable && !IsUpdating && (!IsPremiumUser ||
+  !AnyRowUpdating)`), both computed on the row so no parent-walk MultiBinding
+  is needed.
 
 ## The app self-update UI
 

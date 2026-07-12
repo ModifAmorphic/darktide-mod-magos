@@ -447,7 +447,8 @@ public sealed record UpdateCheckResult(
     DateTimeOffset CheckedAt,
     bool RateLimited,
     bool Thorough,
-    bool NamesChanged = false);
+    bool NamesChanged = false,
+    CheckOutcome Outcome = CheckOutcome.Failed);
 
 public sealed record ModUpdateInfo(
     Guid ContainerId,
@@ -455,6 +456,8 @@ public sealed record ModUpdateInfo(
     string ModName,
     string CurrentVersion,
     DateTimeOffset? LatestUpdateAt);
+
+public enum CheckOutcome { Failed, Success, NoAuth, NoNexusMods, RateLimited }
 ```
 
 - `CheckAsync(profileId)`: the periodic check (see flow below). Queries the v2
@@ -474,15 +477,20 @@ public sealed record ModUpdateInfo(
   here). Kept for interface compatibility; both paths run the same query, so
   the flag no longer signals a coverage difference.
 - `LastResult`: the last check result, or null before the first check. Holds
-  the most recent result regardless of which method produced it. The mod-list
-  UI reads this to render badges without awaiting. Written under a lock
-  alongside the `CheckCompleted` invocation so an event subscriber observes the
-  result that was just published; reads are lock-free (reference assignment is
-  atomic).
+  the most recent result regardless of which method produced it. Kept for
+  compatibility (the rate-limit notice reads it); the per-row update flags no
+  longer read it. Written under a lock alongside the `CheckCompleted` invocation
+  + the persisted-state recording.
 - `CheckCompleted`: raised (on the completing thread) exactly once per
   `CheckAsync` / `CheckThoroughAsync` call (including the no-auth / rate-limited
   / failure short circuits) with the same result that was just set on
-  `LastResult`.
+  `LastResult` + recorded through the update-state store.
+- `Outcome`: the authoritative outcome of the check. `Success` is the only
+  outcome that authoritatively replaces a profile's persisted known-update
+  state (including clearing it when the API reports no updates); `NoNexusMods`
+  clears it (local state proves no applicable Nexus update); `NoAuth`,
+  `RateLimited`, and `Failed` preserve prior state. The UI-layer automatic-update
+  service gates execution on `Outcome == Success` with updates.
 - `NamesChanged`: `true` when the name-sync pass renamed at least one
   container. The mod-list UI refreshes the affected rows' displayed names in
   place when this is set. Only the normal completion path can set it `true`;
@@ -560,6 +568,43 @@ the `Thorough` flag on the result).
 9. **Return + publish.** Set `LastResult`, raise `CheckCompleted` (under the
    lock), return the result.
 
+### Update-state store
+
+`IUpdateStateStore` owns the persistence rules for profile-scoped "known update
+available" knowledge: when a fresh authoritative result replaces (or clears) a
+profile's state, when prior state must be preserved, how to acknowledge a
+successful local version change, and how to hydrate persisted state for the
+current profile while filtering out stale entries.
+
+```csharp
+public interface IUpdateStateStore
+{
+    void RecordResult(Guid profileId, UpdateCheckResult result);
+    void AcknowledgeInstall(Guid profileId, Guid containerId);
+    IReadOnlyCollection<Guid> GetKnownUpdateContainerIds(Guid profileId);
+}
+```
+
+- `RecordResult`: applies the replacement rules based on the result's
+  `Outcome`. `Success` replaces that profile's snapshot with the result's
+  flagged mods (clearing when the API reports no updates); `NoNexusMods` clears
+  it; `NoAuth`, `RateLimited`, and `Failed` preserve prior state. Called by
+  `UpdateCheckService` after every check completes (inside the publish lock).
+- `AcknowledgeInstall`: removes a single profile/container entry immediately.
+  Called after a successful local version change (manual Premium update,
+  automatic update, nxm acquisition) so a just-installed version clears its own
+  flag without an extra API check.
+- `GetKnownUpdateContainerIds`: reads the persisted snapshots for a profile,
+  filters out stale ones (removed / pinned / source-changed / version-changed
+  since the flag was recorded), writes the filtered set back (self-heal), and
+  returns the container ids that remain flagged. The UI calls this on reload +
+  on profile switch + after an acknowledgement + after a check completes.
+
+The persisted shape is `KnownUpdateSnapshot` (in General; a plain serializable
+DTO) backed by `IAppStateStore.KnownUpdates` (a profile-keyed map in
+`app-state.json`). Restored/persisted data is never re-published as a fresh
+authoritative result; the UI reads it directly to render flags.
+
 ### UI wiring (`UpdateCheckRunner`)
 
 The triggers that fire the checks live in `UpdateCheckRunner` in `ui/Session/`,
@@ -573,10 +618,13 @@ the periodic timer (every `AutoUpdateCheckIntervalMinutes` when
 `AutoUpdateCheckEnabled` is on; the only gated trigger). A fourth trigger, the
 manual "check now" affordance on the mod list, fires `CheckThoroughAsync` via an
 awaitable `CheckNowAsync()` (the mod-list VM awaits it to drive an
-`IsCheckingNow` spinner). Registered + started from `CuratorComposition` after
-the provider is built (best-effort: a wiring failure is logged + swallowed,
-never blocks startup). The mod-list UI subscribes to `CheckCompleted` + reads
-`LastResult`.
+`IsCheckingNow` spinner; the await now also covers the chained
+`IAutomaticUpdateService` batch, so the manual spinner stays active through the
+installations). Registered + started from `CuratorComposition` after the
+provider is built (best-effort: a wiring failure is logged + swallowed,
+never blocks startup). The mod-list UI subscribes to `CheckCompleted` and reads
+the profile-scoped `IUpdateStateStore` (not `LastResult`) to render per-row
+update flags.
 
 ## DI registration
 
@@ -602,8 +650,11 @@ Registers (alongside the existing GitHub typed HTTP client):
   plain `HttpClient` from the factory for the CDN download).
 - `IUpdateCheckService` -> `UpdateCheckService` (singleton; the Nexus-only
   update check. Depends on `INexusClient` + `IProfileService` + `IModRepository`
-  + `IConfigLoader`; the Integrations -> Profiles project reference exists for
-  this service).
+  + `IConfigLoader` + `IUpdateStateStore`; the Integrations -> Profiles project
+  reference exists for this service).
+- `IUpdateStateStore` -> `UpdateStateStore` (singleton; the profile-scoped
+  known-update persistence rules over `IAppStateStore.KnownUpdates` + the live
+  profile/repository for hydration self-heal).
 
 The OAuth factory's token store + the service's token store are the SAME
 `NexusOAuthTokenStore` instance (matches production wiring). The store depends

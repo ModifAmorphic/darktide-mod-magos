@@ -112,28 +112,53 @@ public partial class ModItemViewModel : ObservableObject
     /// <summary>
     /// Whether the update check flagged this container as having a newer release
     /// on Nexus than the imported version. Set by the parent
-    /// <see cref="ModListViewModel"/> from
-    /// <c>IUpdateCheckService.LastResult.Updates</c> (matched by
-    /// <see cref="ContainerId"/>) on reload + on the
-    /// <c>CheckCompleted</c> event. Drives the drawn update-available marker on
-    /// the source badge + (combined with premium + Nexus + Latest) the per-row
-    /// Update button's visibility. Always <c>false</c> for Pinned / Untracked /
-    /// GitHub rows (the update check skips them).
+    /// <see cref="ModListViewModel"/> from the profile-scoped known-update state
+    /// (persisted across restarts) on reload + on every
+    /// <c>CheckCompleted</c>. Drives the stable update-action button's enabled
+    /// state + the accent-blue download arrow. Always <c>false</c> for Pinned /
+    /// Untracked / GitHub rows (the update check skips them).
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CanShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(UpdateActionEnabled))]
+    [NotifyPropertyChangedFor(nameof(UpdateActionTooltip))]
     private bool _updateAvailable;
 
     /// <summary>
-    /// Whether the row is currently running a one-click update (the parent's
-    /// <c>UpdateCommand</c> set it + <c>AnyRowUpdating</c> on the parent). While
-    /// true, the row shows an indeterminate progress affordance in place of the
-    /// Update button + every other row's Update button is disabled (one update
-    /// at a time). Cleared in the command's finally block on success or failure.
+    /// Whether the row is currently running an update install (the parent's
+    /// <c>UpdateCommand</c> set it + the global coordinator's busy flag). While
+    /// true, the row shows an indeterminate progress affordance in the
+    /// source-badge area (immediately left of the badge), and the update-action
+    /// button is disabled via <see cref="UpdateActionEnabled"/>. The button
+    /// itself stays visible in its fixed cell. Cleared when the install
+    /// completes (success or failure).
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CanShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(UpdateActionEnabled))]
     private bool _isUpdating;
+
+    /// <summary>
+    /// Whether the Nexus account was verified Premium. Pushed down by the parent
+    /// (read once at construction). Drives the update action's click behavior
+    /// (Premium -> in-app install; regular/unknown -> open the Nexus files page)
+    /// and the tooltip. The button itself shows for Nexus + Latest rows
+    /// regardless of premium; only the click behavior + tooltip differ.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(UpdateActionEnabled))]
+    [NotifyPropertyChangedFor(nameof(UpdateActionTooltip))]
+    private bool _isPremiumUser;
+
+    /// <summary>
+    /// Whether any row (or the automatic updater) is currently running an
+    /// install. Pushed down by the parent so the per-row enabled state can reflect
+    /// the global "one install at a time" coordination without a parent walk in
+    /// the binding. Premium clicks are disabled while this is true (the
+    /// coordinator would reject a second concurrent install); regular/unknown
+    /// clicks (which open a files page, no install) stay enabled.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(UpdateActionEnabled))]
+    private bool _anyRowUpdating;
 
     /// <summary>
     /// The ComboBox selection for the policy editor (0 = Latest, 1 = Pinned),
@@ -172,6 +197,50 @@ public partial class ModItemViewModel : ObservableObject
     /// driving the inline version dropdown's visibility.
     /// </summary>
     public bool IsPinned => PolicyChoice == PolicyPinned;
+
+    /// <summary>
+    /// Whether the stable update-action button should show for this row: the row
+    /// is Nexus-sourced AND on the <see cref="LatestPolicy"/>. Pinned Nexus,
+    /// GitHub, and Untracked rows do not show the button (their reserved
+    /// update-action cell stays fixed-width but empty). The button stays visible
+    /// while a row is updating (it is disabled via <see cref="UpdateActionEnabled"/>,
+    /// which includes <c>!IsUpdating</c>); the indeterminate progress affordance
+    /// shows in the source-badge area, not in the action cell.
+    /// </summary>
+    public bool CanShowUpdateAction => IsNexusLatest;
+
+    /// <summary>
+    /// Whether the stable update-action button is enabled. A Premium user's
+    /// button is enabled only when an update is available and no other install is
+    /// running globally (one install at a time). A regular/unknown user's button
+    /// is enabled whenever an update is available (the click opens the Nexus
+    /// files page, which needs no install coordination). No update -> disabled.
+    /// </summary>
+    public bool UpdateActionEnabled =>
+        UpdateAvailable && !IsUpdating && (!IsPremiumUser || !AnyRowUpdating);
+
+    /// <summary>
+    /// The localized tooltip for the stable update-action button, distinguished by
+    /// the row's state so the affordance is discoverable without clicking:
+    /// Premium + update available -> "install directly"; regular/unknown + update
+    /// available -> "open the Nexus files page"; no update -> "up to date".
+    /// Unsupported rows (Pinned / GitHub / Untracked) never show the button, so no
+    /// tooltip applies there.
+    /// </summary>
+    public string UpdateActionTooltip
+    {
+        get
+        {
+            if (!UpdateAvailable)
+            {
+                return _localization["ModRow_UpdateTooltipNoUpdate"];
+            }
+
+            return IsPremiumUser
+                ? _localization["ModRow_UpdateTooltipInstall"]
+                : _localization["ModRow_UpdateTooltipOpenFiles"];
+        }
+    }
 
     /// <summary>
     /// The source badge text (localized): "Local" / "Nexus #{id}" /
@@ -229,23 +298,13 @@ public partial class ModItemViewModel : ObservableObject
 
     /// <summary>
     /// Whether the row is both Nexus-sourced AND on the <see cref="LatestPolicy"/>
-    /// (the conjunction the update check requires). The Update button's effective
-    /// visibility binds to this AND <see cref="UpdateAvailable"/> AND the list
-    /// VM's <c>IsPremiumUser</c>. Pinned / Untracked / GitHub rows are always
-    /// <c>false</c>, so the Update button never shows for them.
+    /// (the conjunction the update check requires). The stable update-action
+    /// button's visibility binds to <see cref="CanShowUpdateAction"/> (which adds
+    /// <c>!IsUpdating</c>); Pinned / Untracked / GitHub rows are always
+    /// <c>false</c>, so the button never shows for them (their reserved cell stays
+    /// fixed-width but empty).
     /// </summary>
     public bool IsNexusLatest => Source is NexusSource && Policy is LatestPolicy;
-
-    /// <summary>
-    /// The row-local half of the Update button's visibility conjunction:
-    /// <see cref="IsNexusLatest"/> AND <see cref="UpdateAvailable"/> AND NOT
-    /// <see cref="IsUpdating"/>. The list VM's <c>IsPremiumUser</c> (the
-    /// premium gate) ANDs with this in the view via a MultiBinding. Splitting
-    /// the conjunction this way avoids a 4-way MultiBinding + lets each source
-    /// re-fire <see cref="CanShowUpdateButton"/> via
-    /// <c>[NotifyPropertyChangedFor]</c>.
-    /// </summary>
-    public bool CanShowUpdateButton => IsNexusLatest && UpdateAvailable && !IsUpdating;
 
     /// <summary>
     /// The mod's remote page URL for the source-badge link (the badge is a
@@ -264,14 +323,13 @@ public partial class ModItemViewModel : ObservableObject
     };
 
     /// <summary>
-    /// The mod's Nexus <c>files</c> tab URL (the update-available marker is a
-    /// hyperlink to it, so the user's instinct to click the marker lands on the
-    /// files page where the new release lives). Nexus -> the mod page with
-    /// <c>?tab=files</c>; GitHub / Untracked / not-found -> <c>null</c> (the
-    /// marker's <c>NavigateUri</c> is null, so the <c>HyperlinkButton</c>
-    /// no-ops; those rows never show the marker anyway). Reuses
-    /// <see cref="SourceUrl"/> for the base, so any future change to the page
-    /// URL shape lands in one place.
+    /// The mod's Nexus <c>files</c> tab URL. The regular/unknown update action
+    /// opens this in the user's browser (the per-file download page where a
+    /// non-Premium user can mint the nxm token). Nexus -> the mod page with
+    /// <c>?tab=files</c>; GitHub / Untracked / not-found -> <c>null</c> (those
+    /// rows never show the update action anyway). Reuses <see cref="SourceUrl"/>
+    /// for the base, so any future change to the page URL shape lands in one
+    /// place.
     /// </summary>
     public string? UpdatePageUrl => Source is NexusSource
         ? SourceUrl + "?tab=files"
@@ -358,6 +416,7 @@ public partial class ModItemViewModel : ObservableObject
         OnPropertyChanged(nameof(PolicyDisplayText));
         OnPropertyChanged(nameof(SourceUrl));
         OnPropertyChanged(nameof(UpdatePageUrl));
+        OnPropertyChanged(nameof(UpdateActionTooltip));
     }
 }
 

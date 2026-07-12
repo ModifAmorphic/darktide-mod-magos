@@ -150,9 +150,14 @@ public static class ServiceCollectionExtensions
     /// Singleton: holds the last result (<see cref="IUpdateCheckService.LastResult"/>)
     /// so the mod-list view can bind badges to it without re-running the check, and
     /// publishes updates through <see cref="IUpdateCheckService.CheckCompleted"/>.
+    /// Also registers <see cref="IUpdateStateStore"/> (the profile-scoped known-update
+    /// persistence rules over <see cref="IAppStateStore.KnownUpdates"/>) as a
+    /// singleton; the check service records each result through it, and the UI reads
+    /// + acknowledges through it.
     /// </summary>
     private static void AddUpdateCheck(IServiceCollection services)
     {
+        services.AddSingleton<IUpdateStateStore, UpdateStateStore>();
         services.AddSingleton<IUpdateCheckService, UpdateCheckService>();
     }
 

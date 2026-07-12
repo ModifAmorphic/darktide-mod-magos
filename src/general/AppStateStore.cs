@@ -7,9 +7,10 @@ namespace Modificus.Curator.General;
 /// Default <see cref="IAppStateStore"/>. Loads + saves a single JSON file at
 /// <c>&lt;app-data&gt;/app-state.json</c> (<c>{ "ActiveProfileId": "&lt;guid&gt;" | null,
 /// "LastUpdateCheckUtc": "&lt;iso-8601&gt;" | null,
-/// "ManualRefreshTimestamps": [ "&lt;iso-8601&gt;", ... ] | null }</c>). The app-data dir is derived
-/// the same way <see cref="ConfigLoader"/> derives its config path (both via
-/// <see cref="AppPaths.AppDataDir"/>). JSON is handled with
+/// "ManualRefreshTimestamps": [ "&lt;iso-8601&gt;", ... ] | null,
+/// "KnownUpdates": { "&lt;profile-guid&gt;": [ { ...snapshot... }, ... ] } | null }</c>).
+/// The app-data dir is derived the same way <see cref="ConfigLoader"/> derives its
+/// config path (both via <see cref="AppPaths.AppDataDir"/>). JSON is handled with
 /// <see cref="JsonSerializer"/> (direct, read+write) rather than
 /// <c>Microsoft.Extensions.Configuration</c>. The latter is binding-oriented and
 /// read-only; a tiny writable state file is the wrong fit for it.
@@ -26,14 +27,16 @@ namespace Modificus.Curator.General;
 /// app lifetime and is the sole writer of the file, so an in-memory cache is the
 /// honest model.</para>
 /// <para><b>First-run safe:</b> a missing or corrupt state file never throws;
-/// the cache just seeds as defaults (<c>null</c> / <c>null</c> / <c>null</c>).
-/// Writes are best-effort; runtime app-state is non-critical, so a persistence
-/// failure (unwritable dir, full disk) is swallowed rather than crashing the app
-/// mid-interaction. An old file without <see cref="LastUpdateCheckUtc"/> or
-/// <see cref="ManualRefreshTimestamps"/> deserializes those fields as
+/// the cache just seeds as defaults (<c>null</c> / <c>null</c> / <c>null</c> /
+/// <c>null</c>). Writes are best-effort; runtime app-state is non-critical, so a
+/// persistence failure (unwritable dir, full disk) is swallowed rather than
+/// crashing the app mid-interaction. An old file without
+/// <see cref="IAppStateStore.LastUpdateCheckUtc"/>,
+/// <see cref="IAppStateStore.ManualRefreshTimestamps"/>, or
+/// <see cref="IAppStateStore.KnownUpdates"/> deserializes those fields as
 /// <c>null</c> (System.Text.Json default for an absent nullable member), so a
-/// first run after upgrade sees no recorded timestamp and the runner seeds its
-/// interval floor / an empty manual window.</para>
+/// first run after upgrade sees no recorded value and the runner seeds its
+/// interval floor / an empty manual window / an empty known-update map.</para>
 /// </remarks>
 public sealed class AppStateStore : IAppStateStore
 {
@@ -80,6 +83,34 @@ public sealed class AppStateStore : IAppStateStore
         set => Mutate(m => m.ManualRefreshTimestamps = value is null
             ? null
             : new List<DateTimeOffset>(value));
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? KnownUpdates
+    {
+        get => Load().KnownUpdates?
+            .ToDictionary(
+                kv => kv.Key,
+                kv => (IReadOnlyList<KnownUpdateSnapshot>)kv.Value)
+            .AsReadOnly();
+        set => Mutate(m =>
+        {
+            if (value is null)
+            {
+                m.KnownUpdates = null;
+                return;
+            }
+
+            // Copy into the mutable model shape (Dictionary<Guid, List<...>>).
+            var copy = new Dictionary<Guid, List<KnownUpdateSnapshot>>();
+            foreach (var (profileId, snapshots) in value)
+            {
+                copy[profileId] = snapshots is null
+                    ? new List<KnownUpdateSnapshot>()
+                    : new List<KnownUpdateSnapshot>(snapshots);
+            }
+            m.KnownUpdates = copy;
+        });
     }
 
     /// <summary>The conventional state-file location: <c>&lt;app-data&gt;/app-state.json</c>.</summary>
@@ -167,5 +198,6 @@ public sealed class AppStateStore : IAppStateStore
         public Guid? ActiveProfileId { get; set; }
         public DateTimeOffset? LastUpdateCheckUtc { get; set; }
         public List<DateTimeOffset>? ManualRefreshTimestamps { get; set; }
+        public Dictionary<Guid, List<KnownUpdateSnapshot>>? KnownUpdates { get; set; }
     }
 }

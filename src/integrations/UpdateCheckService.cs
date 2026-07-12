@@ -83,6 +83,7 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     private readonly IProfileService _profiles;
     private readonly IModRepository _repository;
     private readonly IConfigLoader _configLoader;
+    private readonly IUpdateStateStore _stateStore;
     private readonly ILogger<UpdateCheckService> _logger;
 
     /// <summary>
@@ -159,6 +160,9 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     /// versions + containers).</param>
     /// <param name="configLoader">Read live for the Nexus auth gate (AuthMethod.None
     /// short-circuits before the API is touched).</param>
+    /// <param name="stateStore">Records each result's authoritative outcome so
+    /// persisted known-update state survives a restart + self-heals against the
+    /// live profile.</param>
     /// <param name="logger">Structured logger for best-effort failure paths.</param>
     /// <param name="getNow">The clock, for testable tier-3 cache TTL math.
     /// Defaults to <see cref="DateTimeOffset.UtcNow"/> when null (the production
@@ -169,6 +173,7 @@ internal sealed class UpdateCheckService : IUpdateCheckService
         IProfileService profiles,
         IModRepository repository,
         IConfigLoader configLoader,
+        IUpdateStateStore stateStore,
         ILogger<UpdateCheckService> logger,
         Func<DateTimeOffset>? getNow = null)
     {
@@ -176,6 +181,7 @@ internal sealed class UpdateCheckService : IUpdateCheckService
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
+        _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _getNow = getNow ?? (() => DateTimeOffset.UtcNow);
     }
@@ -219,7 +225,7 @@ internal sealed class UpdateCheckService : IUpdateCheckService
         if (authMethod == NexusAuthMethod.None)
         {
             _logger.LogDebug("Update check skipped: Nexus auth not configured.");
-            return Publish(EmptyResult(thorough));
+            return Publish(profileId, EmptyResult(thorough, CheckOutcome.NoAuth));
         }
 
         // 2. Profile mods + the Nexus subset. Let KeyNotFoundException propagate
@@ -265,7 +271,7 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             _logger.LogDebug(
                 "Update check skipped: no Nexus mods in profile {Profile}.",
                 profileId);
-            return Publish(EmptyResult(thorough));
+            return Publish(profileId, EmptyResult(thorough, CheckOutcome.NoNexusMods));
         }
 
         // 3. Query Nexus v2 GraphQL (1 call for ALL Nexus mods, Latest + Pinned).
@@ -291,13 +297,14 @@ internal sealed class UpdateCheckService : IUpdateCheckService
             _logger.LogInformation(
                 ex,
                 "Nexus update check rate-limited; reporting rate-limited result.");
-            return Publish(new UpdateCheckResult(
-                Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: true, Thorough: thorough));
+            return Publish(profileId, new UpdateCheckResult(
+                Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: true, Thorough: thorough,
+                Outcome: CheckOutcome.RateLimited));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Nexus update check failed; reporting empty result.");
-            return Publish(EmptyResult(thorough));
+            return Publish(profileId, EmptyResult(thorough, CheckOutcome.Failed));
         }
 
         // 4. Rate-limit gate (post-call, on a successful response). Guard
@@ -315,8 +322,9 @@ internal sealed class UpdateCheckService : IUpdateCheckService
                 "Nexus update check rate-limited (daily {DailyRem}/{DailyLim}, hourly {HourlyRem}/{HourlyLim}).",
                 limits.DailyRemaining, limits.DailyLimit,
                 limits.HourlyRemaining, limits.HourlyLimit);
-            return Publish(new UpdateCheckResult(
-                Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: true, Thorough: thorough));
+            return Publish(profileId, new UpdateCheckResult(
+                Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: true, Thorough: thorough,
+                Outcome: CheckOutcome.RateLimited));
         }
 
         // 5. Map the batch response to the flagged list (tiers 1 + 2). Index the
@@ -464,12 +472,13 @@ internal sealed class UpdateCheckService : IUpdateCheckService
         _logger.LogInformation(
             "Update check for profile {Profile}: {Count} mod(s) flagged for update.",
             profileId, flagged.Count);
-        return Publish(new UpdateCheckResult(
+        return Publish(profileId, new UpdateCheckResult(
             flagged.Select(f => f.Info).ToList(),
             DateTimeOffset.UtcNow,
             RateLimited: false,
             Thorough: thorough,
-            NamesChanged: namesChanged));
+            NamesChanged: namesChanged,
+            Outcome: CheckOutcome.Success));
     }
 
     /// <summary>
@@ -532,16 +541,42 @@ internal sealed class UpdateCheckService : IUpdateCheckService
     }
 
     /// <summary>
-    /// Sets <see cref="LastResult"/> and raises <see cref="CheckCompleted"/>
+    /// Sets <see cref="LastResult"/>, records the result's authoritative outcome
+    /// through the persisted known-update store (so it survives a restart + is
+    /// available before the next check), and raises <see cref="CheckCompleted"/>
     /// atomically (under <see cref="_publishLock"/>) so an event subscriber
     /// observes the result that was just published. Returns the result for
     /// caller convenience.
     /// </summary>
-    private UpdateCheckResult Publish(UpdateCheckResult result)
+    /// <param name="profileId">The profile this result is scoped to (the store
+    /// records state per-profile so a result from one profile never becomes
+    /// another's).</param>
+    /// <param name="result">The result to publish + record.</param>
+    /// <remarks>
+    /// <see cref="IUpdateStateStore.RecordResult"/> applies the replacement rules
+    /// (success replaces / clears; no-Nexus-mods clears; failure / no-auth /
+    /// rate-limit preserve). Recording happens inside the publish lock so the
+    /// persisted state is consistent with the published result an observer sees.
+    /// The store is itself lock-protected; this lock only orders publish + record
+    /// against a concurrent check. Recording never throws (the store swallows
+    /// persistence failures), so it cannot break the publish.
+    /// </remarks>
+    private UpdateCheckResult Publish(Guid profileId, UpdateCheckResult result)
     {
         lock (_publishLock)
         {
             LastResult = result;
+            try
+            {
+                _stateStore.RecordResult(profileId, result);
+            }
+            catch (Exception ex)
+            {
+                // Defensive: RecordResult should not throw (the store swallows
+                // persistence failures), but a persistence bug must not break the
+                // publish or the CheckCompleted event.
+                _logger.LogWarning(ex, "Recording update state for profile {Profile} failed.", profileId);
+            }
             CheckCompleted?.Invoke(this, result);
         }
         return result;
@@ -549,9 +584,10 @@ internal sealed class UpdateCheckService : IUpdateCheckService
 
     /// <summary>
     /// A fresh empty non-rate-limited result, stamped at the current time, with
-    /// the given <paramref name="thorough"/> flag. Used by every short-circuit
-    /// path (no auth, no checkable mods, API failure).
+    /// the given <paramref name="thorough"/> flag + <paramref name="outcome"/>.
+    /// Used by the no-auth + no-checkable-mods + API-failure short-circuit paths.
     /// </summary>
-    private static UpdateCheckResult EmptyResult(bool thorough) =>
-        new(Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: thorough);
+    private static UpdateCheckResult EmptyResult(bool thorough, CheckOutcome outcome) =>
+        new(Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, RateLimited: false, Thorough: thorough,
+            Outcome: outcome);
 }

@@ -160,6 +160,19 @@ public partial class IntegrationsViewModel : ObservableObject
     private bool _isAuthenticated;
 
     /// <summary>
+    /// Whether the verified Nexus account is Premium. Read from the auth state on
+    /// open + after each auth action + after a culture flip (which re-resolves
+    /// state). Drives the automatic-updates checkbox's enabled state + tooltip:
+    /// a verified Premium user can toggle it on; a regular or unverified account
+    /// sees it visible, checked (preserving any configured value), and disabled
+    /// with a Premium-required explanation.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanEditAutomaticUpdates))]
+    [NotifyPropertyChangedFor(nameof(AutomaticUpdatesTooltip))]
+    private bool _isPremiumVerified;
+
+    /// <summary>
     /// Whether the dialog is mid-flight on an OAuth login or API-key validate
     /// (both are async + hit the network). Disables the buttons + shows a
     /// "working" status while in flight so the user gets feedback that the click
@@ -208,6 +221,18 @@ public partial class IntegrationsViewModel : ObservableObject
     private decimal? _autoUpdateCheckIntervalMinutes;
 
     /// <summary>
+    /// Whether Premium accounts have flagged mod updates installed automatically
+    /// after a check runs (opt-in, default false). Loaded live from
+    /// <c>NexusConfig.AutomaticUpdatesEnabled</c> on dialog open; persisted on
+    /// each user change via read-modify-save. Independent of
+    /// <see cref="AutoUpdateCheckEnabled"/>: turning this on never requires
+    /// periodic checking, and changing the periodic-check toggle never clears a
+    /// configured <c>true</c> value here.
+    /// </summary>
+    [ObservableProperty]
+    private bool _automaticUpdatesEnabled;
+
+    /// <summary>
     /// Persisted when the user flips <see cref="AutoUpdateCheckEnabled"/>.
     /// Skipped during the dialog-open load (guarded by
     /// <c>_isLoadingAutoUpdate</c>) so populating the field from config does not
@@ -223,9 +248,19 @@ public partial class IntegrationsViewModel : ObservableObject
     partial void OnAutoUpdateCheckIntervalMinutesChanged(decimal? value) => SaveAutoUpdateSettings();
 
     /// <summary>
-    /// Read-modify-saves the toggle + interval into the live config so the
-    /// runner picks them up on its next tick. Best-effort (the ConfigLoader
-    /// swallows write failures); clamps the interval to
+    /// Persisted when the user flips <see cref="AutomaticUpdatesEnabled"/>.
+    /// Skipped during the dialog-open load (guarded by
+    /// <c>_isLoadingAutoUpdate</c>). Independent of
+    /// <see cref="OnAutoUpdateCheckEnabledChanged"/>: toggling the periodic check
+    /// never touches <c>AutomaticUpdatesEnabled</c>, so a configured true value
+    /// survives turning periodic checking off (and vice versa).
+    /// </summary>
+    partial void OnAutomaticUpdatesEnabledChanged(bool value) => SaveAutoUpdateSettings();
+
+    /// <summary>
+    /// Read-modify-saves the toggle + interval + automatic-updates setting into
+    /// the live config so the runner picks them up on its next tick. Best-effort
+    /// (the ConfigLoader swallows write failures); clamps the interval to
     /// [<see cref="NexusConfig.MinAutoUpdateCheckIntervalMinutes"/>,
     /// <see cref="NexusConfig.MaxAutoUpdateCheckIntervalMinutes"/>] minutes + null
     /// defaults to 10. No-op while <c>_isLoadingAutoUpdate</c> is set.
@@ -243,14 +278,18 @@ public partial class IntegrationsViewModel : ObservableObject
             (int)Math.Clamp(AutoUpdateCheckIntervalMinutes ?? 10,
                 NexusConfig.MinAutoUpdateCheckIntervalMinutes,
                 NexusConfig.MaxAutoUpdateCheckIntervalMinutes);
+        // Independent of the periodic-check settings: this is preserved exactly
+        // as toggled, never cleared when periodic checking changes.
+        config.Integrations.Nexus.AutomaticUpdatesEnabled = AutomaticUpdatesEnabled;
         _configLoader.Save(config);
     }
 
     /// <summary>
-    /// Loads the toggle + interval from the live config into the bound
-    /// properties, suppressing the change-triggered save while populating.
-    /// Called from <see cref="RefreshAsync"/> so the dialog reflects the
-    /// persisted state on every open (a prior session may have changed it).
+    /// Loads the toggle + interval + automatic-updates setting from the live
+    /// config into the bound properties, suppressing the change-triggered save
+    /// while populating. Called from <see cref="RefreshAsync"/> so the dialog
+    /// reflects the persisted state on every open (a prior session may have
+    /// changed it).
     /// </summary>
     private void LoadAutoUpdateSettings()
     {
@@ -260,12 +299,32 @@ public partial class IntegrationsViewModel : ObservableObject
         {
             AutoUpdateCheckEnabled = nexus.AutoUpdateCheckEnabled;
             AutoUpdateCheckIntervalMinutes = nexus.AutoUpdateCheckIntervalMinutes;
+            AutomaticUpdatesEnabled = nexus.AutomaticUpdatesEnabled;
         }
         finally
         {
             _isLoadingAutoUpdate = false;
         }
     }
+
+    /// <summary>
+    /// Whether the automatic-updates checkbox is enabled: only a verified Premium
+    /// account can opt in. A regular or unverified account sees the checkbox
+    /// visible (preserving any configured value) but disabled, with the
+    /// Premium-required tooltip explaining why.
+    /// </summary>
+    public bool CanEditAutomaticUpdates => IsPremiumVerified;
+
+    /// <summary>
+    /// The automatic-updates checkbox tooltip, distinguished by the account state:
+    /// a verified Premium user gets the normal explanation; a regular or
+    /// unverified account gets the Premium-required explanation. The view sets
+    /// <c>ToolTip.ShowOnDisabled</c> so the latter shows even while the checkbox
+    /// is disabled.
+    /// </summary>
+    public string AutomaticUpdatesTooltip => IsPremiumVerified
+        ? _localization["Integrations_AutomaticUpdatesTooltip"]
+        : _localization["Integrations_AutomaticUpdatesPremiumRequired"];
 
     // ---- localized labels -------------------------------------------------
 
@@ -281,6 +340,7 @@ public partial class IntegrationsViewModel : ObservableObject
     public string AutoUpdateHeader => _localization["Integrations_AutoUpdateHeader"];
     public string AutoUpdateEnabledLabel => _localization["Integrations_AutoUpdateEnabled"];
     public string AutoUpdateIntervalLabel => _localization["Integrations_AutoUpdateInterval"];
+    public string AutomaticUpdatesLabel => _localization["Integrations_AutomaticUpdates"];
     public string ShowApiKeyTooltip => _localization["Integrations_ShowApiKeyTooltip"];
     public string HideApiKeyTooltip => _localization["Integrations_HideApiKeyTooltip"];
 
@@ -440,6 +500,7 @@ public partial class IntegrationsViewModel : ObservableObject
     {
         ActiveMethod = state?.Method ?? NexusAuthMethod.None;
         IsAuthenticated = state is not null;
+        IsPremiumVerified = state?.IsPremium == true;
         // The API-key field reflects the persisted key when the method is
         // ApiKey (so the user sees one is configured, masked, + can re-validate
         // without re-entering); empty otherwise (placeholder visible). Clearing
@@ -662,6 +723,8 @@ public partial class IntegrationsViewModel : ObservableObject
         OnPropertyChanged(nameof(AutoUpdateHeader));
         OnPropertyChanged(nameof(AutoUpdateEnabledLabel));
         OnPropertyChanged(nameof(AutoUpdateIntervalLabel));
+        OnPropertyChanged(nameof(AutomaticUpdatesLabel));
+        OnPropertyChanged(nameof(AutomaticUpdatesTooltip));
         OnPropertyChanged(nameof(ShowApiKeyTooltip));
         OnPropertyChanged(nameof(HideApiKeyTooltip));
         OnPropertyChanged(nameof(NxmSectionHeader));

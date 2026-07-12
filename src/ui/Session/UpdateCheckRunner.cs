@@ -127,6 +127,7 @@ public sealed class UpdateCheckRunner
     private readonly IUpdateCheckService _updateCheck;
     private readonly IConfigLoader _configLoader;
     private readonly IAppStateStore _appState;
+    private readonly IAutomaticUpdateService _autoUpdate;
     private readonly ILogger<UpdateCheckRunner> _logger;
     private readonly Action<Action>? _startTimer;
     private readonly Func<DateTimeOffset> _getNow;
@@ -185,6 +186,10 @@ public sealed class UpdateCheckRunner
     /// <see cref="IAppStateStore.LastUpdateCheckUtc"/> (the interval-gate
     /// timestamp) and <see cref="IAppStateStore.ManualRefreshTimestamps"/>
     /// (the manual throttle's sliding window) across restarts.</param>
+    /// <param name="autoUpdate">The opt-in Premium automatic-update installer,
+    /// chained after each check completes (the runner captures the exact result
+    /// + awaits the install batch so a manual CheckNow keeps its spinner active
+    /// through the installations).</param>
     /// <param name="logger">Structured logger for swallowed exceptions.</param>
     /// <param name="startTimer">Starts the periodic tick. Production wires this
     /// to a <c>DispatcherTimer</c> (UI thread); tests pass null and invoke the
@@ -196,6 +201,7 @@ public sealed class UpdateCheckRunner
         IUpdateCheckService updateCheck,
         IConfigLoader configLoader,
         IAppStateStore appState,
+        IAutomaticUpdateService autoUpdate,
         ILogger<UpdateCheckRunner> logger,
         Action<Action>? startTimer = null,
         Func<DateTimeOffset>? getNow = null)
@@ -204,6 +210,7 @@ public sealed class UpdateCheckRunner
         _updateCheck = updateCheck ?? throw new ArgumentNullException(nameof(updateCheck));
         _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
         _appState = appState ?? throw new ArgumentNullException(nameof(appState));
+        _autoUpdate = autoUpdate ?? throw new ArgumentNullException(nameof(autoUpdate));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _startTimer = startTimer;
         _getNow = getNow ?? (() => DateTimeOffset.UtcNow);
@@ -489,6 +496,23 @@ public sealed class UpdateCheckRunner
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>Capture the exact result.</b> The check's return value is captured
+    /// directly (not re-read from <see cref="IUpdateCheckService.LastResult"/>,
+    /// which a concurrent check could have replaced between the call + the
+    /// read). That captured result is what the automatic-update service gates on
+    /// + installs from.</para>
+    /// <para>
+    /// <b>Chain the automatic-update service on the UI context.</b> The
+    /// thread-pool task returns the result; the outer await (no
+    /// <c>ConfigureAwait(false)</c>, the UI-layer convention) resumes on the
+    /// captured UI context, and the service is invoked there. So the manual
+    /// CheckNow keeps its spinner active through the installations (the VM
+    /// awaits this task), and the automatic triggers' check + install form one
+    /// ordered task (asynchronous + non-blocking to the UI, but sequential
+    /// within the run). The service gates itself (outcome, updates, setting,
+    /// profile, fresh Premium); a no-op service call is cheap.</para>
+    /// <para>
+    /// <b>Belt-and-suspenders exception handling.</b>
     /// <see cref="IUpdateCheckService.CheckAsync"/> /
     /// <see cref="IUpdateCheckService.CheckThoroughAsync"/> are documented to
     /// catch their own non-cancellation failures and return an empty / partial
@@ -509,30 +533,62 @@ public sealed class UpdateCheckRunner
         _lastCheckAt = _getNow();
         _appState.LastUpdateCheckUtc = _lastCheckAt;
 
+        UpdateCheckResult? result = null;
         try
         {
-            await Task.Run(async () =>
+            // The check runs on a thread-pool task. The INNER awaits use
+            // ConfigureAwait(false) (explicit background-task code, the narrow
+            // documented exception). The OUTER await does NOT, so the
+            // continuation resumes on the captured UI context (the UI-layer
+            // convention) before invoking the automatic-update service below.
+            result = await Task.Run(async () =>
             {
                 if (thorough)
                 {
-                    await _updateCheck.CheckThoroughAsync(profileId).ConfigureAwait(false);
+                    return await _updateCheck.CheckThoroughAsync(profileId).ConfigureAwait(false);
                 }
-                else
-                {
-                    await _updateCheck.CheckAsync(profileId).ConfigureAwait(false);
-                }
-            }).ConfigureAwait(false);
+                return await _updateCheck.CheckAsync(profileId).ConfigureAwait(false);
+            });
         }
         catch (OperationCanceledException)
         {
             // Defensive only: no cancellation token is wired today (the
             // runner uses the default token), so this does not fire in
             // production. Swallowed silently regardless.
+            return;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "Update check for profile {Profile} threw unexpectedly.", profileId);
+            return;
+        }
+
+        // The thread-pool task returned the result. The outer await resumes on
+        // the captured UI context (no ConfigureAwait(false) on it, per the
+        // UI-layer convention). Invoke the automatic-update service here, on the
+        // UI context, so its dialog + event callbacks land on the UI thread +
+        // the manual CheckNow (which awaits this task) keeps its spinner active
+        // through the installations. The service gates itself; a no-op call is
+        // cheap, so no need to pre-filter here.
+        if (result is not null)
+        {
+            try
+            {
+                await _autoUpdate.RunAfterCheckAsync(result, profileId);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation from the automatic batch (shutdown). Swallowed.
+            }
+            catch (Exception ex)
+            {
+                // The service isolates per-mod failures + surfaces an aggregated
+                // alert itself; this catch is belt-and-suspenders so a bug in the
+                // service never leaks an unobserved exception through the runner.
+                _logger.LogError(ex,
+                    "Automatic update batch for profile {Profile} threw unexpectedly.", profileId);
+            }
         }
     }
 }

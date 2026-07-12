@@ -73,6 +73,21 @@ public sealed class NexusConfig
     public bool AutoUpdateCheckEnabled { get; set; } = true;
 
     /// <summary>
+    /// Whether Premium accounts have flagged mod updates installed
+    /// automatically after an update check runs. <c>false</c> by default
+    /// (opt-in). Independent of <see cref="AutoUpdateCheckEnabled"/>: turning
+    /// this on never requires periodic checking to be on (startup + switch +
+    /// manual checks still drive it), and changing the periodic-check toggle
+    /// never clears a configured <c>true</c> value here. Read live by the
+    /// automatic-update service after each check that authoritatively reports
+    /// updates. Runtime execution additionally requires a fresh verified
+    /// <see cref="NexusAuthState.IsPremium"/> == <c>true</c>, so a configured
+    /// <c>true</c> is preserved if Premium later becomes unavailable (the box
+    /// stays checked + visible but disabled) while no automatic install runs.
+    /// </summary>
+    public bool AutomaticUpdatesEnabled { get; set; }
+
+    /// <summary>
     /// The minimum user-configurable value for
     /// <see cref="AutoUpdateCheckIntervalMinutes"/>, in minutes. A Nexus API
     /// acceptable-use compliance floor: at 5 minutes the periodic check tops

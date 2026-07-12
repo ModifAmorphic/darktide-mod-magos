@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Modificus.Curator.Integrations;
@@ -84,19 +85,24 @@ public partial class ModListViewModel : ObservableObject
     private readonly IUpdateCheckService _updateCheck;
     private readonly IModAcquisitionService _acquisition;
     private readonly INexusAuthService _auth;
+    private readonly IUpdateStateStore _updateState;
     private readonly UpdateCheckRunner _updateCheckRunner;
+    private readonly UpdateCoordinator _updateCoordinator;
+    private readonly IAutomaticUpdateService _automaticUpdates;
     private readonly ILogger<ModListViewModel> _logger;
     private readonly Action<Action> _invokeOnUi;
     private readonly Action<Action>? _startCountdownTimer;
     private readonly Action? _stopCountdownTimer;
+    private readonly Func<Uri, bool> _launchExternal;
 
     /// <summary>
     /// Creates the list VM, subscribes to the session (reload on active-profile
     /// change), the update-check service (badge refresh on
-    /// <see cref="IUpdateCheckService.CheckCompleted"/>), and localization
-    /// (culture refresh), loads the current profile's mods, and reads the Nexus
-    /// premium state once (fire-and-forget; flips <see cref="IsPremiumUser"/>
-    /// when it lands).
+    /// <see cref="IUpdateCheckService.CheckCompleted"/>), the update coordinator
+    /// (push the global busy flag down to rows), the automatic-update service
+    /// (reload after a batch installs mods), and localization (culture refresh),
+    /// loads the current profile's mods, and reads the Nexus premium state once
+    /// (fire-and-forget; flips <see cref="IsPremiumUser"/> when it lands).
     /// </summary>
     public ModListViewModel(
         IProfileService profiles,
@@ -109,11 +115,15 @@ public partial class ModListViewModel : ObservableObject
         IUpdateCheckService updateCheck,
         IModAcquisitionService acquisition,
         INexusAuthService auth,
+        IUpdateStateStore updateState,
         UpdateCheckRunner updateCheckRunner,
+        UpdateCoordinator updateCoordinator,
+        IAutomaticUpdateService automaticUpdates,
         Action<Action> invokeOnUi,
         ILogger<ModListViewModel> logger,
         Action<Action>? startCountdownTimer = null,
-        Action? stopCountdownTimer = null)
+        Action? stopCountdownTimer = null,
+        Func<Uri, bool>? launchExternal = null)
     {
         _profiles = profiles;
         _session = session;
@@ -125,15 +135,22 @@ public partial class ModListViewModel : ObservableObject
         _updateCheck = updateCheck;
         _acquisition = acquisition;
         _auth = auth;
+        _updateState = updateState;
         _updateCheckRunner = updateCheckRunner;
+        _updateCoordinator = updateCoordinator ?? throw new ArgumentNullException(nameof(updateCoordinator));
+        _automaticUpdates = automaticUpdates ?? throw new ArgumentNullException(nameof(automaticUpdates));
         _logger = logger;
         _invokeOnUi = invokeOnUi ?? throw new ArgumentNullException(nameof(invokeOnUi));
         _startCountdownTimer = startCountdownTimer;
         _stopCountdownTimer = stopCountdownTimer;
+        _launchExternal = launchExternal ?? LaunchExternalDefault;
 
         _session.PropertyChanged += OnSessionPropertyChanged;
         _localization.PropertyChanged += OnCultureChanged;
         _updateCheck.CheckCompleted += OnUpdateCheckCompleted;
+        _updateCoordinator.BusyChanged += OnCoordinatorBusyChanged;
+        _automaticUpdates.UpdatesApplied += OnAutomaticUpdatesApplied;
+        _automaticUpdates.ModUpdateProgress += OnAutomaticUpdateProgress;
 
         // The refresh button's tooltip defaults to the normal "check now"
         // string. When the manual sliding-window throttle engages, the countdown
@@ -144,13 +161,55 @@ public partial class ModListViewModel : ObservableObject
         // GetCurrentStateAsync hits the network, so blocking the (UI-thread)
         // constructor on it would stall app startup. The result lands quickly
         // (sub-second typically) and flips IsPremiumUser; until then the Update
-        // buttons stay hidden (also gated on an update-check result, which takes
-        // longer). No mid-session refresh by design (re-checking on Integrations
+        // buttons stay disabled (also gated on an update being flagged, which
+        // takes longer). No mid-session refresh by design (re-checking on Integrations
         // dialog close would burn an API call each time; a user signing in
-        // mid-session needing a restart for the buttons to appear is acceptable).
+        // mid-session needing a restart for the install behavior to change is acceptable).
         _ = LoadPremiumStateAsync();
 
         Reload();
+    }
+
+    /// <summary>
+    /// The automatic-update service finished a batch with at least one
+    /// successful install. Reload on the UI thread so the new versions + cleared
+    /// flags show. The event fires on the UI thread (the service is invoked from
+    /// the runner after it returns to the UI context), but marshal defensively
+    /// so a test that fires it off-thread stays correct.
+    /// </summary>
+    private void OnAutomaticUpdatesApplied(object? sender, EventArgs e) =>
+        _invokeOnUi(Reload);
+
+    /// <summary>
+    /// The automatic-update service reports per-mod progress: a container's
+    /// install started (active=true) or finished (active=false). Marshal to the
+    /// UI thread, find the row by ContainerId, and set its
+    /// <see cref="ModItemViewModel.IsUpdating"/> so the row-level spinner (left
+    /// of the Nexus badge) tracks the currently installing mod. An event for a
+    /// row no longer present (after a profile switch / reload) is ignored, so a
+    /// switch mid-batch never leaves a stale spinner on a now-absent row.
+    /// </summary>
+    private void OnAutomaticUpdateProgress(object? sender, ModUpdateProgressEventArgs e) =>
+        _invokeOnUi(() => ApplyModUpdateProgress(e.ContainerId, e.IsActive));
+
+    /// <summary>
+    /// Applies a per-mod automatic-update progress signal to the matching row.
+    /// Finds the row by ContainerId; sets its <see cref="ModItemViewModel.IsUpdating"/>
+    /// to <paramref name="isActive"/>. Ignores a container id with no matching
+    /// row (the row may have been removed by a profile switch / reload between
+    /// the event + this UI-thread callback).
+    /// </summary>
+    private void ApplyModUpdateProgress(Guid containerId, bool isActive)
+    {
+        var row = Mods.FirstOrDefault(m => m.ContainerId == containerId);
+        if (row is null)
+        {
+            // The row is gone (profile switch / reload). Ignore: no stale
+            // spinner is left on a now-absent row.
+            return;
+        }
+
+        row.IsUpdating = isActive;
     }
 
     /// <summary>The active profile's mod rows, in load order (lower first).</summary>
@@ -200,12 +259,13 @@ public partial class ModListViewModel : ObservableObject
     /// <summary>
     /// Whether the Nexus account is premium. Read once at construction (see the
     /// constructor's premium-read note); no mid-session refresh. Drives the
-    /// per-row Update button's visibility (premium-only, hidden not nagged for
-    /// non-premium). False until the read lands (or on a read failure; a
+    /// per-row update action's click behavior (Premium -> in-app install;
+    /// regular/unknown -> open the Nexus files page) and is pushed down to each
+    /// row so the per-row enabled state + tooltip can recompute without a parent
+    /// walk in the binding. False until the read lands (or on a read failure; a
     /// restart re-reads).
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsUpdateEnabled))]
     private bool _isPremiumUser;
 
     /// <summary>
@@ -218,13 +278,13 @@ public partial class ModListViewModel : ObservableObject
     private bool _isRateLimited;
 
     /// <summary>
-    /// Whether any row is currently running a one-click update. True while the
-    /// async <see cref="UpdateCommand"/> is in flight; disables every row's
-    /// Update button (one update at a time). Re-enabled in the command's finally
-    /// block on success or failure (no stuck state).
+    /// Whether the update coordinator reports an install in flight (manual or
+    /// automatic). Set from <see cref="OnCoordinatorBusyChanged"/>; pushed down
+    /// to each row so the per-row enabled state reflects the global "one install
+    /// at a time" coordination. The manual Update command no longer sets this
+    /// directly; acquiring the coordinator is the single source of truth.
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsUpdateEnabled))]
     private bool _anyRowUpdating;
 
     /// <summary>
@@ -261,21 +321,12 @@ public partial class ModListViewModel : ObservableObject
     private string _manualRefreshTooltip;
 
     /// <summary>
-    /// Whether the per-row Update buttons are enabled: the user is premium AND
-    /// no other update is in flight. The row's IsVisible gating already hides
-    /// the button for non-premium; this is the IsEnabled half (one update at a
-    /// time). A single computed property so the view binds IsEnabled without
-    /// negating a deep path across a parent walk (compiled-binding limitation).
-    /// </summary>
-    public bool IsUpdateEnabled => IsPremiumUser && !AnyRowUpdating;
-
-    /// <summary>
     /// Whether the manual "check now" refresh button is enabled: NOT while a
     /// thorough check is in flight (<see cref="IsCheckingNow"/>) AND NOT while
     /// the manual sliding-window throttle is blocking (<see cref="IsManualRefreshThrottled"/>).
     /// A single computed property so the view binds the button's IsEnabled to
-    /// one source (mirrors <see cref="IsUpdateEnabled"/>); its dependencies each
-    /// carry <c>[NotifyPropertyChangedFor(nameof(IsRefreshEnabled))]</c> so the
+    /// one source; its dependencies each carry
+    /// <c>[NotifyPropertyChangedFor(nameof(IsRefreshEnabled))]</c> so the
     /// binding re-evaluates when either flips.
     /// </summary>
     public bool IsRefreshEnabled => !IsCheckingNow && !IsManualRefreshThrottled;
@@ -356,35 +407,35 @@ public partial class ModListViewModel : ObservableObject
 
     /// <summary>
     /// The update check finished (background task fires the event on its
-    /// completing thread). Re-apply <see cref="IUpdateCheckService.LastResult"/>
-    /// to the rows + the list-level rate-limit flag. Idempotent: safe to call on
-    /// every completion, including the no-auth / no-checkable-mods / failure
-    /// short-circuits.
+    /// completing thread). The check service already recorded the authoritative
+    /// outcome through the persisted known-update store, so re-hydrate the rows
+    /// from that store (profile-scoped) rather than reading the single in-memory
+    /// <see cref="IUpdateCheckService.LastResult"/> (which cannot distinguish
+    /// profiles). The transient rate-limit notice still reads
+    /// <see cref="IUpdateCheckService.LastResult"/> (the notice is session-only;
+    /// it does not need to persist and must not erase known flags). Idempotent.
     /// </summary>
     private void OnUpdateCheckCompleted(object? sender, UpdateCheckResult? result)
     {
         // The event fires on the check's completing thread (a threadpool thread
-        // via UpdateCheckRunner's Task.Run). Marshal to the UI thread so
-        // ApplyUpdateCheckResult's iteration of the UI-bound Mods collection
-        // doesn't race with a UI-thread Reload (ObservableCollection's
-        // enumerator is not thread-safe vs concurrent mutation).
-        _invokeOnUi(ApplyUpdateCheckResult);
+        // via UpdateCheckRunner's Task.Run). Marshal to the UI thread so the
+        // hydration's iteration of the UI-bound Mods collection doesn't race
+        // with a UI-thread Reload (ObservableCollection's enumerator is not
+        // thread-safe vs concurrent mutation).
+        _invokeOnUi(() => ApplyCheckLanded(result));
     }
 
     /// <summary>
-    /// Reads <see cref="IUpdateCheckService.LastResult"/> and applies it to the
-    /// list: sets <see cref="IsRateLimited"/> + per-row
-    /// <see cref="ModItemViewModel.UpdateAvailable"/> (matched by container id),
-    /// and, when the check renamed any container (the name-sync piggybacks on
-    /// the batch query), refreshes each affected row's displayed name from the
-    /// repository in place (no full reload). Called on
-    /// <see cref="IUpdateCheckService.CheckCompleted"/> + at the end
-    /// of <see cref="Reload"/> (so a freshly rebuilt list picks up the last
-    /// result without waiting for the next check).
+    /// Applies a just-landed check: refreshes the rate-limit notice from the
+    /// result, refreshes in-place row names when the check renamed any container
+    /// (the name-sync piggybacks on the batch query), and re-hydrates the per-row
+    /// update flags from the profile-scoped known-update store. Called on
+    /// <see cref="IUpdateCheckService.CheckCompleted"/> + at the end of
+    /// <see cref="Reload"/> (so a freshly rebuilt list picks up the persisted
+    /// state without waiting for the next check).
     /// </summary>
-    private void ApplyUpdateCheckResult()
+    private void ApplyCheckLanded(UpdateCheckResult? result)
     {
-        var result = _updateCheck.LastResult;
         IsRateLimited = result?.RateLimited == true;
 
         if (Mods.Count == 0)
@@ -409,10 +460,23 @@ public partial class ModListViewModel : ObservableObject
             }
         }
 
-        // Index the flagged container ids once for an O(1) per-row lookup (the
-        // result is shared across every row; a LINQ Any per row would re-scan).
-        var flagged = result?.Updates;
-        if (flagged is null || flagged.Count == 0)
+        ApplyKnownUpdateState();
+    }
+
+    /// <summary>
+    /// Reads the profile-scoped known-update container ids from the persisted
+    /// store (which self-heals stale entries against the live profile + repo) and
+    /// applies them to the rows by container id. This is the single source of
+    /// truth for the per-row <see cref="ModItemViewModel.UpdateAvailable"/> flag,
+    /// so a restart inside the interval gate shows prior flags before any API
+    /// call, and a result from one profile never bleeds into another. Called from
+    /// <see cref="ApplyCheckLanded"/> + <see cref="Reload"/> +
+    /// <see cref="AcknowledgeUpdateAndReload"/>. A no-op when no profile is
+    /// active.
+    /// </summary>
+    private void ApplyKnownUpdateState()
+    {
+        if (_session.ActiveProfileId is not Guid profileId)
         {
             foreach (var row in Mods)
             {
@@ -421,7 +485,7 @@ public partial class ModListViewModel : ObservableObject
             return;
         }
 
-        var flaggedIds = flagged.Select(u => u.ContainerId).ToHashSet();
+        var flaggedIds = _updateState.GetKnownUpdateContainerIds(profileId);
         foreach (var row in Mods)
         {
             row.UpdateAvailable = flaggedIds.Contains(row.ContainerId);
@@ -429,10 +493,35 @@ public partial class ModListViewModel : ObservableObject
     }
 
     /// <summary>
+    /// The global install-coordinator's busy flag changed (a manual row update or
+    /// the automatic updater acquired or released it). Mirror it to
+    /// <see cref="AnyRowUpdating"/> + push the new value down to every row so the
+    /// per-row enabled state recomputes (Premium clicks stay disabled while
+    /// another install runs; regular/unknown clicks stay enabled). Fires on a
+    /// threadpool thread when the automatic updater acquires/releases, so marshal
+    /// to the UI thread.
+    /// </summary>
+    private void OnCoordinatorBusyChanged(object? sender, EventArgs e) =>
+        _invokeOnUi(() => AnyRowUpdating = _updateCoordinator.IsBusy);
+
+    /// <summary>
+    /// Pushes the current <see cref="IsPremiumUser"/> + <see cref="AnyRowUpdating"/>
+    /// down to every row so each row's enabled state + tooltip recompute without
+    /// a parent walk in the binding. Called on reload + whenever either flips.
+    /// </summary>
+    private void PushGlobalStateToRows()
+    {
+        foreach (var row in Mods)
+        {
+            row.IsPremiumUser = IsPremiumUser;
+            row.AnyRowUpdating = AnyRowUpdating;
+        }
+    }
+
+    /// <summary>
     /// Reads the Nexus premium state once (called fire-and-forget from the
-    /// constructor). On success flips <see cref="IsPremiumUser"/>; on failure
-    /// logs + leaves it false (a restart re-reads; the operator accepted this
-    /// edge case over burning API calls on every Integrations-dialog close).
+    /// constructor). On success flips <see cref="IsPremiumUser"/> and pushes it
+    /// down to the rows; on failure logs + leaves it false (a restart re-reads).
     /// </summary>
     private async Task LoadPremiumStateAsync()
     {
@@ -444,9 +533,27 @@ public partial class ModListViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
-                "Nexus premium state read failed; per-mod Update buttons stay hidden until restart.");
+                "Nexus premium state read failed; per-row update actions stay regular-tier until restart.");
+        }
+        finally
+        {
+            // Whether the read landed or failed, push the current value down so
+            // each row's tooltip + enabled state reflect it.
+            PushGlobalStateToRows();
         }
     }
+
+    /// <summary>
+    /// Pushes the new premium flag down to every row when it changes (the
+    /// construction-time read + a future refresh).
+    /// </summary>
+    partial void OnIsPremiumUserChanged(bool value) => PushGlobalStateToRows();
+
+    /// <summary>
+    /// Pushes the new global-busy flag down to every row when it changes (the
+    /// coordinator acquired or released).
+    /// </summary>
+    partial void OnAnyRowUpdatingChanged(bool value) => PushGlobalStateToRows();
 
     /// <summary>
     /// Rebuilds <see cref="Mods"/> from the active profile. Each row's source +
@@ -502,29 +609,44 @@ public partial class ModListViewModel : ObservableObject
 
         HasMods = Mods.Count > 0;
 
-        // The freshly built rows default UpdateAvailable=false; re-apply the
-        // last check result so a profile switch (or a post-edit reload) reflects
-        // the most recent check without waiting for the next one.
-        ApplyUpdateCheckResult();
+        // The freshly built rows default UpdateAvailable=false + carry no
+        // premium / global-busy state. Push the current global state down, then
+        // re-apply the persisted known-update state (profile-scoped) so a profile
+        // switch (or a post-edit reload, or a restart) reflects the recorded
+        // flags without waiting for the next check.
+        PushGlobalStateToRows();
+        ApplyKnownUpdateState();
     }
 
     /// <summary>
-    /// Reloads the mod list and clears the update flag for the specified
-    /// container. Called after an nxm install/reinstall: the stale
-    /// <see cref="IUpdateCheckService.LastResult"/> (computed before the
-    /// version change) would re-apply the flag via
-    /// <see cref="ApplyUpdateCheckResult"/>, so this overrides it for instant
-    /// UX. The next automatic or manual check reconciles the flag (the pin
-    /// was cleared by <c>AddVersion</c>, so the mod is re-evaluated).
+    /// Acknowledges a successful version change for <paramref name="containerId"/>
+    /// in the active profile (removing its persisted known-update entry
+    /// immediately, without an extra API check), then reloads so the new version
+    /// shows and the flag clears. Called after a successful nxm
+    /// install/reinstall: the prior known-update state (recorded before the
+    /// version change) would otherwise re-apply the flag via
+    /// <see cref="ApplyKnownUpdateState"/>. The next authoritative check
+    /// reconciles naturally (the mod is re-evaluated against the new version).
     /// </summary>
-    public void ReloadAndClearUpdateFlag(Guid containerId)
+    public void AcknowledgeUpdateAndReload(Guid containerId)
     {
-        Reload();
-        var row = Mods.FirstOrDefault(m => m.ContainerId == containerId);
-        if (row is not null)
+        if (_session.ActiveProfileId is Guid profileId)
         {
-            row.UpdateAvailable = false;
+            try
+            {
+                _updateState.AcknowledgeInstall(profileId, containerId);
+            }
+            catch (Exception ex)
+            {
+                // Defensive: AcknowledgeInstall should not throw, but a
+                // persistence failure must not block the reload.
+                _logger.LogWarning(ex,
+                    "Acknowledging update for container {Container} failed; the next check reconciles.",
+                    containerId);
+            }
         }
+
+        Reload();
     }
 
     /// <summary>
@@ -814,40 +936,44 @@ public partial class ModListViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Runs the one-click per-mod update: re-downloads the mod's latest MAIN
-    /// release via <see cref="IModAcquisitionService.AcquireLatestNexusAsync"/>
-    /// (the auth-only / premium path), then reloads so the new version shows +
-    /// the marker clears (the new ImportedAt is now, so the next check will not
-    /// re-flag it). Premium-only (hidden, not nagged, for non-premium). One at a
-    /// time: a second invocation while <see cref="AnyRowUpdating"/> is a no-op.
+    /// The stable per-row update action. Branches on the verified Premium state:
+    /// <b>Premium</b> re-downloads the mod's latest MAIN release via
+    /// <see cref="IModAcquisitionService.AcquireLatestNexusAsync"/> (the
+    /// auth-only / premium path) under the global install coordinator, then
+    /// acknowledges the install (clearing the persisted known-update entry
+    /// immediately, with no extra API check) + reloads; <b>regular / unknown</b>
+    /// opens the mod's Nexus files page in the user's browser via the injectable
+    /// external-launcher seam, surfacing a fallback alert on launch failure.
     /// </summary>
     /// <remarks>
-    /// <para><b>Defense.</b> No-op when: there is no active profile; another
-    /// update is in flight (<see cref="AnyRowUpdating"/>); the row is not
-    /// Nexus+Latest (<see cref="ModItemViewModel.IsNexusLatest"/>); no update is
-    /// flagged (<see cref="ModItemViewModel.UpdateAvailable"/>); the user is not
-    /// premium (<see cref="IsPremiumUser"/>); or the row has no
-    /// <see cref="ModItemViewModel.NexusModId"/>.</para>
+    /// <para><b>Defense.</b> No-op when: there is no active profile; the row is
+    /// not Nexus+Latest (<see cref="ModItemViewModel.IsNexusLatest"/>); no update
+    /// is flagged (<see cref="ModItemViewModel.UpdateAvailable"/>); or the row
+    /// has no <see cref="ModItemViewModel.NexusModId"/>. The Premium install path
+    /// additionally no-ops when the global coordinator is already busy (one
+    /// install at a time, shared with the automatic updater).</para>
+    /// <para><b>One install at a time, globally.</b> The Premium path acquires
+    /// the shared <see cref="UpdateCoordinator"/>; the automatic updater acquires
+    /// the same coordinator per mod, so a manual click and an automatic batch can
+    /// never install the same mod concurrently. The coordinator's busy flag drives
+    /// <see cref="AnyRowUpdating"/> (pushed to rows), which disables other
+    /// Premium rows' actions while an install runs.</para>
     /// <para><b>Transactional extraction.</b> The mod repository's
     /// <c>AddVersion</c> extracts into a sibling temp + atomically swaps on
     /// success, so a mid-update failure leaves the existing version intact (the
-    /// user keeps the version they had). On failure the command surfaces a
-    /// user-facing alert; on success (or failure) the finally block clears
-    /// <see cref="ModItemViewModel.IsUpdating"/> + <see cref="AnyRowUpdating"/>
-    /// so the row's other controls re-enable.</para>
+    /// user keeps the version they had). On Premium-install failure the command
+    /// surfaces a user-facing alert; on success (or failure) the finally block
+    /// clears <see cref="ModItemViewModel.IsUpdating"/> + releases the
+    /// coordinator so the row's other controls re-enable.</para>
+    /// <para><b>No ConfigureAwait(false)</b> on the Premium path: the continuation
+    /// must stay on the UI thread so Reload + ShowAlertAsync run on the UI thread
+    /// (the UI-layer convention). The acquisition's own I/O runs on the threadpool
+    /// internally; awaiting it does not block the UI thread.</para>
     /// </remarks>
     [RelayCommand]
     private async Task Update(ModItemViewModel? row)
     {
-        if (row is null || _session.ActiveProfileId is not Guid)
-        {
-            return;
-        }
-
-        // One at a time: a second click while another update is in flight is a
-        // no-op. Checked here (not via the button's IsEnabled) so a programmatic
-        // call is also gated.
-        if (AnyRowUpdating)
+        if (row is null || _session.ActiveProfileId is not Guid profileId)
         {
             return;
         }
@@ -855,46 +981,51 @@ public partial class ModListViewModel : ObservableObject
         // Defense: the button is only visible+enabled under these conditions,
         // but the command is the source of truth (a programmatic caller, a test,
         // or a future keystroke could bypass the view's gating).
-        if (!IsPremiumUser || !row.IsNexusLatest || !row.UpdateAvailable || row.NexusModId is not int modId)
+        if (!row.IsNexusLatest || !row.UpdateAvailable || row.NexusModId is not int modId)
         {
             return;
         }
 
-        AnyRowUpdating = true;
+        if (IsPremiumUser)
+        {
+            await UpdatePremiumAsync(profileId, row, modId);
+        }
+        else
+        {
+            OpenFilesPage(row);
+        }
+    }
+
+    /// <summary>
+    /// The Premium install branch of the update action: acquires the global
+    /// coordinator (no-op if busy), runs the acquisition, acknowledges the
+    /// install, and reloads. Surfaces a user-facing alert on failure.
+    /// </summary>
+    private async Task UpdatePremiumAsync(Guid profileId, ModItemViewModel row, int modId)
+    {
+        // One install at a time, globally: a second click while another install
+        // is in flight is a no-op. The coordinator is shared with the automatic
+        // updater, so the two paths can never install the same mod concurrently.
+        if (!_updateCoordinator.TryAcquire(out var scope))
+        {
+            return;
+        }
+
         row.IsUpdating = true;
         try
         {
             // No ConfigureAwait(false): the continuation must stay on the UI
-            // thread so Reload (mutates the UI-bound Mods collection) + the
-            // failure-path ShowAlertAsync below run on the UI thread. Matches
-            // Remove + AddMods in this file; the NxmModDownloadHandler marshals
-            // explicitly via an _invokeOnUi seam instead, but this file's
-            // convention is to stay on the captured UI context.
+            // thread so AcknowledgeUpdateAndReload (mutates the UI-bound Mods
+            // collection) + the failure-path ShowAlertAsync below run on the UI
+            // thread (the UI-layer convention).
             await _acquisition.AcquireLatestNexusAsync(GameDomain, modId);
 
-            // Reload so the new version (its IsLatest flip + the fresh
-            // ImportedAt) shows. Then clear the marker for this row immediately:
-            // the stale LastResult (from before the update) still flags this
-            // container, so ApplyUpdateCheckResult (called inside Reload)
-            // re-set UpdateAvailable=true. Override it here for instant UX, then
-            // fire a fresh check so the stale LastResult is replaced (otherwise
-            // the next edit's Reload would re-apply the stale result + flicker
-            // the marker back). The fresh check won't re-flag this mod: its
-            // RemoteUploadedAt is now the latest file's upload date, so
-            // LatestFileUpdateUtc > RemoteUploadedAt is false.
-            Reload();
-            var updated = Mods.FirstOrDefault(m => m.ContainerId == row.ContainerId);
-            if (updated is not null)
-            {
-                updated.UpdateAvailable = false;
-            }
-
-            if (_session.ActiveProfileId is Guid checkId)
-            {
-                _ = _updateCheck.CheckAsync(checkId).ContinueWith(
-                    t => _logger.LogError(t.Exception, "Post-update check failed for profile {Profile}.", checkId),
-                    TaskContinuationOptions.OnlyOnFaulted);
-            }
+            // Acknowledge the install: remove this container's known-update entry
+            // immediately (no extra API check), then reload so the new version
+            // shows + the flag clears. The persisted state was the source of the
+            // flag, so clearing it is enough; ApplyKnownUpdateState (inside
+            // Reload) reads the cleared state.
+            AcknowledgeUpdateAndReload(row.ContainerId);
 
             _logger.LogInformation("Updated mod {Container} to the latest Nexus release.", row.ContainerId);
         }
@@ -915,7 +1046,86 @@ public partial class ModListViewModel : ObservableObject
         finally
         {
             row.IsUpdating = false;
-            AnyRowUpdating = false;
+            scope?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The regular / unknown Premium branch of the update action: opens the
+    /// mod's Nexus files page in the user's browser via the injectable
+    /// external-launcher seam, surfacing a fallback alert on launch failure
+    /// (rather than swallowing it). No install coordination is needed (this only
+    /// opens a page); the user picks a file on Nexus + the registered nxm
+    /// handler acquires it through the standard flow.
+    /// </summary>
+    private void OpenFilesPage(ModItemViewModel row)
+    {
+        if (row.UpdatePageUrl is not { } url || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_launchExternal(uri))
+            {
+                // The seam returns false on a launch failure (no default browser,
+                // headless, etc.). Surface a fallback alert rather than swallowing
+                // it so the user can act (the URL is included for manual copy).
+                _logger.LogWarning("Opening the Nexus files page for {Container} failed.", row.ContainerId);
+                _ = ShowLaunchFailedAlertAsync(row.Name, url);
+            }
+        }
+        catch (Exception ex)
+        {
+            // The default launcher's exception filter is narrow; a real wiring
+            // bug surfaces here as a fallback alert rather than being swallowed.
+            _logger.LogError(ex, "Launching the Nexus files page for {Container} threw.", row.ContainerId);
+            _ = ShowLaunchFailedAlertAsync(row.Name, url);
+        }
+    }
+
+    /// <summary>
+    /// Shows the localized launcher-failure alert (fire-and-forget on the UI
+    /// thread; the click handler is sync). Includes the files-page URL so the
+    /// user can open it manually.
+    /// </summary>
+    private async Task ShowLaunchFailedAlertAsync(string modName, string url)
+    {
+        await _dialogs.ShowAlertAsync(
+            _localization["ModList_OpenFilesFailedTitle"],
+            _localization.Format("ModList_OpenFilesFailedMessage", modName, url));
+    }
+
+    /// <summary>
+    /// The default external-launcher: opens <paramref name="uri"/> via the OS
+    /// shell-open (<c>Process.Start(UseShellExecute=true)</c>). Mirrors
+    /// <c>DmfPromptService</c>'s launcher; the narrow exception filter
+    /// (<c>Win32Exception</c>, <c>PlatformNotSupportedException</c>,
+    /// <c>FileNotFoundException</c>) keeps a real wiring bug visible rather than
+    /// silently swallowed. Returns false on a caught launch failure; tests
+    /// inject a controllable seam.
+    /// </summary>
+    private static bool LaunchExternalDefault(Uri uri)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = uri.AbsoluteUri,
+                UseShellExecute = true,
+            };
+            using (Process.Start(psi))
+            {
+            }
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is System.ComponentModel.Win32Exception
+                or PlatformNotSupportedException
+                or FileNotFoundException)
+        {
+            return false;
         }
     }
 

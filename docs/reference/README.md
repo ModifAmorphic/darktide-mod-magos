@@ -35,6 +35,10 @@ Per-library API reference for the Modificus Curator backend libraries + the UI
 
 ## Strategy & release
 
+- [nexus-premium.md](nexus-premium.md): the complete Premium versus regular
+  Nexus behavior matrix, including one-click updates, the DMF prompt,
+  token-bearing `nxm://` downloads, Premium-state lifetime, and external-policy
+  uncertainties.
 - [rate-limiting-strategy.md](rate-limiting-strategy.md): the proactive Nexus
   API call-limiting mechanisms (manual sliding-window throttle, auto-check
   interval floor, persisted interval gate) and the worst-case budget math.

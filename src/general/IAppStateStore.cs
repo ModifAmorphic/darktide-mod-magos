@@ -2,14 +2,14 @@ namespace Modificus.Curator.General;
 
 /// <summary>
 /// Persists non-critical **runtime application state**: values that capture
-/// "where the app left off" (e.g. the last-selected profile, the last update
-/// check timestamp) rather than user system settings. Backed by a small JSON
-/// file kept under the app-data dir, separate from
-/// <see cref="Config.CuratorConfig"/> (which holds system settings only). Kept
-/// deliberately narrow on purpose: the three state values (<see cref="ActiveProfileId"/>,
-/// <see cref="LastUpdateCheckUtc"/>, and <see cref="ManualRefreshTimestamps"/>)
-/// share a tiny dedicated store that is the honest model + keeps the settings
-/// schema pure.
+/// "where the app left off" (e.g. the last-selected profile, the last update-check
+/// timestamp, the persisted known-update snapshots) rather than user system
+/// settings. Backed by a small JSON file kept under the app-data dir, separate
+/// from <see cref="Config.CuratorConfig"/> (which holds system settings only). Kept
+/// deliberately narrow on purpose: the state values (<see cref="ActiveProfileId"/>,
+/// <see cref="LastUpdateCheckUtc"/>, <see cref="ManualRefreshTimestamps"/>, and
+/// <see cref="KnownUpdates"/>) share a tiny dedicated store that is the honest
+/// model + keeps the settings schema pure.
 /// </summary>
 /// <remarks>
 /// <para><b>First-run safe:</b> a missing or corrupt state file never throws;
@@ -43,4 +43,28 @@ public interface IAppStateStore
     /// carry the manual throttle's sliding window across restarts.
     /// </summary>
     IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; }
+
+    /// <summary>
+    /// Profile-scoped "known update available" snapshots, keyed by profile id, or
+    /// <c>null</c> when none are recorded. Reading returns the persisted map (or
+    /// <c>null</c> on first run / corrupt file); assigning persists immediately.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Used by the Integrations-layer update-state store to persist flagged-update
+    /// knowledge so it survives an app restart. The persistence rules (which
+    /// outcomes replace, which preserve, how entries self-heal on hydration) live
+    /// in the Integrations <c>IUpdateStateStore</c>; this property is the raw
+    /// key-value store it reads + writes. Each profile's entry list is replaced
+    /// wholesale on a write (the store does not merge at this granularity).</para>
+    /// <para>
+    /// <b>First-run + upgrade safe.</b> An old <c>app-state.json</c> written
+    /// before this field existed deserializes it as <c>null</c> (System.Text.Json
+    /// default for an absent nullable member), so a first run after upgrade sees
+    /// no persisted snapshots + the next check seeds them. Existing fields
+    /// (<see cref="ActiveProfileId"/>, <see cref="LastUpdateCheckUtc"/>,
+    /// <see cref="ManualRefreshTimestamps"/>) are preserved on every write: the
+    /// whole cached model is rewritten on each assignment.</para>
+    /// </remarks>
+    IReadOnlyDictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? KnownUpdates { get; set; }
 }

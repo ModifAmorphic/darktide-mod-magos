@@ -1207,8 +1207,12 @@ public sealed class UpdateCheckServiceTests
         services.AddSingleton<IModRepository>(repository);
         services.AddSingleton<IConfigLoader>(configLoader);
         services.AddSingleton<ILogger<UpdateCheckService>>(NullLogger<UpdateCheckService>.Instance);
-        // Mirrors AddUpdateCheck (the interface-to-impl registration under test);
-        // the unregistered Func<DateTimeOffset>? param must fall back to its default.
+        services.AddSingleton<ILogger<UpdateStateStore>>(NullLogger<UpdateStateStore>.Instance);
+        // Mirrors AddUpdateCheck (the interface-to-impl registration under test
+        // + the IUpdateStateStore registration that ships alongside it); the
+        // unregistered Func<DateTimeOffset>? param must fall back to its default.
+        services.AddSingleton<IAppStateStore, AppStateStore>();
+        services.AddSingleton<IUpdateStateStore, UpdateStateStore>();
         services.AddSingleton<IUpdateCheckService, UpdateCheckService>();
 
         using var provider = services.BuildServiceProvider();
@@ -1311,13 +1315,23 @@ public sealed class UpdateCheckServiceTests
         };
 
     /// <summary>
+    /// The <see cref="FakeAppStateStore"/> backing the last <see cref="CreateService"/>
+    /// service. New persistence tests read this to assert on recorded state;
+    /// existing tests ignore it.
+    /// </summary>
+    private FakeAppStateStore? _lastAppState;
+
+    /// <summary>
     /// Constructs the service with the given fakes + a <see cref="FakeConfigLoader"/>
     /// whose Nexus auth method is <paramref name="authMethod"/> (ApiKey by
     /// default, so the auth gate passes and the API is reached). The optional
     /// <paramref name="getNow"/> drives the tier-3 cache TTL clock for the TTL
-    /// re-resolve test; it defaults to null (the production UtcNow clock).
+    /// re-resolve test; it defaults to null (the production UtcNow clock). A real
+    /// <see cref="UpdateStateStore"/> is wired over a <see cref="FakeAppStateStore"/>
+    /// (exposed via <see cref="_lastAppState"/>) so the persistence side-effect of
+    /// each check is exercised + assertable.
     /// </summary>
-    private static UpdateCheckService CreateService(
+    private UpdateCheckService CreateService(
         FakeNexusClient nexus,
         FakeProfileService profiles,
         FakeModRepository repository,
@@ -1327,8 +1341,13 @@ public sealed class UpdateCheckServiceTests
         var config = CuratorConfig.CreateDefault();
         config.Integrations.Nexus.AuthMethod = authMethod;
         var configLoader = new FakeConfigLoader { Config = config };
+        var appState = new FakeAppStateStore();
+        var stateStore = new UpdateStateStore(
+            appState, profiles, repository, NullLogger<UpdateStateStore>.Instance);
+        _lastAppState = appState;
         return new UpdateCheckService(
-            nexus, profiles, repository, configLoader, NullLogger<UpdateCheckService>.Instance, getNow);
+            nexus, profiles, repository, configLoader, stateStore,
+            NullLogger<UpdateCheckService>.Instance, getNow);
     }
 
     /// <summary>
@@ -1522,5 +1541,217 @@ public sealed class UpdateCheckServiceTests
             }
             return base.RenameContainer(containerId, newName);
         }
+    }
+
+    // ---- UpdateStateStore: persisted known-update rules ---------------------
+
+    /// <summary>
+    /// Builds a <see cref="UpdateStateStore"/> over fresh fakes + returns them
+    /// so each test drives the persistence rules directly.
+    /// </summary>
+    private static (UpdateStateStore Store, FakeAppStateStore AppState, FakeProfileService Profiles, FakeModRepository Repo)
+        CreateStateStore()
+    {
+        var appState = new FakeAppStateStore();
+        var profiles = new FakeProfileService();
+        var repo = new FakeModRepository();
+        var store = new UpdateStateStore(
+            appState, profiles, repo, NullLogger<UpdateStateStore>.Instance);
+        return (store, appState, profiles, repo);
+    }
+
+    /// <summary>
+    /// A <see cref="ModContainer"/> with one version at <paramref name="versionString"/>,
+    /// the version flagged IsLatest. Used by the state-store self-heal tests.
+    /// </summary>
+    private static ModContainer ContainerWithVersion(Guid id, ModSource source, string versionString)
+    {
+        var version = new ModVersion
+        {
+            Folder = id.ToString("N") + "-v",
+            VersionString = versionString,
+            IsLatest = true,
+            ImportedAt = DateTimeOffset.UtcNow,
+        };
+        return new ModContainer
+        {
+            Id = id,
+            Source = source,
+            Name = "Mod " + id,
+            Versions = new[] { version },
+        };
+    }
+
+    [Fact]
+    public void StateStore_success_replaces_the_profile_state_and_clears_on_no_updates()
+    {
+        var (store, appState, profiles, repo) = CreateStateStore();
+        var profile = Guid.NewGuid();
+        var container = Guid.NewGuid();
+        profiles.Mods = new[] { new ModListEntry { ContainerId = container, Order = 0, Policy = ModVersionPolicy.Latest } };
+        repo.Containers[container] = ContainerWithVersion(container, new NexusSource { ModId = 8 }, "1.0");
+
+        // First record a flagged result.
+        store.RecordResult(profile, new UpdateCheckResult(
+            new[] { new ModUpdateInfo(container, 8, "Mod", "1.0", DateTimeOffset.UtcNow) },
+            DateTimeOffset.UtcNow, false, false, Outcome: CheckOutcome.Success));
+        Assert.Contains(container, store.GetKnownUpdateContainerIds(profile));
+
+        // Then an authoritative success with no updates clears it.
+        store.RecordResult(profile, new UpdateCheckResult(
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, false, false,
+            Outcome: CheckOutcome.Success));
+        Assert.Empty(store.GetKnownUpdateContainerIds(profile));
+    }
+
+    [Fact]
+    public void StateStore_no_auth_failed_rate_limited_preserve_prior_flags()
+    {
+        var (store, _, profiles, repo) = CreateStateStore();
+        var profile = Guid.NewGuid();
+        var container = Guid.NewGuid();
+        profiles.Mods = new[] { new ModListEntry { ContainerId = container, Order = 0, Policy = ModVersionPolicy.Latest } };
+        repo.Containers[container] = ContainerWithVersion(container, new NexusSource { ModId = 8 }, "1.0");
+
+        // Seed a flagged state via a success.
+        store.RecordResult(profile, new UpdateCheckResult(
+            new[] { new ModUpdateInfo(container, 8, "Mod", "1.0", DateTimeOffset.UtcNow) },
+            DateTimeOffset.UtcNow, false, false, Outcome: CheckOutcome.Success));
+        Assert.Contains(container, store.GetKnownUpdateContainerIds(profile));
+
+        // Each non-authoritative outcome preserves the prior flag.
+        foreach (var outcome in new[] { CheckOutcome.NoAuth, CheckOutcome.RateLimited, CheckOutcome.Failed })
+        {
+            store.RecordResult(profile, new UpdateCheckResult(
+                Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, false, false, Outcome: outcome));
+            Assert.Contains(container, store.GetKnownUpdateContainerIds(profile));
+        }
+    }
+
+    [Fact]
+    public void StateStore_no_nexus_mods_clears_the_profile_state()
+    {
+        var (store, _, profiles, repo) = CreateStateStore();
+        var profile = Guid.NewGuid();
+        var container = Guid.NewGuid();
+        profiles.Mods = new[] { new ModListEntry { ContainerId = container, Order = 0, Policy = ModVersionPolicy.Latest } };
+        repo.Containers[container] = ContainerWithVersion(container, new NexusSource { ModId = 8 }, "1.0");
+
+        store.RecordResult(profile, new UpdateCheckResult(
+            new[] { new ModUpdateInfo(container, 8, "Mod", "1.0", DateTimeOffset.UtcNow) },
+            DateTimeOffset.UtcNow, false, false, Outcome: CheckOutcome.Success));
+        Assert.Contains(container, store.GetKnownUpdateContainerIds(profile));
+
+        // A no-Nexus-mods result is a local-truth clear.
+        store.RecordResult(profile, new UpdateCheckResult(
+            Array.Empty<ModUpdateInfo>(), DateTimeOffset.UtcNow, false, false,
+            Outcome: CheckOutcome.NoNexusMods));
+        Assert.Empty(store.GetKnownUpdateContainerIds(profile));
+    }
+
+    [Fact]
+    public void StateStore_profile_scoped_snapshots_never_bleed_between_profiles()
+    {
+        var (store, appState, profiles, repo) = CreateStateStore();
+        var profileA = Guid.NewGuid();
+        var profileB = Guid.NewGuid();
+        var containerA = Guid.NewGuid();
+        var containerB = Guid.NewGuid();
+        profiles.Mods = Array.Empty<ModListEntry>();
+        repo.Containers[containerA] = ContainerWithVersion(containerA, new NexusSource { ModId = 8 }, "1.0");
+        repo.Containers[containerB] = ContainerWithVersion(containerB, new NexusSource { ModId = 9 }, "1.0");
+
+        store.RecordResult(profileA, new UpdateCheckResult(
+            new[] { new ModUpdateInfo(containerA, 8, "A", "1.0", DateTimeOffset.UtcNow) },
+            DateTimeOffset.UtcNow, false, false, Outcome: CheckOutcome.Success));
+        store.RecordResult(profileB, new UpdateCheckResult(
+            new[] { new ModUpdateInfo(containerB, 9, "B", "1.0", DateTimeOffset.UtcNow) },
+            DateTimeOffset.UtcNow, false, false, Outcome: CheckOutcome.Success));
+
+        // The persisted map is keyed by profile id: each profile's entry list is
+        // independent (a result from profile A never becomes profile B's state).
+        Assert.NotNull(appState.KnownUpdatesData);
+        var persisted = appState.KnownUpdatesData!;
+        Assert.True(persisted.ContainsKey(profileA));
+        Assert.True(persisted.ContainsKey(profileB));
+        Assert.Equal(containerA, Assert.Single(persisted[profileA]).ContainerId);
+        Assert.Equal(containerB, Assert.Single(persisted[profileB]).ContainerId);
+    }
+
+    [Fact]
+    public void StateStore_acknowledge_removes_a_single_entry()
+    {
+        var (store, _, profiles, repo) = CreateStateStore();
+        var profile = Guid.NewGuid();
+        var c1 = Guid.NewGuid();
+        var c2 = Guid.NewGuid();
+        profiles.Mods = new[]
+        {
+            new ModListEntry { ContainerId = c1, Order = 0, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = c2, Order = 1, Policy = ModVersionPolicy.Latest },
+        };
+        repo.Containers[c1] = ContainerWithVersion(c1, new NexusSource { ModId = 8 }, "1.0");
+        repo.Containers[c2] = ContainerWithVersion(c2, new NexusSource { ModId = 9 }, "1.0");
+
+        store.RecordResult(profile, new UpdateCheckResult(
+            new[]
+            {
+                new ModUpdateInfo(c1, 8, "A", "1.0", DateTimeOffset.UtcNow),
+                new ModUpdateInfo(c2, 9, "B", "1.0", DateTimeOffset.UtcNow),
+            },
+            DateTimeOffset.UtcNow, false, false, Outcome: CheckOutcome.Success));
+
+        store.AcknowledgeInstall(profile, c1);
+
+        var flags = store.GetKnownUpdateContainerIds(profile);
+        Assert.Equal(c2, Assert.Single(flags));
+    }
+
+    [Fact]
+    public void StateStore_hydration_self_heals_removed_pinned_source_changed_and_version_changed_entries()
+    {
+        var (store, _, profiles, repo) = CreateStateStore();
+        var profile = Guid.NewGuid();
+        var removed = Guid.NewGuid();
+        var pinned = Guid.NewGuid();
+        var sourceChanged = Guid.NewGuid();
+        var versionChanged = Guid.NewGuid();
+        var stillValid = Guid.NewGuid();
+
+        // Seed all five as flagged.
+        store.RecordResult(profile, new UpdateCheckResult(
+            new[]
+            {
+                new ModUpdateInfo(removed, 1, "r", "1.0", DateTimeOffset.UtcNow),
+                new ModUpdateInfo(pinned, 2, "p", "1.0", DateTimeOffset.UtcNow),
+                new ModUpdateInfo(sourceChanged, 3, "s", "1.0", DateTimeOffset.UtcNow),
+                new ModUpdateInfo(versionChanged, 4, "v", "1.0", DateTimeOffset.UtcNow),
+                new ModUpdateInfo(stillValid, 5, "k", "1.0", DateTimeOffset.UtcNow),
+            },
+            DateTimeOffset.UtcNow, false, false, Outcome: CheckOutcome.Success));
+
+        // Now set up the live profile + repo state so only stillValid qualifies:
+        // - removed: NOT in the profile.
+        // - pinned: in the profile but on PinnedPolicy.
+        // - sourceChanged: in the profile + Latest, but the container's source
+        //   is no longer Nexus with the same ModId.
+        // - versionChanged: in the profile + Latest, but the installed version
+        //   differs from the snapshot's CurrentVersion.
+        // - stillValid: in the profile + Latest + Nexus + matching version.
+        profiles.Mods = new[]
+        {
+            new ModListEntry { ContainerId = pinned, Order = 0, Policy = new PinnedPolicy("v") },
+            new ModListEntry { ContainerId = sourceChanged, Order = 1, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = versionChanged, Order = 2, Policy = ModVersionPolicy.Latest },
+            new ModListEntry { ContainerId = stillValid, Order = 3, Policy = ModVersionPolicy.Latest },
+        };
+        repo.Containers[pinned] = ContainerWithVersion(pinned, new NexusSource { ModId = 2 }, "1.0");
+        repo.Containers[sourceChanged] = ContainerWithVersion(sourceChanged, new UntrackedSource(), "1.0");
+        repo.Containers[versionChanged] = ContainerWithVersion(versionChanged, new NexusSource { ModId = 4 }, "2.0");
+        repo.Containers[stillValid] = ContainerWithVersion(stillValid, new NexusSource { ModId = 5 }, "1.0");
+
+        var flags = store.GetKnownUpdateContainerIds(profile);
+
+        Assert.Equal(stillValid, Assert.Single(flags));
     }
 }

@@ -164,12 +164,11 @@ internal sealed class NxmModDownloadHandler : INxmModDownloadHandler
 
             // Refresh the mod list on the UI thread so the newly-added (or
             // reinstalled) mod appears immediately without a profile switch.
-            // The container id is forwarded so the refresh can also clear a
-            // stale UpdateAvailable flag: the last check result (computed
-            // before the version change) would otherwise re-apply it via the
-            // reload. No fresh check is fired; the reconciliation pin was
-            // cleared by AddVersion, so the next automatic or manual check
-            // re-evaluates the mod.
+            // The container id is forwarded so the refresh can also acknowledge
+            // the install: clear the persisted known-update entry for this
+            // container immediately (no extra API check), so the stale
+            // known-update state (recorded before the version change) does not
+            // re-apply the flag on the reload.
             if (_refreshModList is not null)
             {
                 await _invokeOnUi(() => { _refreshModList(containerId); return Task.CompletedTask; });
