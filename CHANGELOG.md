@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.7.1...v0.8.0) (2026-07-12)
+
+
+### Features
+
+* **mod-import:** accept all archive formats in manual import ([#91](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/91)) ([a812d30](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/a812d3094c8395f2141b0a9c659c6a9d746462fb))
+
 ## [0.7.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.7.0...v0.7.1) (2026-07-12)
 
 
