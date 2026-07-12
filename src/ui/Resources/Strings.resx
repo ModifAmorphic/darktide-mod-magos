@@ -98,27 +98,27 @@
     <comment>Status-strip label when Darktide is not running.</comment>
   </data>
   <data name="Status_NxmRegistered" xml:space="preserve">
-    <value>NXM: Curator</value>
+    <value>Nexus links: enabled</value>
     <comment>Status-strip label when Curator is the registered OS handler for nxm:// links.</comment>
   </data>
   <data name="Status_NxmNotRegistered" xml:space="preserve">
-    <value>NXM: not Curator</value>
-    <comment>Status-strip label when another program (or nothing) is the registered OS handler for nxm:// links.</comment>
+    <value>Nexus links: disabled</value>
+    <comment>Status-strip label when Curator is not the registered OS handler for nxm:// links.</comment>
   </data>
   <data name="Status_NxmUnavailable" xml:space="preserve">
-    <value>NXM: unavailable</value>
+    <value>Nexus links: unavailable</value>
     <comment>Status-strip label when there is no platform registrar (not Windows or Linux).</comment>
   </data>
   <data name="Status_NxmRegisteredTooltip" xml:space="preserve">
-    <value>Curator handles Nexus Mod Manager download links (nxm://). Manage this in Integrations.</value>
+    <value>Curator handles Nexus download links (nxm://). Manage this in Integrations.</value>
     <comment>Tooltip on the NXM status-strip label when Curator is registered.</comment>
   </data>
   <data name="Status_NxmNotRegisteredTooltip" xml:space="preserve">
-    <value>Another program handles Nexus Mod Manager download links (nxm://). Enable it in Integrations to download mods from Nexus.</value>
-    <comment>Tooltip on the NXM status-strip label when Curator is not registered.</comment>
+    <value>Curator is not set to handle Nexus download links (nxm://). Enable it in Integrations to download mods from Nexus.</value>
+    <comment>Tooltip on the NXM status-strip label when Curator is not registered. Does not assert a third-party handler; nothing may own nxm:// yet.</comment>
   </data>
   <data name="Status_NxmUnavailableTooltip" xml:space="preserve">
-    <value>Curator cannot register as the nxm:// handler on this platform.</value>
+    <value>Curator cannot handle Nexus download links (nxm://) on this platform.</value>
     <comment>Tooltip on the NXM status-strip label when there is no platform registrar.</comment>
   </data>
   <data name="ProfileSwitch_RunningTooltip" xml:space="preserve">
@@ -710,6 +710,10 @@
     <value>https://www.nexusmods.com/settings/api-keys</value>
     <comment>The Nexus API-keys page URL. Used as the link target + the help-link tooltip.</comment>
   </data>
+  <data name="Integrations_ApiKeyTestingNote" xml:space="preserve">
+    <value>For testing only. This option is removed at release.</value>
+    <comment>Small, low-opacity note inside the API-key block signaling its pre-registration status. The release-time remove-vs-hide decision is separate.</comment>
+  </data>
   <data name="Integrations_SignOutButton" xml:space="preserve">
     <value>Sign out</value>
     <comment>The Sign out button (shown when authenticated).</comment>
@@ -795,8 +799,8 @@
     <comment>Status line in the nxm section when Curator is the registered OS handler.</comment>
   </data>
   <data name="Integrations_NxmStatusNotRegistered" xml:space="preserve">
-    <value>Another program handles Nexus download links (nxm://).</value>
-    <comment>Status line in the nxm section when Curator is not the registered OS handler.</comment>
+    <value>Curator is not set to handle Nexus download links (nxm://).</value>
+    <comment>Status line in the nxm section when Curator is not the registered OS handler. Does not assert a third-party handler; nothing may own nxm:// yet.</comment>
   </data>
   <data name="Integrations_NxmStatusUnavailable" xml:space="preserve">
     <value>Not available on this platform.</value>
@@ -827,7 +831,7 @@
     <comment>Title of the confirmation prompt shown before registering Curator as the nxm:// handler.</comment>
   </data>
   <data name="Integrations_NxmConfirmMessage" xml:space="preserve">
-    <value>This changes the system-wide handler for Nexus Mod Manager download links (nxm://). It may affect Vortex, Mod Organizer 2, Nexus Mod Manager, or other mod managers. Curator only supports Darktide downloads. Continue?</value>
+    <value>This changes the system-wide handler for Nexus download links (nxm://). It may affect Vortex, Mod Organizer 2, Nexus Mod Manager, or other mod managers. Curator only supports Darktide downloads. Continue?</value>
     <comment>Body of the nxm registration confirmation prompt. Warns it is a system-wide change that can affect other mod managers.</comment>
   </data>
   <data name="Integrations_NxmRegisterFailedTitle" xml:space="preserve">

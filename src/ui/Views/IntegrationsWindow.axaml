@@ -16,18 +16,21 @@
   <!--
     The Integrations modal. Nexus-only in v1 (no navigation structure; GitHub
     stays config-file-only). Custom chrome (DialogTitleBar) mirrors the Track
-    A/D modal pattern. The Nexus section is laid out as TWO clearly-alternative,
-    visually-separated option blocks ("Sign in with Nexus" OAuth + "Use an API
-    key"), divided by a Separator, only one of which is active at a time:
+    A/D modal pattern. The Nexus section leads with the OAuth block ("Sign in
+    with Nexus"); the API-key block is demoted to the bottom of the dialog
+    (below the update-check settings + the nxm download-links section) and
+    carries a "testing only, removed at release" note reflecting its
+    pre-registration status. The two remain alternative auth methods, only one
+    active at a time:
 
       - OAuth block: a "Sign in with Nexus" button (always present, the
         call-to-action when inactive). When active, a per-block Sign out button
         appears next to it.
-      - API-key block: a masked TextBox (shows bullets when a key is
+      - API-key block (bottom): a masked TextBox (shows bullets when a key is
         configured, persisted across reopens) + a Show eye-toggle Path + a
         Validate button. When active, a per-block Sign out button appears.
 
-    The shared status line above the blocks carries the active-method
+    The shared status line above the OAuth block carries the active-method
     indicator ("Signed in as X (Premium) via Nexus login" / "...via API key"),
     so the user always knows WHICH method is configured. Auth controls stay
     usable while Darktide runs (only launch + active-profile changes are
@@ -95,98 +98,6 @@
               </Button>
             </StackPanel>
 
-            <!-- Visual divider between the two alternative blocks. Lean
-                 separator (the operator's lean: just two options, no card
-                 chrome). -->
-            <Separator Margin="0,4" />
-
-            <!-- ============== API-key block ============== -->
-            <StackPanel Spacing="8" Margin="0,4">
-
-              <!-- Block header. -->
-              <TextBlock Text="{Binding ApiKeyLabel}"
-                         Opacity="0.85" />
-
-              <!-- Masked TextBox + Show eye-toggle + Validate. The TextBox's
-                   PasswordChar binds to ApiKeyMaskChar ('\0' = plain /
-                   revealed, bullet = masked). The eye toggle is two stacked
-                   Buttons (show / hide) with their visibility flipped by
-                   IsApiKeyRevealed; the active one re-resolves its own
-                   tooltip via the matching VM property. -->
-              <Grid ColumnDefinitions="*,Auto,Auto">
-                <TextBox Grid.Column="0"
-                         Text="{Binding ApiKey, Mode=TwoWay}"
-                         PasswordChar="{Binding ApiKeyMaskChar}"
-                         PlaceholderText="{ReflectionBinding [Integrations_ApiKeyWatermark], Source={StaticResource Loc}}" />
-
-                <!-- Show eye toggle (revealed state -> click to hide). Material
-                     "visibility_off" icon. -->
-                <Button Grid.Column="1"
-                        Command="{Binding ToggleApiKeyRevealCommand}"
-                        IsVisible="{Binding IsApiKeyRevealed}"
-                        MinWidth="36"
-                        Margin="8,0,0,0"
-                        VerticalAlignment="Stretch"
-                        HorizontalAlignment="Stretch"
-                        Padding="0"
-                        ToolTip.Tip="{Binding HideApiKeyTooltip}">
-                  <Path Width="16" Height="16" Stretch="Uniform"
-                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Fill="{Binding $parent[Button].Foreground}"
-                        Data="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27z" />
-                </Button>
-
-                <!-- Hide eye toggle (masked state -> click to reveal). Material
-                     "visibility" icon. -->
-                <Button Grid.Column="1"
-                        Command="{Binding ToggleApiKeyRevealCommand}"
-                        IsVisible="{Binding !IsApiKeyRevealed}"
-                        MinWidth="36"
-                        Margin="8,0,0,0"
-                        VerticalAlignment="Stretch"
-                        HorizontalAlignment="Stretch"
-                        Padding="0"
-                        ToolTip.Tip="{Binding ShowApiKeyTooltip}">
-                  <Path Width="16" Height="16" Stretch="Uniform"
-                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Fill="{Binding $parent[Button].Foreground}"
-                        Data="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
-                </Button>
-
-                <Button Grid.Column="2"
-                        Content="{Binding ValidateLabel}"
-                        Command="{Binding ValidateApiKeyCommand}"
-                        Margin="8,0,0,0"
-                        MinWidth="80" />
-              </Grid>
-
-              <!-- Help link to where the user gets their API key. -->
-              <Button Content="{Binding ApiKeyHelpLabel}"
-                      Classes="link"
-                      HorizontalAlignment="Left"
-                      Margin="0,0,0,4"
-                      Click="ApiKeyHelp_Click"
-                      Padding="0"
-                      ToolTip.Tip="{Binding ApiKeyHelpLink}" />
-
-              <!-- Per-block Sign out: visible only when API key is the active
-                   method. Material "logout" icon. -->
-              <Button Command="{Binding SignOutCommand}"
-                      IsVisible="{Binding IsApiKeyActive}"
-                      HorizontalAlignment="Left"
-                      MinWidth="120">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                  <Path Width="14" Height="14" Stretch="Uniform"
-                        VerticalAlignment="Center"
-                        Fill="{Binding $parent[Button].Foreground}"
-                        Data="M17 7l-1.4 1.4 1.6 1.6H8v2h9.2l-1.6 1.6L17 15l4-4-4-4zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
-                  <TextBlock Text="{Binding SignOutLabel}"
-                             VerticalAlignment="Center"
-                             Margin="8,0,0,0" />
-                </StackPanel>
-              </Button>
-            </StackPanel>
-
           </StackPanel>
 
           <!-- ============== Update-check settings ==============
@@ -231,14 +142,127 @@
           <StackPanel Spacing="8" Margin="0,4">
             <TextBlock Text="{Binding NxmSectionHeader}"
                        FontWeight="SemiBold" />
-            <TextBlock Text="{Binding NxmStatusText}"
-                       TextWrapping="Wrap"
-                       Opacity="0.85" />
+            <!-- nxm status line with a green/grey indicator mirroring the
+                 status-strip one. Green when Curator is registered, grey
+                 otherwise (covers not registered + unavailable, since the VM
+                 sets IsNxmRegistered false when no registrar is present). -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Ellipse Width="11" Height="11" VerticalAlignment="Center"
+                       Fill="#22A06B"
+                       IsVisible="{Binding IsNxmRegistered}" />
+              <Ellipse Width="11" Height="11" VerticalAlignment="Center"
+                       Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                       IsVisible="{Binding !IsNxmRegistered}" />
+              <TextBlock Text="{Binding NxmStatusText}"
+                         TextWrapping="Wrap"
+                         Opacity="0.85" />
+            </StackPanel>
             <Button Content="{Binding NxmActionLabel}"
                     Command="{Binding ToggleNxmHandlerCommand}"
                     HorizontalAlignment="Left"
                     MinWidth="220"
                     ToolTip.Tip="{Binding NxmActionTooltip}" />
+          </StackPanel>
+
+          <!-- ============== API-key block (demoted) ==============
+               The API-key alternative, moved to the bottom of the dialog
+               (below OAuth, the update-check settings, and the nxm
+               download-links section). Self-contained with its own bindings.
+               The "testing only" note signals its pre-registration status; the
+               release-time remove-vs-hide decision is separate. -->
+          <Separator Margin="0,4" />
+          <StackPanel Spacing="8" Margin="0,4">
+
+            <!-- Block header. -->
+            <TextBlock Text="{Binding ApiKeyLabel}"
+                       Opacity="0.85" />
+
+            <!-- Masked TextBox + Show eye-toggle + Validate. The TextBox's
+                 PasswordChar binds to ApiKeyMaskChar ('\0' = plain /
+                 revealed, bullet = masked). The eye toggle is two stacked
+                 Buttons (show / hide) with their visibility flipped by
+                 IsApiKeyRevealed; the active one re-resolves its own
+                 tooltip via the matching VM property. -->
+            <Grid ColumnDefinitions="*,Auto,Auto">
+              <TextBox Grid.Column="0"
+                       Text="{Binding ApiKey, Mode=TwoWay}"
+                       PasswordChar="{Binding ApiKeyMaskChar}"
+                       PlaceholderText="{ReflectionBinding [Integrations_ApiKeyWatermark], Source={StaticResource Loc}}" />
+
+              <!-- Show eye toggle (revealed state -> click to hide). Material
+                   "visibility_off" icon. -->
+              <Button Grid.Column="1"
+                      Command="{Binding ToggleApiKeyRevealCommand}"
+                      IsVisible="{Binding IsApiKeyRevealed}"
+                      MinWidth="36"
+                      Margin="8,0,0,0"
+                      VerticalAlignment="Stretch"
+                      HorizontalAlignment="Stretch"
+                      Padding="0"
+                      ToolTip.Tip="{Binding HideApiKeyTooltip}">
+                <Path Width="16" Height="16" Stretch="Uniform"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                      Fill="{Binding $parent[Button].Foreground}"
+                      Data="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27z" />
+              </Button>
+
+              <!-- Hide eye toggle (masked state -> click to reveal). Material
+                   "visibility" icon. -->
+              <Button Grid.Column="1"
+                      Command="{Binding ToggleApiKeyRevealCommand}"
+                      IsVisible="{Binding !IsApiKeyRevealed}"
+                      MinWidth="36"
+                      Margin="8,0,0,0"
+                      VerticalAlignment="Stretch"
+                      HorizontalAlignment="Stretch"
+                      Padding="0"
+                      ToolTip.Tip="{Binding ShowApiKeyTooltip}">
+                <Path Width="16" Height="16" Stretch="Uniform"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                      Fill="{Binding $parent[Button].Foreground}"
+                      Data="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+              </Button>
+
+              <Button Grid.Column="2"
+                      Content="{Binding ValidateLabel}"
+                      Command="{Binding ValidateApiKeyCommand}"
+                      Margin="8,0,0,0"
+                      MinWidth="80" />
+            </Grid>
+
+            <!-- Help link to where the user gets their API key. -->
+            <Button Content="{Binding ApiKeyHelpLabel}"
+                    Classes="link"
+                    HorizontalAlignment="Left"
+                    Margin="0,0,0,4"
+                    Click="ApiKeyHelp_Click"
+                    Padding="0"
+                    ToolTip.Tip="{Binding ApiKeyHelpLink}" />
+
+            <!-- Per-block Sign out: visible only when API key is the active
+                 method. Material "logout" icon. -->
+            <Button Command="{Binding SignOutCommand}"
+                    IsVisible="{Binding IsApiKeyActive}"
+                    HorizontalAlignment="Left"
+                    MinWidth="120">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Path Width="14" Height="14" Stretch="Uniform"
+                      VerticalAlignment="Center"
+                      Fill="{Binding $parent[Button].Foreground}"
+                      Data="M17 7l-1.4 1.4 1.6 1.6H8v2h9.2l-1.6 1.6L17 15l4-4-4-4zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
+                <TextBlock Text="{Binding SignOutLabel}"
+                           VerticalAlignment="Center"
+                           Margin="8,0,0,0" />
+              </StackPanel>
+            </Button>
+
+            <!-- Testing-only note: signals the API-key path's
+                 pre-registration status. Small + low opacity so it reads as
+                 an aside. -->
+            <TextBlock Text="{ReflectionBinding [Integrations_ApiKeyTestingNote], Source={StaticResource Loc}}"
+                       FontSize="11"
+                       Opacity="0.6"
+                       TextWrapping="Wrap" />
           </StackPanel>
 
         </StackPanel>
