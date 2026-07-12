@@ -31,7 +31,7 @@ dialogs, preferences, and i18n fit together.
 │  ┌─ Content area ──────────────────────────────────────────────────────┐ │
 │  │ ModListView (the active profile's mod list; drag-and-drop target)   │ │
 │  │   header: title · rate-limit notice · refresh ·                  │ │
-│  │           auto-sort · Add split button (zip / folder)               │ │
+│  │           auto-sort · Add split button (archive / folder)           │ │
 │  │   rows:   name · source badge + update marker · enabled · policy ·  │ │
 │  │           update button / progress · up · down · remove             │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
@@ -210,7 +210,7 @@ The command set:
   The current resolver is the identity stub (a no-op); a real
   dependency-driven resolver is out of v1. The seam is DI-swappable, so the
   UI wires against the abstraction now.
-- **Add** (`AddMods`): the Add split button (zip picker + folder picker) and
+- **Add** (`AddMods`): the Add split button (archive picker + folder picker) and
   drag-and-drop both reduce to this command, which processes paths
   sequentially.
 

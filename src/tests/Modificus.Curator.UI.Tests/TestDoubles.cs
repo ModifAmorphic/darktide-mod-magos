@@ -936,7 +936,7 @@ internal sealed class FakeModImportService : IModImportService
     /// Optional override for <see cref="GetBaseName"/>: receives the source path
     /// and returns the base name (or throws, to simulate an invalid source).
     /// When unset, the base name is derived from the path (folder name or
-    /// <c>.zip</c> stem), never throwing.
+    /// archive stem, any extension), never throwing.
     /// </summary>
     public Func<string, string>? GetBaseNameFunc { get; set; }
 
@@ -953,12 +953,7 @@ internal sealed class FakeModImportService : IModImportService
             return GetBaseNameFunc(sourcePath);
         }
         var trimmed = sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var name = Path.GetFileName(trimmed);
-        const string zip = ".zip";
-        if (name.EndsWith(zip, StringComparison.OrdinalIgnoreCase) && name.Length > zip.Length)
-        {
-            name = name.Substring(0, name.Length - zip.Length);
-        }
+        var name = Path.GetFileNameWithoutExtension(trimmed);
         return name;
     }
 

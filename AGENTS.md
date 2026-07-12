@@ -32,7 +32,7 @@ game-binary constraints now live with the runtime, in
   service, the mod-list update UI, the DMF new-profile/auth install prompt,
   and Windows in-app self-update (Velopack).
   The app is user-usable:
-  create profiles, import mods (folder/`.zip`, Nexus/GitHub/Untracked), manage
+  create profiles, import mods (folder/archive, Nexus/GitHub/Untracked), manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
   (discovery paths + mod-repo location), and launch modded Darktide. Premium
   users additionally get per-mod one-click update on the mod list; non-premium
@@ -524,7 +524,7 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   active profile, the switch-block gate, and the live running-state), global
   Preferences + i18n infrastructure, the mod-list UI (view mods with
   source/version badges, enable/disable, remove-with-confirm, reorder, per-mod
-  Latest/Pinned policy, auto-sort identity stub, and local folder/`.zip` import
+  Latest/Pinned policy, auto-sort identity stub, and local folder/archive import
   via file picker + drag-and-drop, joined to containers via `IModRepository` by
   `ContainerId`), and Launch (`LaunchCommand` -> `IRelayLaunchService.Launch`
   -> branch on `LaunchResult.Status` (`Launched` -> status note + immediate

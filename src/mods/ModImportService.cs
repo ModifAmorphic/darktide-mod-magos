@@ -343,8 +343,8 @@ internal sealed class ModImportService : IModImportService
     /// empty key is a no-op (nothing to combine, so nothing to escape).
     /// </summary>
     /// <remarks>
-    /// Separator normalization (replace '\' with '/') carries over from the
-    /// zip-only era: zip uses '/' per spec, other formats may use '\'. On Linux,
+    /// Separator normalization (replace '\' with '/') is defensive across
+    /// formats: zip uses '/' per spec, other formats may use '\'. On Linux,
     /// an un-normalized backslash is a filename character rather than a
     /// separator, which would let a '..\escape' entry slip past the prefix check.
     /// </remarks>

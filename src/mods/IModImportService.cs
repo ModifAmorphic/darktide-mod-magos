@@ -1,14 +1,14 @@
 namespace Modificus.Curator.Mods;
 
 /// <summary>
-/// Imports a local mod source (a folder OR a <c>.zip</c> archive) into the
+/// Imports a local mod source (a folder OR an archive) into the
 /// global mod repository. The mod-list UI's add flow (picker + drag-and-drop)
 /// goes through this seam: the UI never touches the filesystem directly.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Import resolves (or creates) the container for the source, validates the
-/// source's structure, then extracts a <c>.zip</c> / copies a folder into the
+/// source's structure, then extracts an archive / copies a folder into the
 /// repository-managed opaque version folder via
 /// <see cref="IModRepository.AddVersion"/>. Container dedup: Untracked by name,
 /// Nexus by mod id, GitHub by owner/repo. Version dedup: re-importing the same
@@ -17,7 +17,7 @@ namespace Modificus.Curator.Mods;
 /// <para>
 /// <b>Source validation (both kinds):</b> the source must contain exactly one
 /// base directory with a <c>&lt;base&gt;.mod</c> descriptor inside it (the
-/// descriptor filename matches the base folder name). A <c>.zip</c> is inspected
+/// descriptor filename matches the base folder name). An archive is inspected
 /// <em>before</em> extraction (single top-level folder, no loose top-level
 /// files, matching descriptor); a folder is checked directly (non-empty +
 /// matching descriptor). An invalid source throws
@@ -55,9 +55,11 @@ public interface IModImportService
     /// Imports a local mod source into the global repository, resolving (or
     /// creating) the container + version.
     /// </summary>
-    /// <param name="sourcePath">Absolute path to a folder OR a <c>.zip</c>
-    /// archive. A path ending in <c>.zip</c> (ordinal ignore-case) is extracted;
-    /// anything else is treated as a folder path and recursively copied.</param>
+    /// <param name="sourcePath">Absolute path to a folder OR an archive file on
+    /// disk. A file is treated as an archive when SharpCompress recognizes its
+    /// contents (magic-byte detection, format-agnostic: zip, 7z, rar, and the
+    /// others SharpCompress supports); a directory is treated as a folder source
+    /// and recursively copied. Detection is by content, not by extension.</param>
     /// <param name="modName">The container display name + the untracked dedup
     /// key. Confined to a single direct child of the mod root: it must not
     /// contain path separators, <c>..</c>, or be an absolute path.</param>
@@ -92,8 +94,8 @@ public interface IModImportService
     /// container/version is created.</exception>
     /// <exception cref="System.IO.IOException">Thrown on any I/O failure (copy,
     /// delete, extract).</exception>
-    /// <exception cref="System.IO.InvalidDataException">Thrown if a <c>.zip</c>
-    /// archive is malformed.</exception>
+    /// <exception cref="System.IO.InvalidDataException">Thrown if an archive is
+    /// malformed.</exception>
     (Guid ContainerId, string VersionId) Import(
         string sourcePath,
         string modName,
@@ -107,12 +109,13 @@ public interface IModImportService
     /// pre-check a base-name collision against the active profile BEFORE
     /// importing.
     /// </summary>
-    /// <param name="sourcePath">Absolute path to a folder OR a <c>.zip</c> archive
-    /// (same detection as <see cref="Import"/>: a <c>.zip</c> extension, ordinal
-    /// ignore-case, is inspected as an archive; anything else is treated as a
-    /// folder path).</param>
+    /// <param name="sourcePath">Absolute path to a folder OR an archive file on
+    /// disk (same detection as <see cref="Import"/>: a file is inspected as an
+    /// archive when SharpCompress recognizes its contents via magic-byte
+    /// detection, format-agnostic; a directory is treated as a folder
+    /// source).</param>
     /// <returns>The validated base folder name (the single top-level directory for
-    /// a <c>.zip</c>, the picked folder's own name for a folder). The descriptor
+    /// an archive, the picked folder's own name for a folder). The descriptor
     /// filename (<c>&lt;base&gt;.mod</c>) matches the base folder name.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="sourcePath"/> is
     /// null.</exception>
@@ -124,8 +127,8 @@ public interface IModImportService
     /// files are placed and no container/version is created.</exception>
     /// <exception cref="System.IO.IOException">Thrown on any I/O failure reading
     /// the source.</exception>
-    /// <exception cref="System.IO.InvalidDataException">Thrown if a <c>.zip</c>
-    /// archive is malformed.</exception>
+    /// <exception cref="System.IO.InvalidDataException">Thrown if an archive is
+    /// malformed.</exception>
     /// <remarks>
     /// This is a pure peek: it validates the source structure (reusing the same
     /// private validation as <see cref="Import"/>, so the two cannot drift) and

@@ -185,13 +185,14 @@ public sealed class ModAcquisitionServiceTests
     }
 
     [Fact]
-    public async Task AcquireFromNexusAsync_preserves_real_file_extension_on_temp_file()
+    public async Task AcquireFromNexusAsync_uses_opaque_temp_name_regardless_of_source_extension()
     {
-        // The temp file carries the real file_name extension from files.json,
-        // not a forced .zip. Content-based detection (ArchiveFactory.IsArchive)
-        // makes the extension cosmetic, but preserving it is good hygiene (log
-        // clarity, debuggability) and proves the rename-to-.zip workaround is
-        // gone: a .7z mod like Scoreboard II arrives at Import named .7z.
+        // Detection is content-based (ArchiveFactory.IsArchive reads the file's
+        // magic bytes), so the temp filename is an opaque Path.GetRandomFileName()
+        // fully decoupled from the source filename. A misnamed or extensionless
+        // temp cannot mislead the import or a debugger: the source's real name
+        // (here "scoreboard_ii.7z") leaves no trace on the temp path. This also
+        // guards against any future fabricated-.zip fallback sneaking back in.
         var nexus = new FakeNexusClient
         {
             DownloadLinks = ParseLinks(DownloadLinksJson),
@@ -222,7 +223,10 @@ public sealed class ModAcquisitionServiceTests
         await service.AcquireFromNexusAsync(GameDomain, ModId, FileId);
 
         var single = Assert.Single(import.Calls);
-        Assert.EndsWith(".7z", single.SourcePath);
+        var tempName = Path.GetFileName(single.SourcePath);
+        // Path.GetRandomFileName() yields an opaque 8.3 name; the source's real
+        // extension (here .7z) leaves no trace, and no fabricated .zip is appended.
+        Assert.Matches(@"^[0-9a-z]{8}\.[0-9a-z]{3}$", tempName);
         // The temp file is cleaned up after Import returns.
         Assert.False(File.Exists(single.SourcePath));
     }
