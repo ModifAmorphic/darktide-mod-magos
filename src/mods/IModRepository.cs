@@ -105,10 +105,10 @@ public interface IModRepository
     /// <c>"v2.0.1"</c>). Dedup key within the container.</param>
     /// <param name="populateFolder">A callback that receives the absolute path
     /// of an empty temp directory (created by the repo, a sibling of the final
-    /// version folder) and populates it: extract a <c>.zip</c>/<c>.7z</c>,
-    /// copy a folder, etc. On success the repo atomically swaps the temp into
-    /// the version folder; on a thrown exception the temp is deleted and the
-    /// existing version folder is left untouched.</param>
+    /// version folder) and populates it: extract an archive, copy a folder, etc.
+    /// On success the repo atomically swaps the temp into the version folder; on
+    /// a thrown exception the temp is deleted and the existing version folder is
+    /// left untouched.</param>
     /// <param name="remoteUploadedAt">Optional remote-publish timestamp (UTC)
     /// captured at acquisition for remote-source mods (Nexus). Recorded on the
     /// version entry in BOTH branches: a new version creates the entry with it,

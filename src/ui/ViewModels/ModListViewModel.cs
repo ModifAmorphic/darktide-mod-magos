@@ -16,12 +16,12 @@ namespace Modificus.Curator.UI.ViewModels;
 /// The add flow's current mode (which picker the Add split button's primary
 /// click opens). Tracked by the view code-behind + mirrored on the VM (as
 /// <see cref="ModListViewModel.AddMode"/>) so the split button's label reflects
-/// the selected mode. Zip is the default.
+/// the selected mode. Archive is the default.
 /// </summary>
 public enum ModAddMode
 {
-    /// <summary>Import <c>.zip</c> archives via the file picker (default).</summary>
-    Zip,
+    /// <summary>Import archives (zip, 7z, rar) via the file picker (default).</summary>
+    Archive,
 
     /// <summary>Import mod folders via the folder picker.</summary>
     Folder,
@@ -58,7 +58,7 @@ public enum ModAddMode
 /// <para><b>Localized text is live:</b> the header count + empty-state messages
 /// re-resolve from <see cref="LocalizationService"/> on a culture change, and each
 /// row's badge + policy text refresh too (via <see cref="ModItemViewModel.Refresh"/>).</para>
-/// <para><b>Add flow:</b> the Add split button (zip picker + folder picker) +
+/// <para><b>Add flow:</b> the Add split button (archive picker + folder picker) +
 /// drag-and-drop all reduce to <see cref="AddModsCommand"/>, which processes
 /// paths sequentially: one import modal per path, then
 /// <c>IModImportService.Import</c> (extract/copy into the repository, returning
@@ -188,14 +188,14 @@ public partial class ModListViewModel : ObservableObject
 
     /// <summary>
     /// The Add split button's current mode (which picker the primary click
-    /// opens). Defaults to <see cref="ModAddMode.Zip"/>. The view sets this from
+    /// opens). Defaults to <see cref="ModAddMode.Archive"/>. The view sets this from
     /// the split button's flyout items + main click (public setter); the
     /// <see cref="AddModeLabel"/> derived string tracks it so the button reads
-    /// "Add Mod (zip)" / "Add Mod (folder)" per the current mode.
+    /// "Add Mod (archive)" / "Add Mod (folder)" per the current mode.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(AddModeLabel))]
-    private ModAddMode _addMode = ModAddMode.Zip;
+    private ModAddMode _addMode = ModAddMode.Archive;
 
     /// <summary>
     /// Whether the Nexus account is premium. Read once at construction (see the
@@ -282,13 +282,13 @@ public partial class ModListViewModel : ObservableObject
 
     /// <summary>
     /// The localized split-button label for the current <see cref="AddMode"/>
-    /// (mirrors the operator's mock: "Add Mod (zip)" / "Add Mod (folder)").
+    /// (mirrors the operator's mock: "Add Mod (archive)" / "Add Mod (folder)").
     /// Re-fires on a culture change (live-refresh with the rest of the UI).
     /// </summary>
     public string AddModeLabel =>
         AddMode == ModAddMode.Folder
             ? _localization["ModList_AddFolder"]
-            : _localization["ModList_AddZip"];
+            : _localization["ModList_AddArchive"];
 
     /// <summary>
     /// The localized header label: "Mods". Shown for both the active-profile +
@@ -945,7 +945,7 @@ public partial class ModListViewModel : ObservableObject
     // ---- add (picker + drag-and-drop) --------------------------------------
 
     /// <summary>
-    /// Processes a list of local paths (folders or <c>.zip</c> archives) from the
+    /// Processes a list of local paths (folders or archives) from the
     /// add flow: one import modal per path, sequentially. Per path the flow is:
     /// <b>(1)</b> peek the base folder name from the source (validates structure,
     /// throws on an invalid source); <b>(2)</b> hard-block a base-name collision
@@ -954,7 +954,7 @@ public partial class ModListViewModel : ObservableObject
     /// + <see cref="IProfileService.AddMod"/> (the profile reference). A cancelled
     /// modal, a failed peek/import, OR a collision cancels the whole remaining
     /// batch (mods imported earlier in the batch stay imported). Used by the Add
-    /// split button (the zip file picker + the folder picker) + the drop handler.
+    /// split button (the archive file picker + the folder picker) + the drop handler.
     /// </summary>
     /// <remarks>
     /// The name is derived from each path (folder name or archive stem, no
@@ -1090,18 +1090,14 @@ public partial class ModListViewModel : ObservableObject
 
     /// <summary>
     /// Derives the default mod name from a path: the folder name, or the archive
-    /// stem (no <c>.zip</c> extension) for a <c>.zip</c>. Falls back to the raw
-    /// path when the stem is empty (a defensive edge case).
+    /// stem (any extension stripped: <c>.zip</c>, <c>.7z</c>, <c>.rar</c>, etc.).
+    /// Falls back to the raw path when the stem is empty (a defensive edge
+    /// case).
     /// </summary>
     private static string DeriveModName(string path)
     {
         var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var name = Path.GetFileName(trimmed);
-        const string zip = ".zip";
-        if (name.EndsWith(zip, StringComparison.OrdinalIgnoreCase) && name.Length > zip.Length)
-        {
-            name = name[..^zip.Length];
-        }
+        var name = Path.GetFileNameWithoutExtension(trimmed);
 
         return string.IsNullOrWhiteSpace(name) ? path : name;
     }

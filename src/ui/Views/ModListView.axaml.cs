@@ -14,7 +14,7 @@ namespace Modificus.Curator.UI.Views;
 /// The mod-list content area (a <see cref="UserControl"/>). Its
 /// <c>DataContext</c> is a <see cref="ModListViewModel"/> (bound from the shell as
 /// <c>{Binding ModList}</c>). Owns the add entry points (the Add split button's
-/// zip file picker + folder picker + the content-area drag-and-drop target) and
+/// archive file picker + folder picker + the content-area drag-and-drop target) and
 /// routes every per-row interaction (toggle / move / policy / remove) through
 /// code-behind handlers calling the parent VM's commands with the row as the
 /// parameter (the established <c>ManageProfilesWindow</c> pattern). All state +
@@ -22,14 +22,14 @@ namespace Modificus.Curator.UI.Views;
 /// </summary>
 /// <remarks>
 /// <para><b>Add split button:</b> the primary click opens the current mode's
-/// picker (zip file picker by default; folder picker after the folder flyout item
+/// picker (archive file picker by default; folder picker after the folder flyout item
 /// is chosen). The flyout's two items switch the mode (one-click import) and the
 /// VM's <see cref="ModListViewModel.AddMode"/> is mirrored so the split button's
 /// label reflects it. Folders get a picker path because drag-and-drop is a
 /// Windows-only feature in Avalonia 12.0.x.</para>
 /// <para><b>Drag-and-drop:</b> the content area has
 /// <c>DragDrop.AllowDrop="True"</c> + <c>Drop</c>/<c>DragOver</c> handlers. The
-/// drop reads the files (folders AND <c>.zip</c>, multi) via the sync
+    /// drop reads the files (folders AND archives, multi) via the sync
 /// <c>TryGetFiles</c> extension on <see cref="DragEventArgs.DataTransfer"/> (an
 /// <c>IDataTransfer</c> in Avalonia 12.x, so the async variant is unavailable
 /// here), maps each to its local path, and forwards the list to the VM's add
@@ -52,17 +52,17 @@ public partial class ModListView : UserControl
 
     /// <summary>
     /// The Add split button's current mode (which picker the primary click
-    /// opens). Defaults to <see cref="ModAddMode.Zip"/>. Kept in sync with the
+    /// opens). Defaults to <see cref="ModAddMode.Archive"/>. Kept in sync with the
     /// VM's <see cref="ModListViewModel.AddMode"/> (via <see cref="SetAddMode"/>)
     /// so the split button's label tracks the selected mode.
     /// </summary>
-    private ModAddMode _addMode = ModAddMode.Zip;
+    private ModAddMode _addMode = ModAddMode.Archive;
 
-    // ---- add: split button (zip + folder pickers) --------------------------
+    // ---- add: split button (archive + folder pickers) --------------------------
 
     /// <summary>
     /// The Add split button's primary click: opens the picker for the current
-    /// mode (zip file picker by default; folder picker after the folder flyout
+    /// mode (archive file picker by default; folder picker after the folder flyout
     /// item is chosen). A native picker cannot mix files + folders, so the two
     /// flyout items switch the mode for one-click import.
     /// </summary>
@@ -74,19 +74,19 @@ public partial class ModListView : UserControl
         }
         else
         {
-            await OpenZipPickerAsync();
+            await OpenArchivePickerAsync();
         }
     }
 
     /// <summary>
-    /// The "Add Mod (zip)" flyout item: switches the mode to zip (so subsequent
-    /// primary clicks open the zip picker) and opens the zip picker immediately
-    /// (one-click import).
+    /// The "Add Mod (archive)" flyout item: switches the mode to archive (so
+    /// subsequent primary clicks open the archive picker) and opens the archive
+    /// picker immediately (one-click import).
     /// </summary>
-    private async void AddZip_Click(object? sender, RoutedEventArgs e)
+    private async void AddArchive_Click(object? sender, RoutedEventArgs e)
     {
-        SetAddMode(ModAddMode.Zip);
-        await OpenZipPickerAsync();
+        SetAddMode(ModAddMode.Archive);
+        await OpenArchivePickerAsync();
     }
 
     /// <summary>
@@ -116,10 +116,14 @@ public partial class ModListView : UserControl
     }
 
     /// <summary>
-    /// Opens a multi-select <c>.zip</c> file picker and forwards the selected
-    /// paths to the VM's add command.
+    /// Opens a multi-select archive file picker and forwards the selected paths
+    /// to the VM's add command. The filter offers a curated "Archives" entry
+    /// (zip/7z/rar) plus the built-in "All files" entry, so unsupported-but-real
+    /// archives (and edge cases) are still reachable. The import backend detects
+    /// the format from the file contents, so the filter is a convenience, not a
+    /// gate.
     /// </summary>
-    private async Task OpenZipPickerAsync()
+    private async Task OpenArchivePickerAsync()
     {
         if (ViewModel is not { } vm)
         {
@@ -132,14 +136,14 @@ public partial class ModListView : UserControl
             return;
         }
 
-        var zip = new FilePickerFileType("Zip archive")
+        var archives = new FilePickerFileType("Archives")
         {
-            Patterns = new[] { "*.zip" },
+            Patterns = new[] { "*.zip", "*.7z", "*.rar" },
         };
         var options = new FilePickerOpenOptions
         {
             AllowMultiple = true,
-            FileTypeFilter = new[] { zip },
+            FileTypeFilter = new[] { archives, FilePickerFileTypes.All },
         };
 
         var result = await topLevel.StorageProvider.OpenFilePickerAsync(options);
@@ -196,7 +200,7 @@ public partial class ModListView : UserControl
 
     /// <summary>
     /// Advertises the Copy effect when the dragged payload carries files (folders
-    /// or <c>.zip</c>); otherwise None, so non-file drops are not accepted.
+    /// or archives); otherwise None, so non-file drops are not accepted.
     /// </summary>
     private void OnDragOver(object? sender, DragEventArgs e)
     {
@@ -211,7 +215,7 @@ public partial class ModListView : UserControl
     }
 
     /// <summary>
-    /// Collects the dropped files' local paths (folders or <c>.zip</c>, multi) via
+    /// Collects the dropped files' local paths (folders or archives, multi) via
     /// the sync <c>TryGetFiles</c> extension on <see cref="DragEventArgs.DataTransfer"/>
     /// and forwards them to the VM's add command.
     /// </summary>

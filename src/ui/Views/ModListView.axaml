@@ -9,8 +9,8 @@
     The active profile's mod list: header (title + rate-limit notice +
     check-now refresh + auto-sort + Add split button) over a
     scrollable row list, with owned empty states (no profile / no mods). The
-    whole content area is a drag-and-drop target (folders + .zip), so mods can
-    be added by dropping as well as via the Add split button's zip + folder
+    whole content area is a drag-and-drop target (folders + archives), so mods can
+    be added by dropping as well as via the Add split button's archive + folder
     pickers. Drag-and-drop is a Windows-only feature in Avalonia 12.0.x (XDND
     lands in 12.1), surfaced via a hint in the no-mods empty state + the
     content-area tooltip; the folder picker covers folder import on all
@@ -147,10 +147,10 @@
                    VerticalAlignment="Center" />
       </StackPanel>
       <!--
-        Add split button: primary click opens the current mode's picker (zip file
+        Add split button: primary click opens the current mode's picker (archive file
         picker by default, folder picker after the folder flyout item is chosen);
         the arrow opens the flyout to switch modes. The TextBlock binds to the
-        VM's AddModeLabel so it reads "Add Mod (zip)" / "Add Mod (folder)". The
+        VM's AddModeLabel so it reads "Add Mod (archive)" / "Add Mod (folder)". The
         arrow is built-in theme chrome (no authored glyph). Folders need a picker
         path because drag-and-drop is a Windows-only feature in Avalonia 12.0.x.
       -->
@@ -170,8 +170,8 @@
         </SplitButton.Content>
         <SplitButton.Flyout>
           <MenuFlyout>
-            <MenuItem Header="{ReflectionBinding [ModList_AddZip], Source={StaticResource Loc}}"
-                      Click="AddZip_Click" />
+            <MenuItem Header="{ReflectionBinding [ModList_AddArchive], Source={StaticResource Loc}}"
+                      Click="AddArchive_Click" />
             <MenuItem Header="{ReflectionBinding [ModList_AddFolder], Source={StaticResource Loc}}"
                       Click="AddFolder_Click" />
           </MenuFlyout>

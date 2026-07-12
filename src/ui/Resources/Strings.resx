@@ -304,9 +304,9 @@
     <value>Add a mod to this profile</value>
     <comment>Tooltip on the Add split button in the mod list header (the primary click opens the current mode's picker).</comment>
   </data>
-  <data name="ModList_AddZip" xml:space="preserve">
-    <value>Add Mod (zip)</value>
-    <comment>The zip-import label: the Add split button's primary label in zip mode + the zip flyout item.</comment>
+  <data name="ModList_AddArchive" xml:space="preserve">
+    <value>Add Mod (archive)</value>
+    <comment>The archive-import label: the Add split button's primary label in archive mode + the archive flyout item. Curator auto-detects the archive format from the file contents via SharpCompress, so zip/7z/rar and other supported archives are all accepted.</comment>
   </data>
   <data name="ModList_AddFolder" xml:space="preserve">
     <value>Add Mod (folder)</value>
@@ -514,7 +514,7 @@
 
   <data name="Import_FailedTitle" xml:space="preserve">
     <value>Could not import mod</value>
-    <comment>Title of the modal alert shown when an import fails on an invalid source (bad zip/folder structure).</comment>
+    <comment>Title of the modal alert shown when an import fails on an invalid source (bad archive/folder structure).</comment>
   </data>
   <data name="Import_FailedMessage" xml:space="preserve">
     <value>Could not import '{0}'.</value>

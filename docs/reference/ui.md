@@ -166,7 +166,7 @@ public sealed record ImportModRequest
 {
     public string ModName { get; set; }    // pre-filled; two-way bound so the
                                            // user's rename-at-import flows back
-    public string SourcePath { get; set; } // absolute path to a folder OR .zip
+    public string SourcePath { get; set; } // absolute path to a folder OR archive
 
     public ImportModRequest(string modName, string sourcePath);
 }

@@ -521,6 +521,31 @@ public sealed class ModListViewModelTests
     }
 
     [Fact]
+    public async Task AddMods_derives_default_name_from_any_archive_extension()
+    {
+        // DeriveModName strips any archive extension (.7z, .rar, etc.), not just
+        // .zip: Path.GetFileNameWithoutExtension on the picked path's tail. A
+        // folder like DMF (no extension) returns unchanged.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var import = new FakeModImportService(repo);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var dialogs = new FakeDialogService
+        {
+            ImportResult = new ImportModResult(new UntrackedSource(), "", ModVersionPolicy.Latest),
+        };
+        var vm = Build(profiles, session, repo, import, dialogs);
+
+        await vm.AddModsCommand.ExecuteAsync(
+            new[] { "/mods/Foo.7z", "/mods/Bar.rar" });
+
+        Assert.Equal(2, dialogs.ImportCalls);
+        Assert.Equal("Foo", dialogs.ImportRequests[0].ModName);   // .7z stem
+        Assert.Equal("Bar", dialogs.ImportRequests[1].ModName);   // .rar stem
+    }
+
+    [Fact]
     public async Task AddMods_with_Pinned_choice_pins_to_the_imported_version_id()
     {
         // The modal returns a Pinned policy (placeholder VersionId=""); the add
@@ -787,12 +812,12 @@ public sealed class ModListViewModelTests
     // ---- add split-button view state ---------------------------------------
 
     [Fact]
-    public void AddMode_defaults_to_Zip_and_the_label_tracks_the_mode()
+    public void AddMode_defaults_to_Archive_and_the_label_tracks_the_mode()
     {
         var vm = Build();
 
-        Assert.Equal(ModAddMode.Zip, vm.AddMode);
-        Assert.Equal("Add Mod (zip)", vm.AddModeLabel);
+        Assert.Equal(ModAddMode.Archive, vm.AddMode);
+        Assert.Equal("Add Mod (archive)", vm.AddModeLabel);
 
         vm.AddMode = ModAddMode.Folder;
 

@@ -24,7 +24,7 @@ public sealed record ImportModRequest
     /// canonical (possibly edited) name.</summary>
     public string ModName { get; set; }
 
-    /// <summary>Absolute path to a folder OR a <c>.zip</c> archive on disk. Handed
+    /// <summary>Absolute path to a folder OR an archive on disk. Handed
     /// straight to <c>IModImportService.Import</c> when the modal is
     /// confirmed.</summary>
     public string SourcePath { get; set; }
