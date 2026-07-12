@@ -6,8 +6,8 @@
              x:DataType="vm:ModListViewModel">
 
   <!--
-    The active profile's mod list: header (title + recent-only / rate-limit
-    notices + check-now refresh + auto-sort + Add split button) over a
+    The active profile's mod list: header (title + rate-limit notice +
+    check-now refresh + auto-sort + Add split button) over a
     scrollable row list, with owned empty states (no profile / no mods). The
     whole content area is a drag-and-drop target (folders + .zip), so mods can
     be added by dropping as well as via the Add split button's zip + folder
@@ -57,12 +57,12 @@
 
   <Grid RowDefinitions="Auto,*" Margin="20,12,20,12">
 
-    <!-- Header: title + recent-only / rate-limit notices + check-now refresh
-         + auto-sort toggle + Add split button (hidden until a profile is
-         active). The title reads the plain "Mods" label (no count; the row list
-         itself is the count). -->
+    <!-- Header: title + rate-limit notice + check-now refresh + auto-sort
+         toggle + Add split button (hidden until a profile is active). The title
+         reads the plain "Mods" label (no count; the row list itself is the
+         count). -->
     <Grid Grid.Row="0"
-          ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto"
+          ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto"
           IsVisible="{Binding HasActiveProfile}"
           Margin="0,0,0,8">
       <TextBlock Grid.Column="0"
@@ -70,39 +70,11 @@
                  FontSize="16" FontWeight="SemiBold"
                  VerticalAlignment="Center" />
       <!--
-        Recent-only notice: shown when the last check was Month-only (NOT
-        thorough) AND not rate-limited. A subtle, neutral-informational pill
-        (NOT the caution styling the rate-limit notice uses) hinting the badges
-        reflect only the past month, so the user clicks refresh for a complete
-        check. The IsVisible binds to the VM's ShowRecentOnlyNotice, which
-        encodes the precedence (rate-limit takes precedence; the two notices
-        never co-show).
-      -->
-      <Border Grid.Column="1"
-              Classes="recentOnlyNotice"
-              IsVisible="{Binding ShowRecentOnlyNotice}"
-              Background="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}"
-              CornerRadius="8"
-              Padding="6,1"
-              Margin="8,0,0,0"
-              VerticalAlignment="Center"
-              ToolTip.Tip="{ReflectionBinding [ModList_RecentOnlyTooltip], Source={StaticResource Loc}}">
-        <StackPanel Orientation="Horizontal" Spacing="4">
-          <Ellipse Width="6" Height="6"
-                   Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                   VerticalAlignment="Center" />
-          <TextBlock Text="{Binding RecentOnlyNoticeText}"
-                     FontSize="11" VerticalAlignment="Center" />
-        </StackPanel>
-      </Border>
-      <!--
         Rate-limit notice: shown when the last update check was rate-limited
         (the badges may not reflect every available update). A drawn warning
-        dot + the localized text; the tooltip carries the detail. Takes
-        precedence over the recent-only notice (the VM's ShowRecentOnlyNotice
-        suppresses it while IsRateLimited is set).
+        dot + the localized text; the tooltip carries the detail.
       -->
-      <Border Grid.Column="2"
+      <Border Grid.Column="1"
               Classes="rateLimitedNotice"
               IsVisible="{Binding IsRateLimited}"
               Background="{DynamicResource SystemControlBackgroundCautionBrush}"
@@ -126,21 +98,21 @@
         CheckForUpdatesNow command, which fires an immediate THOROUGH check
         (the per-mod pass that also catches mods outside the Month window) +
         drives the IsCheckingNow affordance while it runs. The result lands via
-        the existing CheckCompleted subscription. Disabled while a thorough
-        check is in flight (IsCheckingNow) OR while the manual sliding-window
-        throttle is active (IsRefreshEnabled covers both), and an indeterminate
-        progress spinner replaces the refresh icon for the duration. The tooltip
-        is the VM's ManualRefreshTooltip: the normal "check for updates now"
-        string normally, or the live m:ss countdown ("Rate limiting protection
+        the existing CheckCompleted subscription. The button stays visible at
+        all times; it disables while a thorough check is in flight
+        (IsCheckingNow) OR while the manual sliding-window throttle is active
+        (IsRefreshEnabled covers both), and an indeterminate progress spinner
+        overlays the refresh icon for the duration. The tooltip is the VM's
+        ManualRefreshTooltip: the normal "check for updates now" string
+        normally, or the live m:ss countdown ("Rate limiting protection
         enabled. Manual refresh will be available again in {time}.") while
         throttled.
       -->
-      <Panel Grid.Column="3" Margin="8,0,0,0" VerticalAlignment="Center">
+      <Panel Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center">
         <Button Classes="icon"
                 Click="RefreshUpdates_Click"
                 IsEnabled="{Binding IsRefreshEnabled}"
                 VerticalAlignment="Center"
-                IsVisible="{Binding !IsCheckingNow}"
                 ToolTip.Tip="{Binding ManualRefreshTooltip}">
           <!-- Material "refresh" (24x24 source): drawn geometry, themed via the
                button foreground. -->
@@ -150,14 +122,23 @@
                 Data="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
         </Button>
         <!-- Indeterminate progress while the thorough check runs (multiple API
-             calls, a few seconds). Replaces the refresh button via the
-             IsCheckingNow-toggled IsVisible on both. -->
+             calls, a few seconds). Overlays the refresh button (which stays
+             visible but disabled) via the IsCheckingNow-toggled IsVisible on
+             the spinner. -->
         <ProgressBar Width="18" Height="18"
                      IsIndeterminate="True"
                      IsVisible="{Binding IsCheckingNow}"
                      VerticalAlignment="Center" />
       </Panel>
-      <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="16,0,0,0">
+      <!--
+        Auto-sort toggle. Intentionally hidden (IsVisible="False"): the real
+        dependency-driven IModOrderResolver lands later. The wiring (the
+        AutoSortEnabled binding, the AutoSort_Click handler, the
+        IdentityModOrderResolver registration) stays intact so the seam drops in
+        without a UI change; only the control is collapsed out of layout.
+      -->
+      <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="16,0,0,0"
+                  IsVisible="False">
         <CheckBox IsChecked="{Binding AutoSortEnabled, Mode=TwoWay}"
                   Click="AutoSort_Click"
                   ToolTip.Tip="{ReflectionBinding [ModList_AutoSortTooltip], Source={StaticResource Loc}}" />
@@ -172,7 +153,7 @@
         arrow is built-in theme chrome (no authored glyph). Folders need a picker
         path because drag-and-drop is a Windows-only feature in Avalonia 12.0.x.
       -->
-      <SplitButton Grid.Column="6"
+      <SplitButton Grid.Column="5"
                    Click="Add_Click"
                    ToolTip.Tip="{ReflectionBinding [ModList_AddButtonTooltip], Source={StaticResource Loc}}"
                    Margin="16,0,0,0"
@@ -257,23 +238,18 @@
                              TextTrimming="CharacterEllipsis" />
 
                   <!--
-                    Source badge (a clickable link) + the update-available
-                    marker (a drawn accent dot PLUS a HyperlinkButton to the
+                    Update-available marker (left) + source badge (right). The
+                    marker is a drawn accent dot PLUS a HyperlinkButton to the
                     mod's Nexus files tab, so the user's instinct to click the
-                    marker lands on the files page where the new release lives).
+                    marker lands on the files page where the new release lives.
                     The badge is a HyperlinkButton styled as the pill; its
                     NavigateUri is the row's SourceUrl (null for Untracked,
                     which the HyperlinkButton treats as a no-op click). The
-                    marker's IsVisible is still UpdateAvailable; the dot stays
-                    as a visual cue alongside the link.
+                    marker's IsVisible is UpdateAvailable; the dot stays as a
+                    visual cue alongside the link.
                   -->
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
                               Margin="8,0,0,0" VerticalAlignment="Center">
-                    <HyperlinkButton Classes="badge"
-                                     NavigateUri="{Binding SourceUrl}"
-                                     ToolTip.Tip="{ReflectionBinding [ModRow_SourceBadgeLinkTooltip], Source={StaticResource Loc}}">
-                      <TextBlock Text="{Binding SourceBadgeText}" FontSize="11" />
-                    </HyperlinkButton>
                     <!-- Update-available marker: drawn accent dot + a
                          HyperlinkButton to the mod's Nexus files tab. Both
                          shown when the update check flagged this container.
@@ -295,6 +271,11 @@
                                    VerticalAlignment="Center" />
                       </HyperlinkButton>
                     </StackPanel>
+                    <HyperlinkButton Classes="badge"
+                                     NavigateUri="{Binding SourceUrl}"
+                                     ToolTip.Tip="{ReflectionBinding [ModRow_SourceBadgeLinkTooltip], Source={StaticResource Loc}}">
+                      <TextBlock Text="{Binding SourceBadgeText}" FontSize="11" />
+                    </HyperlinkButton>
                   </StackPanel>
 
                   <!-- Enabled toggle (two-way; Click applies via the parent). -->

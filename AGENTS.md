@@ -104,10 +104,7 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           signal + per-mod update button. `ModListViewModel` subscribes
                           to `IUpdateCheckService.CheckCompleted` (per-row
                           `UpdateAvailable` from `LastResult.Updates` matched by
-                          ContainerId, list-level `IsRateLimited` notice + a
-                          companion `IsRecentOnly`/"showing recent updates"
-                          notice that fires after a non-thorough check and clears
-                          after a thorough one), reads
+                          ContainerId, list-level `IsRateLimited` notice), reads
                           `INexusAuthService.GetCurrentStateAsync` once at construction
                           for the premium gate (`IsPremiumUser`, no mid-session refresh),
                           and exposes an async `UpdateCommand(row)` that calls
@@ -123,8 +120,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           files tab (`?tab=files`) marks flagged rows, a drawn
                           download-arrow Update button + indeterminate
                           `ProgressBar` (toggled by `IsUpdating`) live in a new
-                          row column, and the rate-limit + recent-only notices
-                          sit in the header. `ModItemViewModel` carries the
+                          row column, and the rate-limit notice
+                          sits in the header. `ModItemViewModel` carries the
                           INPC state + derived `SourceUrl`/`UpdatePageUrl`/
                           `IsNexusLatest`/`CanShowUpdateButton`/`NexusModId`; a
                           `BoolAllConverter` (ui/Converters/) ANDs the row's

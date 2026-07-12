@@ -777,8 +777,7 @@ No backend library references the UI (the dependency direction is one-way).
   remove (with confirm), auto-sort (identity stub), the add flow (peek,
   collision hard-block, import, add-mod), `CheckCompleted` per-row state,
   `UpdateCommand` success / failure / one-at-a-time / premium gating,
-  `CheckForUpdatesNow`, `IsRateLimited` / `IsRecentOnly` /
-  `ShowRecentOnlyNotice` precedence.
+  `CheckForUpdatesNow`, `IsRateLimited`.
 - **`PreferencesViewModelTests`** + **`PreferencesServiceTests`**: the
   Preferences dialog view model and the service that applies theme / font
   scale / language and persists.

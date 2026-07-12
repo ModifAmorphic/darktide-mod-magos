@@ -397,14 +397,6 @@
     <value>The Nexus update check was rate-limited, so some available updates may not be shown. Try again later.</value>
     <comment>Tooltip on the rate-limit banner in the mod-list header.</comment>
   </data>
-  <data name="ModList_RecentOnly" xml:space="preserve">
-    <value>Showing recent updates</value>
-    <comment>Short banner shown in the mod-list header when the last update check was Month-only (not thorough). Hints the badges reflect only the past month; clicking refresh runs a complete check.</comment>
-  </data>
-  <data name="ModList_RecentOnlyTooltip" xml:space="preserve">
-    <value>The last check only looked at mods updated in the past month. Click the refresh button for a complete check that also catches older updates.</value>
-    <comment>Tooltip on the "Showing recent updates" banner in the mod-list header. No em-dash; explains what Month-only means + how to run the complete (thorough) check.</comment>
-  </data>
   <data name="ModList_CheckNowTooltip" xml:space="preserve">
     <value>Check for updates now</value>
     <comment>Tooltip on the refresh button in the mod-list header; clicking it fires an immediate update check for the active profile.</comment>

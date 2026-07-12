@@ -212,26 +212,10 @@ public partial class ModListViewModel : ObservableObject
     /// Whether the last update check was rate-limited. Drives the header
     /// rate-limit notice (the "check incomplete" indicator). Set from
     /// <see cref="IUpdateCheckService.LastResult"/> on reload + on
-    /// <see cref="IUpdateCheckService.CheckCompleted"/>. Takes precedence over
-    /// <see cref="IsRecentOnly"/> in the derived <see cref="ShowRecentOnlyNotice"/>.
+    /// <see cref="IUpdateCheckService.CheckCompleted"/>.
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowRecentOnlyNotice))]
     private bool _isRateLimited;
-
-    /// <summary>
-    /// Whether the last update check was Month-only (NOT thorough). Drives the
-    /// "showing recent updates" notice: a Month-only check completed but did
-    /// not do the per-mod pass, so the badges may not reflect every available
-    /// update. Set from <see cref="IUpdateCheckService.LastResult"/> on reload +
-    /// on <see cref="IUpdateCheckService.CheckCompleted"/>: true when the result
-    /// is non-null, not rate-limited, and not thorough. Cleared after a
-    /// thorough check. Suppressed while <see cref="IsRateLimited"/> is set (the
-    /// rate-limit notice takes precedence via <see cref="ShowRecentOnlyNotice"/>).
-    /// </summary>
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowRecentOnlyNotice))]
-    private bool _isRecentOnly;
 
     /// <summary>
     /// Whether any row is currently running a one-click update. True while the
@@ -326,21 +310,6 @@ public partial class ModListViewModel : ObservableObject
     public string RateLimitedNoticeText => _localization["ModList_RateLimited"];
 
     /// <summary>
-    /// The localized "recent updates only" notice text shown in the header when
-    /// <see cref="ShowRecentOnlyNotice"/> is true (a Month-only check landed
-    /// without a thorough pass). Re-fires on a culture change.
-    /// </summary>
-    public string RecentOnlyNoticeText => _localization["ModList_RecentOnly"];
-
-    /// <summary>
-    /// Whether the "recent updates only" notice should show: the last check was
-    /// Month-only (NOT thorough) AND not rate-limited (the rate-limit notice
-    /// takes precedence). The view binds the notice's <c>IsVisible</c> here so
-    /// the precedence rule stays in the VM (one source of truth).
-    /// </summary>
-    public bool ShowRecentOnlyNotice => !IsRateLimited && IsRecentOnly;
-
-    /// <summary>
     /// Session-driven reload: the active id changed (dropdown switch, create,
     /// delete-of-active). Rebuilds the list from the new profile. Running-state
     /// changes do not trigger a reload (the list stays put; edits are allowed
@@ -371,7 +340,6 @@ public partial class ModListViewModel : ObservableObject
         OnPropertyChanged(nameof(EmptyNoModsText));
         OnPropertyChanged(nameof(AddModeLabel));
         OnPropertyChanged(nameof(RateLimitedNoticeText));
-        OnPropertyChanged(nameof(RecentOnlyNoticeText));
         // When not throttled, the refresh tooltip re-resolves to the normal
         // resx string (the culture changed, so the localized value changed).
         // When throttled, the countdown tick owns the tooltip and re-renders it
@@ -405,21 +373,16 @@ public partial class ModListViewModel : ObservableObject
 
     /// <summary>
     /// Reads <see cref="IUpdateCheckService.LastResult"/> and applies it to the
-    /// list: sets <see cref="IsRateLimited"/> + <see cref="IsRecentOnly"/> +
-    /// per-row <see cref="ModItemViewModel.UpdateAvailable"/> (matched by
-    /// container id). Called on <see cref="IUpdateCheckService.CheckCompleted"/>
-    /// + at the end of <see cref="Reload"/> (so a freshly rebuilt list picks up
-    /// the last result without waiting for the next check).
+    /// list: sets <see cref="IsRateLimited"/> + per-row
+    /// <see cref="ModItemViewModel.UpdateAvailable"/> (matched by container id).
+    /// Called on <see cref="IUpdateCheckService.CheckCompleted"/> + at the end
+    /// of <see cref="Reload"/> (so a freshly rebuilt list picks up the last
+    /// result without waiting for the next check).
     /// </summary>
     private void ApplyUpdateCheckResult()
     {
         var result = _updateCheck.LastResult;
         IsRateLimited = result?.RateLimited == true;
-        // The "recent updates only" notice fires when a Month-only (non-thorough)
-        // check landed without being rate-limited. Suppressed before the first
-        // check (null result) + after a thorough check (the operator's "click
-        // refresh for a complete check" affordance clears it).
-        IsRecentOnly = result is not null && !result.RateLimited && !result.Thorough;
 
         if (Mods.Count == 0)
         {

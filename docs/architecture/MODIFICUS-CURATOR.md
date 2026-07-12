@@ -419,7 +419,7 @@ do, and what consumes the budget) is documented in
 
 `CheckThoroughAsync` (the manual "check now" affordance) runs the same v2 batch
 query as `CheckAsync`; the two differ only in the result's `Thorough` flag (kept
-for the mod-list UI's result-surface contract). The result (`UpdateCheckResult`
+for interface compatibility). The result (`UpdateCheckResult`
 with per-mod `ModUpdateInfo`) is published via `LastResult` + a
 `CheckCompleted` event for the mod-list badges to consume without re-awaiting.
 The check is fired fire-and-forget by `UpdateCheckRunner` (UI), which subscribes

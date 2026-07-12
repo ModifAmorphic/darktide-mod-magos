@@ -14,7 +14,7 @@ namespace Modificus.Curator.Integrations;
 /// newest MAIN file + clears the flag when it matches the installed version;
 /// best-effort + cached). Tier 1 is authoritative and never second-guessed. The
 /// two shapes differ only in the result's <see cref="UpdateCheckResult.Thorough"/>
-/// flag (kept for the mod-list UI's result-surface contract).
+/// flag (kept for interface compatibility).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -65,9 +65,8 @@ public interface IUpdateCheckService
     /// query as <see cref="CheckAsync"/> (the v2 query covers all mods in one
     /// call; there is no Month-only vs thorough distinction). Kept for
     /// interface compatibility: the result has
-    /// <see cref="UpdateCheckResult.Thorough"/> = <c>true</c>, which the mod-list
-    /// UI uses to clear the "recent updates only" notice after a manual "check
-    /// now" action.
+    /// <see cref="UpdateCheckResult.Thorough"/> = <c>true</c>. Both paths run
+    /// the same query, so the flag no longer signals a coverage difference.
     /// </summary>
     /// <param name="profileId">The profile whose mods to check.</param>
     /// <param name="ct">Cancellation token. <see cref="OperationCanceledException"/>
@@ -125,8 +124,7 @@ public interface IUpdateCheckService
 /// path); <c>false</c> if it came from the periodic
 /// <see cref="IUpdateCheckService.CheckAsync"/>. Both paths run the same v2
 /// batch query (the query covers all mods regardless), so the flag no longer
-/// signals a coverage difference; it is kept for the mod-list UI's
-/// "recent updates only" notice contract (cleared after a thorough check).</param>
+/// signals a coverage difference; it is kept for interface compatibility.</param>
 public sealed record UpdateCheckResult(
     IReadOnlyList<ModUpdateInfo> Updates,
     DateTimeOffset CheckedAt,

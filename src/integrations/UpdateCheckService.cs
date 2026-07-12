@@ -44,7 +44,7 @@ namespace Modificus.Curator.Integrations;
 /// (the periodic / profile-load path) and <see cref="CheckThoroughAsync"/> (the
 /// manual "check now" path) run the same v2 batch query; they differ only in
 /// the result's <see cref="UpdateCheckResult.Thorough"/> flag (kept for
-/// interface compatibility + the mod-list UI's result-surface contract).</para>
+/// interface compatibility).</para>
 /// <para>
 /// <b>Best-effort, never throws (except cancellation).</b> A transient API
 /// failure, a missing auth config, or an exhausted rate limit all surface as an

@@ -464,8 +464,8 @@ public sealed record ModUpdateInfo(
   propagates; the caller owns passing a valid id.
 - `CheckThoroughAsync(profileId)`: runs the same v2 batch query as
   `CheckAsync`; the two differ only in the result's `Thorough` flag (`true`
-  here). Kept for interface compatibility + the mod-list UI's result-surface
-  contract (the "check now" affordance clears the "recent updates only" notice).
+  here). Kept for interface compatibility; both paths run the same query, so
+  the flag no longer signals a coverage difference.
 - `LastResult`: the last check result, or null before the first check. Holds
   the most recent result regardless of which method produced it. The mod-list
   UI reads this to render badges without awaiting. Written under a lock
