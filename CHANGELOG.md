@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.9.0...v0.9.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **release:** bundle stable Relay releases ([#97](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/97)) ([1c2cdd3](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/1c2cdd31024a4d87dbbfa872356083e6f613628a))
+
 ## [0.9.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.8.0...v0.9.0) (2026-07-12)
 
 
