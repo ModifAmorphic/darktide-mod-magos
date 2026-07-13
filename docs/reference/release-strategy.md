@@ -66,12 +66,13 @@ Jobs:
 
    **build-windows** then produces a Velopack installer (the Windows asset is
    no longer a portable zip):
-   - Extracts the latest non-draft Relay release (prereleases included) from
+   - Extracts the latest stable, non-draft Relay release from
      `ModifAmorphic/darktide-modificus-relay` into `stage/app/relay/` so Relay
      ships app-local inside the payload. (Fetched via
-     `gh release list --exclude-drafts` + `gh release download --pattern '*-windows-x64.zip'`.
-     The Relay tag is resolved per workflow run; there is no Relay version
-     pinning and no Relay provenance sidecar.)
+     `gh release list --exclude-drafts --exclude-pre-releases` +
+     `gh release download --pattern '*-windows-x64.zip'`. The Relay tag is
+     resolved per workflow run; there is no Relay version pinning and no
+     Relay provenance sidecar.)
    - Runs `vpk pack` (Velopack 1.2.0) with `--packId ModifAmorphic.ModificusCurator`,
      the release version, `--packDir stage/app`, `--mainExe Modificus.Curator.exe`,
      `--packTitle "Modificus Curator"`, the app icon, and
@@ -376,7 +377,7 @@ What the release pipeline provides today, and what it does not:
 - **Linux arm64 / Steam Deck builds.** Only `win-x64` and `linux-x64` are
   published.
 - **Relay pinning or Relay provenance sidecar.** The bundled Relay is whatever
-  was latest (non-draft, prerelease-inclusive) at workflow-run time.
+  was latest stable (non-draft, non-prerelease) at workflow-run time.
 
 ## Sources
 

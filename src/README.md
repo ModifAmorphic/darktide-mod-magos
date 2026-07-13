@@ -95,9 +95,9 @@ Releases are cut by `release-please` (`.release-please-config.json` +
 `.release-please-manifest.json` at the repo root; tag style `v0.1.0`, no
 component prefix). When release-please creates a release, the release workflow
 publishes each target as an unsigned asset (Windows: a Velopack installer;
-Linux: a framework-dependent tar.gz bundle), fetches the
-latest Modificus Relay release (prereleases included), and uploads a GitHub
-Artifact Attestation against each asset. Verify an asset's provenance with:
+Linux: a framework-dependent tar.gz bundle), fetches the latest stable
+Modificus Relay release, and uploads a GitHub Artifact Attestation against each
+asset. Verify an asset's provenance with:
 
 ```
 gh attestation verify <file> --repo ModifAmorphic/darktide-modificus-curator

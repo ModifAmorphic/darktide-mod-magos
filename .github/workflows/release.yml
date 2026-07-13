@@ -81,7 +81,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-modificus-relay \
-            --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')
+            --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName')
           echo "RELAY_TAG=$RELAY_TAG" >> "$GITHUB_ENV"
           echo "Relay tag: $RELAY_TAG"
           gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \
@@ -189,7 +189,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-modificus-relay \
-            --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')
+            --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName')
           echo "RELAY_TAG=$RELAY_TAG" >> "$GITHUB_ENV"
           echo "Relay tag: $RELAY_TAG"
           gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \

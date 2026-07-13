@@ -509,7 +509,7 @@ scripts/            release.env: the install manifest (RELEASE_URL +
                     releases.win.json, and attests the installer + the nupkg; build-linux keeps the
                     portable-archive flow, publishing the framework-dependent
                     curator-<tag>-linux-x64.tar.gz with a top-level app/ + relay/ layout, bundling
-                    the latest Relay release (prereleases included), uploading + attesting it; both
+                    the latest stable Relay release, uploading + attesting it; both
                     legs target win-x64 / linux-x64 RIDs with --self-contained false to filter native
                     libs, and an AfterTargets=Publish target strips all .pdb files; then
                     repository_dispatch the post-release workflow; an

@@ -1,11 +1,19 @@
 # Modificus Curator
 
+<div align="center">
+  <img src="src/ui/Assets/app-icon.png" alt="Modificus Curator app icon" width="128">
+</div>
+
 **Modificus Curator** is a mod manager for **Warhammer 40,000: Darktide**. It launches the
 game modded via
 [Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay) (DLL
 injection: no files in the game directory, no bundle-database patching) and
 stays out of the way for vanilla play (launch the game from Steam and it runs
 unmodified).
+
+<div align="center">
+  <img src="docs/images/main.png" alt="Modificus Curator main application window showing the mod list interface">
+</div>
 
 ## Components
 
@@ -28,8 +36,9 @@ Initial releases are published on the
 [releases page](https://github.com/ModifAmorphic/darktide-modificus-curator/releases) and
 are marked as prereleases while the release pipeline settles. To build from
 source instead, see [`src/README.md`](src/README.md). The bundled runtime
-artifacts (launcher, shell DLL, mod loader) come from
-[Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay).
+artifacts (launcher, shell DLL, mod loader) come from the latest stable
+[Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay)
+release.
 
 ## Installation
 
