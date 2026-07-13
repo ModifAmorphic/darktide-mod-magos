@@ -270,9 +270,9 @@ public sealed class NexusOAuthTokenStore : INexusTokenStore;   // OidcClient + t
 - `AuthStateChanged` -- raised whenever an auth action changes the persisted
   `NexusAuthMethod` (OAuth login, API-key validate, or sign-out). Carries no
   payload; subscribers re-read what they need from the live config or
-  `GetCurrentStateAsync`. The UI's `DmfPromptService` subscribes so it can
-  surface the DMF install prompt the first time auth transitions from `None`
-  to configured.
+  `GetCurrentStateAsync`. The shell's Integrations flow refreshes the nxm
+  handler status after the dialog closes; the DMF prompt is profile-creation-only
+  and does not subscribe.
 - `LoginWithOAuthAsync` -- runs the OAuth loopback flow (browser + token exchange
   + persist), flips `AuthMethod = OAuth` (clearing any API key), fetches the
   user info via the v1 client.

@@ -279,16 +279,58 @@ live service. The XAML uses `{ReflectionBinding [Key], Source=...}` rather
 than a compiled binding because the indexer-based dynamic-language path is
 not expressible as a compiled binding.
 
+## The first-run Welcome onboarding
+
+### `OnboardingService`
+
+The first-run Welcome coordinator. Shows the Welcome modal once, the first time
+the app starts with `IAppStateStore.OnboardingCompleted` still `false`, persists
+completion, and opens the shell's Integrations flow on a "Set up Nexus" choice.
+After the first run, the call is a no-op for the lifetime of the process.
+
+```csharp
+public sealed class OnboardingService
+{
+    public OnboardingService(
+        IAppStateStore appState,
+        IDialogService dialogs,
+        Func<Task> openIntegrations,   // resolves to ShellViewModel.OpenIntegrationsAsync
+        ILogger<OnboardingService> logger);
+
+    public Task ShowWelcomeIfFirstRunAsync();
+}
+```
+
+- `ShowWelcomeIfFirstRunAsync()`: one-shot. Reads the persisted
+  `OnboardingCompleted` flag (plus an in-process guard) and no-ops when already
+  complete; otherwise shows the Welcome dialog, persists completion BEFORE any
+  further UI (so closing the subsequent Integrations dialog can never cause
+  Welcome to repeat), and on a `WelcomeChoice.SetUpNexus` choice opens the
+  shell's full Integrations flow via the injected `openIntegrations` delegate.
+- `openIntegrations`: resolved lazily through `ShellViewModel.OpenIntegrationsAsync`
+  at composition, so the nxm handler status refresh applies after the
+  Welcome-driven Integrations dialog too. Kept as a delegate so the coordinator
+  stays unit-testable.
+- `WelcomeChoice`: the typed result returned through
+  `IDialogService.ShowWelcomeAsync`. `Continue` (the default; also ESC, the
+  title-bar close button, and a window close) persists completion and leaves the
+  user at the main window; `SetUpNexus` persists completion then opens
+  Integrations.
+
+The App wires the call after the main window is actually opened (Avalonia modal
+dialogs require a shown owner): a one-shot `Opened` handler resolves the
+coordinator and fires the call; a failure is logged and swallowed so it never
+crashes startup.
+
 ## The DMF prompt coordinator
 
 ### `DmfPromptService`
 
 The DMF (Darktide Mod Framework, Nexus mod 8) install-prompt coordinator.
-Records triggers from `IProfileService.ProfileCreated` and
-`INexusAuthService.AuthStateChanged` (both fire from inside the
-Manage-profiles and Integrations dialogs) and processes them when the shell
-calls `ProcessPendingAsync` after the triggering dialog closes, so the DMF
-prompt is the topmost modal at that point (no dialog-on-dialog).
+Records the trigger from `IProfileService.ProfileCreated` (which fires from
+inside the Manage-profiles dialog) and processes it when the shell calls
+`ProcessPendingAsync` after the triggering dialog closes, so the DMF prompt is
+the topmost modal at that point (no dialog-on-dialog).
 
 ```csharp
 public sealed class DmfPromptService
@@ -301,7 +343,6 @@ public sealed class DmfPromptService
         IModRepository repo,
         IModAcquisitionService acquisition,
         INexusAuthService auth,
-        IConfigLoader configLoader,
         IDialogService dialogs,
         LocalizationService localization,
         ILogger<DmfPromptService> logger,
@@ -314,45 +355,42 @@ public sealed class DmfPromptService
 - `DmfModId`: the Nexus mod id of Darktide Mod Framework (8). DMF is
   required for most Darktide mods; the prompt offers to install it when
   missing.
-- `ProcessPendingAsync()`: processes any pending triggers, in the order they
-  would naturally surface (new-profile before auth). Called by the shell
-  after the Manage-profiles and Integrations dialogs close. Safe to call when
-  nothing is pending (a no-op). Each trigger is consumed (cleared) before it
-  is processed so an exception in one prompt does not leave it stuck pending
-  for the next call; each prompt is wrapped in a try/catch that logs and
-  swallows non-cancellation exceptions.
+- `ProcessPendingAsync()`: processes any pending new-profile trigger. Called by
+  the shell after the Manage-profiles dialog closes. Safe to call when nothing
+  is pending (a no-op). The trigger is consumed (cleared) before it is
+  processed so an exception in the prompt does not leave it stuck pending for
+  the next call; the prompt is wrapped in a try/catch that logs and swallows
+  non-cancellation exceptions.
 
-### Triggers + cases
+### Trigger + cases
 
-Two triggers fire when DMF is not in the active profile:
+One trigger fires when DMF is not in the active profile:
 
 1. **New profile becomes active** (a fresh ask per profile; no persisted
    flag). A profile created while Darktide runs does not become active (the
    session gates it), so no prompt fires in that case.
-2. **First Nexus auth `None` to configured transition** (gated by the
-   persisted `CuratorConfig.Nexus.DmfAuthPromptShown` flag so it fires once
-   ever; subsequent auth changes do not re-prompt).
 
-Three cases on a trigger:
+Two cases on a trigger:
 
 1. DMF in the repo but not in the profile: a Yes/No confirm. On Yes,
    `IProfileService.AddMod` adds it instantly.
-2. DMF not in the repo plus auth configured: a Yes/No confirm. On Yes,
-   premium users get the in-app API download under a modal spinner (via
+2. DMF not in the repo: a Yes/No confirm (the message tailors to whether Curator
+   owns the `nxm://` handler: the manager-download path when it does,
+   manual-import guidance when it does not). On Yes, premium users get the
+   in-app API download under a modal spinner (via
    `IDialogService.ShowProgressAsync` plus
-   `IModAcquisitionService.AcquireLatestNexusAsync`); non-premium users (or
-   unknown premium state) get their browser opened at DMF's Nexus files page
-   (`https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files`) via
-   the OS shell-open (`UseShellExecute = true`) only when Curator is
-   registered as the `nxm://` handler. The user clicks Download on the page
-   and the handler picks up the URL. When Curator is not the handler, an
-   informational alert tells the user to enable nxm links in Integrations (or
-   download the archive manually) and carries the DMF files URL.
-3. DMF not in the repo plus auth not configured: an informational OK-only
-   alert. Only reachable from the new-profile trigger.
+   `IModAcquisitionService.AcquireLatestNexusAsync`); everyone else (no auth,
+   regular, or unknown premium state) gets the DMF Nexus files page
+   (`https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files`) opened in
+   the default browser via the OS shell-open (`UseShellExecute = true`),
+   regardless of `nxm://` setup. When Curator owns the handler the user clicks
+   Download on the page and the handler picks up the URL; otherwise the user
+   downloads the archive and imports it via the normal add flow. On a
+   browser-open failure, a fallback alert carries the files-page URL.
 
-The auth-trigger flag is flipped after the prompt fires (accepted, declined,
-or informational). The new-profile trigger has no flag.
+Decline is respected: nothing opens, no Integrations prompt. The DMF flow never
+opens the Integrations dialog; the one-time Nexus setup offer lives in the
+first-run Welcome flow.
 
 `launchExternal` is injectable so tests exercise the browser-open failure
 path without launching a real browser. The default uses `Process.Start` with
@@ -784,7 +822,12 @@ services.AddSingleton<IAppUpdateService>(sp => new VelopackAppUpdateService(
 services.AddSingleton<IAppUpdateService, NoopAppUpdateService>();
 #endif
 services.AddSingleton(sp => new AppUpdateCheckRunner(/* IAppUpdateService, IConfigLoader, logger */));
-services.AddSingleton(sp => new DmfPromptService(/* … */, sp.GetService<INxmHandlerRegistrar>()));
+services.AddSingleton(sp => new DmfPromptService(/* … no IConfigLoader */, sp.GetService<INxmHandlerRegistrar>()));
+services.AddSingleton(sp => new OnboardingService(
+    sp.GetRequiredService<IAppStateStore>(),
+    sp.GetRequiredService<IDialogService>(),
+    () => sp.GetRequiredService<ShellViewModel>().OpenIntegrationsAsync(),
+    sp.GetRequiredService<ILogger<OnboardingService>>()));
 ```
 
 Key wiring notes:
@@ -797,9 +840,13 @@ Key wiring notes:
 - `ShellViewModel`, `DialogService`, and `DmfPromptService` resolve the
   `INxmHandlerRegistrar` via `GetService` (null on platforms without a
   registrar) so the shell status strip, the Integrations "Nexus download
-  links" section, and the DMF non-premium path can query/toggle the OS
+  links" section, and the DMF download-confirm message can query/toggle the OS
   `nxm://` handler without forcing activation to fail on unsupported
   platforms. The composition root no longer auto-registers the handler.
+- `OnboardingService` resolves `ShellViewModel.OpenIntegrationsAsync` lazily
+  through its `openIntegrations` delegate, so the first-run Welcome "Set up
+  Nexus" choice reuses the shell's full Integrations flow (including the nxm
+  handler status refresh after the dialog closes).
 - `MainWindow` is a singleton: the desktop lifetime installs the resolved
   instance as `desktop.MainWindow`, and `DialogService` resolves the same
   instance as the owner for modal dialogs.
@@ -920,11 +967,17 @@ No backend library references the UI (the dependency direction is one-way).
   (`IsUpdateSupported` false, null state, completed-null check, never-raised
   event) and the `NotSupportedException` from `DownloadUpdatesAsync` (the
   wiring-mistake guard).
-- **`DmfPromptServiceTests`**: the three DMF cases, the new-profile and
-  auth-configured triggers, the ask-once auth flag, the decline path, the
-  dialog-on-dialog avoidance (the prompt fires from the shell after the
-  triggering dialog closes), and the non-premium browser-open path gated on
-  the nxm registrar (registered vs not registered vs no registrar).
+- **`DmfPromptServiceTests`**: the two DMF cases (add existing / download +
+  add or browser-open), the new-profile trigger, the decline path (nothing
+  opens), the dialog-on-dialog avoidance (the prompt fires from the shell
+  after the triggering dialog closes), the premium in-app download, the
+  non-premium / unknown / no-auth browser-open path (opens regardless of the
+  nxm registrar state), and the browser-launch failure fallback alert.
+- **`OnboardingServiceTests`**: the first-run Welcome coordinator (already
+  complete no-op, Continue persists + skips Integrations, Set up Nexus
+  persists before opening Integrations once, the close == Continue
+  equivalence, the in-process one-shot guard, and Integrations failure
+  isolation).
 - **`NxmModDownloadHandlerTests`**: the Darktide-only gate (rejects other
   games before auth / profile / acquisition), the auth + active-profile
   gates, the acquire / register / refresh flow, the error wiring (alert on

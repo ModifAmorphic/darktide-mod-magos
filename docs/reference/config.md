@@ -92,7 +92,6 @@ public sealed class NexusConfig
     public bool AutoUpdateCheckEnabled { get; set; } = true;
     public int AutoUpdateCheckIntervalMinutes { get; set; } = 10;
     public bool AutomaticUpdatesEnabled { get; set; }            // opt-in Premium auto-install, default false
-    public bool DmfAuthPromptShown { get; set; }
 }
 
 public enum NexusAuthMethod { None, OAuth, ApiKey }
@@ -158,12 +157,6 @@ Nexus fields:
   disabled in the Integrations dialog) if Premium later becomes unavailable,
   while no automatic install runs. Surfaced as a checkbox in the Integrations
   "Update checks" section, enabled only for a verified Premium account.
-- `DmfAuthPromptShown`: gates the DMF (Darktide Mod Framework) install prompt
-  that fires the first time Nexus auth transitions from `None` to configured.
-  `false` by default; the DMF prompt coordinator flips it to `true` after
-  showing the auth-triggered prompt (whether the user accepted or declined), so
-  subsequent auth changes do not re-prompt. The new-profile trigger has no such
-  flag: each new profile is a fresh ask.
 
 The `NexusAuthMethod` enum carries the three explicit choices. The OAuth client
 id is a build-time constant (in `Modificus.Curator.Integrations.NexusOAuthConstants`),

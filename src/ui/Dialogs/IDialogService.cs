@@ -3,6 +3,29 @@ using Modificus.Curator.UI.Session;
 namespace Modificus.Curator.UI.Dialogs;
 
 /// <summary>
+/// The user's first-run Welcome choice, returned through
+/// <see cref="IDialogService.ShowWelcomeAsync"/> so the onboarding coordinator
+/// can decide whether to open Integrations. Both the explicit Continue button
+/// and a close (ESC, title-bar close, window close) map to
+/// <see cref="Continue"/>.
+/// </summary>
+public enum WelcomeChoice
+{
+    /// <summary>
+    /// The user chose to skip Nexus setup (or closed the window). The
+    /// coordinator persists onboarding completion and leaves the user at the
+    /// main window.
+    /// </summary>
+    Continue,
+
+    /// <summary>
+    /// The user chose to set up Nexus. The coordinator persists onboarding
+    /// completion first, then opens the Integrations dialog.
+    /// </summary>
+    SetUpNexus,
+}
+
+/// <summary>
 /// The application's UI-dialog abstraction. Keeps view models free of direct
 /// Avalonia <c>Window</c> construction so their logic stays unit-testable: a VM
 /// depends on this seam, and tests inject a recording fake instead of a real
@@ -11,6 +34,15 @@ namespace Modificus.Curator.UI.Dialogs;
 /// </summary>
 public interface IDialogService
 {
+    /// <summary>
+    /// Shows the first-run Welcome modal, returning the user's choice. The
+    /// owner window must already be shown (Avalonia modal dialogs require a
+    /// shown owner), so this is called once at startup after the main window
+    /// opens. ESC, title-bar close, and window close are equivalent to
+    /// <see cref="WelcomeChoice.Continue"/>.
+    /// </summary>
+    Task<WelcomeChoice> ShowWelcomeAsync();
+
     /// <summary>
     /// Shows a modal confirmation prompt. Returns <c>true</c> when the user
     /// confirms, <c>false</c> otherwise (cancel / dismiss). Used to gate

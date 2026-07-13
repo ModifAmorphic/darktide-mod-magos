@@ -48,9 +48,9 @@ Method behavior:
 
 - `ProfileCreated` -- raised whenever `CreateProfile` successfully persists a new
   profile (carries the new profile's summary). The UI's `DmfPromptService`
-  subscribes so it can surface the DMF install prompt on a new active profile
-  missing DMF; subscribers that need to react to "a profile was just created"
-  use this rather than diffing `ListProfiles()`.
+  subscribes so it can surface the DMF install prompt when the new profile
+  becomes active and is missing DMF; subscribers that need to react to "a
+  profile was just created" use this rather than diffing `ListProfiles()`.
 - `ListProfiles()` -- every profile under `ProfilesBaseFolder`, as lightweight
   summaries, sorted by `Name` (ordinal). Non-`Guid` directories and unreadable
   profiles are skipped with a debug/warning log; one bad profile never breaks

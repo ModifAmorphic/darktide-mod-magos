@@ -45,7 +45,7 @@ URL are not Premium-gated by Curator.
 | Opt-in automatic update installation (Integrations) | Checkbox enabled | Checkbox visible but disabled (Premium-required tooltip) | Same as regular |
 | Standard `nxm://` download and import | Available, using the URL's per-file token | Same | Same, when auth is configured and the URL is valid |
 | DMF prompt, DMF already in repository | Confirm and add existing container | Same | Same |
-| DMF prompt, DMF absent and auth configured | Direct in-app download and add | Website plus `nxm://` flow, or manual guidance | Treated like a regular account |
+| DMF prompt, DMF absent | Direct in-app download and add | Browser opens at DMF's Nexus files page (manager-download via `nxm://` or manual import) | Treated like a regular account |
 | Local import and ordinary profile management | Available | Available | Available |
 
 "Unknown" means Curator has a configured authentication method but could not
@@ -221,42 +221,38 @@ Relevant implementation:
 
 ## Premium capability: direct DMF prompt download
 
-The DMF prompt has a Premium difference only in one of its three repository and
-authentication cases.
+The DMF prompt has a Premium difference only in its repository-missing case.
+DMF (Darktide Mod Framework) is sourced from Nexus Mods (mod 8).
 
 ### DMF already exists in the repository
 
 Premium status is irrelevant. After confirmation, Curator adds the existing DMF
 container to the active profile without downloading it.
 
-### DMF is absent and Nexus auth is configured
+### DMF is absent
 
-After the user confirms the download, `DmfPromptService` gets the current auth
-state. Unlike the mod-list gate, this is a fresh membership lookup each time the
-prompt reaches this branch.
+After the user confirms the download offer, `DmfPromptService` gets the current
+auth state. Unlike the mod-list gate, this is a fresh membership lookup each
+time the prompt reaches this branch.
 
 - **Premium:** Curator calls `AcquireLatestNexusAsync` under a modal progress
   dialog and then adds the returned container to the profile.
-- **Regular or unknown:** Curator checks whether it owns the operating system's
-  `nxm://` handler. If it does, Curator opens DMF's Nexus files page. The user
-  chooses a file on Nexus, Nexus emits an `nxm://` URL containing the per-file
-  token, and Curator's normal handler downloads and adds DMF. If Curator is not
-  registered, no registrar exists, or the browser cannot be opened, Curator
-  shows guidance containing the files-page URL for manual action.
+- **Regular, unknown, or no auth:** Curator opens DMF's Nexus files page in the
+  default browser regardless of whether it owns the `nxm://` handler. If Curator
+  owns the handler, the user clicks Download on Nexus, Nexus emits an `nxm://`
+  URL containing the per-file token, and Curator's normal handler downloads and
+  adds DMF. If Curator does not own the handler, the user downloads the archive
+  and imports it via the normal add flow (the confirm message already explained
+  the manual-import path). If the browser cannot be opened, Curator shows an
+  alert containing the files-page URL.
 
 DMF's files page is
 `https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files`.
 
-### DMF is absent and Nexus auth is not configured
-
-Premium status cannot be resolved and does not affect the result. Curator shows
-an informational alert. This case can occur from the new-profile trigger, but
-not from the first-auth-configured trigger.
-
 Relevant implementation:
 
 - `src/ui/Session/DmfPromptService.cs`, `ProcessPendingAsync`,
-  `OfferDmfDownloadForNonPremiumAsync`, and `DownloadAndAddAsync`
+  `OpenDmfFilesPageInBrowser`, and `DownloadAndAddAsync`
 - `src/ui/Nxm/NxmModDownloadHandler.cs`
 
 ## Download-link mechanics
@@ -368,8 +364,8 @@ The behavior is covered primarily by these suites:
 - `Modificus.Curator.UI.Tests/IntegrationsViewModelTests.cs`: Premium, regular,
   and unverified status text.
 - `Modificus.Curator.UI.Tests/DmfPromptServiceTests.cs`: Premium direct download,
-  regular and unknown browser flow, missing-handler guidance, and browser-open
-  failure fallback.
+  regular and unknown browser flow (opened regardless of nxm handler state),
+  and browser-open failure fallback.
 
 Known coverage limits:
 

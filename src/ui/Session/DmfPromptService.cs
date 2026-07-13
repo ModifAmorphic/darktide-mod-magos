@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using Modificus.Curator.Config;
-using Modificus.Curator.General;
 using Modificus.Curator.Integrations;
 using Modificus.Curator.Mods;
 using Modificus.Curator.Nxm;
@@ -14,50 +13,42 @@ namespace Modificus.Curator.UI.Session;
 
 /// <summary>
 /// The DMF (Darktide Mod Framework, Nexus mod 8) install-prompt coordinator.
-/// Surfaces a modal prompt on the main window after two triggers, when DMF is
-/// not already in the active profile: (1) the first time Nexus auth transitions
-/// from <see cref="NexusAuthMethod.None"/> to configured (OAuth or API key),
-/// gated by a persisted flag so it fires once ever; and (2) each time a new
-/// profile is created + set active (a fresh ask per profile, no persisted flag).
+/// Surfaces a modal prompt on the main window when a new profile becomes active
+/// and DMF is not already in it: a fresh ask per profile (no persisted flag).
 /// Decline is respected; the user can add DMF later via the normal add flow.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Trigger signals come from the backend services; the prompt fires from the
-/// shell, on the main window.</b> <see cref="IProfileService.ProfileCreated"/>
-/// fires from inside the ManageProfiles dialog's create call, and
-/// <see cref="INexusAuthService.AuthStateChanged"/> fires from inside the
-/// Integrations dialog's auth command. Showing a modal prompt from inside those
-/// handlers would be a dialog-on-dialog (manage-profiles / Integrations is still
-/// open). This coordinator records each signal as a pending trigger; the shell
-/// calls <see cref="ProcessPendingAsync"/> after the triggering dialog closes,
-/// so the DMF prompt is the topmost modal at that point.</para>
+/// <b>The trigger fires from the backend; the prompt fires from the shell, on
+/// the main window.</b> <see cref="IProfileService.ProfileCreated"/> fires from
+/// inside the ManageProfiles dialog's create call. Showing a modal prompt from
+/// inside that handler would be a dialog-on-dialog (manage-profiles is still
+/// open). This coordinator records the signal as pending; the shell calls
+/// <see cref="ProcessPendingAsync"/> after the triggering dialog closes, so the
+/// DMF prompt is the topmost modal at that point.</para>
 /// <para>
-/// <b>The three DMF cases.</b> On a trigger, the coordinator looks up DMF by
+/// <b>The two DMF cases.</b> On a trigger, the coordinator looks up DMF by
 /// source (<c>new NexusSource { ModId = <see cref="DmfModId"/> }</c>) and checks
 /// the active profile's mod list. (1) DMF in the repo but not in the profile:
 /// a Yes/No confirm, On Yes adds it instantly (no download). (2) DMF not in the
-/// repo + Nexus auth configured: a Yes/No confirm, On Yes either downloads +
-/// adds it under a spinner (premium users; the Nexus <c>download_link</c>
-/// endpoint is premium-only) or opens the DMF files page in the user's browser
-/// (non-premium or unknown premium state; the user clicks Download on the page
-/// and the existing <c>nxm://</c> handler picks it up). (3) DMF not in the repo
-/// + auth NOT configured: an informational OK-only alert (this case applies only
-/// to the new-profile trigger; the auth-configured trigger implies auth is set
-/// up).</para>
+/// repo: a Yes/No confirm. On Yes, premium users get the in-app API download
+/// under a spinner (the Nexus <c>download_link</c> endpoint is premium-only)
+/// plus the add; everyone else gets the DMF files page opened in their browser
+/// (the user downloads DMF there, and either clicks Download if Curator owns
+/// the <c>nxm://</c> handler, or imports the archive manually).</para>
 /// <para>
-/// <b>Ask-once for the auth trigger.</b> <see cref="NexusConfig.DmfAuthPromptShown"/>
-/// is set to <c>true</c> after the auth-triggered prompt fires (accepted or
-/// declined), so subsequent auth changes (re-login, sign-out + re-sign-in) do
-/// not re-prompt. The new-profile trigger has no such flag: each new profile is
-/// a fresh ask.</para>
+/// <b>No auth trigger.</b> Configuring Nexus auth no longer surfaces a DMF
+/// prompt on its own; the one-time Nexus setup offer lives in the first-run
+/// Welcome flow instead. The coordinator never opens the Integrations dialog
+/// and never stops at an informational dead-end: on a confirmed download it
+/// either downloads in-app (premium) or opens the browser (everyone else).</para>
 /// <para>
 /// <b>Lives in the UI assembly.</b> Mirrors <see cref="UpdateCheckRunner"/>:
 /// the coordinator observes UI-layer singletons (<see cref="IProfileSession"/>,
 /// <see cref="IDialogService"/>) and orchestrates Integrations + Profiles +
 /// Mods services. Registered as a singleton; the shell resolves it + calls
-/// <see cref="ProcessPendingAsync"/> after the ManageProfiles + Integrations
-/// dialogs close.</para>
+/// <see cref="ProcessPendingAsync"/> after the ManageProfiles dialog
+/// closes.</para>
 /// </remarks>
 public sealed class DmfPromptService
 {
@@ -75,12 +66,14 @@ public sealed class DmfPromptService
     private const string GameDomain = "warhammer40kdarktide";
 
     /// <summary>
-    /// The Nexus files page for DMF. Used as the browser-open target for
-    /// non-premium users (the Nexus <c>download_link</c> endpoint is
-    /// premium-only, so non-premium users must visit the site to generate the
-    /// per-file nxm download token). The user clicks Download on the page; the
-    /// existing <c>nxm://</c> handler catches the URL and DMF is added to the
-    /// active profile via the standard nxm flow.
+    /// The Nexus files page for DMF. Opened in the user's browser when DMF is
+    /// not in the repository and the user is not premium (the Nexus
+    /// <c>download_link</c> endpoint is premium-only, so non-premium users
+    /// must visit the site). When Curator owns the <c>nxm://</c> handler the
+    /// user clicks Download on the page and the handler picks up the URL, so
+    /// DMF is added to the active profile via the standard nxm flow. When
+    /// Curator does not own the handler the user downloads the archive and
+    /// imports it via the normal add flow.
     /// </summary>
     private const string DmfFilesUrl = "https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files";
 
@@ -89,25 +82,19 @@ public sealed class DmfPromptService
     private readonly IModRepository _repo;
     private readonly IModAcquisitionService _acquisition;
     private readonly INexusAuthService _auth;
-    private readonly IConfigLoader _configLoader;
     private readonly IDialogService _dialogs;
     private readonly LocalizationService _localization;
     private readonly INxmHandlerRegistrar? _nxmRegistrar;
     private readonly ILogger<DmfPromptService> _logger;
     private readonly Func<Uri, bool> _launchExternal;
 
-    // Pending triggers, set by the event handlers (which fire from inside the
-    // ManageProfiles / Integrations dialogs) and consumed by
+    // The pending new-profile trigger, set by the event handler (which fires
+    // from inside the ManageProfiles dialog) and consumed by
     // ProcessPendingAsync (called by the shell after the triggering dialog
-    // closes). Single-entry each: the newest trigger of a kind wins, which is
-    // correct (a second create during one dialog open is the relevant one).
-    // _pendingNewProfileId is read + written on the UI thread only (ProfileCreated
-    // fires from ProfileService on the UI thread). _pendingAuthConfigured is
-    // volatile: AuthStateChanged fires from background threads (the OAuth and
-    // API-key flows await internally), so the write may happen off-thread; the
-    // read in ProcessPendingAsync is on the UI thread.
+    // closes). Single-entry: the newest create wins (a second create during one
+    // dialog open is the relevant one). Read + written on the UI thread only
+    // (ProfileCreated fires from ProfileService on the UI thread).
     private Guid? _pendingNewProfileId;
-    private volatile bool _pendingAuthConfigured;
 
     public DmfPromptService(
         IProfileService profiles,
@@ -115,7 +102,6 @@ public sealed class DmfPromptService
         IModRepository repo,
         IModAcquisitionService acquisition,
         INexusAuthService auth,
-        IConfigLoader configLoader,
         IDialogService dialogs,
         LocalizationService localization,
         ILogger<DmfPromptService> logger,
@@ -127,7 +113,6 @@ public sealed class DmfPromptService
         _repo = repo ?? throw new ArgumentNullException(nameof(repo));
         _acquisition = acquisition ?? throw new ArgumentNullException(nameof(acquisition));
         _auth = auth ?? throw new ArgumentNullException(nameof(auth));
-        _configLoader = configLoader ?? throw new ArgumentNullException(nameof(configLoader));
         _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _localization = localization ?? throw new ArgumentNullException(nameof(localization));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -135,7 +120,6 @@ public sealed class DmfPromptService
         _launchExternal = launchExternal ?? DefaultLaunchExternal;
 
         _profiles.ProfileCreated += OnProfileCreated;
-        _auth.AuthStateChanged += OnAuthStateChanged;
     }
 
     /// <summary>
@@ -158,53 +142,25 @@ public sealed class DmfPromptService
     }
 
     /// <summary>
-    /// Records an auth-state-changed signal. The shell will call
-    /// <see cref="ProcessPendingAsync"/> after the Integrations dialog closes;
-    /// this method only records the pending trigger so the prompt does not fire
-    /// dialog-on-dialog.
+    /// Processes any pending new-profile trigger. Called by the shell after the
+    /// ManageProfiles dialog closes so the DMF prompt is the topmost modal at
+    /// that point. Safe to call when nothing is pending (a no-op).
     /// </summary>
     /// <remarks>
-    /// The actual gate (was auth just configured for the first time? is the
-    /// flag still false? is DMF missing?) lives in
-    /// <see cref="PromptForAuthConfiguredAsync"/>, which re-reads the live
-    /// config at process time. This keeps the trigger cheap + the gate
-    /// evaluation against the freshest state.
-    /// </remarks>
-    private void OnAuthStateChanged(object? sender, EventArgs e)
-    {
-        _pendingAuthConfigured = true;
-        _logger.LogDebug("Recorded pending DMF auth-trigger.");
-    }
-
-    /// <summary>
-    /// Processes any pending triggers, in the order they would naturally
-    /// surface (new-profile before auth). Called by the shell after the
-    /// ManageProfiles + Integrations dialogs close so the DMF prompt is the
-    /// topmost modal at that point. Safe to call when nothing is pending (a
-    /// no-op).
-    /// </summary>
-    /// <remarks>
-    /// Each trigger is consumed (cleared) before it is processed so a thrown
-    /// exception in one prompt does not leave it stuck pending for the next
-    /// call. A failure inside a prompt is caught + logged so a wiring issue
+    /// The trigger is consumed (cleared) before it is processed so a thrown
+    /// exception in the prompt does not leave it stuck pending for the next
+    /// call. A failure inside the prompt is caught + logged so a wiring issue
     /// never blocks the shell's post-dialog return.</remarks>
     public async Task ProcessPendingAsync()
     {
-        // Snapshot + clear before processing so an exception in one prompt
+        // Snapshot + clear before processing so an exception in the prompt
         // doesn't leave the trigger stuck for the next call.
         var newProfileId = _pendingNewProfileId;
-        var authConfigured = _pendingAuthConfigured;
         _pendingNewProfileId = null;
-        _pendingAuthConfigured = false;
 
         if (newProfileId is Guid id)
         {
             await RunPromptSafelyAsync(() => PromptForNewProfileAsync(id));
-        }
-
-        if (authConfigured)
-        {
-            await RunPromptSafelyAsync(PromptForAuthConfiguredAsync);
         }
     }
 
@@ -230,8 +186,6 @@ public sealed class DmfPromptService
         }
     }
 
-    // ---- new-profile trigger ----------------------------------------------
-
     /// <summary>
     /// The new-profile trigger: prompts for DMF if the just-created profile
     /// became active + DMF is not in it. A profile created while Darktide runs
@@ -251,77 +205,20 @@ public sealed class DmfPromptService
             return Task.CompletedTask;
         }
 
-        return PromptIfMissingAsync(createdProfileId, isAuthTrigger: false);
+        return PromptIfMissingAsync(createdProfileId);
     }
-
-    // ---- auth-configured trigger ------------------------------------------
-
-    /// <summary>
-    /// The auth-trigger: prompts for DMF the first time Nexus auth transitions
-    /// from <c>None</c> to configured (gated by
-    /// <see cref="NexusConfig.DmfAuthPromptShown"/>), if DMF is not already in
-    /// the active profile. After the prompt fires (accepted, declined, or
-    /// informational), the flag is flipped so subsequent auth changes do not
-    /// re-prompt.
-    /// </summary>
-    private Task PromptForAuthConfiguredAsync()
-    {
-        var nexus = _configLoader.Load().Integrations.Nexus;
-
-        // Ask-once: if the flag is already set, never re-prompt on auth changes
-        // (re-login, sign-out + re-sign-in). The flag is the durable signal
-        // that the first-time prompt already happened.
-        if (nexus.DmfAuthPromptShown)
-        {
-            _logger.LogDebug("Skipping DMF auth-trigger prompt: already shown (flag is set).");
-            return Task.CompletedTask;
-        }
-
-        // The trigger fires on every auth-state change (login, sign-out,
-        // re-login). Only a None -> configured transition crosses the
-        // first-time threshold; a sign-out lands here with AuthMethod=None and
-        // is skipped. A subsequent sign-in (None -> configured) lands here
-        // with the flag still false + triggers the prompt.
-        if (nexus.AuthMethod == NexusAuthMethod.None)
-        {
-            _logger.LogDebug("Skipping DMF auth-trigger prompt: auth method is None.");
-            return Task.CompletedTask;
-        }
-
-        // No active profile means nowhere to add DMF. The user can configure
-        // auth without a profile (the Integrations dialog opens from the shell
-        // with no profile selected). The auth-trigger flag is NOT flipped in
-        // this case: the prompt did not fire, so the first time the user has
-        // both auth + an active profile we still want to ask. The next auth
-        // change after they have a profile will fire the prompt + flip the
-        // flag. (Acceptable trade-off: most users create a profile before
-        // configuring auth, so this branch is rare.)
-        if (_session.ActiveProfileId is not Guid profileId)
-        {
-            _logger.LogDebug("Skipping DMF auth-trigger prompt: no active profile.");
-            return Task.CompletedTask;
-        }
-
-        return PromptIfMissingAsync(profileId, isAuthTrigger: true);
-    }
-
-    // ---- shared prompt body -----------------------------------------------
 
     /// <summary>
     /// The shared prompt body. Looks up DMF in the repo + checks the active
-    /// profile's mod list, then surfaces the appropriate case (1: add, 2:
-    /// download + add, 3: informational). No-op if DMF is already in the
-    /// profile. After showing (when <paramref name="isAuthTrigger"/> is true),
-    /// flips <see cref="NexusConfig.DmfAuthPromptShown"/> so subsequent auth
-    /// changes do not re-prompt.
+    /// profile's mod list, then surfaces the appropriate case (1: add,
+    /// 2: download/add or browser-open). No-op if DMF is already in the
+    /// profile.
     /// </summary>
-    private async Task PromptIfMissingAsync(Guid profileId, bool isAuthTrigger)
+    private async Task PromptIfMissingAsync(Guid profileId)
     {
         var dmf = _repo.FindBySource(new NexusSource { ModId = DmfModId });
 
-        // DMF already in the profile: nothing to prompt about. The auth-trigger
-        // flag is NOT flipped in this case (no prompt was shown); the next
-        // auth change re-evaluates against the live state.
+        // DMF already in the profile: nothing to prompt about.
         var mods = _profiles.GetModList(profileId);
         if (dmf is not null && mods.Any(m => m.ContainerId == dmf.Id))
         {
@@ -330,129 +227,88 @@ public sealed class DmfPromptService
             return;
         }
 
-        var nexus = _configLoader.Load().Integrations.Nexus;
-        var authConfigured = nexus.AuthMethod != NexusAuthMethod.None;
-
-        var shown = false;
-        try
+        if (dmf is not null)
         {
-            if (dmf is not null)
+            // Case 1: DMF in the repo but not in this profile. Instant add on
+            // confirm (no download).
+            var confirmed = await _dialogs.ConfirmAsync(
+                _localization["Dmf_AddTitle"],
+                _localization["Dmf_AddMessage"]);
+
+            if (confirmed)
             {
-                // Case 1: DMF in the repo but not in this profile.
-                shown = true;
-                var confirmed = await _dialogs.ConfirmAsync(
-                    _localization["Dmf_AddTitle"],
-                    _localization["Dmf_AddMessage"]);
-
-                if (confirmed)
-                {
-                    _profiles.AddMod(profileId, dmf.Id, ModVersionPolicy.Latest);
-                    _logger.LogInformation(
-                        "Added existing DMF container {Container} to profile {Profile} via the DMF prompt.",
-                        dmf.Id, profileId);
-                }
+                _profiles.AddMod(profileId, dmf.Id, ModVersionPolicy.Latest);
+                _logger.LogInformation(
+                    "Added existing DMF container {Container} to profile {Profile} via the DMF prompt.",
+                    dmf.Id, profileId);
             }
-            else if (authConfigured)
-            {
-                // Case 2: DMF not in the repo + Nexus auth configured.
-                shown = true;
-                var confirmed = await _dialogs.ConfirmAsync(
-                    _localization["Dmf_DownloadTitle"],
-                    _localization["Dmf_DownloadMessage"]);
-
-                if (confirmed)
-                {
-                    // Premium users get the in-app API download; non-premium (or
-                    // unknown) get the browser opened at DMF's files page. The
-                    // Nexus download_link endpoint is premium-only; non-premium
-                    // users must visit the site to generate the per-file nxm
-                    // token. The user clicks Download on the page -> the
-                    // existing nxm:// handler picks it up -> DMF is added to the
-                    // active profile via the standard nxm flow. Opening the
-                    // browser only helps when Curator owns the nxm handler, so
-                    // the non-premium path checks the registrar first.
-                    var state = await _auth.GetCurrentStateAsync();
-                    if (state?.IsPremium == true)
-                    {
-                        await DownloadAndAddAsync(profileId);
-                    }
-                    else
-                    {
-                        await OfferDmfDownloadForNonPremiumAsync();
-                    }
-                }
-            }
-            else
-            {
-                // Case 3: DMF not in the repo + auth NOT configured. Applies
-                // only to the new-profile trigger (the auth-configured trigger
-                // implies auth is set up).
-                shown = true;
-                await _dialogs.ShowAlertAsync(
-                    _localization["Dmf_InfoTitle"],
-                    _localization["Dmf_InfoMessage"]);
-            }
-        }
-        finally
-        {
-            // Flip the auth-trigger flag once the prompt has been shown
-            // (whether accepted, declined, or informational). The new-profile
-            // trigger has no flag (each new profile is a fresh ask).
-            if (shown && isAuthTrigger)
-            {
-                SetAuthPromptShown();
-            }
-        }
-    }
-
-    /// <summary>
-    /// The non-premium (or unknown-premium) DMF download path. Opening the DMF
-    /// files page only helps when Curator owns the <c>nxm://</c> handler (the
-    /// user clicks Download on the page and the handler picks up the URL); if
-    /// Curator is not registered (or there is no registrar for this platform),
-    /// the browser-open would be a dead end, so an informational alert tells
-    /// the user to enable nxm links in Integrations (or download the archive
-    /// manually) and carries the DMF URL.
-    /// </summary>
-    private async Task OfferDmfDownloadForNonPremiumAsync()
-    {
-        var registered = false;
-        try
-        {
-            registered = _nxmRegistrar?.IsRegistered() ?? false;
-        }
-        catch (Exception ex)
-        {
-            // Defensive: the platform registrars catch their own probe
-            // exceptions. Treat a throw as "not registered" so the informational
-            // path runs (which carries the URL either way).
-            _logger.LogWarning(ex, "IsRegistered probe threw during the DMF prompt; treating as not registered.");
-            registered = false;
-        }
-
-        if (registered)
-        {
-            await OpenDmfFilesPageInBrowser();
             return;
         }
 
-        _logger.LogInformation(
-            "DMF non-premium path: Curator is not the nxm handler; showing the enable-nxm informational alert.");
-        await _dialogs.ShowAlertAsync(
-            _localization["Dmf_NotConfiguredTitle"],
-            _localization.Format("Dmf_NotConfiguredMessage", DmfFilesUrl));
+        // Case 2: DMF not in the repo. Always offer the download (regardless of
+        // Nexus auth): on confirm, premium users get the in-app API download;
+        // everyone else gets the DMF files page opened in the browser. The
+        // confirm message is tailored to whether Curator owns the nxm handler
+        // so the user knows whether to click Download on Nexus (manager path)
+        // or download the archive and import it manually.
+        var ownsHandler = OwnsNxmHandler();
+        var message = ownsHandler
+            ? _localization["Dmf_DownloadMessage"]
+            : _localization["Dmf_DownloadMessageManual"];
+
+        var downloadConfirmed = await _dialogs.ConfirmAsync(
+            _localization["Dmf_DownloadTitle"],
+            message);
+
+        if (!downloadConfirmed)
+        {
+            // Decline is respected: do nothing, open no browser, show no
+            // integration prompt.
+            return;
+        }
+
+        var state = await _auth.GetCurrentStateAsync();
+        if (state?.IsPremium == true)
+        {
+            await DownloadAndAddAsync(profileId);
+        }
+        else
+        {
+            await OpenDmfFilesPageInBrowser();
+        }
     }
 
     /// <summary>
-    /// Opens DMF's Nexus files page in the user's default browser. Used when the
-    /// user is non-premium (or premium state is unknown): the Nexus
-    /// <c>download_link.json</c> endpoint is premium-only, so non-premium users
-    /// must visit the site to generate the per-file nxm download token. The user
-    /// clicks Download on the page; the existing nxm:// handler catches the URL
-    /// and DMF is added to the active profile via the standard nxm flow. No
-    /// additional confirm before opening (the user already confirmed "Download
-    /// DMF?"); on a launcher failure, falls back to an alert with the URL so the
-    /// user can copy it manually (better than a silent no-op).
+    /// Whether Curator is registered as the OS <c>nxm://</c> handler (false when
+    /// no platform registrar is available). Used only to tailor the download
+    /// confirm message (manager-download vs. manual-import guidance). A probe
+    /// throw is treated as "not registered" (defensive; the platform registrars
+    /// catch their own probe exceptions).
+    /// </summary>
+    private bool OwnsNxmHandler()
+    {
+        try
+        {
+            return _nxmRegistrar?.IsRegistered() ?? false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "IsRegistered probe threw during the DMF prompt; treating as not registered.");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Opens DMF's Nexus files page in the user's default browser. Used when DMF
+    /// is not in the repository and the user is not premium (the Nexus
+    /// <c>download_link</c> endpoint is premium-only). When Curator owns the
+    /// <c>nxm://</c> handler the user clicks Download on the page and the
+    /// handler catches the URL, so DMF is added to the active profile via the
+    /// standard nxm flow. When Curator does not own the handler the user
+    /// downloads the archive and imports it via the normal add flow. No
+    /// additional confirm before opening (the user already confirmed the
+    /// download offer); on a launcher failure, falls back to an alert with the
+    /// URL so the user can copy it manually (better than a silent no-op).
     /// </summary>
     private async Task OpenDmfFilesPageInBrowser()
     {
@@ -460,12 +316,12 @@ public sealed class DmfPromptService
         if (_launchExternal(uri))
         {
             _logger.LogInformation(
-                "Opened DMF files page in browser (non-premium user); the nxm handler will pick up the download.");
+                "Opened DMF files page in browser; the nxm handler will pick up the download if Curator owns it.");
             return;
         }
 
         // Launcher failed (no default browser, headless, etc.). Surface the URL
-        // so the user can copy it; this is a failure alert, not a "safety" confirm.
+        // so the user can copy it; this is a failure alert, not a guidance step.
         _logger.LogWarning("Failed to open the DMF files page in the browser.");
         await _dialogs.ShowAlertAsync(
             _localization["Dmf_DownloadFailedTitle"],
@@ -535,22 +391,5 @@ public sealed class DmfPromptService
                 _localization["Dmf_DownloadFailedTitle"],
                 _localization.Format("Dmf_DownloadFailedMessage", ex.Message));
         }
-    }
-
-    /// <summary>
-    /// Persists <see cref="NexusConfig.DmfAuthPromptShown"/> = <c>true</c> via a
-    /// read-modify-save so the auth-trigger does not fire again on subsequent
-    /// auth changes. Best-effort (the ConfigLoader swallows write failures).
-    /// </summary>
-    private void SetAuthPromptShown()
-    {
-        var config = _configLoader.Load();
-        if (config.Integrations.Nexus.DmfAuthPromptShown)
-        {
-            return; // already set; avoid a redundant write
-        }
-        config.Integrations.Nexus.DmfAuthPromptShown = true;
-        _configLoader.Save(config);
-        _logger.LogInformation("DMF auth-trigger flag persisted (prompt will not re-fire on subsequent auth changes).");
     }
 }

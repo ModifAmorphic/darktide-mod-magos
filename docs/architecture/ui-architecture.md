@@ -72,10 +72,13 @@ a UI-layer singleton that the shell (and other view models) inject:
   │                              fire-and-forget; no periodic timer (unlike
   │                              UpdateCheckRunner)
   │
-  └── DmfPromptService ──────── records triggers from IProfileService +
-                                INexusAuthService; the shell calls
-                                ProcessPendingAsync after the triggering dialog
-                                closes so the DMF prompt is never dialog-on-dialog
+  ├── OnboardingService ─────── shows the first-run Welcome modal once, then
+  │                             opens Integrations on a "Set up Nexus" choice
+  │
+  ├── DmfPromptService ──────── records the new-profile trigger from
+  │                             IProfileService; the shell calls
+  │                             ProcessPendingAsync after the triggering dialog
+  │                             closes so the DMF prompt is never dialog-on-dialog
 
  IDialogService ────────────── the testable dialog seam (every Show* is one method);
                              production DialogService owns the real Window wiring
@@ -170,15 +173,18 @@ branches on `LaunchResult.Status`:
 
 ### The post-dialog DMF prompt path
 
-`ManageProfiles` and `OpenIntegrations` both call
-`_dmfPrompts.ProcessPendingAsync()` after their dialog closes. The
-`DmfPromptService` records triggers from `IProfileService.ProfileCreated`
-(fires from inside the Manage-profiles dialog's create) and
-`INexusAuthService.AuthStateChanged` (fires from inside the Integrations
-dialog's auth command) as pending; processing them after the dialog closes
-means the DMF prompt is the topmost modal at that point, never nested on top
-of the dialog that triggered it. After the prompt, the shell calls
-`ModList.Reload()` so a DMF add shows without a profile switch.
+`ManageProfiles` calls `_dmfPrompts.ProcessPendingAsync()` after its dialog
+closes. The `DmfPromptService` records the trigger from
+`IProfileService.ProfileCreated` (which fires from inside the Manage-profiles
+dialog's create) as pending; processing it after the dialog closes means the DMF
+prompt is the topmost modal at that point, never nested on top of the dialog
+that triggered it. After the prompt, the shell calls `ModList.Reload()` so a DMF
+add shows without a profile switch.
+
+`OpenIntegrations` no longer processes a DMF trigger: configuring Nexus auth
+does not surface a DMF prompt on its own (the one-time Nexus setup offer lives
+in the first-run Welcome flow). It still re-reads the nxm handler status after
+the dialog closes and reloads the mod list.
 
 ## The mod list (`ModListViewModel` + `ModItemViewModel`)
 
@@ -408,23 +414,46 @@ models use no `ConfigureAwait(false)` (the project rule); their network calls
 run inside `Task.Run`. Download failures surface an alert and never proceed to
 apply.
 
+## First-run Welcome onboarding (`OnboardingService`)
+
+The first-run Welcome coordinator shows a compact modal over the main window the
+first time the app starts with `IAppStateStore.OnboardingCompleted` still
+`false`. It introduces Curator's three capabilities in user-facing prose
+(profile-based mod management, checking installed mods for updates, and handling
+Nexus "Download with manager" links), and offers two explicit actions: an accent
+"Set up Nexus" button and a secondary "Continue without Nexus" button. ESC, the
+title-bar close button, and a window close are all equivalent to Continue.
+
+`ShowWelcomeIfFirstRunAsync` is a one-shot: it reads the persisted flag (and an
+in-process guard) and no-ops when onboarding is already complete. On either
+choice it persists completion BEFORE any further UI, so closing or canceling the
+subsequent Integrations dialog can never cause Welcome to repeat. On a "Set up
+Nexus" choice it opens the shell's full Integrations flow
+(`ShellViewModel.OpenIntegrationsAsync`) after Welcome closes, so enabling the
+`nxm://` handler inside Integrations refreshes the shell status when the dialog
+closes.
+
+The coordinator is wired after the main window is actually opened (Avalonia
+modal dialogs require a shown owner): `App` subscribes to the main window's
+`Opened` event once, resolves `OnboardingService`, and fires the call; a failure
+inside onboarding is logged and swallowed so it never crashes startup. The
+coordinator stays unit-testable through the `IDialogService.ShowWelcomeAsync`
+seam (returns a typed `WelcomeChoice`) and the `IAppStateStore` flag.
+
 ## The DMF install prompt (`DmfPromptService`)
 
 The DMF (Darktide Mod Framework, Nexus mod 8) install-prompt coordinator
-surfaces a modal on the main window when DMF is not already in the active
-profile. There are two triggers:
+surfaces a modal on the main window when a new profile becomes active and DMF
+is not already in it. There is one trigger:
 
-1. **The first time Nexus auth transitions from `None` to configured**
-   (OAuth or API key), gated by the persisted
-   `CuratorConfig.Nexus.DmfAuthPromptShown` flag so it fires once ever.
-   Subsequent auth changes (re-login, sign-out plus re-sign-in) do not
-   re-prompt.
-2. **Each time a new profile is created and becomes active** (a fresh ask
-   per profile, no persisted flag). A profile created while Darktide runs
-   does not become active (the session gates it), so no prompt fires in that
-   case.
+1. **Each time a new profile is created and becomes active** (a fresh ask per
+   profile, no persisted flag). A profile created while Darktide runs does not
+   become active (the session gates it), so no prompt fires in that case.
 
-### The three cases
+Configuring Nexus auth no longer surfaces a DMF prompt on its own; the one-time
+Nexus setup offer lives in the Welcome flow instead.
+
+### The two cases
 
 On a trigger, the coordinator looks up DMF by source
 (`new NexusSource { ModId = DmfModId }`) and checks the active profile's mod
@@ -432,37 +461,32 @@ list:
 
 1. **DMF in the repo but not in the profile**: a Yes/No confirm. On Yes,
    `IProfileService.AddMod` adds it instantly (no download).
-2. **DMF not in the repo plus auth configured**: a Yes/No confirm. On Yes,
-   premium users get the in-app API download under a modal spinner (the
-   Nexus `download_link` endpoint is premium-only) plus the add. Non-premium
-   users (or unknown premium state) get their browser opened at DMF's Nexus
-   files page only when Curator is registered as the `nxm://` handler (the user
-   clicks Download there and the handler picks up the URL, so DMF is added to
-   the active profile via the standard nxm flow); when Curator is not the
-   handler, an informational alert tells the user to enable nxm links in
-   Integrations (or download the archive manually) and carries the DMF files
+2. **DMF not in the repo**: a Yes/No confirm (the message tailors to whether
+   Curator owns the `nxm://` handler: the manager-download path when it does,
+   manual-import guidance when it does not). On Yes, premium users get the
+   in-app API download under a modal spinner (the Nexus `download_link`
+   endpoint is premium-only) plus the add. Everyone else (no auth, regular, or
+   unknown premium) gets the DMF Nexus files page opened in the default browser
+   regardless of `nxm://` setup, so the user is never left at an informational
+   dead-end. On a browser-open failure, a fallback alert carries the files-page
    URL.
-3. **DMF not in the repo plus auth not configured**: an informational
-   OK-only alert. This case is only reachable from the new-profile trigger
-   (the auth-configured trigger implies auth is set up).
 
-Decline is respected. DMF can be added later via the normal add flow.
+Decline is respected: nothing opens, no Integrations prompt. DMF can be added
+later via the normal add flow.
 
 ### Why the prompt fires from the shell
 
-The trigger signals (`IProfileService.ProfileCreated`,
-`INexusAuthService.AuthStateChanged`) fire from inside the Manage-profiles
-and Integrations dialogs. Showing a modal from inside those handlers would
-be dialog-on-dialog (the triggering dialog is still open). The coordinator
-records each signal as pending; the shell calls `ProcessPendingAsync` after
-the triggering dialog closes, so the DMF prompt is the topmost modal at that
-point.
+The trigger signal (`IProfileService.ProfileCreated`) fires from inside the
+Manage-profiles dialog. Showing a modal from inside that handler would be
+dialog-on-dialog (the triggering dialog is still open). The coordinator records
+the signal as pending; the shell calls `ProcessPendingAsync` after the
+triggering dialog closes, so the DMF prompt is the topmost modal at that point.
 
-`ProcessPendingAsync` snapshots and clears the pending triggers before
-processing each one, so an exception in one prompt does not leave it stuck
-pending for the next call. Each prompt is wrapped in a try/catch that logs
-and swallows non-cancellation exceptions, so a wiring failure never blocks
-the shell's post-dialog return.
+`ProcessPendingAsync` snapshots and clears the pending trigger before
+processing it, so an exception in the prompt does not leave it stuck pending
+for the next call. The prompt is wrapped in a try/catch that logs and swallows
+non-cancellation exceptions, so a wiring failure never blocks the shell's
+post-dialog return.
 
 ## Dialogs, preferences, and i18n
 
@@ -476,6 +500,7 @@ injects a recording fake instead of a real window. The production
 ```csharp
 public interface IDialogService
 {
+    Task<WelcomeChoice> ShowWelcomeAsync();
     Task<bool> ConfirmAsync(string title, string message);
     Task ShowManageProfilesAsync();
     Task ShowPreferencesAsync();

@@ -32,7 +32,9 @@ expected conditions:
   exception's body on `Message` (the full exception is also logged). An unknown
   profile (`KeyNotFoundException` from PrepareModRoot) is caught and mapped to
   `Error`.
-- Checks that the launcher exists at `<RelayDir>/modificus_relay.exe`.
+- Resolves the launcher path (see [Launcher path resolution](#launcher-path-resolution)).
+  If it cannot be found in any applicable location, returns `Error` reporting the
+  configured `<RelayDir>/modificus_relay.exe` path.
 - Spawns the launcher via the active `IPlatformLaunchStrategy` (directly on
   Windows; under `proton run` on Linux) -- the service itself contains no
   per-launch OS branch.
@@ -94,6 +96,33 @@ The launch path branches on platform via the active `IPlatformLaunchStrategy`,
 selected once at DI registration from the host OS -- the launch service contains
 no per-launch OS branch. Each strategy owns the spawn (via `IProcessLauncher`),
 its required discovery fields, and its own log label.
+
+### Launcher path resolution
+
+`RelayLaunchService.ResolveLauncherPath` resolves `modificus_relay.exe` with a
+fixed precedence, then the service spawns whatever it resolved via the active
+strategy:
+
+1. **Configured `CuratorConfig.RelayDir`** -- `<RelayDir>/modificus_relay.exe`.
+   Honors an explicit user override and the data-root default once Relay is
+   deployed there (the Linux layout, and the Windows dev/data layout).
+2. **App-local fallback (Windows only)** -- `<AppContext.BaseDirectory>/relay/
+   modificus_relay.exe`. A Velopack install ships Relay app-local inside the
+   payload; the `current\` directory is replaced in place on update, so the path
+   is stable.
+3. **Sibling-folder fallback (Windows only)** -- `<AppContext.BaseDirectory>/../relay/
+   modificus_relay.exe` (normalized to no `..` segment). The portable Windows
+   archive ships Curator under `<root>/app/` and Relay under `<root>/relay/` (a
+   sibling of the app folder, mirroring the Linux layout), so Relay resolves
+   without a config override.
+4. **`null`** -- none of the applicable locations had the launcher; the service
+   returns `Error` reporting the configured path.
+
+Linux consults only the configured `RelayDir`: both Windows packaged fallbacks
+(the app-local Velopack payload and the portable sibling layout) are skipped, so
+Relay stays at the data-root `relay/` folder. The helper is a pure function of
+`(configRelayDir, baseDirectory, isWindows)` so the precedence is unit-testable
+on any CI OS.
 
 ### Windows -- direct invocation
 

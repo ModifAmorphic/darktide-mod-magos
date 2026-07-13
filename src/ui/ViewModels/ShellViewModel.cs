@@ -44,13 +44,15 @@ namespace Modificus.Curator.UI.ViewModels;
 /// overrides + mod-repository relocation). After Settings closes, the bound
 /// <see cref="ModList"/> reloads so a relocate's rescan is reflected in the
 /// mod rows.</para>
-/// <para><b>DMF prompt fires after the ManageProfiles + Integrations dialogs
-/// close:</b> <see cref="DmfPromptService"/> subscribes to backend signals
-/// (profile-created, auth-state-changed) that fire FROM inside those dialogs;
-/// it records them as pending + processes them here (after the dialog closes)
-/// so the DMF prompt is the topmost modal. The shell calls
-/// <see cref="DmfPromptService.ProcessPendingAsync"/> after ManageProfiles +
-/// Integrations; safe to call when nothing is pending (a no-op).</para>
+/// <para><b>DMF prompt fires after the ManageProfiles dialog closes:</b>
+/// <see cref="DmfPromptService"/> subscribes to
+/// <see cref="IProfileService.ProfileCreated"/>, which fires FROM inside the
+/// ManageProfiles dialog's create call; it records the signal as pending + the
+/// shell calls <see cref="DmfPromptService.ProcessPendingAsync"/> after that
+/// dialog closes so the DMF prompt is the topmost modal. The auth-triggered DMF
+/// flow was removed: configuring Nexus auth no longer surfaces a DMF prompt on
+/// its own (the one-time Nexus setup offer lives in the first-run Welcome
+/// flow).</para>
 /// </remarks>
 public partial class ShellViewModel : ObservableObject
 {
@@ -518,13 +520,26 @@ public partial class ShellViewModel : ObservableObject
     /// Opens the Integrations dialog (Nexus auth: OAuth login + API-key validate
     /// + sign-out, plus the explicit nxm:// handler registration toggle).
     /// Nexus-only in v1; GitHub stays config-file-only. After the dialog closes,
-    /// processes any pending DMF auth-trigger prompt the dialog's auth action may
-    /// have triggered (the prompt fires here, on the main window, not
-    /// dialog-on-dialog), and re-reads the nxm handler status so the status strip
-    /// reflects any register/unregister the user did inside the dialog.
+    /// re-reads the nxm handler status so the status strip reflects any
+    /// register/unregister the user did inside the dialog, and reloads the mod
+    /// list (cheap no-op when nothing changed). This is also the Integrations
+    /// entry point the first-run Welcome onboarding reuses (via
+    /// <see cref="OpenIntegrationsAsync"/>), so the nxm handler status refresh
+    /// applies identically after a Welcome "Set up Nexus" choice.
     /// </summary>
     [RelayCommand]
-    private async Task OpenIntegrations()
+    private Task OpenIntegrations() => OpenIntegrationsAsync();
+
+    /// <summary>
+    /// The awaitable Integrations flow: shows the dialog, then refreshes the
+    /// nxm handler status + reloads the mod list. Called by the
+    /// <see cref="OpenIntegrations"/> command wrapper and by the onboarding
+    /// coordinator's "Set up Nexus" path (passed in as a delegate at
+    /// composition). The DMF auth-trigger processing was removed (the DMF
+    /// prompt is profile-creation-only now); this method no longer calls
+    /// <see cref="DmfPromptService.ProcessPendingAsync"/>.
+    /// </summary>
+    internal async Task OpenIntegrationsAsync()
     {
         await _dialogs.ShowIntegrationsAsync();
 
@@ -532,15 +547,8 @@ public partial class ShellViewModel : ObservableObject
         // the OS state so the status strip label stays accurate.
         RefreshNxmHandlerStatus();
 
-        // Surface any DMF prompt the dialog's auth action may have triggered.
-        // Fires after the Integrations dialog is gone so the prompt is the
-        // topmost modal. Safe no-op when no auth state change happened (or the
-        // ask-once flag is already set).
-        await _dmfPrompts.ProcessPendingAsync();
-
-        // The DMF prompt (if it fired + the user accepted) added a mod to the
-        // active profile. Reload so the new row shows without a profile switch.
-        // Cheap no-op when nothing changed.
+        // Reload so a change inside the dialog is reflected without a profile
+        // switch. Cheap no-op when nothing changed.
         ModList.Reload();
     }
 

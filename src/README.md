@@ -94,20 +94,30 @@ produced by the release workflow instead.
 Releases are cut by `release-please` (`.release-please-config.json` +
 `.release-please-manifest.json` at the repo root; tag style `v0.1.0`, no
 component prefix). When release-please creates a release, the release workflow
-publishes each target as an unsigned asset (Windows: a Velopack installer;
-Linux: a framework-dependent tar.gz bundle), fetches the latest stable
-Modificus Relay release, and uploads a GitHub Artifact Attestation against each
-asset. Verify an asset's provenance with:
+publishes each target as an unsigned asset (Windows: a Velopack installer
+and a portable ZIP; Linux: a framework-dependent tar.gz bundle), fetches
+the latest stable Modificus Relay release, and uploads a GitHub Artifact
+Attestation against each asset. Verify an asset's provenance with:
 
 ```
 gh attestation verify <file> --repo ModifAmorphic/darktide-modificus-curator
 ```
 
-The Windows release is a Velopack installer (`modificus-curator-setup.exe`,
-pack id `ModifAmorphic.ModificusCurator`, installs to
-`%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\`, bootstraps the .NET 10
-runtime); the Linux release archive is two top-level folders, extracted into
-the Linux app-data root (`~/.local/share/Modificus Curator`):
+The Windows releases are:
+
+- **Velopack installer** (`modificus-curator-setup.exe`, pack id
+  `ModifAmorphic.ModificusCurator`, installs to
+  `%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\`, bootstraps the .NET 10
+  runtime). This is the recommended installation method; it supports in-app
+  self-update via Velopack.
+- **Portable ZIP** (`curator-<tag>-windows-x64.zip`), a framework-dependent
+  archive with two top-level folders: `app/` (the Curator UI and NXM handler)
+  and `relay/` (the bundled Relay runtime). The .NET 10 Runtime must be
+  installed separately. The portable build does not include Velopack and
+  does not support in-app self-update; download a newer ZIP manually to update.
+
+The Linux release archive is two top-level folders, extracted into the
+Linux app-data root (`~/.local/share/Modificus Curator`):
 
 - `app/` - the Curator UI + the `nxm://` handler (+ the launcher stub, pending
   later cleanup).
