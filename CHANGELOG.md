@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.9.1...v0.10.0) (2026-07-13)
+
+
+### Features
+
+* **curator:** add portable release and first-run onboarding ([#100](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/100)) ([d55424a](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/d55424acddbbc4e8abd23ce1c88830ea650a2a35))
+
 ## [0.9.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.9.0...v0.9.1) (2026-07-13)
 
 
