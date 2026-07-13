@@ -365,17 +365,13 @@
     <value>Nexus #{0}</value>
     <comment>Source badge text for a Nexus Mods mod. {0} is the Nexus mod id.</comment>
   </data>
-  <data name="ModRow_SourceGitHub" xml:space="preserve">
-    <value>GitHub {0}/{1}</value>
-    <comment>Source badge text for a GitHub mod. {0} is the owner, {1} is the repo.</comment>
-  </data>
   <data name="ModRow_NotFound" xml:space="preserve">
     <value>Not found</value>
     <comment>Source badge text when a mod has no mod-store entry (stale profile reference).</comment>
   </data>
   <data name="ModRow_SourceBadgeLinkTooltip" xml:space="preserve">
     <value>Open this mod's source page</value>
-    <comment>Tooltip on the source badge when it doubles as a link to the mod's remote page (Nexus mod page or GitHub repo).</comment>
+    <comment>Tooltip on the source badge when it doubles as a link to the mod's remote page (Nexus mod page).</comment>
   </data>
   <data name="ModRow_UpdateTooltipInstall" xml:space="preserve">
     <value>Update this mod to the latest release</value>
@@ -454,10 +450,6 @@
     <value>Nexus Mods</value>
     <comment>Source chooser option: Nexus Mods.</comment>
   </data>
-  <data name="Import_SourceGitHub" xml:space="preserve">
-    <value>GitHub</value>
-    <comment>Source chooser option: GitHub.</comment>
-  </data>
   <data name="Import_VersionLabel" xml:space="preserve">
     <value>Version</value>
     <comment>Label over the version field in the import modal.</comment>
@@ -470,17 +462,9 @@
     <value>Mod URL</value>
     <comment>Label over the URL field when Nexus is chosen.</comment>
   </data>
-  <data name="Import_GitHubUrlLabel" xml:space="preserve">
-    <value>Repo URL</value>
-    <comment>Label over the URL field when GitHub is chosen.</comment>
-  </data>
   <data name="Import_UrlPlaceholderNexus" xml:space="preserve">
     <value>https://www.nexusmods.com/warhammer40kdarktide/mods/…</value>
     <comment>Watermark / placeholder for the Nexus URL field.</comment>
-  </data>
-  <data name="Import_UrlPlaceholderGitHub" xml:space="preserve">
-    <value>https://github.com/owner/repo</value>
-    <comment>Watermark / placeholder for the GitHub repo URL field.</comment>
   </data>
   <data name="Import_OkButton" xml:space="preserve">
     <value>OK</value>

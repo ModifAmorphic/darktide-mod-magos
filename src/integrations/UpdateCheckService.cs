@@ -53,15 +53,13 @@ namespace Modificus.Curator.Integrations;
 /// to catch. Cancellation (<see cref="OperationCanceledException"/>) propagates
 /// so a cancelled check is not misreported as "no updates found".</para>
 /// <para>
-/// <b>Nexus-only.</b> GitHub-sourced mods are skipped alongside Untracked
-/// (no remote to query). The update-FLAG logic (tiers 1/2/3) is scoped to
+/// <b>Nexus-only.</b> Untracked mods are skipped (no remote to query). The
+/// update-FLAG logic (tiers 1/2/3) is scoped to
 /// <see cref="LatestPolicy"/> + <see cref="NexusSource"/> mods;
 /// <see cref="PinnedPolicy"/> mods are frozen version-wise and are never
 /// flagged. The name-sync pass covers EVERY <see cref="NexusSource"/> mod in
 /// the profile (Latest AND Pinned): the batch query already returns the name
-/// for free, so the sync piggybacks on it at zero extra API cost. The service
-/// has no GitHub code paths anywhere (the
-/// <see cref="IGitHubClient"/> is never touched).</para>
+/// for free, so the sync piggybacks on it at zero extra API cost.</para>
 /// </remarks>
 internal sealed class UpdateCheckService : IUpdateCheckService
 {
@@ -236,8 +234,7 @@ internal sealed class UpdateCheckService : IUpdateCheckService
         // The batch query is sent for this full set so both the update-flag
         // logic AND the name-sync pass read their data from one call. Pinned
         // mods ride along for name sync only (the flag logic below stays scoped
-        // to Latest). Skip UntrackedSource (no remote to query) + GitHubSource
-        // (out of scope for the update check).
+        // to Latest). Skip UntrackedSource (no remote to query).
         var nexusMods = new List<(ModListEntry Entry, ModContainer Container, NexusSource Nexus)>();
         foreach (var entry in entries)
         {

@@ -8,8 +8,8 @@ namespace Modificus.Curator.UI.ViewModels;
 
 /// <summary>
 /// The view model behind the per-mod import modal (<see cref="Views.ImportModDialog"/>).
-/// Collects the mod's source provenance (Local / Nexus / GitHub) + a raw version
-/// tag + a URL for the remote sources, validates them, and yields an
+/// Collects the mod's source provenance (Local / Nexus) + a raw version tag + a
+/// URL for the remote source, validates them, and yields an
 /// <see cref="ImportModResult"/> on confirm (the URL is parsed to canonical
 /// identity via <see cref="ModSourceParser"/>). A cancel yields <c>null</c>.
 /// </summary>
@@ -20,14 +20,13 @@ namespace Modificus.Curator.UI.ViewModels;
 /// stem and is editable; the edited name becomes the canonical mod-store key
 /// (the import service upserts).</para>
 /// <para><b>Source chooser:</b> a ComboBox over <see cref="ImportSource"/>
-/// (Untracked / Nexus / GitHub). Switching it shows / hides the conditional fields:
-/// Nexus + GitHub require a Version tag + a URL that parses (the user supplies the
-/// release tag; the modal does not fetch it from the remote); Untracked needs nothing extra (the mod imports as
-/// <see cref="UntrackedSource"/> with an empty version).</para>
-/// <para><b>Single URL field:</b> Nexus + GitHub share one <see cref="Url"/>
-/// entry (they are mutually exclusive; only one shows at a time). The label +
-/// placeholder + parser adapt to the chosen source. This keeps the state surface
-/// minimal versus two redundant fields.</para>
+/// (Untracked / Nexus). Switching it shows / hides the conditional fields:
+/// Nexus requires a Version tag + a URL that parses (the user supplies the
+/// release tag; the modal does not fetch it from the remote); Untracked needs
+/// nothing extra (the mod imports as <see cref="UntrackedSource"/> with an empty
+/// version).</para>
+/// <para><b>URL field:</b> Nexus shows one <see cref="Url"/> entry whose label +
+/// placeholder adapt to the Nexus source. Untracked needs nothing extra.</para>
 /// <para><b>Validation never throws:</b> <see cref="ModSourceParser"/> returns
 /// <c>false</c> on malformed input; the modal surfaces a validation message and
 /// keeps OK disabled. All logic lives here (unit-tested); the dialog only wires
@@ -43,7 +42,7 @@ public partial class ImportModViewModel : ObservableObject
     /// from the request (folder / archive stem) and editable; the source defaults
     /// to <see cref="ImportSource.Nexus"/> (most Darktide mods ship on Nexus, so
     /// the common case is a Nexus URL + a release tag; the user can switch to
-    /// GitHub or Untracked when needed).
+    /// Untracked when needed).
     /// </summary>
     public ImportModViewModel(ImportModRequest request, LocalizationService localization)
     {
@@ -63,9 +62,6 @@ public partial class ImportModViewModel : ObservableObject
 
         /// <summary>Nexus Mods (collects a mod URL parsed to a mod id).</summary>
         Nexus,
-
-        /// <summary>GitHub (collects a repo URL parsed to owner/repo).</summary>
-        GitHub,
     }
 
     /// <summary>
@@ -94,8 +90,8 @@ public partial class ImportModViewModel : ObservableObject
     private string _modName;
 
     /// <summary>
-    /// The chosen source. Drives which conditional fields show (Nexus + GitHub:
-    /// Version + URL; Local: nothing) and which validation applies.
+    /// The chosen source. Drives which conditional fields show (Nexus:
+    /// Version + URL; Untracked: nothing) and which validation applies.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsRemote))]
@@ -110,8 +106,8 @@ public partial class ImportModViewModel : ObservableObject
 
     /// <summary>
     /// Integer adapter for the source ComboBox's <c>SelectedIndex</c> (0 = Local,
-    /// 1 = Nexus, 2 = GitHub), so the ComboBox binds two-way without a converter or
-    /// view code-behind. Maps to / from <see cref="SourceChoice"/>.
+    /// 1 = Nexus), so the ComboBox binds two-way without a converter or view
+    /// code-behind. Maps to / from <see cref="SourceChoice"/>.
     /// </summary>
     public int SourceChoiceIndex
     {
@@ -127,7 +123,7 @@ public partial class ImportModViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The raw release tag string (e.g. <c>"1.2"</c>). Required for Nexus + GitHub
+    /// The raw release tag string (e.g. <c>"1.2"</c>). Required for Nexus
     /// (the user enters the release tag; the modal does not fetch it from the remote); ignored
     /// for Local, which records an empty version. An empty version is recorded as
     /// <c>""</c>. Never parsed or normalized at this layer.
@@ -139,8 +135,8 @@ public partial class ImportModViewModel : ObservableObject
     private string _version = string.Empty;
 
     /// <summary>
-    /// The remote source URL (shared by Nexus + GitHub; only one shows at a time).
-    /// Parsed to canonical identity on confirm. Ignored for Local.
+    /// The remote source URL (shown for Nexus). Parsed to canonical identity on
+    /// confirm. Ignored for Local.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanConfirm))]
@@ -195,24 +191,20 @@ public partial class ImportModViewModel : ObservableObject
     /// runs + closes.</summary>
     public ImportModResult? Result { get; private set; }
 
-    /// <summary>Whether a remote source (Nexus / GitHub) is chosen, driving the
-    /// Version + URL fields' visibility.</summary>
+    /// <summary>Whether a remote source (Nexus) is chosen, driving the Version +
+    /// URL fields' visibility.</summary>
     public bool IsRemote => SourceChoice != ImportSource.Untracked;
 
-    /// <summary>Whether the Version field is visible (Nexus / GitHub). The field
-    /// is required for remote sources; it shows so the user must enter the
+    /// <summary>Whether the Version field is visible (Nexus). The field is
+    /// required for the remote source; it shows so the user must enter the
     /// release tag.</summary>
     public bool IsVersionVisible => IsRemote;
 
-    /// <summary>The localized label for the URL field, adapting to the source.</summary>
-    public string UrlLabel => SourceChoice == ImportSource.GitHub
-        ? _localization["Import_GitHubUrlLabel"]
-        : _localization["Import_NexusUrlLabel"];
+    /// <summary>The localized label for the URL field (Nexus).</summary>
+    public string UrlLabel => _localization["Import_NexusUrlLabel"];
 
-    /// <summary>The localized placeholder for the URL field, adapting to the source.</summary>
-    public string UrlPlaceholder => SourceChoice == ImportSource.GitHub
-        ? _localization["Import_UrlPlaceholderGitHub"]
-        : _localization["Import_UrlPlaceholderNexus"];
+    /// <summary>The localized placeholder for the URL field (Nexus).</summary>
+    public string UrlPlaceholder => _localization["Import_UrlPlaceholderNexus"];
 
     /// <summary>
     /// The localized validation message for the URL field when the input is
@@ -333,13 +325,6 @@ public partial class ImportModViewModel : ObservableObject
                 if (ModSourceParser.TryParseNexus(url, out var nexus))
                 {
                     parsed = nexus;
-                    return true;
-                }
-                return false;
-            case ImportSource.GitHub:
-                if (ModSourceParser.TryParseGitHub(url, out var git))
-                {
-                    parsed = git;
                     return true;
                 }
                 return false;

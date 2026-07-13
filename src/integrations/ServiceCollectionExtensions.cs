@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using Duende.IdentityModel.OidcClient.Browser;
 using Modificus.Curator.Config;
 using Modificus.Curator.General;
@@ -12,78 +11,32 @@ namespace Modificus.Curator.Integrations;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the GitHub + Nexus clients. The GitHub client is a typed
-    /// <c>HttpClient</c> configured from the live <see cref="CuratorConfig.Integrations.GitHub"/>
-    /// section. The Nexus client is a typed <c>HttpClient</c> with per-request
-    /// auth applied by the auth message factory selector (which reads
-    /// <see cref="NexusConfig.AuthMethod"/> live). The Nexus auth service +
-    /// the loopback <see cref="IBrowser"/> + the token store are singletons.
-    /// The acquisition service (download + extract + place orchestration over
-    /// <see cref="INexusClient"/> + <see cref="IModImportService"/>) is a
-    /// singleton; both the nxm download handler and the per-mod update
-    /// button resolve it. The update-check service (one-call v2 GraphQL
-    /// <c>modsByUid</c> batch query for the active profile's
-    /// LatestPolicy + NexusSource mods) is a singleton; the mod-list view binds badges to
-    /// its <see cref="IUpdateCheckService.LastResult"/> + subscribes to
-    /// <see cref="IUpdateCheckService.CheckCompleted"/>.
+    /// Registers the Nexus client (a typed <c>HttpClient</c> with per-request
+    /// auth applied by the auth message factory selector, which reads
+    /// <see cref="NexusConfig.AuthMethod"/> live), the Nexus auth service +
+    /// the loopback <see cref="IBrowser"/> + the token store (singletons), the
+    /// mod acquisition service (download + extract + place orchestration over
+    /// <see cref="INexusClient"/> + <see cref="IModImportService"/>, singleton),
+    /// and the update-check service (one-call v2 GraphQL <c>modsByUid</c> batch
+    /// query for the active profile's LatestPolicy + NexusSource mods, singleton;
+    /// the mod-list view binds badges to <see cref="IUpdateCheckService.LastResult"/>
+    /// + subscribes to <see cref="IUpdateCheckService.CheckCompleted"/>).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The GitHub configuration callback resolves <see cref="IConfigLoader"/> from
-    /// the container on typed-client construction and reads the GitHub section from
-    /// a fresh live snapshot, so a runtime config change takes effect the next
-    /// time the typed client is constructed.</para>
-    /// <para>
-    /// <b>GitHub headers applied to every request:</b> <c>User-Agent: Modificus-Curator</c>
-    /// (required by GitHub) and <c>Accept: application/vnd.github+json</c>. When
-    /// <see cref="GitHubConfig.Token"/> is set, it is sent as
-    /// <c>Authorization: Bearer &lt;token&gt;</c> (raises the rate limit /
-    /// unlocks private repos); anonymous access is used otherwise.</para>
-    /// <para>
-    /// The GitHub base URL is normalized to end with a trailing slash so relative
-    /// request URIs resolve correctly against <c>HttpClient.BaseAddress</c>. The
-    /// Nexus API base URL is normalized the same way.</para>
+    /// The Nexus API base URL is normalized to end with a trailing slash so
+    /// relative request URIs resolve correctly against
+    /// <c>HttpClient.BaseAddress</c>.</para>
     /// </remarks>
     public static IServiceCollection AddIntegrations(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        AddGitHub(services);
         AddNexus(services);
         AddAcquisition(services);
         AddUpdateCheck(services);
 
         return services;
-    }
-
-    private static void AddGitHub(IServiceCollection services)
-    {
-        services.AddHttpClient<IGitHubClient, GitHubClient>((serviceProvider, client) =>
-        {
-            var config = serviceProvider.GetRequiredService<IConfigLoader>().Load();
-            var gitHub = config.Integrations.GitHub;
-
-            // Trim whitespace + trailing slashes, then re-append one slash so
-            // relative request URIs resolve against BaseAddress predictably
-            // (the classic BaseAddress footgun). A blank value falls back to the
-            // public GitHub API.
-            var baseUrl = (gitHub.BaseUrl ?? string.Empty).Trim().TrimEnd('/');
-            if (baseUrl.Length == 0)
-            {
-                baseUrl = GitHubConfigDefaults.BaseUrl;
-            }
-
-            client.BaseAddress = new Uri(baseUrl + "/", UriKind.Absolute);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("Modificus-Curator");
-            client.DefaultRequestHeaders.Accept.Add(
-                new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-
-            if (!string.IsNullOrWhiteSpace(gitHub.Token))
-            {
-                client.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", gitHub.Token);
-            }
-        });
     }
 
     private static void AddNexus(IServiceCollection services)
@@ -159,11 +112,6 @@ public static class ServiceCollectionExtensions
     {
         services.AddSingleton<IUpdateStateStore, UpdateStateStore>();
         services.AddSingleton<IUpdateCheckService, UpdateCheckService>();
-    }
-
-    private static class GitHubConfigDefaults
-    {
-        public const string BaseUrl = "https://api.github.com";
     }
 
     private static class NexusConfigDefaults

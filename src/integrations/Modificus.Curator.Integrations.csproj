@@ -6,10 +6,11 @@
   </PropertyGroup>
 
   <!--
-    Exposes the internal GitHubClient implementation to the test assembly so it
-    can be unit-tested against a fake HttpMessageHandler without widening the
-    library's public surface. The implementation stays internal and is also
-    exercised through IGitHubClient via DI in the service-collection tests.
+    Exposes internal Integrations implementations (NexusClient, the auth
+    factories, ModAcquisitionService, UpdateCheckService) to the test assembly
+    so they can be unit-tested against fakes without widening the library's
+    public surface. The implementations stay internal and are also exercised
+    through their interfaces via DI in the service-collection tests.
   -->
   <ItemGroup>
     <InternalsVisibleTo Include="Modificus.Curator.Integrations.Tests" />
@@ -37,7 +38,7 @@
   <ItemGroup>
     <!--
       CuratorConfig is the config schema; IConfigLoader (General) is the live
-      reader the typed-client builder reads the GitHub section from.
+      reader the typed-client builder reads the Nexus section from.
       Mods is the unified mod repository: the acquisition service imports
       downloaded archives via IModImportService + keys Nexus containers by
       NexusSource. The dependency direction is clean (Mods knows nothing of

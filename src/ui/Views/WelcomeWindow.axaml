@@ -6,7 +6,7 @@
         Title="{ReflectionBinding [Welcome_Title], Source={StaticResource Loc}}"
         ExtendClientAreaToDecorationsHint="True"
         WindowDecorations="None"
-        Width="460" MinWidth="360"
+        Width="540" MinWidth="360"
         SizeToContent="Height"
         CanResize="False"
         ShowInTaskbar="False"
@@ -36,32 +36,43 @@
           <TextBlock Text="{ReflectionBinding [Welcome_Intro], Source={StaticResource Loc}}"
                      TextWrapping="Wrap" />
 
-          <!-- Setup bullets: drawn Ellipse markers, never Unicode glyphs. -->
+          <!--
+            Setup bullets: drawn Ellipse markers, never Unicode glyphs. Each row
+            is a two-column Grid (Auto,*) with ColumnSpacing so the TextBlock
+            receives the remaining finite dialog width and wraps; a horizontal
+            StackPanel would measure it unconstrained and clip past the dialog.
+          -->
           <StackPanel Spacing="8">
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Ellipse Width="6" Height="6"
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+              <Ellipse Grid.Column="0"
+                       Width="6" Height="6"
                        Fill="{DynamicResource SystemControlForegroundBaseHighBrush}"
                        VerticalAlignment="Center" />
-              <TextBlock Text="{ReflectionBinding [Welcome_CapabilityProfiles], Source={StaticResource Loc}}"
+              <TextBlock Grid.Column="1"
+                         Text="{ReflectionBinding [Welcome_CapabilityProfiles], Source={StaticResource Loc}}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center" />
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Ellipse Width="6" Height="6"
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+              <Ellipse Grid.Column="0"
+                       Width="6" Height="6"
                        Fill="{DynamicResource SystemControlForegroundBaseHighBrush}"
                        VerticalAlignment="Center" />
-              <TextBlock Text="{ReflectionBinding [Welcome_CapabilityUpdates], Source={StaticResource Loc}}"
+              <TextBlock Grid.Column="1"
+                         Text="{ReflectionBinding [Welcome_CapabilityUpdates], Source={StaticResource Loc}}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center" />
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Ellipse Width="6" Height="6"
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+              <Ellipse Grid.Column="0"
+                       Width="6" Height="6"
                        Fill="{DynamicResource SystemControlForegroundBaseHighBrush}"
                        VerticalAlignment="Center" />
-              <TextBlock Text="{ReflectionBinding [Welcome_CapabilityNxm], Source={StaticResource Loc}}"
+              <TextBlock Grid.Column="1"
+                         Text="{ReflectionBinding [Welcome_CapabilityNxm], Source={StaticResource Loc}}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center" />
-            </StackPanel>
+            </Grid>
           </StackPanel>
 
           <StackPanel Orientation="Horizontal"

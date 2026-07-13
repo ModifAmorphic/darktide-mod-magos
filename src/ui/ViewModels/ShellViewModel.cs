@@ -519,13 +519,12 @@ public partial class ShellViewModel : ObservableObject
     /// <summary>
     /// Opens the Integrations dialog (Nexus auth: OAuth login + API-key validate
     /// + sign-out, plus the explicit nxm:// handler registration toggle).
-    /// Nexus-only in v1; GitHub stays config-file-only. After the dialog closes,
-    /// re-reads the nxm handler status so the status strip reflects any
-    /// register/unregister the user did inside the dialog, and reloads the mod
-    /// list (cheap no-op when nothing changed). This is also the Integrations
-    /// entry point the first-run Welcome onboarding reuses (via
-    /// <see cref="OpenIntegrationsAsync"/>), so the nxm handler status refresh
-    /// applies identically after a Welcome "Set up Nexus" choice.
+    /// Nexus-only. After the dialog closes, re-reads the nxm handler status so
+    /// the status strip reflects any register/unregister the user did inside the
+    /// dialog, and reloads the mod list (cheap no-op when nothing changed). This
+    /// is also the Integrations entry point the first-run Welcome onboarding
+    /// reuses (via <see cref="OpenIntegrationsAsync"/>), so the nxm handler
+    /// status refresh applies identically after a Welcome "Set up Nexus" choice.
     /// </summary>
     [RelayCommand]
     private Task OpenIntegrations() => OpenIntegrationsAsync();

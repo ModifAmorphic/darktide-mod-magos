@@ -4,8 +4,8 @@ using System.Net.Http.Headers;
 namespace Modificus.Curator.Integrations.Tests;
 
 /// <summary>
-/// A scriptable <see cref="HttpMessageHandler"/> for offline GitHub + Nexus
-/// client tests. Returns canned responses via a callback and records a lightweight
+/// A scriptable <see cref="HttpMessageHandler"/> for offline Nexus client
+/// tests. Returns canned responses via a callback and records a lightweight
 /// snapshot of each request so tests can assert on the outgoing URI + headers.
 /// </summary>
 /// <remarks>

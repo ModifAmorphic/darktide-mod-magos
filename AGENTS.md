@@ -32,7 +32,7 @@ game-binary constraints now live with the runtime, in
   service, the mod-list update UI, the DMF new-profile install prompt, the
   first-run Welcome onboarding, and Windows in-app self-update (Velopack).
   The app is user-usable:
-  create profiles, import mods (folder/archive, Nexus/GitHub/Untracked), manage
+  create profiles, import mods (folder/archive, Nexus/Untracked), manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
   (discovery paths + mod-repo location), and launch modded Darktide. Every
   Nexus Latest row shows a stable update-action button (disabled + neutral when
@@ -138,7 +138,7 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           button + indeterminate `ProgressBar` (toggled by
                           `IsUpdating`). The button shows for Nexus + Latest rows
                           regardless of tier (disabled + neutral when no update,
-                          enabled + accent-blue arrow when flagged); Pinned/GitHub/
+                          enabled + accent-blue arrow when flagged); Pinned/
                           Untracked rows keep the reserved cell but no button. The
                           rate-limit notice sits in the header. `ModItemViewModel`
                           carries the INPC state + derived `SourceUrl`/`UpdatePageUrl`/
@@ -310,7 +310,7 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         key to ModVersion.Folder, so the repo is the sole source of truth for
                         version details) + the
                         mod-source provenance model (ModSource: UntrackedSource/
-                        NexusSource/GitHubSource + ModSourceParser URL parsing) + the
+                        NexusSource + ModSourceParser URL parsing) + the
                         local-import service (IModImportService: folder/archive ->
                         container/version; content-based archive detection via
                         SharpCompress (zip/7z/rar/...) not extension, traversal-safe
@@ -323,10 +323,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         collision block; AddVersion dedup refreshes
                         RemoteUploadedAt from the re-acquired version's
                         remote-publish timestamp).
-  integrations/         Modificus.Curator.Integrations -- GitHub Releases client
-                        (IGitHubClient: ListReleases/GetLatestRelease/DownloadAssetAsync
-                        via IHttpClientFactory, typed exceptions, optional PAT)
-                        + the Nexus Mods v1 client + auth
+  integrations/         Modificus.Curator.Integrations -- the Nexus Mods v1
+                        client + auth
                         (INexusClient over the v1 REST endpoints with per-request
                         auth via INexusAuthMessageFactory selector -- ApiKey /
                         OAuth / None factories, the latter doing 401-reactive
@@ -439,8 +437,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                           old-file-without-field compatibility)
     Modificus.Curator.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
     Modificus.Curator.Mods.Tests/      xUnit tests for the mod repository + import
-    Modificus.Curator.Integrations.Tests/    xUnit tests for the GitHub Releases client
-                                          + the Nexus client (against a fake HttpMessageHandler),
+    Modificus.Curator.Integrations.Tests/    xUnit tests for the Nexus client
+                                          (against a fake HttpMessageHandler),
                                           the auth factories (apikey / OAuth / None + selector),
                                           the OAuth flow scripted with a fake IBrowser + stub
                                           discovery+token endpoint (via the OidcClient backchannel
@@ -585,7 +583,7 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   link + mods.lst name; no per-profile mod files) + the import-time base-name
   collision hard-block (`GetBaseNameCollision`; two same-folder mods can't
   coexist in a profile), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
-  **Integrations** (GitHub Releases client + the Nexus v1 client/auth +
+  **Integrations** (the Nexus v1 client/auth +
   `IModAcquisitionService` the download + extract + place orchestrator +
   `IUpdateCheckService` the Nexus-only update-check service),
   **Relay-client** (the launch
@@ -594,7 +592,7 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   `container.json` manifests, in-memory index rebuilt from a scan,
   `PruneUnreferenced` GC; the version-policy model `ModVersionPolicy`; the
   mod-source provenance model `ModSource`
-  (`UntrackedSource`/`NexusSource`/`GitHubSource`) + `ModSourceParser`; the
+  (`UntrackedSource`/`NexusSource`) + `ModSourceParser`; the
   local-import service `IModImportService`). **General** carries cross-cutting
   infra: logging, `ConfigLoader`, and `AppStateStore` (the active-profile id +
   last update-check timestamp + manual-refresh throttle window, persisted to

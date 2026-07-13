@@ -20,7 +20,7 @@
     modal pattern. One is shown per imported path by the add flow; OK collects the
     source + conditional Version + URL (URL parsed to canonical identity), Cancel
     yields null and cancels the batch. SizeToContent="Height" fits the varying
-    field count (Local shows nothing extra; Nexus / GitHub show Version + URL).
+    field count (Local shows nothing extra; Nexus shows Version + URL).
   -->
   <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
           BorderThickness="1">
@@ -38,17 +38,16 @@
                      PlaceholderText="{ReflectionBinding [Import_NameLabel], Source={StaticResource Loc}}" />
           </StackPanel>
 
-          <!-- Source chooser: Untracked / Nexus / GitHub. -->
+          <!-- Source chooser: Untracked / Nexus. -->
           <StackPanel Spacing="4">
             <TextBlock Text="{ReflectionBinding [Import_SourceLabel], Source={StaticResource Loc}}" />
             <ComboBox SelectedIndex="{Binding SourceChoiceIndex, Mode=TwoWay}" MinWidth="160">
               <ComboBoxItem Content="{ReflectionBinding [Import_SourceUntracked], Source={StaticResource Loc}}" />
               <ComboBoxItem Content="{ReflectionBinding [Import_SourceNexus], Source={StaticResource Loc}}" />
-              <ComboBoxItem Content="{ReflectionBinding [Import_SourceGitHub], Source={StaticResource Loc}}" />
             </ComboBox>
           </StackPanel>
 
-          <!-- Version (Nexus / GitHub only; required). -->
+          <!-- Version (Nexus only; required). -->
           <StackPanel Spacing="4" IsVisible="{Binding IsVersionVisible}">
             <TextBlock Text="{ReflectionBinding [Import_VersionLabel], Source={StaticResource Loc}}" />
             <TextBox Text="{Binding Version, Mode=TwoWay}" MinWidth="160" />
@@ -58,7 +57,7 @@
                        FontSize="11" />
           </StackPanel>
 
-          <!-- URL (Nexus / GitHub only; label + placeholder adapt). -->
+          <!-- URL (Nexus only; label + placeholder adapt). -->
           <StackPanel Spacing="4" IsVisible="{Binding IsRemote}">
             <TextBlock Text="{Binding UrlLabel}" />
             <TextBox Text="{Binding Url, Mode=TwoWay}"

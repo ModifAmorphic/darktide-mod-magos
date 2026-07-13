@@ -19,9 +19,8 @@ Per-library API reference for the Modificus Curator backend libraries + the UI
   the local-import service.
 - [steam](steam.md): Steam / Darktide / Proton discovery and game-running
   detection.
-- [integrations](integrations.md): external mod-source clients, a read-only
-  GitHub Releases client, the Nexus Mods v1 client + OAuth/API-key auth, the
-  download + extract + place acquisition service, and the Nexus-only
+- [integrations](integrations.md): the Nexus Mods v1 client + OAuth/API-key
+  auth, the download + extract + place acquisition service, and the Nexus-only
   update-check service.
 - [relay-client](relay-client.md): the v1 launch facade over Modificus Relay,
   resolving the profile + Steam discovery, assembling the launcher args, and

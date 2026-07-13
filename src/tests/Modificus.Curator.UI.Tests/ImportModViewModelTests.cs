@@ -7,8 +7,8 @@ namespace Modificus.Curator.UI.Tests;
 
 /// <summary>
 /// Import-modal VM behaviors: source chooser shows/hides the conditional fields,
-/// the URL parsers accept / reject inputs and gate OK, Version is required for
-/// remote sources while Local needs nothing, and Confirm yields a parsed
+/// the URL parser accepts / rejects inputs and gates OK, Version is required for
+/// the remote source while Local needs nothing, and Confirm yields a parsed
 /// <see cref="ImportModResult"/> (URL to canonical source) or leaves it
 /// <c>null</c> (cancel). All against the pure VM (no window).
 /// </summary>
@@ -26,7 +26,7 @@ public sealed class ImportModViewModelTests
     {
         // Most Darktide mods ship on Nexus, so the modal opens with Nexus
         // selected (the Version + URL fields visible). The user can switch to
-        // GitHub or Untracked when needed.
+        // Untracked when needed.
         var vm = Build();
 
         Assert.Equal(ImportModViewModel.ImportSource.Nexus, vm.SourceChoice);
@@ -57,25 +57,26 @@ public sealed class ImportModViewModelTests
     }
 
     [Fact]
-    public void GitHub_source_shows_the_remote_fields_with_a_repo_label()
-    {
-        var vm = Build();
-        vm.SourceChoice = ImportModViewModel.ImportSource.GitHub;
-
-        Assert.True(vm.IsRemote);
-        Assert.NotEmpty(vm.UrlLabel);
-    }
-
-    [Fact]
     public void SourceChoiceIndex_maps_to_and_from_the_enum()
     {
+        // The source chooser offers exactly two options: 0 = Untracked, 1 = Nexus.
         var vm = Build();
-        vm.SourceChoiceIndex = 2;
-        Assert.Equal(ImportModViewModel.ImportSource.GitHub, vm.SourceChoice);
-        Assert.Equal(2, vm.SourceChoiceIndex);
+        vm.SourceChoiceIndex = 0;
+        Assert.Equal(ImportModViewModel.ImportSource.Untracked, vm.SourceChoice);
+        Assert.Equal(0, vm.SourceChoiceIndex);
 
         vm.SourceChoice = ImportModViewModel.ImportSource.Nexus;
         Assert.Equal(1, vm.SourceChoiceIndex);
+    }
+
+    [Fact]
+    public void Source_chooser_has_only_untracked_and_nexus()
+    {
+        // The only valid ImportSource values are Untracked (0) and Nexus (1).
+        var values = Enum.GetValues<ImportModViewModel.ImportSource>();
+        Assert.Equal(2, values.Length);
+        Assert.Contains(ImportModViewModel.ImportSource.Untracked, values);
+        Assert.Contains(ImportModViewModel.ImportSource.Nexus, values);
     }
 
     // ---- Untracked needs nothing -------------------------------------------
@@ -181,82 +182,6 @@ public sealed class ImportModViewModelTests
 
         Assert.NotEmpty(vm.UrlValidationMessage);
         Assert.False(vm.CanConfirm);
-    }
-
-    // ---- GitHub parse ------------------------------------------------------
-
-    [Fact]
-    public void GitHub_with_a_valid_url_and_version_confirms_with_GitHubSource()
-    {
-        var vm = Build();
-        vm.SourceChoice = ImportModViewModel.ImportSource.GitHub;
-        vm.Version = "v2.0.1";
-        vm.Url = "https://github.com/owner/repo";
-
-        Assert.True(vm.CanConfirm);
-
-        vm.ConfirmCommand.Execute(null);
-
-        var git = Assert.IsType<GitHubSource>(vm.Result!.Source);
-        Assert.Equal("owner", git.Owner);
-        Assert.Equal("repo", git.Repo);
-        Assert.Equal("v2.0.1", vm.Result.Version);
-    }
-
-    [Fact]
-    public void GitHub_strips_the_dot_git_suffix()
-    {
-        var vm = Build();
-        vm.SourceChoice = ImportModViewModel.ImportSource.GitHub;
-        vm.Version = "1.0";
-        vm.Url = "https://github.com/owner/repo.git";
-
-        vm.ConfirmCommand.Execute(null);
-
-        var git = Assert.IsType<GitHubSource>(vm.Result!.Source);
-        Assert.Equal("repo", git.Repo);
-    }
-
-    [Fact]
-    public void GitHub_with_too_few_segments_disables_OK()
-    {
-        var vm = Build();
-        vm.SourceChoice = ImportModViewModel.ImportSource.GitHub;
-        vm.Version = "1.0";
-        vm.Url = "https://github.com/owner";
-
-        Assert.False(vm.CanConfirm);
-    }
-
-    [Fact]
-    public void GitHub_version_is_required_ok_disabled_with_empty_version()
-    {
-        var vm = Build();
-        vm.SourceChoice = ImportModViewModel.ImportSource.GitHub;
-        vm.Version = "   ";
-        vm.Url = "https://github.com/owner/repo";
-
-        Assert.False(vm.CanConfirm);
-        Assert.NotEmpty(vm.VersionValidationMessage);
-    }
-
-    [Fact]
-    public void GitHub_version_filled_and_valid_url_enables_ok_with_no_message()
-    {
-        var vm = Build();
-        vm.SourceChoice = ImportModViewModel.ImportSource.GitHub;
-        vm.Version = "v2.0.1";
-        vm.Url = "https://github.com/owner/repo";
-
-        Assert.True(vm.CanConfirm);
-        Assert.Empty(vm.VersionValidationMessage);
-
-        vm.ConfirmCommand.Execute(null);
-
-        var git = Assert.IsType<GitHubSource>(vm.Result!.Source);
-        Assert.Equal("owner", git.Owner);
-        Assert.Equal("repo", git.Repo);
-        Assert.Equal("v2.0.1", vm.Result.Version);
     }
 
     // ---- name handling -----------------------------------------------------

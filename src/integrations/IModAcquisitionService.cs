@@ -12,11 +12,11 @@ namespace Modificus.Curator.Integrations;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The interface accommodates both Nexus and GitHub, but only the Nexus method is
-/// implemented (there is no GitHub-acquisition trigger yet; the per-mod update
-/// button for GitHub-sourced mods is where <c>AcquireFromGitHubAsync</c>
-/// would land). The signature carries an <see cref="IProgress{T}"/> so a caller
-/// can wire a per-row progress indicator without retooling the seam.</para>
+/// Nexus-only: the service resolves the download link, fetches the mod's
+/// metadata, downloads the archive to a temp file, and imports it into the
+/// unified mod repository via <see cref="IModImportService.Import"/>. The
+/// signature carries an <see cref="IProgress{T}"/> so a caller can wire a
+/// per-row progress indicator without retooling the seam.</para>
 /// <para>
 /// <b>No degraded metadata fallback.</b> If the metadata fetch (mod name or file
 /// version) fails, the acquisition fails with a clear error. A mod stored under

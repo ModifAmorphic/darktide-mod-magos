@@ -362,8 +362,8 @@ re-hydrates from the store when the result lands.
   update-status area.
 - The stable update-action cell is a fixed-width `Panel` reserved on every row
   so later controls never shift. For Nexus + Latest rows it holds the
-  update-action button; for Pinned Nexus, GitHub, and Untracked rows the cell
-  stays reserved but empty. The button shows for Nexus + Latest rows regardless
+  update-action button; for Pinned Nexus and Untracked rows the cell stays
+  reserved but empty. The button shows for Nexus + Latest rows regardless
   of account tier and regardless of whether an update is available, and it
   stays visible while a row is updating (disabled via `UpdateActionEnabled`,
   which includes `!IsUpdating`); the progress affordance lives in the

@@ -70,9 +70,8 @@ public partial class ModItemViewModel : ObservableObject
     private string _name;
 
     /// <summary>
-    /// Where this mod came from (Untracked / Nexus / GitHub), joined from the
-    /// repository by the parent. <see cref="UntrackedSource"/> when the container
-    /// is absent.
+    /// Where this mod came from (Untracked / Nexus), joined from the repository
+    /// by the parent. <see cref="UntrackedSource"/> when the container is absent.
     /// </summary>
     public ModSource Source { get; }
 
@@ -116,7 +115,7 @@ public partial class ModItemViewModel : ObservableObject
     /// (persisted across restarts) on reload + on every
     /// <c>CheckCompleted</c>. Drives the stable update-action button's enabled
     /// state + the accent-blue download arrow. Always <c>false</c> for Pinned /
-    /// Untracked / GitHub rows (the update check skips them).
+    /// Untracked rows (the update check skips them).
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(UpdateActionEnabled))]
@@ -200,12 +199,12 @@ public partial class ModItemViewModel : ObservableObject
 
     /// <summary>
     /// Whether the stable update-action button should show for this row: the row
-    /// is Nexus-sourced AND on the <see cref="LatestPolicy"/>. Pinned Nexus,
-    /// GitHub, and Untracked rows do not show the button (their reserved
-    /// update-action cell stays fixed-width but empty). The button stays visible
-    /// while a row is updating (it is disabled via <see cref="UpdateActionEnabled"/>,
-    /// which includes <c>!IsUpdating</c>); the indeterminate progress affordance
-    /// shows in the source-badge area, not in the action cell.
+    /// is Nexus-sourced AND on the <see cref="LatestPolicy"/>. Pinned Nexus and
+    /// Untracked rows do not show the button (their reserved update-action cell
+    /// stays fixed-width but empty). The button stays visible while a row is
+    /// updating (it is disabled via <see cref="UpdateActionEnabled"/>, which
+    /// includes <c>!IsUpdating</c>); the indeterminate progress affordance shows
+    /// in the source-badge area, not in the action cell.
     /// </summary>
     public bool CanShowUpdateAction => IsNexusLatest;
 
@@ -224,8 +223,8 @@ public partial class ModItemViewModel : ObservableObject
     /// the row's state so the affordance is discoverable without clicking:
     /// Premium + update available -> "install directly"; regular/unknown + update
     /// available -> "open the Nexus files page"; no update -> "up to date".
-    /// Unsupported rows (Pinned / GitHub / Untracked) never show the button, so no
-    /// tooltip applies there.
+    /// Unsupported rows (Pinned / Untracked) never show the button, so no tooltip
+    /// applies there.
     /// </summary>
     public string UpdateActionTooltip
     {
@@ -243,9 +242,8 @@ public partial class ModItemViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The source badge text (localized): "Local" / "Nexus #{id}" /
-    /// "GitHub {owner}/{repo}", or a "not found" marker when <see cref="Found"/>
-    /// is <c>false</c>.
+    /// The source badge text (localized): "Local" / "Nexus #{id}", or a
+    /// "not found" marker when <see cref="Found"/> is <c>false</c>.
     /// </summary>
     public string SourceBadgeText
     {
@@ -259,7 +257,6 @@ public partial class ModItemViewModel : ObservableObject
             return Source switch
             {
                 NexusSource n => _localization.Format("ModRow_SourceNexus", n.ModId),
-                GitHubSource g => _localization.Format("ModRow_SourceGitHub", g.Owner, g.Repo),
                 _ => _localization["ModRow_SourceUntracked"],
             };
         }
@@ -292,7 +289,7 @@ public partial class ModItemViewModel : ObservableObject
     /// The Nexus mod id when the row's source is <see cref="NexusSource"/>, else
     /// <c>null</c>. The parent's update command reads this to call
     /// <c>IModAcquisitionService.AcquireLatestNexusAsync</c> (which takes the mod
-    /// id, not the file id). Null for Untracked / GitHub / not-found rows.
+    /// id, not the file id). Null for Untracked / not-found rows.
     /// </summary>
     public int? NexusModId => Source is NexusSource n ? n.ModId : null;
 
@@ -300,25 +297,24 @@ public partial class ModItemViewModel : ObservableObject
     /// Whether the row is both Nexus-sourced AND on the <see cref="LatestPolicy"/>
     /// (the conjunction the update check requires). The stable update-action
     /// button's visibility binds to <see cref="CanShowUpdateAction"/> (which adds
-    /// <c>!IsUpdating</c>); Pinned / Untracked / GitHub rows are always
-    /// <c>false</c>, so the button never shows for them (their reserved cell stays
-    /// fixed-width but empty).
+    /// <c>!IsUpdating</c>); Pinned / Untracked rows are always <c>false</c>, so
+    /// the button never shows for them (their reserved cell stays fixed-width but
+    /// empty).
     /// </summary>
     public bool IsNexusLatest => Source is NexusSource && Policy is LatestPolicy;
 
     /// <summary>
     /// The mod's remote page URL for the source-badge link (the badge is a
-    /// hyperlink). Nexus -> the mod page; GitHub -> the repo; Untracked /
-    /// not-found -> <c>null</c> (the link is a no-op + the badge reads as plain
-    /// metadata). The URL is not localized, so it does not re-resolve on a
-    /// culture change; <see cref="Refresh"/> re-fires it only for binding
-    /// consistency if the source ever changes (it does not today, but the hook
-    /// keeps the contract uniform with the other derived members).
+    /// hyperlink). Nexus -> the mod page; Untracked / not-found -> <c>null</c>
+    /// (the link is a no-op + the badge reads as plain metadata). The URL is not
+    /// localized, so it does not re-resolve on a culture change;
+    /// <see cref="Refresh"/> re-fires it only for binding consistency if the
+    /// source ever changes (it does not today, but the hook keeps the contract
+    /// uniform with the other derived members).
     /// </summary>
     public string? SourceUrl => Source switch
     {
         NexusSource n => $"https://www.nexusmods.com/warhammer40kdarktide/mods/{n.ModId}",
-        GitHubSource g => $"https://github.com/{g.Owner}/{g.Repo}",
         _ => null,
     };
 
@@ -326,10 +322,9 @@ public partial class ModItemViewModel : ObservableObject
     /// The mod's Nexus <c>files</c> tab URL. The regular/unknown update action
     /// opens this in the user's browser (the per-file download page where a
     /// non-Premium user can mint the nxm token). Nexus -> the mod page with
-    /// <c>?tab=files</c>; GitHub / Untracked / not-found -> <c>null</c> (those
-    /// rows never show the update action anyway). Reuses <see cref="SourceUrl"/>
-    /// for the base, so any future change to the page URL shape lands in one
-    /// place.
+    /// <c>?tab=files</c>; Untracked / not-found -> <c>null</c> (those rows never
+    /// show the update action anyway). Reuses <see cref="SourceUrl"/> for the
+    /// base, so any future change to the page URL shape lands in one place.
     /// </summary>
     public string? UpdatePageUrl => Source is NexusSource
         ? SourceUrl + "?tab=files"

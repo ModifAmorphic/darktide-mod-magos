@@ -16,7 +16,6 @@ namespace Modificus.Curator.Mods;
 /// <remarks>
 /// <para>
 /// <b>Container resolution:</b> Nexus by <see cref="NexusSource.ModId"/>,
-/// GitHub by <see cref="GitHubSource.Owner"/>/<see cref="GitHubSource.Repo"/>,
 /// Untracked by <see cref="ModContainer.Name"/> (the import <c>modName</c>).
 /// A re-import of the same identity resolves to the existing container instead
 /// of creating a new one, so the container is the dedup unit across imports.</para>
@@ -137,7 +136,7 @@ internal sealed class ModImportService : IModImportService
             : ValidateFolderStructure(sourcePath);
 
         // Resolve or create the container (the dedup unit). Untracked dedups by
-        // the modName; Nexus/GitHub dedup by source identity. Runs only after the
+        // the modName; Nexus dedups by source identity. Runs only after the
         // source validated, so an invalid source creates no container.
         var container = ResolveContainer(source, modName);
 
@@ -236,7 +235,7 @@ internal sealed class ModImportService : IModImportService
 
     private ModContainer ResolveContainer(ModSource source, string modName)
     {
-        // Untracked dedups by name; Nexus/GitHub by source identity. Create the
+        // Untracked dedups by name; Nexus by source identity. Create the
         // container if absent.
         if (source is UntrackedSource)
         {

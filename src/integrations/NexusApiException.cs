@@ -2,8 +2,7 @@ namespace Modificus.Curator.Integrations;
 
 /// <summary>
 /// Thrown when the Nexus v1 API returns a non-success response. Carries the HTTP
-/// status + the API's <c>message</c> field when available. Mirrors
-/// <see cref="GitHubApiException"/>.
+/// status + the API's <c>message</c> field when available.
 /// </summary>
 /// <remarks>
 /// Unsealed so <see cref="NexusRateLimitException"/> can specialize it; callers

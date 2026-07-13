@@ -83,7 +83,7 @@
           <!-- Material "extension" puzzle-piece icon (24x24 source): drawn
                geometry, inherits the button foreground. Chosen for Integrations:
                the canonical "plug things in" symbol (Nexus is the only
-               integration in v1; a future GitHub UI etc. would slot in here). -->
+               integration). -->
           <Path Width="16" Height="16" Stretch="Uniform"
                 HorizontalAlignment="Center" VerticalAlignment="Center"
                 Fill="{Binding $parent[Button].Foreground}"

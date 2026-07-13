@@ -59,8 +59,8 @@ unit.
 rate-limit signal is: HTTP **429** always, or HTTP **403** when the limit
 headers are present (`x-rl-*-limit > 0`) and at least one remaining counter is
 zero. A 403 with no rate-limit headers, or with a non-zero remaining, is treated
-as a permissions error, not rate-limiting (this mirrors the GitHub client's
-two-condition rule). On a rate-limit signal, `NexusClient` throws
+as a permissions error, not rate-limiting (the two-condition rule). On a
+rate-limit signal, `NexusClient` throws
 `NexusRateLimitException` carrying the parsed `NexusRateLimits`, so a caller
 could in principle advise when to retry. The exception propagates to the caller,
 which surfaces it as an error.

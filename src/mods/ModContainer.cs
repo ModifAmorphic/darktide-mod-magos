@@ -10,14 +10,13 @@ namespace Modificus.Curator.Mods;
 /// renames); the on-disk container directory is keyed by it. <see cref="Name"/>
 /// is the display label (set at import, used for the symlink name at stage time,
 /// sanitized on use). <see cref="Source"/> records where the mod came from
-/// (Untracked / Nexus / GitHub).</para>
+/// (Untracked / Nexus).</para>
 /// <para>
 /// Different source-types are separate namespaces: an untracked "WeaponTweaks"
 /// and a Nexus "WeaponTweaks" never collide (they are distinct containers, by
 /// <see cref="Id"/>). Container identity by source: Nexus by
-/// <see cref="NexusSource.ModId"/>, GitHub by
-/// <see cref="GitHubSource.Owner"/>/<see cref="GitHubSource.Repo"/>, Untracked
-/// by <see cref="Name"/> (the source record itself carries no payload).</para>
+/// <see cref="NexusSource.ModId"/>, Untracked by <see cref="Name"/> (the source
+/// record itself carries no payload).</para>
 /// <para>
 /// <b>The container's on-disk path is derived</b>:
 /// <c>&lt;ModsFolder&gt;/&lt;Id&gt;/</c>. It is never stored absolute, so
@@ -38,7 +37,7 @@ public sealed record ModContainer
     public Guid Id { get; init; }
 
     /// <summary>
-    /// Where this mod came from (Untracked / Nexus / GitHub). Default
+    /// Where this mod came from (Untracked / Nexus). Default
     /// <see cref="UntrackedSource"/>. For Untracked, this record carries no
     /// identity; the dedup key is <see cref="Name"/>.
     /// </summary>

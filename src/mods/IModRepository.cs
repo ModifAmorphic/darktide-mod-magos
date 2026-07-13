@@ -16,7 +16,6 @@ namespace Modificus.Curator.Mods;
 /// (paths derive from the config root + UUIDs, never stored absolute).</para>
 /// <para>
 /// Container identity is by source: Nexus by <see cref="NexusSource.ModId"/>,
-/// GitHub by <see cref="GitHubSource.Owner"/>/<see cref="GitHubSource.Repo"/>,
 /// Untracked by <see cref="ModContainer.Name"/> (the source record carries no
 /// identity payload, so Untracked lookup goes through
 /// <see cref="FindUntrackedByName"/>). Different source-types never collide and
@@ -37,11 +36,9 @@ public interface IModRepository
 
     /// <summary>
     /// Looks up a container by its source identity: Nexus by
-    /// <see cref="NexusSource.ModId"/>, GitHub by
-    /// <see cref="GitHubSource.Owner"/>/<see cref="GitHubSource.Repo"/>. Returns
-    /// <c>null</c> for <see cref="UntrackedSource"/> (untracked identity is the
-    /// container <see cref="ModContainer.Name"/>; use
-    /// <see cref="FindUntrackedByName"/>).
+    /// <see cref="NexusSource.ModId"/>. Returns <c>null</c> for
+    /// <see cref="UntrackedSource"/> (untracked identity is the container
+    /// <see cref="ModContainer.Name"/>; use <see cref="FindUntrackedByName"/>).
     /// </summary>
     ModContainer? FindBySource(ModSource source);
 
@@ -137,8 +134,8 @@ public interface IModRepository
     /// equals <paramref name="newName"/> (ordinal). For an
     /// <see cref="UntrackedSource"/> container the untracked-name index is kept
     /// consistent (the old name key is dropped, the new one recorded); for other
-    /// sources the index is untouched (Nexus/GitHub identity is on the source
-    /// record, not the name).
+    /// sources the index is untouched (Nexus identity is on the source record,
+    /// not the name).
     /// </summary>
     /// <param name="containerId">The target container.</param>
     /// <param name="newName">The new display name.</param>

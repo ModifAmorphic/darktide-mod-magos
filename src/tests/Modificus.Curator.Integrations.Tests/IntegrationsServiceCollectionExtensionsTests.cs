@@ -6,23 +6,23 @@ using Microsoft.Extensions.Logging;
 namespace Modificus.Curator.Integrations.Tests;
 
 /// <summary>
-/// Proves <c>AddIntegrations()</c> registers <see cref="IGitHubClient"/> as a
-/// typed HTTP client configured from <see cref="CuratorConfig.Integrations.GitHub"/>
-/// (base URL + optional auth), resolvable via DI with an
-/// <c>IHttpClientFactory</c>-provided <c>HttpClient</c>.
+/// Proves <c>AddIntegrations()</c> registers the Nexus typed HTTP client
+/// configured from <see cref="CuratorConfig.Integrations.Nexus"/> (base URL),
+/// resolvable via DI with an <c>IHttpClientFactory</c>-provided
+/// <c>HttpClient</c>, plus the acquisition + update-check singletons.
 /// </summary>
 /// <remarks>
 /// Config is verified end-to-end: a stub <see cref="HttpMessageHandler"/> is
 /// wired into the same typed-client registration <c>AddIntegrations()</c> builds,
 /// the client makes a real (offline) call, and the recorded request is asserted
-/// on - so the test proves the <see cref="IConfigLoader"/> → <see cref="CuratorConfig"/>
-/// → <c>HttpClient</c> wiring actually reaches the wire, not just that something
-/// resolves.
+/// on, so the test proves the <see cref="IConfigLoader"/> →
+/// <see cref="CuratorConfig"/> → <c>HttpClient</c> wiring actually reaches the
+/// wire, not just that something resolves.
 /// </remarks>
 public sealed class IntegrationsServiceCollectionExtensionsTests
 {
     [Fact]
-    public void AddIntegrations_registers_resolvable_IGitHubClient()
+    public void AddIntegrations_registers_resolvable_INexusClient()
     {
         var services = new ServiceCollection();
         services.AddSingleton<IConfigLoader>(new FakeConfigLoader());
@@ -30,16 +30,16 @@ public sealed class IntegrationsServiceCollectionExtensionsTests
         services.AddIntegrations();
         using var provider = services.BuildServiceProvider();
 
-        var client = provider.GetService<IGitHubClient>();
+        var client = provider.GetService<INexusClient>();
 
         Assert.NotNull(client);
-        Assert.IsAssignableFrom<IGitHubClient>(client);
+        Assert.IsAssignableFrom<INexusClient>(client);
     }
 
     [Fact]
     public void AddIntegrations_exposes_IHttpClientFactory()
     {
-        // The typed client's HttpClient is built by the factory - proving the
+        // The typed client's HttpClient is built by the factory, proving the
         // standard, testable HTTP DI pattern is wired.
         var services = new ServiceCollection();
         services.AddSingleton<IConfigLoader>(new FakeConfigLoader());
@@ -51,60 +51,53 @@ public sealed class IntegrationsServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddIntegrations_configures_base_url_headers_and_auth_from_config()
+    public async Task AddIntegrations_configures_base_url_from_config()
     {
         var config = CuratorConfig.CreateDefault();
-        config.Integrations.GitHub.BaseUrl = "https://api.test.local";
-        config.Integrations.GitHub.Token = "secret-token";
+        config.Integrations.Nexus.BaseUrl = "https://api.test.local";
+        config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
+        config.Integrations.Nexus.ApiKey = "test-key";
 
         var (client, handler) = BuildWithStub(config);
-        client.ListReleases(new GitHubRepo("o", "r"));
+        // Drive a real (offline) call so the configured BaseAddress reaches the wire.
+        await client.GetModInfoAsync("warhammer40kdarktide", 1);
 
         var request = Assert.Single(handler.Requests);
-        Assert.Equal("https://api.test.local/repos/o/r/releases", request.RequestUri!.ToString());
-        Assert.Equal("Bearer secret-token", request.Authorization);
-        Assert.NotNull(request.UserAgent);
-        Assert.Contains("Modificus-Curator", request.UserAgent, StringComparison.Ordinal);
-        Assert.Contains("application/vnd.github+json", request.Accept, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AddIntegrations_omits_auth_when_no_token_configured()
-    {
-        // Default config: Token is null -> anonymous access (public releases need no auth).
-        var (client, handler) = BuildWithStub(CuratorConfig.CreateDefault());
-        client.ListReleases(new GitHubRepo("o", "r"));
-
-        var request = Assert.Single(handler.Requests);
-        Assert.Null(request.Authorization);
-    }
-
-    [Fact]
-    public void AddIntegrations_normalizes_trailing_slash_on_base_url()
-    {
-        var config = CuratorConfig.CreateDefault();
-        config.Integrations.GitHub.BaseUrl = "https://gh.enterprise.example/api/v3"; // no trailing slash
-
-        var (client, handler) = BuildWithStub(config);
-        client.ListReleases(new GitHubRepo("o", "r"));
-
-        var request = Assert.Single(handler.Requests);
-        Assert.Equal(
-            "https://gh.enterprise.example/api/v3/repos/o/r/releases",
+        Assert.Equal("https://api.test.local/v1/games/warhammer40kdarktide/mods/1.json",
             request.RequestUri!.ToString());
     }
 
     [Fact]
-    public void AddIntegrations_falls_back_to_default_base_url_when_blank()
+    public async Task AddIntegrations_normalizes_trailing_slash_on_base_url()
     {
         var config = CuratorConfig.CreateDefault();
-        config.Integrations.GitHub.BaseUrl = "   ";
+        config.Integrations.Nexus.BaseUrl = "https://api.nexusmods.example"; // no trailing slash
+        config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
+        config.Integrations.Nexus.ApiKey = "test-key";
 
         var (client, handler) = BuildWithStub(config);
-        client.ListReleases(new GitHubRepo("o", "r"));
+        await client.GetModInfoAsync("warhammer40kdarktide", 1);
 
         var request = Assert.Single(handler.Requests);
-        Assert.Equal("https://api.github.com/repos/o/r/releases", request.RequestUri!.ToString());
+        Assert.Equal(
+            "https://api.nexusmods.example/v1/games/warhammer40kdarktide/mods/1.json",
+            request.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task AddIntegrations_falls_back_to_default_base_url_when_blank()
+    {
+        var config = CuratorConfig.CreateDefault();
+        config.Integrations.Nexus.BaseUrl = "   ";
+        config.Integrations.Nexus.AuthMethod = NexusAuthMethod.ApiKey;
+        config.Integrations.Nexus.ApiKey = "test-key";
+
+        var (client, handler) = BuildWithStub(config);
+        await client.GetModInfoAsync("warhammer40kdarktide", 1);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("https://api.nexusmods.com/v1/games/warhammer40kdarktide/mods/1.json",
+            request.RequestUri!.ToString());
     }
 
     [Fact]
@@ -136,25 +129,40 @@ public sealed class IntegrationsServiceCollectionExtensionsTests
         Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
     }
 
+    [Fact]
+    public void AddIntegrations_registers_IModAcquisitionService_as_singleton()
+    {
+        var services = new ServiceCollection();
+        services.AddIntegrations();
+
+        var descriptor = services.FirstOrDefault(s => s.ServiceType == typeof(IModAcquisitionService));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(typeof(ModAcquisitionService), descriptor.ImplementationType);
+        Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+    }
+
     /// <summary>
     /// Wires a stub HTTP handler into the typed-client registration
     /// <c>AddIntegrations()</c> builds (by re-entering the same
-    /// <c>AddHttpClient&lt;IGitHubClient, GitHubClient&gt;</c> builder) so tests
+    /// <c>AddHttpClient&lt;INexusClient, NexusClient&gt;</c> builder) so tests
     /// can drive the real client offline and inspect the outgoing request.
     /// </summary>
-    private static (IGitHubClient Client, StubHttpMessageHandler Handler) BuildWithStub(CuratorConfig config)
+    private static (INexusClient Client, StubHttpMessageHandler Handler) BuildWithStub(CuratorConfig config)
     {
-        var handler = new StubHttpMessageHandler(_ => HttpResponses.Json("[]"));
+        // An empty mod-info envelope the Nexus client can deserialize.
+        var handler = new StubHttpMessageHandler(_ =>
+            HttpResponses.Json("{\"name\":\"x\",\"version\":\"1\",\"endorsement_count\":0,\"category_id\":0}"));
 
         var services = new ServiceCollection();
         services.AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config });
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.AddIntegrations();
         // Attach the stub to the same named typed client AddIntegrations registered.
-        services.AddHttpClient<IGitHubClient, GitHubClient>()
+        services.AddHttpClient<INexusClient, NexusClient>()
             .ConfigurePrimaryHttpMessageHandler(_ => handler);
 
         var provider = services.BuildServiceProvider();
-        return (provider.GetRequiredService<IGitHubClient>(), handler);
+        return (provider.GetRequiredService<INexusClient>(), handler);
     }
 }

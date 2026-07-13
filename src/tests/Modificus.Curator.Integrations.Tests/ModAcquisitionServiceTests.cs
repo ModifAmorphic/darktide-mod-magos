@@ -765,7 +765,7 @@ public sealed class ModAcquisitionServiceTests
 
     /// <summary>
     /// An <see cref="IProgress{T}"/> that captures reports synchronously for
-    /// deterministic assertions (mirrors the GitHub client test pattern).
+    /// deterministic assertions.
     /// </summary>
     private sealed class CapturingProgress : IProgress<long>
     {

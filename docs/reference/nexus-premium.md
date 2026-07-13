@@ -114,8 +114,8 @@ of whether an update is currently available:
   becomes accent blue. The tooltip distinguishes the click behavior by account
   tier.
 
-Pinned Nexus, GitHub, and Untracked rows do not show the button, but their
-reserved cell stays fixed-width.
+Pinned Nexus and Untracked rows do not show the button, but their reserved cell
+stays fixed-width.
 
 ### Click behavior by account tier
 

@@ -13,7 +13,7 @@ namespace Modificus.Curator.UI.ViewModels;
 
 /// <summary>
 /// The view model behind the Integrations modal
-/// (<see cref="Views.IntegrationsWindow"/>). Nexus-only in v1: two clearly
+/// (<see cref="Views.IntegrationsWindow"/>). Nexus-only: two clearly
 /// alternative, visually separated blocks, "Sign in with Nexus" (OAuth) and
 /// "Use an API key", only one of which is active at a time. The active method
 /// is shown by a per-block Sign out button + the method-aware status line
@@ -21,10 +21,9 @@ namespace Modificus.Curator.UI.ViewModels;
 /// API-key field is masked by default, persisted across reopens (so the user
 /// sees one is configured), revealed on a Show eye toggle, + re-validatable
 /// without re-entering. Auth controls stay usable while Darktide runs (only
-/// launch + active-profile changes are blocked while the game runs); GitHub
-/// stays config-file-only (no UI section). Below the auth blocks, an
-/// "Update checks" sub-section holds the periodic update-check toggle +
-/// interval, persisted live through <see cref="IConfigLoader"/>
+/// launch + active-profile changes are blocked while the game runs). Below the
+/// auth blocks, an "Update checks" sub-section holds the periodic update-check
+/// toggle + interval, persisted live through <see cref="IConfigLoader"/>
 /// (read-modify-save on each change). A final "Nexus download links" section
 /// exposes the explicit OS <c>nxm://</c> handler registration: register is a
 /// confirm-first action (it is a system-wide change that can affect other mod

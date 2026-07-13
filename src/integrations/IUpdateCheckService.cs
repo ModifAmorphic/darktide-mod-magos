@@ -18,8 +18,7 @@ namespace Modificus.Curator.Integrations;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Scope.</b> Nexus-only: GitHub is out of scope (no GitHub code
-/// paths anywhere in the check), and Untracked mods have no remote to query.
+/// <b>Scope.</b> Nexus-only: Untracked mods have no remote to query.
 /// <see cref="PinnedPolicy"/> mods are frozen version-wise, so they are never
 /// flagged for an update. The update-FLAG logic (tiers 1/2/3) is scoped to the
 /// <see cref="LatestPolicy"/> + <see cref="NexusSource"/> subset. The name-sync
