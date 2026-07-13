@@ -114,17 +114,6 @@ public sealed class NexusConfig
     /// <see cref="MinAutoUpdateCheckIntervalMinutes"/> (5) are clamped.
     /// </summary>
     public int AutoUpdateCheckIntervalMinutes { get; set; } = 10;
-
-    /// <summary>
-    /// Whether the DMF (Darktide Mod Framework) install prompt has already
-    /// fired as a result of the user configuring Nexus auth for the first time.
-    /// <c>false</c> by default. The DMF prompt coordinator flips this to
-    /// <c>true</c> after showing the auth-triggered prompt (whether the user
-    /// accepted or declined), so subsequent auth changes (re-login, sign-out +
-    /// re-sign-in) do not re-prompt. The new-profile trigger has no such flag:
-    /// each new profile is a fresh ask.
-    /// </summary>
-    public bool DmfAuthPromptShown { get; set; }
 }
 
 /// <summary>

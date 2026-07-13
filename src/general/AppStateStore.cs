@@ -5,7 +5,8 @@ namespace Modificus.Curator.General;
 
 /// <summary>
 /// Default <see cref="IAppStateStore"/>. Loads + saves a single JSON file at
-/// <c>&lt;app-data&gt;/app-state.json</c> (<c>{ "ActiveProfileId": "&lt;guid&gt;" | null,
+/// <c>&lt;app-data&gt;/app-state.json</c> (<c>{ "OnboardingCompleted": true | false,
+/// "ActiveProfileId": "&lt;guid&gt;" | null,
 /// "LastUpdateCheckUtc": "&lt;iso-8601&gt;" | null,
 /// "ManualRefreshTimestamps": [ "&lt;iso-8601&gt;", ... ] | null,
 /// "KnownUpdates": { "&lt;profile-guid&gt;": [ { ...snapshot... }, ... ] } | null }</c>).
@@ -19,7 +20,7 @@ namespace Modificus.Curator.General;
 /// <para>
 /// <b>Cached model, written whole.</b> The store holds the deserialized
 /// <see cref="StateModel"/> in memory (loaded lazily on first access) and
-/// rewrites the WHOLE model on every property assignment. This keeps the three
+/// rewrites the WHOLE model on every property assignment. This keeps the five
 /// properties independent: setting <see cref="ActiveProfileId"/> preserves a
 /// previously written <see cref="LastUpdateCheckUtc"/> and
 /// <see cref="ManualRefreshTimestamps"/> and vice versa (a naive per-field save
@@ -27,16 +28,16 @@ namespace Modificus.Curator.General;
 /// app lifetime and is the sole writer of the file, so an in-memory cache is the
 /// honest model.</para>
 /// <para><b>First-run safe:</b> a missing or corrupt state file never throws;
-/// the cache just seeds as defaults (<c>null</c> / <c>null</c> / <c>null</c> /
-/// <c>null</c>). Writes are best-effort; runtime app-state is non-critical, so a
-/// persistence failure (unwritable dir, full disk) is swallowed rather than
-/// crashing the app mid-interaction. An old file without
+/// the cache just seeds as defaults (<c>false</c> / <c>null</c> / <c>null</c> /
+/// <c>null</c> / <c>null</c>). Writes are best-effort; runtime app-state is
+/// non-critical, so a persistence failure (unwritable dir, full disk) is
+/// swallowed rather than crashing the app mid-interaction. An old file without
+/// <see cref="IAppStateStore.OnboardingCompleted"/>,
 /// <see cref="IAppStateStore.LastUpdateCheckUtc"/>,
 /// <see cref="IAppStateStore.ManualRefreshTimestamps"/>, or
-/// <see cref="IAppStateStore.KnownUpdates"/> deserializes those fields as
-/// <c>null</c> (System.Text.Json default for an absent nullable member), so a
-/// first run after upgrade sees no recorded value and the runner seeds its
-/// interval floor / an empty manual window / an empty known-update map.</para>
+/// <see cref="IAppStateStore.KnownUpdates"/> deserializes those fields as their
+/// defaults (<c>false</c> / <c>null</c>), so a first run after upgrade sees no
+/// recorded value and the consumers seed cleanly.</para>
 /// </remarks>
 public sealed class AppStateStore : IAppStateStore
 {
@@ -61,6 +62,13 @@ public sealed class AppStateStore : IAppStateStore
 
     /// <summary>The state file this store reads + writes.</summary>
     public string Path => _path;
+
+    /// <inheritdoc />
+    public bool OnboardingCompleted
+    {
+        get => Load().OnboardingCompleted;
+        set => Mutate(m => m.OnboardingCompleted = value);
+    }
 
     /// <inheritdoc />
     public Guid? ActiveProfileId
@@ -195,6 +203,7 @@ public sealed class AppStateStore : IAppStateStore
 
     private sealed class StateModel
     {
+        public bool OnboardingCompleted { get; set; }
         public Guid? ActiveProfileId { get; set; }
         public DateTimeOffset? LastUpdateCheckUtc { get; set; }
         public List<DateTimeOffset>? ManualRefreshTimestamps { get; set; }

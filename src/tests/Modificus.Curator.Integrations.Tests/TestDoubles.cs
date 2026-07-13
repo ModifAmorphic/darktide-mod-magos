@@ -37,6 +37,7 @@ internal sealed class FakeAppStateStore : IAppStateStore
     public Dictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? KnownUpdatesData { get; set; }
     public int KnownUpdatesSetCount { get; private set; }
 
+    public bool OnboardingCompleted { get; set; }
     public Guid? ActiveProfileId { get; set; }
     public DateTimeOffset? LastUpdateCheckUtc { get; set; }
     public IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; }

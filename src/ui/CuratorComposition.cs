@@ -256,25 +256,38 @@ public static class CuratorComposition
             sp.GetRequiredService<ILogger<AppUpdateCheckRunner>>()));
 
         // The DMF (Darktide Mod Framework) install-prompt coordinator.
-        // Subscribes to IProfileService.ProfileCreated +
-        // INexusAuthService.AuthStateChanged (both fire from inside the
-        // ManageProfiles / Integrations dialogs), records them as pending, and
-        // the shell calls ProcessPendingAsync after those dialogs close so the
-        // DMF prompt is the topmost modal at that point (no dialog-on-dialog).
-        // Singleton: owns the event subscriptions for the app lifetime. Takes
-        // the optional nxm registrar so the non-premium browser-open path can
-        // tell the user to enable nxm links when Curator is not the handler.
+        // Subscribes to IProfileService.ProfileCreated (fires from inside the
+        // ManageProfiles dialog), records it as pending, and the shell calls
+        // ProcessPendingAsync after that dialog closes so the DMF prompt is the
+        // topmost modal at that point (no dialog-on-dialog). Singleton: owns the
+        // event subscription for the app lifetime. Takes the optional nxm
+        // registrar so the download confirm can tailor its message to whether
+        // Curator owns the nxm handler (manager-download vs. manual-import
+        // guidance).
         services.AddSingleton(sp => new DmfPromptService(
             sp.GetRequiredService<IProfileService>(),
             sp.GetRequiredService<IProfileSession>(),
             sp.GetRequiredService<IModRepository>(),
             sp.GetRequiredService<IModAcquisitionService>(),
             sp.GetRequiredService<INexusAuthService>(),
-            sp.GetRequiredService<IConfigLoader>(),
             sp.GetRequiredService<IDialogService>(),
             sp.GetRequiredService<LocalizationService>(),
             sp.GetRequiredService<ILogger<DmfPromptService>>(),
             sp.GetService<INxmHandlerRegistrar>()));
+
+        // The first-run Welcome onboarding coordinator. Shows the Welcome modal
+        // once, the first time the app starts with onboarding not yet complete,
+        // persists completion, and on a "Set up Nexus" choice opens the shell's
+        // full Integrations flow (resolved lazily through ShellViewModel so the
+        // nxm handler status refresh applies after the Welcome-driven dialog
+        // too). Singleton: owns the in-process "already shown" guard. Started
+        // from App after the main window opens; best-effort, never blocks
+        // startup.
+        services.AddSingleton(sp => new OnboardingService(
+            sp.GetRequiredService<IAppStateStore>(),
+            sp.GetRequiredService<IDialogService>(),
+            () => sp.GetRequiredService<ShellViewModel>().OpenIntegrationsAsync(),
+            sp.GetRequiredService<ILogger<OnboardingService>>()));
 
         var provider = services.BuildServiceProvider();
 

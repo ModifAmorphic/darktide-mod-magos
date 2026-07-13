@@ -12,6 +12,152 @@ namespace Modificus.Curator.General.Tests;
 /// </summary>
 public sealed class AppStateStoreTests
 {
+    // ---- OnboardingCompleted (the first-run Welcome onboarding flag) ------
+
+    [Fact]
+    public void OnboardingCompleted_is_false_when_file_is_missing()
+    {
+        var path = TempPath();
+        var store = new AppStateStore(path);
+
+        Assert.False(store.OnboardingCompleted);
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void OnboardingCompleted_round_trips_true()
+    {
+        var path = TempPath();
+        try
+        {
+            var store = new AppStateStore(path);
+
+            store.OnboardingCompleted = true;
+
+            Assert.True(File.Exists(path));
+            // A fresh instance over the same file reads the persisted value.
+            Assert.True(new AppStateStore(path).OnboardingCompleted);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public void Setting_OnboardingCompleted_preserves_the_other_fields()
+    {
+        // The no-clobber guarantee now covers five fields. Setting
+        // OnboardingCompleted must not wipe the others (the whole cached model
+        // is rewritten).
+        var path = TempPath();
+        var id = Guid.NewGuid();
+        var stamp = new DateTimeOffset(2025, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var window = new[] { stamp };
+        var known = new Dictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>
+        {
+            [id] = new[] { new KnownUpdateSnapshot(id, Guid.NewGuid(), 8, "1.0", stamp, null) },
+        };
+        try
+        {
+            var store = new AppStateStore(path);
+            store.ActiveProfileId = id;
+            store.LastUpdateCheckUtc = stamp;
+            store.ManualRefreshTimestamps = window;
+            store.KnownUpdates = known;
+
+            store.OnboardingCompleted = true; // must NOT wipe the other four
+
+            Assert.True(store.OnboardingCompleted);
+            Assert.Equal(id, store.ActiveProfileId);
+            Assert.Equal(stamp, store.LastUpdateCheckUtc);
+            Assert.Equal(window, store.ManualRefreshTimestamps);
+            Assert.Equal(known, store.KnownUpdates);
+
+            // And on disk: a fresh instance sees all five.
+            var reloaded = new AppStateStore(path);
+            Assert.True(reloaded.OnboardingCompleted);
+            Assert.Equal(id, reloaded.ActiveProfileId);
+            Assert.Equal(stamp, reloaded.LastUpdateCheckUtc);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public void Setting_another_field_preserves_OnboardingCompleted()
+    {
+        var path = TempPath();
+        var id = Guid.NewGuid();
+        try
+        {
+            var store = new AppStateStore(path);
+            store.OnboardingCompleted = true;
+
+            store.ActiveProfileId = id; // must NOT wipe onboarding
+
+            Assert.True(store.OnboardingCompleted);
+            Assert.Equal(id, store.ActiveProfileId);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public void Old_state_file_without_OnboardingCompleted_loads_false_for_the_new_field()
+    {
+        // First-run-after-upgrade: an existing app-state.json from before this
+        // field existed deserializes OnboardingCompleted as false (the
+        // System.Text.Json default for an absent bool member). Existing fields
+        // still read.
+        var path = TempPath();
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(path)!;
+            Directory.CreateDirectory(dir);
+            var id = Guid.NewGuid();
+            File.WriteAllText(
+                path,
+                "{\"activeProfileId\":\"" + id + "\",\"lastUpdateCheckUtc\":\"2025-01-02T03:04:05+00:00\"}");
+
+            var store = new AppStateStore(path);
+
+            Assert.False(store.OnboardingCompleted);
+            Assert.Equal(id, store.ActiveProfileId); // existing fields still read
+            Assert.NotNull(store.LastUpdateCheckUtc);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public void Corrupt_file_loads_OnboardingCompleted_false_without_throwing()
+    {
+        var path = TempPath();
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(path)!;
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(path, "{ this is not json");
+
+            var store = new AppStateStore(path);
+
+            Assert.False(store.OnboardingCompleted);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    // ---- ActiveProfileId ---------------------------------------------------
+
     [Fact]
     public void ActiveProfileId_is_null_when_file_is_missing()
     {
@@ -346,10 +492,11 @@ public sealed class AppStateStoreTests
     }
 
     [Fact]
-    public void Corrupt_file_seeds_all_fields_null_without_throwing()
+    public void Corrupt_file_seeds_all_fields_as_defaults_without_throwing()
     {
         // The first-run-safe contract extends to every field: a corrupt file
-        // must not throw, and all fields read null.
+        // must not throw, and all fields read their defaults (OnboardingCompleted
+        // false, the rest null).
         var path = TempPath();
         try
         {
@@ -359,6 +506,7 @@ public sealed class AppStateStoreTests
 
             var store = new AppStateStore(path);
 
+            Assert.False(store.OnboardingCompleted);
             Assert.Null(store.ActiveProfileId);
             Assert.Null(store.LastUpdateCheckUtc);
             Assert.Null(store.ManualRefreshTimestamps);

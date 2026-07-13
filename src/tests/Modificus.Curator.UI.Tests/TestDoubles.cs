@@ -45,7 +45,6 @@ internal static class TestDoubles
         FakeModRepository? repo = null,
         FakeModAcquisitionService? acquisition = null,
         FakeNexusAuthService? auth = null,
-        FakeConfigLoader? configLoader = null,
         FakeDialogService? dialogs = null,
         LocalizationService? localization = null,
         FakeNxmHandlerRegistrar? nxmRegistrar = null,
@@ -56,7 +55,6 @@ internal static class TestDoubles
         repo ??= new FakeModRepository();
         acquisition ??= new FakeModAcquisitionService();
         auth ??= new FakeNexusAuthService();
-        configLoader ??= new FakeConfigLoader();
         dialogs ??= new FakeDialogService();
         localization ??= new LocalizationService();
         // SAFETY: an omitted launcher seam defaults to the harmless no-op
@@ -68,7 +66,6 @@ internal static class TestDoubles
             repo,
             acquisition,
             auth,
-            configLoader,
             dialogs,
             localization,
             NullLogger<DmfPromptService>.Instance,
@@ -471,6 +468,12 @@ internal sealed class FakeProfileService : IProfileService
 /// <summary>Records <see cref="IAppStateStore"/> reads/writes for assertion.</summary>
 internal sealed class FakeAppStateStore : IAppStateStore
 {
+    /// <summary>
+    /// The persisted onboarding flag (read + written directly by tests). Default
+    /// <c>false</c>, mirroring a fresh / first-run real store.
+    /// </summary>
+    public bool OnboardingCompleted { get; set; }
+
     public int SetCount { get; private set; }
     public Guid? ActiveProfileId { get; set; } = null;
 
@@ -676,6 +679,15 @@ internal sealed class FakeDialogService : IDialogService
     public int IntegrationsCalls { get; private set; }
 
     /// <summary>
+    /// The result returned by the next <see cref="ShowWelcomeAsync"/> call.
+    /// Default <see cref="WelcomeChoice.Continue"/> (ESC / close equivalent).
+    /// </summary>
+    public WelcomeChoice WelcomeResult { get; set; } = WelcomeChoice.Continue;
+
+    /// <summary>The number of <see cref="ShowWelcomeAsync"/> calls.</summary>
+    public int WelcomeCalls { get; private set; }
+
+    /// <summary>
     /// The result returned by the next escape-hatch call: <c>true</c> = the
     /// user submitted, <c>false</c> = cancelled. Default <c>false</c>.
     /// </summary>
@@ -712,6 +724,12 @@ internal sealed class FakeDialogService : IDialogService
         ConfirmCalls++;
         LastConfirmMessage = message;
         return Task.FromResult(ConfirmResult);
+    }
+
+    public Task<WelcomeChoice> ShowWelcomeAsync()
+    {
+        WelcomeCalls++;
+        return Task.FromResult(WelcomeResult);
     }
 
     public Task ShowManageProfilesAsync()
@@ -1441,9 +1459,10 @@ internal sealed class FakeNexusAuthService : INexusAuthService
     public event EventHandler? AuthStateChanged;
 
     /// <summary>
-    /// Raises <see cref="AuthStateChanged"/> with this sender. Used by the DMF
-    /// prompt coordinator tests to simulate the auth-configured signal that the
-    /// production service raises from its login / sign-out methods.
+    /// Raises <see cref="AuthStateChanged"/> with this sender. Simulates the
+    /// signal the production service raises from its login / sign-out methods
+    /// (the DMF prompt no longer subscribes; the shell's Integrations flow
+    /// refreshes the nxm handler status on close instead).
     /// </summary>
     public void RaiseAuthStateChanged() => AuthStateChanged?.Invoke(this, EventArgs.Empty);
 

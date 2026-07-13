@@ -1,0 +1,84 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="using:Modificus.Curator.UI.Views"
+        xmlns:behaviors="using:Modificus.Curator.UI.Behaviors"
+        x:Class="Modificus.Curator.UI.Views.WelcomeWindow"
+        Title="{ReflectionBinding [Welcome_Title], Source={StaticResource Loc}}"
+        ExtendClientAreaToDecorationsHint="True"
+        WindowDecorations="None"
+        Width="460" MinWidth="360"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        behaviors:EscapeClosesBehavior.IsEnabled="True"
+        WindowStartupLocation="CenterOwner">
+
+  <!--
+    The first-run Welcome modal. Custom chrome (DialogTitleBar) mirrors the
+    other modals. The content is a compact Nexus-focused intro + three setup
+    bullets, each marked with a drawn Ellipse (no Unicode bullet glyphs, per AGENTS.md),
+    then two explicit actions: the accent primary "Set up Nexus" (opens the
+    Integrations dialog after this window closes) and a secondary "Continue
+    without Nexus". ESC, the title-bar close button, and a window close are all
+    equivalent to Continue (the default Result). SizeToContent="Height" sizes
+    the window to its content, including the title bar, at the current font
+    scale.
+  -->
+  <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+          BorderThickness="1">
+    <Grid RowDefinitions="Auto,*">
+
+      <views:DialogTitleBar Grid.Row="0" />
+
+      <Border Grid.Row="1" Padding="24">
+        <StackPanel Spacing="16">
+
+          <TextBlock Text="{ReflectionBinding [Welcome_Intro], Source={StaticResource Loc}}"
+                     TextWrapping="Wrap" />
+
+          <!-- Setup bullets: drawn Ellipse markers, never Unicode glyphs. -->
+          <StackPanel Spacing="8">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Ellipse Width="6" Height="6"
+                       Fill="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                       VerticalAlignment="Center" />
+              <TextBlock Text="{ReflectionBinding [Welcome_CapabilityProfiles], Source={StaticResource Loc}}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Ellipse Width="6" Height="6"
+                       Fill="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                       VerticalAlignment="Center" />
+              <TextBlock Text="{ReflectionBinding [Welcome_CapabilityUpdates], Source={StaticResource Loc}}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Ellipse Width="6" Height="6"
+                       Fill="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                       VerticalAlignment="Center" />
+              <TextBlock Text="{ReflectionBinding [Welcome_CapabilityNxm], Source={StaticResource Loc}}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal"
+                      Spacing="8"
+                      HorizontalAlignment="Right">
+            <Button Name="ContinueButton"
+                    Content="{ReflectionBinding [Welcome_Continue], Source={StaticResource Loc}}"
+                    Click="Continue_Click"
+                    MinWidth="96" />
+            <Button Name="SetUpNexusButton"
+                    Content="{ReflectionBinding [Welcome_SetUpNexus], Source={StaticResource Loc}}"
+                    Click="SetUpNexus_Click"
+                    Classes="accent"
+                    MinWidth="96" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

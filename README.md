@@ -22,7 +22,8 @@ unmodified).
   libraries (Profiles, Mods, Steam, Integrations, Relay-client, General) and
   the UI (the app shell + profile management, global Preferences, the mod-list
   UI, the Launch flow + Settings window) are in place. The app is user-usable.
-  The Launcher is a stub. See
+  On first startup a one-time Welcome window introduces Curator and offers to
+  set up the Nexus integration. The Launcher is a stub. See
   [`src/README.md`](src/README.md) for developer/build
   details.
 - **Modificus Relay** (separate repo):
@@ -44,16 +45,30 @@ release.
 
 ### Windows
 
-1. Download `modificus-curator-setup.exe` from the
-   [latest release](https://github.com/ModifAmorphic/darktide-modificus-curator/releases).
-2. Run it. It is a one-click installer (no wizard): it installs Curator into
-   `%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\`, creates Start Menu and
-   desktop shortcuts, and registers in Apps & Features so you can uninstall it
-   the usual way. If the .NET 10 Runtime is missing, the installer downloads
-   and installs it for you.
+**Recommended:** Download `modificus-curator-setup.exe` from the
+[latest release](https://github.com/ModifAmorphic/darktide-modificus-curator/releases).
+Run it. It is a one-click installer (no wizard): it installs Curator into
+`%LOCALAPPDATA%\ModifAmorphic.ModificusCurator\`, creates Start Menu and
+desktop shortcuts, and registers in Apps & Features so you can uninstall it
+the usual way. If the .NET 10 Runtime is missing, the installer downloads
+and installs it for you.
 
-On first launch Curator registers the `nxm://` handler itself, so Nexus
-"Download with manager" links work without any extra setup.
+**Portable (manual):** Download `curator-<tag>-windows-x64.zip` from the
+[latest release](https://github.com/ModifAmorphic/darktide-modificus-curator/releases).
+Extract it anywhere. The archive contains two top-level folders:
+
+- `app/` - the Curator UI and the `nxm://` handler.
+- `relay/` - the bundled Modificus Relay runtime.
+
+Run `app/Modificus.Curator.exe`. The .NET 10 Runtime is required and must be
+installed separately from <https://dotnet.microsoft.com/download/dotnet/10.0>.
+Curator does not auto-update the portable build; download a newer ZIP manually
+to update.
+
+To enable Nexus "Download with manager" links, open **Integrations** (gear icon
+next to the profiles button) and enable "Nexus download links". This registers
+the `nxm://` handler so clicking a download link on the Nexus Mods website
+opens Curator directly.
 
 > The installer is not code-signed yet, so Windows SmartScreen may warn on the
 > first run. Choose **More info** > **Run anyway** to continue.
@@ -62,7 +77,8 @@ Curator checks for new versions on startup and can update itself in place.
 When one is available, a notice appears in the bottom status strip and the
 **Settings** window's **Updates** section lets you download and restart into
 the new version, so you never need to re-run the installer to stay current.
-(This is Windows-only; on Linux, re-run the install script to update.)
+(This is Windows-only; on Linux, re-run the install script to update.
+The portable Windows build does not support in-app self-update.)
 
 ### Linux
 

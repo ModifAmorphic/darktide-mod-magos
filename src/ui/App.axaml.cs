@@ -1,10 +1,12 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Modificus.Curator.General;
 using Modificus.Curator.Nxm;
 using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Preferences;
+using Modificus.Curator.UI.Session;
 using Modificus.Curator.UI.ViewModels;
 using Modificus.Curator.UI.Views;
 using Microsoft.Extensions.DependencyInjection;
@@ -85,8 +87,42 @@ public class App : Application
             var mainWindow = services.GetRequiredService<MainWindow>();
             mainWindow.DataContext = services.GetRequiredService<ShellViewModel>();
             desktop.MainWindow = mainWindow;
+
+            // Fire the first-run Welcome onboarding once the owner window is
+            // actually shown (Avalonia modal dialogs require a shown owner).
+            // One-shot: unsubscribe before firing so a re-open never re-runs it.
+            // Exception-safe: a failure inside onboarding is logged + swallowed
+            // so it never crashes startup.
+            void OnMainWindowOpened(object? sender, EventArgs e)
+            {
+                if (sender is Window window)
+                {
+                    window.Opened -= OnMainWindowOpened;
+                }
+                _ = FireOnboardingAsync(services, logger);
+            }
+            mainWindow.Opened += OnMainWindowOpened;
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// Runs the first-run Welcome onboarding on the UI thread, catching any
+    /// exception so a wiring failure or unexpected throw never crashes startup.
+    /// Fire-and-forget at the call site (the Opened handler); awaited
+    /// internally so exceptions are observed + logged.
+    /// </summary>
+    private static async Task FireOnboardingAsync(IServiceProvider services, ILogger logger)
+    {
+        try
+        {
+            var onboarding = services.GetRequiredService<OnboardingService>();
+            await onboarding.ShowWelcomeIfFirstRunAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "First-run onboarding failed; startup continues.");
+        }
     }
 }

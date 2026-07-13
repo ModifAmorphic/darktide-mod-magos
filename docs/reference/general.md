@@ -89,17 +89,18 @@ public sealed class ConfigLoader : IConfigLoader
 ### `IAppStateStore` / `AppStateStore`
 
 Persists **runtime application state**: values that capture "where the app left
-off" rather than user system settings. Kept deliberately narrow: the active
-profile id, the last update-check timestamp, the manual-refresh throttle window,
-and the persisted known-update snapshots. A separate file (not
-`CuratorConfig`) holds it so the settings schema stays pure (system settings
-vs. runtime state).
+off" rather than user system settings. Kept deliberately narrow: the first-run
+onboarding flag, the active profile id, the last update-check timestamp, the
+manual-refresh throttle window, and the persisted known-update snapshots. A
+separate file (not `CuratorConfig`) holds it so the settings schema stays pure
+(system settings vs. runtime state).
 
 ```csharp
 public interface IAppStateStore
 {
-    Guid? ActiveProfileId { get; set; }                        // set persists immediately
-    DateTimeOffset? LastUpdateCheckUtc { get; set; }           // set persists immediately
+    bool OnboardingCompleted { get; set; }                          // set persists immediately
+    Guid? ActiveProfileId { get; set; }                             // set persists immediately
+    DateTimeOffset? LastUpdateCheckUtc { get; set; }                // set persists immediately
     IReadOnlyList<DateTimeOffset>? ManualRefreshTimestamps { get; set; } // set persists immediately
     IReadOnlyDictionary<Guid, IReadOnlyList<KnownUpdateSnapshot>>? KnownUpdates { get; set; } // set persists immediately
 }
@@ -117,8 +118,8 @@ public sealed class AppStateStore : IAppStateStore
 ```
 
 - File: `<app-data>/app-state.json`
-  (`{ "ActiveProfileId": ..., "LastUpdateCheckUtc": ..., "ManualRefreshTimestamps": ...,
-  "KnownUpdates": { "<profile-guid>": [ { ...snapshot... }, ... ] } | null }`),
+  (`{ "OnboardingCompleted": ..., "ActiveProfileId": ..., "LastUpdateCheckUtc": ...,
+  "ManualRefreshTimestamps": ..., "KnownUpdates": { "<profile-guid>": [ { ...snapshot... }, ... ] } | null }`),
   derived from `AppPaths.AppDataDir` the same way `ConfigLoader` derives its
   config path.
 - JSON is handled with `System.Text.Json` directly (read + write);
@@ -127,20 +128,27 @@ public sealed class AppStateStore : IAppStateStore
 - The full state model is cached in memory after the first read and written
   whole on every change, so assigning one property never clobbers the others.
 - **First-run safe:** a missing or corrupt file never throws; `get` just
-  returns `null`. Writes are best-effort (runtime state is non-critical; a
-  persistence failure is swallowed rather than crashing the app). An old file
-  written before a field existed deserializes that field as `null`, so a first
-  run after upgrade sees no recorded value and the consumers seed cleanly.
-- Used by `IProfileSession` (the active-profile authority) to restore the active
-  profile on construction and persist it on changes, by `UpdateCheckRunner` to
-  seed and persist the last update-check timestamp (so the interval gate
+  returns the default (`false` for `OnboardingCompleted`, `null` for the rest).
+  Writes are best-effort (runtime state is non-critical; a persistence failure
+  is swallowed rather than crashing the app). An old file written before a field
+  existed deserializes that field as its default, so a first run after upgrade
+  sees no recorded value and the consumers seed cleanly.
+- `OnboardingCompleted` is used by the UI-layer onboarding coordinator
+  (`OnboardingService`) to decide whether to show the first-run Welcome modal:
+  it reads the flag at startup and sets it to `true` once the user has chosen
+  (Set up Nexus or Continue without Nexus), persisting before any further UI so
+  canceling the subsequent Integrations dialog can never cause Welcome to
+  repeat.
+- `ActiveProfileId` is used by `IProfileSession` (the active-profile authority)
+  to restore the active profile on construction and persist it on changes.
+- `LastUpdateCheckUtc` + `ManualRefreshTimestamps` are used by `UpdateCheckRunner`
+  to seed and persist the last update-check timestamp (so the interval gate
   survives a close/reopen) and the manual throttle's sliding-window timestamps
-  (`ManualRefreshTimestamps`, so the manual free-refresh budget survives a
-  close/reopen), and by the Integrations-layer `IUpdateStateStore` to persist
-  profile-scoped known-update snapshots (`KnownUpdates`, so a restart inside the
-  interval gate shows prior update flags before any API call). The shell and the
-  Manage dialog read the active id through the session; they do not touch this
-  store.
+  (so the manual free-refresh budget survives a close/reopen).
+- `KnownUpdates` is used by the Integrations-layer `IUpdateStateStore` to persist
+  profile-scoped known-update snapshots (so a restart inside the interval gate
+  shows prior update flags before any API call). The shell and the Manage dialog
+  read the active id through the session; they do not touch this store.
 
 `KnownUpdateSnapshot` is a plain serializable DTO (no domain behavior) so the
 General library can persist it without depending on the Integrations

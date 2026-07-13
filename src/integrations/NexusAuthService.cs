@@ -253,18 +253,15 @@ public interface INexusAuthService
     /// <summary>
     /// Raised whenever an auth action changes the persisted
     /// <see cref="NexusAuthMethod"/> (OAuth login, API-key validate, or
-    /// sign-out). Carries no payload; subscribers re-read what they need from
-    /// <see cref="GetCurrentStateAsync"/> or the live config. The DMF prompt
-    /// coordinator subscribes to surface the auth-triggered DMF install prompt
-    /// the first time auth transitions from <see cref="NexusAuthMethod.None"/>
-    /// to configured (the dialog-on-dialog avoidance is documented on the
-    /// coordinator).
+    /// sign-out). Carries no payload; a subscriber re-reads what it needs from
+    /// <see cref="GetCurrentStateAsync"/> or the live config. Signals persisted
+    /// auth-method changes for any consumer that needs to react to them; there
+    /// is currently no production subscriber (the DMF prompt was the last one
+    /// and is now profile-creation-only).
     /// </summary>
     /// <remarks>
     /// Fires from inside the auth call, so a subscriber still in the call
-    /// chain (the Integrations dialog) sees it synchronously. The DMF prompt
-    /// coordinator treats it as a pending signal + processes it once the
-    /// Integrations dialog has closed.
+    /// chain (e.g. a dialog driving the auth action) sees it synchronously.
     /// </remarks>
     event EventHandler? AuthStateChanged;
 
@@ -335,9 +332,8 @@ public sealed class NexusAuthService : INexusAuthService
         config.Integrations.Nexus.ApiKey = null;
         _configLoader.Save(config);
 
-        // Notify subscribers (the DMF prompt coordinator) that the persisted
-        // auth state changed. Raised synchronously; the coordinator records the
-        // signal + processes it once the Integrations dialog closes.
+        // Notify subscribers that the persisted auth state changed. Raised
+        // synchronously.
         AuthStateChanged?.Invoke(this, EventArgs.Empty);
 
         // Fetch the user info via the v1 client (now configured with the new
@@ -425,9 +421,7 @@ public sealed class NexusAuthService : INexusAuthService
             _configLoader.Save(reverted);
             _logger.LogWarning(ex, "Nexus API-key login failed; reverted to the prior auth state.");
             // Still notify: the speculative write + revert are both visible
-            // state changes. The coordinator re-reads the live state + sees
-            // priorMethod, so a None -> None (a failed first-time setup) does
-            // not cross the configured threshold and does not prompt.
+            // state changes.
             AuthStateChanged?.Invoke(this, EventArgs.Empty);
             return NexusAuthResult.Failed(ex.Message);
         }
@@ -446,10 +440,8 @@ public sealed class NexusAuthService : INexusAuthService
         config.Integrations.Nexus.OAuth = null;
         _configLoader.Save(config);
         _logger.LogInformation("Nexus auth cleared (signed out).");
-        // Notify subscribers the persisted auth state changed. The DMF
-        // coordinator sees AuthMethod=None + skips (sign-out is not the
-        // "first-time-configured" trigger); the existing DmfAuthPromptShown
-        // flag stays put so a later sign-in does not re-prompt.
+        // Notify any subscriber that the persisted auth state changed. Raised
+        // synchronously.
         AuthStateChanged?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }

@@ -120,14 +120,15 @@ internal sealed class RelayLaunchService : IRelayLaunchService
                 config.RelayDir, AppContext.BaseDirectory, OperatingSystem.IsWindows());
             if (launcherPath is null)
             {
-                // Neither the configured RelayDir nor the Windows app-local
-                // payload had the launcher. Report the configured path in the
-                // error: that is where Curator looks first and what a user
-                // would reconfigure. The app-local path is an internal
-                // fallback, not something to surface.
+                // The configured RelayDir and the Windows packaged fallbacks
+                // (the app-local <base>/relay/ payload and the <base>/../relay/
+                // sibling archive layout) all missed. Report the configured
+                // path in the error: that is where Curator looks first and what
+                // a user would reconfigure. The packaged fallbacks are internal,
+                // not something to surface.
                 var configuredPath = Path.Combine(config.RelayDir, LauncherExecutableName);
                 _logger.LogError(
-                    "Relay launcher not found at {Path} (nor app-local under {Base}).",
+                    "Relay launcher not found at {Path} (nor under the Windows packaged fallbacks below {Base}).",
                     configuredPath, AppContext.BaseDirectory);
                 return ErrorResult($"Relay launcher not found at '{configuredPath}'.");
             }
@@ -177,8 +178,16 @@ internal sealed class RelayLaunchService : IRelayLaunchService
     /// <paramref name="isWindows"/> is true, look under
     /// <c>&lt;baseDirectory&gt;/relay/</c>. A Velopack install ships Relay there
     /// (app-local inside the payload); the <c>current\</c> directory is replaced
-    /// in place on update, so the path is stable. Linux does NOT use this:
-    /// Relay stays at the data-root <c>relay/</c> folder.</description></item>
+    /// in place on update, so the path is stable.</description></item>
+    /// <item><term>Sibling-folder fallback (Windows only).</term>
+    /// <description>If the app-local launcher is also missing and
+    /// <paramref name="isWindows"/> is true, look under
+    /// <c>&lt;baseDirectory&gt;/../relay/</c>. The portable Windows archive ships
+    /// Curator under <c>&lt;root&gt;/app/</c> and Relay under
+    /// <c>&lt;root&gt;/relay/</c> (a sibling of the app folder, mirroring the
+    /// Linux layout), so Relay resolves without a config override. Linux does NOT
+    /// use either Windows fallback: Relay stays at the data-root
+    /// <c>relay/</c> folder.</description></item>
     /// <item><term>Otherwise <c>null</c>.</term>
     /// <description>The caller reports not-found against the configured
     /// path.</description></item>
@@ -207,6 +216,17 @@ internal sealed class RelayLaunchService : IRelayLaunchService
             if (File.Exists(appLocalLauncher))
             {
                 return appLocalLauncher;
+            }
+
+            // Portable Windows archive: Curator lives under <root>/app/ and
+            // Relay under <root>/relay/ -- a sibling of the app folder. Resolve
+            // one level up from the app dir, then normalize so the returned
+            // path carries no ".." segment.
+            var siblingLauncher = Path.GetFullPath(Path.Combine(
+                baseDirectory, "..", AppLocalRelayFolderName, LauncherExecutableName));
+            if (File.Exists(siblingLauncher))
+            {
+                return siblingLauncher;
             }
         }
 

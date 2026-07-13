@@ -86,7 +86,12 @@ jobs:
           echo "Relay tag: $RELAY_TAG"
           gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \
             --pattern "*-windows-x64.zip" --dir stage
-      - name: Extract Relay to relay/ directory
+      - name: Extract Relay for portable (top-level relay/)
+        shell: bash
+        run: |
+          mkdir -p stage/relay
+          unzip -q stage/*-windows-x64.zip -d stage/relay
+      - name: Extract Relay for Velopack (app/relay/)
         shell: bash
         run: |
           mkdir -p stage/app/relay
@@ -99,6 +104,35 @@ jobs:
           version="${{ needs.release-please.outputs.version }}"
           version="${version#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Publish Curator UI (portable, no Velopack)
+        shell: bash
+        run: |
+          version="${{ needs.release-please.outputs.version }}"
+          version="${version#v}"
+          dotnet publish ui --configuration Release --runtime win-x64 --self-contained false --output stage-portable/app \
+            -p:Version="$version" -p:InformationalVersion="$version"
+      - name: Publish NXM handler (portable, AOT win-x64)
+        run: dotnet publish nxm-handler --configuration Release --runtime win-x64 --output stage-portable/app
+      - name: Stage relay for portable archive
+        shell: bash
+        run: |
+          cp -r stage/relay stage-portable/relay
+      - name: Create portable Windows archive
+        shell: bash
+        run: |
+          cd stage-portable
+          powershell -Command "Compress-Archive -Path app, relay -DestinationPath 'curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip'"
+      - name: Upload portable Windows archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            "stage-portable/curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip" --clobber
+      - name: Attest portable Windows archive
+        uses: actions/attest@v4
+        with:
+          subject-path: src/stage-portable/curator-${{ needs.release-please.outputs.tag_name }}-windows-x64.zip
       - name: Pack Velopack installer
         shell: bash
         run: |

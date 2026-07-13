@@ -881,8 +881,8 @@
 
   <!-- ============================================================ -->
   <!-- DMF (Darktide Mod Framework) install prompt                  -->
-  <!-- (DmfPromptService: triggered after first Nexus auth setup    -->
-  <!--  and after new-profile creation when DMF is missing)         -->
+  <!-- (DmfPromptService: triggered after new-profile creation      -->
+  <!--  when DMF is missing)                                        -->
   <!-- ============================================================ -->
 
   <data name="Dmf_AddTitle" xml:space="preserve">
@@ -895,11 +895,15 @@
   </data>
   <data name="Dmf_DownloadTitle" xml:space="preserve">
     <value>Download DMF?</value>
-    <comment>Title of the confirm shown when DMF is not in the repository and Nexus auth is configured (case 2: download + add).</comment>
+    <comment>Title of the confirm shown when DMF is not in the repository (case 2: download + add, or browser-open for non-premium users).</comment>
   </data>
   <data name="Dmf_DownloadMessage" xml:space="preserve">
-    <value>DMF (Darktide Mod Framework) is required for most Darktide mods. Download and add it to this profile?</value>
-    <comment>Body of the case-2 confirm. The download takes a few seconds.</comment>
+    <value>DMF (Darktide Mod Framework) is required for most Darktide mods. Download and add it to this profile? On the next screen, click Download on the DMF Nexus page.</value>
+    <comment>Body of the case-2 confirm when Curator owns the nxm:// handler (the manager-download path: the user clicks Download on Nexus and the handler picks it up).</comment>
+  </data>
+  <data name="Dmf_DownloadMessageManual" xml:space="preserve">
+    <value>DMF (Darktide Mod Framework) is required for most Darktide mods. Download and add it to this profile? On the next screen, download the DMF archive, then import it into Curator.</value>
+    <comment>Body of the case-2 confirm when Curator is not the nxm:// handler (manual-import guidance: the user downloads the archive and imports it via the normal add flow).</comment>
   </data>
   <data name="Dmf_Downloading" xml:space="preserve">
     <value>Downloading DMF…</value>
@@ -920,22 +924,6 @@
   <data name="Dmf_OpenBrowserFailedMessage" xml:space="preserve">
     <value>Could not open the DMF page in your browser. Visit this URL to download DMF: {0}</value>
     <comment>Body of the alert shown when the OS shell-open of the DMF files URL fails (no default browser, headless, etc.). {0} is the DMF files URL. The user can copy it manually.</comment>
-  </data>
-  <data name="Dmf_InfoTitle" xml:space="preserve">
-    <value>DMF required</value>
-    <comment>Title of the informational alert shown when DMF is not in the repository and Nexus auth is NOT configured (case 3: profile-creation trigger only).</comment>
-  </data>
-  <data name="Dmf_InfoMessage" xml:space="preserve">
-    <value>DMF (Darktide Mod Framework) is required for most Darktide mods. Set up the Nexus integration to auto-install it, or import it manually.</value>
-    <comment>Body of the case-3 informational alert. Single OK button (no Yes/No). Tells the user the two paths to get DMF.</comment>
-  </data>
-  <data name="Dmf_NotConfiguredTitle" xml:space="preserve">
-    <value>Curator is not the nxm handler</value>
-    <comment>Title of the informational alert shown when a non-premium user accepts the DMF download but Curator is not registered as the nxm:// handler.</comment>
-  </data>
-  <data name="Dmf_NotConfiguredMessage" xml:space="preserve">
-    <value>Curator is not set up to handle Nexus download links. Enable Nexus download links in Integrations, then click Download on the DMF Nexus page, or download the archive manually and import it: {0}</value>
-    <comment>Body of the DMF not-configured alert for non-premium users. {0} is the DMF files URL.</comment>
   </data>
 
   <!-- ============================================================ -->
@@ -971,5 +959,42 @@
   <data name="Nxm_DownloadFailedTitle" xml:space="preserve">
     <value>Download failed</value>
     <comment>Title of the alert shown when an nxm:// download or its profile registration fails.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- First-run Welcome onboarding                                 -->
+  <!-- (OnboardingService + WelcomeWindow: shown once on first      -->
+  <!--  startup, introduces Curator and offers Nexus setup)         -->
+  <!-- ============================================================ -->
+
+  <data name="Welcome_Title" xml:space="preserve">
+    <value>Welcome to Curator</value>
+    <comment>Title of the first-run Welcome window.</comment>
+  </data>
+  <data name="Welcome_Intro" xml:space="preserve">
+    <value>Curator works without a Nexus connection, but connecting Nexus enables its most useful online features.
+
+Set up Nexus to check your installed mods for updates and enable download links on NexusMods.com that send mods directly to Curator. Nexus Premium members can also install updates from within the app.</value>
+    <comment>Intro in the Welcome window. Explains why Nexus setup is useful while making clear that it is optional.</comment>
+  </data>
+  <data name="Welcome_CapabilityProfiles" xml:space="preserve">
+    <value>Connect using Nexus sign-in or an API key</value>
+    <comment>Bullet: the two supported ways to connect Curator to Nexus.</comment>
+  </data>
+  <data name="Welcome_CapabilityUpdates" xml:space="preserve">
+    <value>Enable Nexus download links so manager downloads open in Curator</value>
+    <comment>Bullet: the Nexus download-link setting available in Integrations.</comment>
+  </data>
+  <data name="Welcome_CapabilityNxm" xml:space="preserve">
+    <value>Change these options at any time from Integrations</value>
+    <comment>Bullet: reassures the user that onboarding choices are not permanent.</comment>
+  </data>
+  <data name="Welcome_SetUpNexus" xml:space="preserve">
+    <value>Set up Nexus</value>
+    <comment>Accent primary button label. Opens the Integrations dialog after Welcome closes.</comment>
+  </data>
+  <data name="Welcome_Continue" xml:space="preserve">
+    <value>Continue without Nexus</value>
+    <comment>Secondary button label. Skips Nexus setup; leaves the user at the main window.</comment>
   </data>
 </root>

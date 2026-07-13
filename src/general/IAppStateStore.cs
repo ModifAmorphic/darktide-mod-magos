@@ -2,23 +2,37 @@ namespace Modificus.Curator.General;
 
 /// <summary>
 /// Persists non-critical **runtime application state**: values that capture
-/// "where the app left off" (e.g. the last-selected profile, the last update-check
-/// timestamp, the persisted known-update snapshots) rather than user system
-/// settings. Backed by a small JSON file kept under the app-data dir, separate
-/// from <see cref="Config.CuratorConfig"/> (which holds system settings only). Kept
-/// deliberately narrow on purpose: the state values (<see cref="ActiveProfileId"/>,
+/// "where the app left off" (e.g. whether first-run onboarding completed, the
+/// last-selected profile, the last update-check timestamp, the persisted
+/// known-update snapshots) rather than user system settings. Backed by a small
+/// JSON file kept under the app-data dir, separate from
+/// <see cref="Config.CuratorConfig"/> (which holds system settings only). Kept
+/// deliberately narrow on purpose: the state values
+/// (<see cref="OnboardingCompleted"/>, <see cref="ActiveProfileId"/>,
 /// <see cref="LastUpdateCheckUtc"/>, <see cref="ManualRefreshTimestamps"/>, and
 /// <see cref="KnownUpdates"/>) share a tiny dedicated store that is the honest
 /// model + keeps the settings schema pure.
 /// </summary>
 /// <remarks>
 /// <para><b>First-run safe:</b> a missing or corrupt state file never throws;
-/// reads just return <c>null</c>. Writes are best-effort; runtime app-state is
-/// non-critical, so a persistence failure (unwritable dir, full disk) is
-/// swallowed rather than crashing the app mid-interaction.</para>
+/// reads just return <c>null</c> (or <c>false</c> for
+/// <see cref="OnboardingCompleted"/>). Writes are best-effort; runtime
+/// app-state is non-critical, so a persistence failure (unwritable dir, full
+/// disk) is swallowed rather than crashing the app mid-interaction.</para>
 /// </remarks>
 public interface IAppStateStore
 {
+    /// <summary>
+    /// Whether the first-run Welcome onboarding has already been shown + the
+    /// user made a choice (Set up Nexus or Continue without Nexus). <c>false</c>
+    /// until the user completes the Welcome dialog, then persisted as
+    /// <c>true</c>. Reading returns the persisted value (or <c>false</c> on
+    /// first run / corrupt file); assigning persists immediately. The onboarding
+    /// coordinator reads this to decide whether to show the Welcome dialog and
+    /// sets it to <c>true</c> once the user has chosen, before any further UI.
+    /// </summary>
+    bool OnboardingCompleted { get; set; }
+
     /// <summary>
     /// The last-chosen active profile id, or <c>null</c> when none is recorded.
     /// Reading returns the persisted value (or <c>null</c> on first run /

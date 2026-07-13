@@ -29,8 +29,8 @@ game-binary constraints now live with the runtime, in
   management, global Preferences + i18n, the mod-list UI + local import, the
   Launch flow + Settings window + discovery escape-hatch, the nxm:// scheme
   handler, Nexus auth + Integrations dialog, mod acquisition, the update-check
-  service, the mod-list update UI, the DMF new-profile/auth install prompt,
-  and Windows in-app self-update (Velopack).
+  service, the mod-list update UI, the DMF new-profile install prompt, the
+  first-run Welcome onboarding, and Windows in-app self-update (Velopack).
   The app is user-usable:
   create profiles, import mods (folder/archive, Nexus/GitHub/Untracked), manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
@@ -39,9 +39,10 @@ game-binary constraints now live with the runtime, in
   no update, enabled + accent when flagged); a Premium click installs in-app,
   a regular/unknown click opens the mod's Nexus files page. Premium users can
   additionally opt into automatic flagged-update installation after each check.
-  The first time Nexus auth is configured, or whenever a new
-  profile is created + set active without DMF in it, a modal prompt offers to
-  add/download DMF (Darktide Mod Framework, Nexus mod 8). The Launcher is a
+  The first app startup shows a one-time Welcome modal introducing Curator and
+  offering to set up Nexus. Whenever a new profile is created + set active
+  without DMF (Darktide Mod Framework, Nexus mod 8) in it, a modal prompt
+  offers to add/download it. The Launcher is a
   stub. Backend libraries: Profiles,
   Mods (the unified mod repository), Steam, Integrations, Relay-client,
   General. Modificus Relay is a separate repo
@@ -211,38 +212,40 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           (ui/Views/) used for its in-flight download. The
                           coordinator subscribes to
                           `IProfileService.ProfileCreated` (fires from inside
-                          the ManageProfiles dialog's create) +
-                          `INexusAuthService.AuthStateChanged` (fires from
-                          inside the Integrations dialog's auth command),
-                          records each as a pending trigger, and the shell
-                          calls `ProcessPendingAsync` after those dialogs close
-                          so the DMF prompt is the topmost modal at that point
-                          (no dialog-on-dialog). The prompt fires for two
-                          triggers when DMF is not in the active profile: (1)
-                          the first time Nexus auth transitions from None to
-                          configured (gated by the persisted
-                          `CuratorConfig.Nexus.DmfAuthPromptShown` flag so
-                          subsequent auth changes do not re-prompt), and (2)
-                          every new profile that becomes active (no flag: a
-                          fresh ask per profile). Three cases: DMF in the repo
+                          the ManageProfiles dialog's create), records it as a
+                          pending trigger, and the shell calls
+                          `ProcessPendingAsync` after that dialog closes so the
+                          DMF prompt is the topmost modal at that point (no
+                          dialog-on-dialog). The prompt fires for one trigger
+                          when DMF is not in the active profile: every new
+                          profile that becomes active (no persisted flag: a
+                          fresh ask per profile). Two cases: DMF in the repo
                           but not the profile -> instant add (case 1); DMF not
-                          in the repo + auth configured -> on confirm, premium
-                          users get the in-app API download under a spinner +
-                          add, non-premium users (or unknown premium state):
-                          if Curator is registered as the `nxm://` handler,
-                          their browser opens at DMF's Nexus files page (the
-                          user clicks Download there + the handler picks up the
-                          URL + adds DMF to the active profile via the standard
-                          nxm flow); if Curator is not the handler, an
-                          informational alert tells the user to enable nxm
-                          links in Integrations or download the archive
-                          manually (the API download_link endpoint is
-                          premium-only, so non-premium users must visit the
-                          site to mint the per-file token) (case 2); DMF not in
-                          the repo + auth not configured -> informational alert
-                          (case 3, only reachable from the new-profile trigger).
+                          in the repo -> a download confirm (the message
+                          tailors to whether Curator owns the `nxm://` handler:
+                          manager-download vs. manual-import guidance); on
+                          confirm, premium users get the in-app API download
+                          under a spinner + add, while everyone else (no auth,
+                          regular, or unknown premium state) gets the DMF Nexus
+                          files page opened in the browser regardless of nxm
+                          setup (when Curator owns the handler, the user clicks
+                          Download there + the handler picks up the URL + adds
+                          DMF to the active profile via the standard nxm flow;
+                          when Curator does not own it, the user downloads the
+                          archive and imports it via the normal add flow; on a
+                          browser-launch failure, a fallback alert carries the
+                          files-page URL) (case 2).
                           Decline is respected; DMF can be added later via the
-                          normal add flow. `IDialogService.ShowProgressAsync<T>`
+                          normal add flow. The DMF flow never opens Integrations
+                          or stops at an informational dead-end. The first-run
+                          `OnboardingService` (ui/Session/) owns the one-time
+                          Nexus setup offer: it shows the `WelcomeWindow`
+                          (ui/Views/) once on first startup (persisted via
+                          `IAppStateStore.OnboardingCompleted`), and on a
+                          "Set up Nexus" choice opens the shell's full
+                          Integrations flow after Welcome closes (wired from
+                          `App` after the main window opens, exception-safe).
+                          `IDialogService.ShowProgressAsync<T>`
                           runs the supplied work under a non-closeable spinner +
                           closes it on completion; `DialogTitleBar.ShowClose`
                           (a new styled property) hides the spinner's close
@@ -254,7 +257,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           result/cancel contracts are unchanged): applied to
                           ConfirmDialog, ImportModDialog,
                           DiscoveryEscapeHatchDialog, IntegrationsWindow,
-                          ManageProfilesWindow, PreferencesWindow, SettingsWindow;
+                          ManageProfilesWindow, PreferencesWindow, SettingsWindow,
+                          WelcomeWindow;
                           ProgressDialog (non-closeable) + the main window opt
                           out, so ESC never dismisses a spinner or exits the app.
                           The shell's `ManageProfiles` command
@@ -329,8 +333,9 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         refresh; NexusAuthService the OAuth loopback + API-key
                         validate + sign-out orchestrator (raises
                         AuthStateChanged on every persisted method change so
-                        the UI's DmfPromptService can react to the
-                        None -> configured transition); NexusOAuthTokenStore
+                        the shell's Integrations flow refreshes the nxm handler
+                        status after the dialog closes; the DMF prompt is
+                        profile-creation-only and does not subscribe); NexusOAuthTokenStore
                         owns the OidcClient + token persistence; LoopbackBrowser
                         the IBrowser impl with an HttpListener on an ephemeral
                         port; Duende.IdentityModel.OidcClient 7.1.0 for the
@@ -470,10 +475,17 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             automatic-update setting + the AutomaticUpdateService
                                             gating/sequencing/isolation/concurrency/profile-switch
                                             + SourceUrl resolution;
-                                            + the DmfPromptService (the three DMF cases, the
-                                            new-profile + auth-configured triggers, the
-                                            ask-once auth flag, the decline path, and the
-                                            dialog-on-dialog avoidance), against in-memory fakes)
+                                            + the DmfPromptService (the two DMF
+                                            cases: add existing / download + add or
+                                            browser-open, the new-profile trigger, the
+                                            decline path, the premium in-app download,
+                                            the non-premium/unknown/no-auth browser-open
+                                            regardless of the nxm registrar state, and the
+                                            dialog-on-dialog avoidance)
+                                            + the OnboardingService (already complete no-op,
+                                            Continue persists + skips Integrations, Set up Nexus
+                                            persists before opening Integrations once, close ==
+                                            Continue, the in-process one-shot guard), against in-memory fakes)
     Modificus.Curator.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
                                             IPC server resilience, SingleInstanceGuard, router,
                                             relay helper, Linux registrar, AddNxm wiring;
@@ -499,38 +511,48 @@ scripts/            release.env: the install manifest (RELEASE_URL +
                     job; no artifact upload; release-please-only PRs are ignored via
                     paths-ignore; there is intentionally no push trigger),
                     release (release-please cuts the release, then per-target jobs publish
-                    unsigned assets that diverge by platform: build-windows publishes the Curator
-                    UI framework-dependent with -p:CuratorUseVelopack=true (adds the Velopack
-                    reference + the CURATOR_VELOPACK symbol that wires VelopackApp.Build().Run()
-                    in Program.cs), stages Relay app-local under stage/app/relay, runs vpk pack
-                    (Velopack 1.2.0, packId ModifAmorphic.ModificusCurator, --framework
-                    net10.0-x64-runtime so the installer bootstraps .NET 10), renames Setup.exe to
-                    modificus-curator-setup.exe, uploads the installer + the full.nupkg +
-                    releases.win.json, and attests the installer + the nupkg; build-linux keeps the
-                    portable-archive flow, publishing the framework-dependent
-                    curator-<tag>-linux-x64.tar.gz with a top-level app/ + relay/ layout, bundling
-                    the latest stable Relay release, uploading + attesting it; both
-                    legs target win-x64 / linux-x64 RIDs with --self-contained false to filter native
-                    libs, and an AfterTargets=Publish target strips all .pdb files; then
-                    repository_dispatch the post-release workflow; an
-                    update-manifest job (after build-linux, gated on releases_created + build-linux
-                    success) rewrites the matching var in scripts/release.env (RELEASE_URL for a
-                    stable release, PRE_RELEASE_URL for a prerelease, selected by the release's
-                    prerelease flag; the Linux tar.gz asset resolved from the release by
-                    content_type==application/x-gtar) and commits it as
-                    "chore(release): update install manifest [skip ci]"), and
-                    curator-post-release-av (repository_dispatch event_type curator-release-assets-published,
-                    or manual workflow_dispatch; scans the published Windows installer bytes
-                    (modificus-curator-setup.exe) with PowerShell
-                    Start-MpScan Defender scan and VirusTotal, classifies Defender results
-                    explicitly as clean/detection/tool_error, submits to VirusTotal via the
-                    pinned crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2
+                    unsigned assets that diverge by platform: build-windows produces two
+                    Windows artifacts: (1) the Velopack installer from the Curator UI
+                    published with -p:CuratorUseVelopack=true (adds the Velopack reference
+                    + the CURATOR_VELOPACK symbol that wires VelopackApp.Build().Run()
+                    in Program.cs), stages Relay app-local under stage/app/relay, runs
+                    vpk pack (Velopack 1.2.0, packId ModifAmorphic.ModificusCurator,
+                    --framework net10.0-x64-runtime so the installer bootstraps .NET 10),
+                    renames Setup.exe to modificus-curator-setup.exe, uploads the
+                    installer + the full.nupkg + releases.win.json, and attests the
+                    installer + the nupkg; (2) the portable ZIP from the Curator UI
+                    published without CuratorUseVelopack (framework-dependent, uses
+                    NoopAppUpdateService, no in-app self-update), the NXM handler
+                    (native-AOT win-x64), and Relay staged under relay/ at the top
+                    level, creating curator-<tag>-windows-x64.zip with app/ + relay/
+                    roots via PowerShell Compress-Archive, uploading + attesting it;
+                    build-linux keeps the portable-archive flow, publishing the
+                    framework-dependent curator-<tag>-linux-x64.tar.gz with a top-level
+                    app/ + relay/ layout, bundling the latest stable Relay release,
+                    uploading + attesting it; all legs target win-x64 / linux-x64 RIDs
+                    with --self-contained false to filter native libs, and an
+                    AfterTargets=Publish target strips all .pdb files; then
+                    repository_dispatch the post-release workflow; an update-manifest
+                    job (after build-linux, gated on releases_created + build-linux
+                    success) rewrites the matching var in scripts/release.env
+                    (RELEASE_URL for a stable release, PRE_RELEASE_URL for a prerelease,
+                    selected by the release's prerelease flag; the Linux tar.gz asset
+                    resolved from the release by content_type==application/x-gtar) and
+                    commits it as "chore(release): update install manifest [skip ci]"),
+                    and curator-post-release-av (repository_dispatch event_type
+                    curator-release-assets-published, or manual workflow_dispatch;
+                    scans the published Windows installer bytes
+                    (modificus-curator-setup.exe) with PowerShell Start-MpScan Defender
+                    scan and VirusTotal, classifies Defender results explicitly as
+                    clean/detection/tool_error, submits to VirusTotal via the pinned
+                    crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2
                     action with request_rate 4, requires VIRUSTOTAL_API_KEY,
-                    fails on Defender tool errors, missing Defender, VT errors, or missing VT key,
-                    creates a GitHub issue with title "AV manual review for release <tag>" when VT
-                    upload succeeds and returns analysis links; deduplicates against existing open
-                    issues with the same title; still post-release and non-gating for publication,
-                    but red means scan signal invalid or VT upload failed)
+                    fails on Defender tool errors, missing Defender, VT errors, or
+                    missing VT key, creates a GitHub issue with title "AV manual review
+                    for release <tag>" when VT upload succeeds and returns analysis
+                    links; deduplicates against existing open issues with the same
+                    title; still post-release and non-gating for publication, but red
+                    means scan signal invalid or VT upload failed)
 .release-please-config.json   release-please config (release-type simple, include-component-in-tag false, prerelease true)
 .release-please-manifest.json release-please version manifest (the source-of-truth version; no csproj Version metadata)
 .gitignore          ignores .NET bin/obj, build artifacts, _local/
@@ -593,12 +615,14 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   atomic `IModRepository.Relocate` over the `DiscoveryConfig` +
   `SteamService.Discover()` validate+heal+persist pipeline). The DMF (Darktide
   Mod Framework) install-prompt coordinator `DmfPromptService` (ui/Session/)
-  offers to add/download DMF on (1) the first Nexus auth None -> configured
-  transition (gated by the persisted `CuratorConfig.Nexus.DmfAuthPromptShown`
-  flag) + (2) every new profile that becomes active without DMF in it; the
-  prompt is a modal on the main window, fired by the shell after the
-  triggering ManageProfiles / Integrations dialog closes so it never nests on
-  top of one. The **Launcher** is a stub. See
+  offers to add/download DMF every new profile that becomes active without DMF
+  in it; the prompt is a modal on the main window, fired by the shell after the
+  triggering ManageProfiles dialog closes so it never nests on top of one. The
+  first-run `OnboardingService` (ui/Session/) owns the one-time Nexus setup
+  offer: it shows the `WelcomeWindow` (ui/Views/) once on first startup
+  (persisted via `IAppStateStore.OnboardingCompleted`), and on a "Set up Nexus"
+  choice opens the shell's full Integrations flow after Welcome closes (wired
+  from `App` after the main window opens, exception-safe). The **Launcher** is a stub. See
   `docs/architecture/MODIFICUS-CURATOR.md`.
 
 ## Key docs

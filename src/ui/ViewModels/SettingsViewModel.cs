@@ -76,9 +76,12 @@ public partial class SettingsViewModel : ObservableObject
     /// </summary>
     /// <remarks>Volatile: <see cref="OnAppUpdateStateChanged"/> fires on a
     /// threadpool thread (the service publishes from its background check) and
-    /// sets this before marshaling, while <see cref="RefreshAppUpdateStatus"/>
-    /// reads it on the UI thread. Mirrors the
-    /// <c>DmfPromptService._pendingAuthConfigured</c> convention.</remarks>
+    /// sets this before marshaling to the UI thread, while
+    /// <see cref="RefreshAppUpdateStatus"/> (and the manual-check paths) read it
+    /// on the UI thread. <c>volatile</c> guarantees the UI-thread read observes
+    /// the background write without a stale-cache reordering. The UI-thread
+    /// writes (the manual <see cref="CheckAppUpdate"/> paths) are
+    /// single-threaded by construction.</remarks>
     private volatile bool _hasCheckedAppUpdate;
 
     /// <summary>

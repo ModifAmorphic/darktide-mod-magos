@@ -151,6 +151,19 @@ public sealed class DialogService : IDialogService
     }
 
     /// <inheritdoc />
+    public async Task<WelcomeChoice> ShowWelcomeAsync()
+    {
+        var dialog = new WelcomeWindow
+        {
+            Title = _localization["Welcome_Title"],
+        };
+
+        using var _ = DisableOwnerForModal();
+        await dialog.ShowDialog(_owner);
+        return dialog.Result;
+    }
+
+    /// <inheritdoc />
     public async Task<bool> ConfirmAsync(string title, string message)
     {
         var dialog = new ConfirmDialog

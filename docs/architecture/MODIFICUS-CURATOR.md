@@ -177,20 +177,17 @@ for the full contract (env-var table, logging, the hook-ready handshake).
 - **DMF on profile creation:** the new-profile flow surfaces a Yes/No confirm
   offering to add DMF (most mods depend on it, so this is the common case; DMF
   isn't mandatory, so the prompt is an offer, not a requirement; decline is
-  respected). DMF is sourced from Nexus Mods (mod 8). Three cases: DMF already
-  in the repo but not in the profile → instant add (no download); DMF not in
-  the repo + Nexus auth configured → on confirm, premium users get the in-app
-  API download under a spinner + add, non-premium users (or unknown premium
-  state) get their browser opened at DMF's Nexus files page only if Curator is
-  registered as the `nxm://` handler (the user clicks Download there + the
-  handler picks up the URL + adds DMF to the active profile via the standard
-  nxm flow); if Curator is not the handler, an informational alert tells the
-  user to enable nxm links in Integrations (or download the archive manually)
-  and carries the DMF files URL (the Nexus `download_link` endpoint is
-  premium-only, so non-premium users must visit the site to mint the per-file
-  token); DMF not in the repo + auth not configured → informational alert
-  telling the user to set up Nexus auth or import DMF manually. DMF is a normal
-  mod with exactly two exceptions: (1) the creation-time prompt; (2) DMF is
+  respected). DMF is sourced from Nexus Mods (mod 8). Two cases: DMF already
+  in the repo but not in the profile -> instant add (no download); DMF not in
+  the repo -> on confirm, premium users get the in-app API download under a
+  spinner + add; everyone else (no auth, regular, or unknown premium state)
+  gets their browser opened at DMF's Nexus files page regardless of whether
+  Curator owns the `nxm://` handler (when Curator owns it, the user clicks
+  Download on the page and the handler picks up the URL + adds DMF to the
+  active profile via the standard nxm flow; when Curator does not own it, the
+  user downloads the archive and imports it via the normal add flow; the
+  confirm message already explains the manual path). DMF is a normal mod with
+  exactly two exceptions: (1) the creation-time prompt; (2) DMF is
   never auto-placed by a Relay-side rule -- Curator writes it first in
   `mods.lst` because dependency resolution puts it there. Beyond those, DMF is
   fully user-controllable (a user could remove / disable / reorder it and break
@@ -322,10 +319,8 @@ detection. The Settings window's Storage section is the UI for it.
   depend on it, so this is the common case; DMF isn't mandatory, so the prompt
   is an offer, not a requirement). DMF is sourced from Nexus Mods (mod 8); the
   prompt's download path branches on the user's premium state (premium: in-app
-  API download; non-premium or unknown: if Curator is the `nxm://` handler, the
-  browser opens at DMF's Nexus files page and the handler completes the
-  install; otherwise an informational alert tells the user to enable nxm links
-  in Integrations or download DMF manually). Bundling DMF with Curator is
+  API download; non-premium, unknown, or no auth: the browser opens at DMF's
+  Nexus files page regardless of nxm setup). Bundling DMF with Curator is
   rejected (modding-community norms + Nexus rules). (See
   [Profiles](#profiles).)
 - Per-mod: auto-update override (overrides the global setting); version pinning.
