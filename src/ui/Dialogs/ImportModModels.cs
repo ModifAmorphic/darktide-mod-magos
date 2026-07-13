@@ -39,15 +39,15 @@ public sealed record ImportModRequest
 
 /// <summary>
 /// The outcome of a confirmed import modal: the parsed canonical
-/// <see cref="ModSource"/> (Local / Nexus / GitHub, URL resolved to identity) +
-/// the raw version string the user typed + the chosen version policy (Latest or
+/// <see cref="ModSource"/> (Local / Nexus, URL resolved to identity) + the raw
+/// version string the user typed + the chosen version policy (Latest or
 /// Pinned). A cancelled modal yields <c>null</c> (the caller stops the batch).
-/// The version is a raw release tag (arbitrary GitHub / Nexus string), never
-/// parsed or normalized.
+/// The version is a raw release tag (arbitrary Nexus string), never parsed or
+/// normalized.
 /// </summary>
 /// <param name="Source">The parsed canonical source. <see cref="UntrackedSource"/>
-/// for an untracked import; <see cref="NexusSource"/> / <see cref="GitHubSource"/>
-/// when the user supplied a URL the parser resolved.</param>
+/// for an untracked import; <see cref="NexusSource"/> when the user supplied a
+/// URL the parser resolved.</param>
 /// <param name="Version">The raw release tag string (e.g. <c>"1.2"</c>,
 /// <c>"v2.0.1"</c>). <see cref="string.Empty"/> for a local / untracked import.</param>
 /// <param name="Policy">The chosen version policy: <see cref="LatestPolicy"/>

@@ -4,8 +4,8 @@ namespace Modificus.Curator.Mods.Tests;
 
 /// <summary>
 /// <see cref="ModSource"/> JSON polymorphism: the <c>$kind</c> discriminator
-/// round-trips for untracked/nexus/github, and the default for an absent source
-/// is <see cref="UntrackedSource"/>. Mirrors the established
+/// round-trips for untracked/nexus, and the default for an absent source is
+/// <see cref="UntrackedSource"/>. Mirrors the established
 /// <see cref="ModVersionPolicy"/> serialization tests.
 /// </summary>
 public sealed class ModSourceTests
@@ -15,7 +15,6 @@ public sealed class ModSourceTests
     [Theory]
     [InlineData("untracked", typeof(UntrackedSource))]
     [InlineData("nexus", typeof(NexusSource))]
-    [InlineData("github", typeof(GitHubSource))]
     public void Kind_discriminator_round_trips(string kind, Type expectedType)
     {
         // The serialized discriminator is the stable lowercase identifier.
@@ -23,7 +22,6 @@ public sealed class ModSourceTests
         {
             "untracked" => (ModSource)new UntrackedSource(),
             "nexus" => new NexusSource { ModId = 4242 },
-            "github" => new GitHubSource { Owner = "o", Repo = "r" },
             _ => throw new ArgumentException($"unknown kind: {kind}", nameof(kind)),
         };
 
@@ -58,35 +56,16 @@ public sealed class ModSourceTests
     }
 
     [Fact]
-    public void GitHubSource_round_trips_owner_and_repo()
-    {
-        ModSource source = new GitHubSource { Owner = "ExampleMods", Repo = "WeaponTweaks" };
-        var json = JsonSerializer.Serialize<ModSource>(source);
-        Assert.Contains("\"$kind\":\"github\"", json);
-        Assert.Contains("\"Owner\":\"ExampleMods\"", json);
-        Assert.Contains("\"Repo\":\"WeaponTweaks\"", json);
-
-        var roundTripped = Assert.IsType<GitHubSource>(JsonSerializer.Deserialize<ModSource>(json)!);
-        Assert.Equal("ExampleMods", roundTripped.Owner);
-        Assert.Equal("WeaponTweaks", roundTripped.Repo);
-    }
-
-    [Fact]
     public void Defaults_are_empty_strings_and_zero()
     {
-        // NexusSource.ModId defaults to 0; GitHubSource.Owner/Repo default to "".
-        // UntrackedSource carries no payload. These defaults are the read-back shape
-        // when fields are absent in the JSON (legacy entries).
+        // NexusSource.ModId defaults to 0; UntrackedSource carries no payload.
+        // These defaults are the read-back shape when fields are absent in the
+        // JSON (legacy entries).
         var untrackedJson = "{\"$kind\":\"untracked\"}";
         Assert.IsType<UntrackedSource>(JsonSerializer.Deserialize<ModSource>(untrackedJson));
 
         var nexusJson = "{\"$kind\":\"nexus\"}";
         Assert.Equal(0, Assert.IsType<NexusSource>(JsonSerializer.Deserialize<ModSource>(nexusJson)!).ModId);
-
-        var ghJson = "{\"$kind\":\"github\"}";
-        var gh = Assert.IsType<GitHubSource>(JsonSerializer.Deserialize<ModSource>(ghJson)!);
-        Assert.Equal(string.Empty, gh.Owner);
-        Assert.Equal(string.Empty, gh.Repo);
     }
 
     [Fact]
@@ -97,11 +76,16 @@ public sealed class ModSourceTests
         Assert.Equal(new UntrackedSource(), new UntrackedSource());
         Assert.Equal(new NexusSource { ModId = 7 }, new NexusSource { ModId = 7 });
         Assert.NotEqual(new NexusSource { ModId = 7 }, new NexusSource { ModId = 8 });
-        Assert.Equal(
-            new GitHubSource { Owner = "a", Repo = "b" },
-            new GitHubSource { Owner = "a", Repo = "b" });
-        Assert.NotEqual(
-            new GitHubSource { Owner = "a", Repo = "b" },
-            new GitHubSource { Owner = "a", Repo = "c" });
+    }
+
+    [Fact]
+    public void Only_untracked_and_nexus_discriminators_are_known_kinds()
+    {
+        // The source hierarchy has exactly two known kinds. An unknown
+        // discriminator fails to deserialize with a JsonException, so a
+        // container whose manifest carries an unrecognized source kind is
+        // rejected rather than misread.
+        var json = "{\"$kind\":\"unsupported\"}";
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<ModSource>(json));
     }
 }

@@ -11,11 +11,11 @@ namespace Modificus.Curator.Integrations;
 
 /// <summary>
 /// The default <see cref="INexusClient"/>. A thin wrapper over the Nexus v1 REST
-/// API via <see cref="HttpClient"/>, mirroring <see cref="GitHubClient"/>. Auth
-/// + app-identification headers are applied per-request by the configured
-/// <see cref="INexusAuthMessageFactory"/>; the rate-limit headers on every
-/// response are parsed into <see cref="NexusRateLimits"/> + carried on the
-/// returned <see cref="Response{T}"/>.
+/// API via <see cref="HttpClient"/>. Auth + app-identification headers are
+/// applied per-request by the configured <see cref="INexusAuthMessageFactory"/>;
+/// the rate-limit headers on every response are parsed into
+/// <see cref="NexusRateLimits"/> + carried on the returned
+/// <see cref="Response{T}"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -339,9 +339,9 @@ internal sealed class NexusClient : INexusClient
 
     /// <summary>
     /// Throws <see cref="NexusRateLimitException"/> / <see cref="NexusApiException"/>
-    /// for a failed response. Returns silently on success. Detection mirrors
-    /// <see cref="GitHubClient"/>: HTTP 429, or HTTP 403 with one of the
-    /// <c>x-rl-*-remaining</c> headers reporting zero, is the rate-limit signal.
+    /// for a failed response. Returns silently on success. Detection:
+    /// HTTP 429, or HTTP 403 with one of the <c>x-rl-*-remaining</c> headers
+    /// reporting zero, is the rate-limit signal.
     /// </summary>
     private async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
     {
@@ -386,7 +386,7 @@ internal sealed class NexusClient : INexusClient
         }
 
         // 403: rate-limit only when limit headers are present and a remaining
-        // counter is exhausted. Mirrors the GitHub client's two-condition rule.
+        // counter is exhausted (two-condition rule).
         var hasLimitHeaders = limits.DailyLimit > 0 || limits.HourlyLimit > 0;
         if (!hasLimitHeaders)
         {

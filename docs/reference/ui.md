@@ -140,9 +140,8 @@ public interface IDialogService
   the caller reloads the mod list so a Settings relocate's rescan is
   reflected in the rows.
 - `ShowIntegrationsAsync()`: the Integrations modal (Nexus auth: OAuth
-  login, API-key validate, sign-out). Nexus-only in v1; GitHub stays
-  config-file-only. Each auth action applies and persists immediately
-  through `NexusAuthService`.
+  login, API-key validate, sign-out). Nexus-only. Each auth action applies and
+  persists immediately through `NexusAuthService`.
 - `ShowDiscoveryEscapeHatchAsync(missingFields)`: the discovery escape-hatch
   modal, focused on the missing discovery fields the launch reported. Inputs
   are shown only for the fields in `missingFields`. Returns true when the
@@ -887,8 +886,8 @@ instance violation) propagates out; `App` catches it and calls
   `IAppStateStore`, `LoggingBootstrap`), `profiles` (`IProfileService`,
   `ProfileSummary`, `ModListEntry`, `IModOrderResolver`), `mods`
   (`IModRepository`, `IModImportService`, `ModContainer`, `ModVersion`,
-  `ModVersionPolicy`, `ModSource`, `NexusSource`, `GitHubSource`,
-  `UntrackedSource`), `integrations` (`INexusAuthService`,
+  `ModVersionPolicy`, `ModSource`, `NexusSource`, `UntrackedSource`),
+  `integrations` (`INexusAuthService`,
   `IModAcquisitionService`, `IUpdateCheckService`, `UpdateCheckResult`,
   `ModUpdateInfo`), `steam` (`ISteamService`), `relay-client`
   (`IRelayLaunchService`, `LaunchResult`, `LaunchStatus`), `nxm`

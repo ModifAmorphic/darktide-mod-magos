@@ -3,7 +3,7 @@
 **Modificus Curator** is the user-facing mod manager app --
 the second of the project's two components, sitting on top of Modificus
 Relay. It owns everything user-facing: profile management, mod staging, load
-order, dependency resolution, mod-source integrations (GitHub Releases, Nexus
+order, dependency resolution, mod-source integrations (Nexus
 Mods, Steam), and the "Launch Darktide" button that invokes the Relay
 launcher. Relay does the injection + mod loading; Modificus Curator owns the
 management experience around it.
@@ -44,7 +44,7 @@ src/
   profiles/               Profiles library -- profile data, staging, mods.lst
   mods/                   Mods library -- unified mod repository (IModRepository) + version-policy + source models
   steam/                  Steam library -- Steam/Darktide/Proton discovery + IsGameRunning
-  integrations/           Integrations library -- GitHub Releases client + Nexus v1 client/auth + mod acquisition + update check
+  integrations/           Integrations library -- Nexus v1 client/auth + mod acquisition + update check
   relay-client/           Relay-client library -- the launch façade
   launcher/               stub launcher -- the Steam non-steam-shortcut target placeholder
   nxm/                    Nxm library: nxm:// scheme-handler plumbing (URL parser, IPC
@@ -69,7 +69,7 @@ UI models.
 | --- | --- |
 | **Relay** | All interaction with Modificus Relay. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control -- status / hot-reload / live enable-disable -- is a future Relay contract expansion; out of v1.) |
 | **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, mod repository); resolves each profile mod's version policy to a repository version folder; materializes the profile mod root + writes `mods.lst` at launch. |
-| **Integrations** | External-service calls: Nexus Mods (primary user-mod source), GitHub Releases, local install. Nexus API key / OIDC, version checks, downloads / updates. |
+| **Integrations** | External-service calls: Nexus Mods (primary user-mod source), local install. Nexus API key / OIDC, version checks, downloads / updates. |
 | **Steam** | Steam operations outside Relay: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
 | **General** | Cross-cutting infra: DI composition, structured logging, configuration, shared primitives. |
 
@@ -104,7 +104,7 @@ through a registered library interface. The UI registers only its own surface
      the root and `IProfileService` always resolves its staging dependency).
    - `AddProfiles()`: profile service + the `StagingLinkCreator` staging seam
      (junction on Windows, symlink on Linux).
-    - `AddIntegrations()`: the typed GitHub HTTP client + the typed Nexus v1
+    - `AddIntegrations()`: the typed Nexus v1
       HTTP client + the Nexus auth service + the OAuth token
       store + the loopback `IBrowser`.
     - `AddSteam()`: Steam discovery + the platform process-lookup seam.
@@ -206,10 +206,10 @@ stage time, so a profile never stores mod files of its own. This keeps one copy
 of each mod + version, organized so they don't collide and can associate to
 profiles.
 
-Container identity by source: **Nexus** by `ModId`, **GitHub** by
-`Owner`/`Repo`, **Untracked** (local) by `Name`. Different source-types are
-separate namespaces, so an untracked "WeaponTweaks" and a Nexus "WeaponTweaks"
-are distinct containers, and a Nexus mod and a GitHub mod never collide or share.
+Container identity by source: **Nexus** by `ModId`, **Untracked** (local) by
+`Name`. Different source-types are separate namespaces, so an untracked
+"WeaponTweaks" and a Nexus "WeaponTweaks" are distinct containers, and a Nexus
+mod and an untracked mod never collide or share.
 The container directory is **UUID-named (opaque)**, and its path is **derived**
 (`<ModsFolder>/<containerUUID>/`), never stored absolute.
 
@@ -236,16 +236,15 @@ release tag lives only on `ModVersion.VersionString` (for display). A pin
 references a version row, so it always resolves to a real imported version or is
 an orphan (skip + warn); a "phantom" pin to a version that was never imported
 cannot be expressed (the policy editor offers only the container's actual
-versions, and `SetModPolicy` rejects an unknown id). GitHub release tags and
-Nexus file versions are arbitrary strings (not SemVer); there is no version
-ordering at this layer, and "newer" is decided by fetching the
-latest release tag and checking string inequality.
+versions, and `SetModPolicy` rejects an unknown id). Nexus file versions are
+arbitrary strings (not SemVer); there is no version ordering at this layer, and
+"newer" is decided by fetching the latest release tag and checking string
+inequality.
 
-Each container also carries a **source** (Untracked / Nexus / GitHub) so a
-pinned version is legible ("WeaponTweaks *(GitHub owner/repo)* pinned to
-`1.2`"). The UI collects URLs; the model stores the canonical identity (Nexus
-mod id; GitHub owner/repo) via a pure parser. Local / untracked mods use the
-`UntrackedSource` source (dedup by name).
+Each container also carries a **source** (Untracked / Nexus) so a pinned version
+is legible ("WeaponTweaks *(Nexus #12345)* pinned to `1.2`"). The UI collects
+URLs; the model stores the canonical identity (Nexus mod id) via a pure parser.
+Local / untracked mods use the `UntrackedSource` source (dedup by name).
 
 **Import flow:** adding a mod to the active profile goes through
 `IModImportService` (the UI never touches the filesystem). The import service
@@ -264,14 +263,14 @@ re-import (a CRC or I/O error mid-extraction) leaves the existing version
 untouched. The validated base folder is **preserved** under
 `<versionFolder>/<base>/` (the folder import copies the folder itself, not its
 contents; the archive is validated to have a single top-level folder before
-extraction). Container dedup: Untracked by name, Nexus by mod id, GitHub by
-owner/repo. Version dedup: re-importing the same tag reuses its folder
-(refreshed); a new tag creates a new version + flips `isLatest`. The service
-returns `(containerId, versionString)`; the caller then adds the profile
-reference via `IProfileService.AddMod`. Remote acquisition (Nexus / GitHub API
-clients, auto-fetch) is handled by `IModAcquisitionService`; the acquisition
-service downloads the archive to a temp path preserving the real Nexus
-`file_name` extension, then hands it to the import service.
+extraction). Container dedup: Untracked by name, Nexus by mod id. Version dedup:
+re-importing the same tag reuses its folder (refreshed); a new tag creates a new
+version + flips `isLatest`. The service returns `(containerId, versionString)`;
+the caller then adds the profile reference via `IProfileService.AddMod`. Remote
+acquisition (the Nexus API client, auto-fetch) is handled by
+`IModAcquisitionService`; the acquisition service downloads the archive to a
+temp path preserving the real Nexus `file_name` extension, then hands it to the
+import service.
 
 **Base-name collision hard-block:** two mods with the same base folder name
 can't coexist in one profile (the mod loader can't tell them apart). Before
@@ -312,8 +311,6 @@ detection. The Settings window's Storage section is the UI for it.
 
 - **Nexus Mods** -- the primary source for user mods (most Darktide mods live
   there). Nexus API key or OIDC; version checks; downloads / updates.
-- **GitHub Releases** -- a source for mods that publish there; no auth required
-  for public releases (version checks + downloads).
 - **Local** -- manually-installed mods (the user supplies the files).
 - **DMF specifically** -- the new-profile prompt offers to add it (most mods
   depend on it, so this is the common case; DMF isn't mandatory, so the prompt
@@ -401,9 +398,8 @@ author bumps the file without updating the header), which is the false positive
 tier 2 produces; tier 3 confirms against the actual file. It is best-effort
 (a failure or an unresolved file leaves the flag) and cached per (mod id, page
 version, updated-at) with a 24h TTL, in memory and session-scoped. Tier-1 flags
-(`viewerUpdateAvailable`) are authoritative and untouched. `PinnedPolicy`,
-`UntrackedSource`, and `GitHubSource` mods
-are skipped. Rate-limit-aware: if the client throws `NexusRateLimitException`
+(`viewerUpdateAvailable`) are authoritative and untouched. `PinnedPolicy` and
+`UntrackedSource` mods are skipped. Rate-limit-aware: if the client throws `NexusRateLimitException`
 (HTTP 429 / exhausted headers) or the response reports an exhausted daily or
 hourly quota (and the limit was actually reported, guarding against the all-zero
 header-absent fallback), the result is flagged `RateLimited` and the mod-list UI
@@ -585,7 +581,7 @@ Per-profile settings live with the profile, not in the global config.
 - Mod list: enable / disable / remove, update indicators, version pinning,
   per-mod auto-update override, auto-sort + manual sequential reorder.
 - Mod storage (unified repository keyed by `(source, identity)`, version resolution by policy).
-- Mod sources: Nexus Mods (primary) + GitHub Releases + local; DMF via the
+- Mod sources: Nexus Mods (primary) + local; DMF via the
   new-profile prompt (Nexus mod 8).
 - Launch Darktide (Windows trivial; Linux native + Proton-at-launch +
   discovery + escape hatch).

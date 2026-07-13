@@ -16,11 +16,11 @@
         WindowStartupLocation="CenterOwner">
 
   <!--
-    The Integrations modal. Nexus-only in v1 (no navigation structure; GitHub
-    stays config-file-only). Custom chrome (DialogTitleBar) mirrors the Track
-    A/D modal pattern. The Nexus section leads with the OAuth block ("Sign in
-    with Nexus"); the API-key block is demoted to the bottom of the dialog
-    (below the update-check settings + the nxm download-links section) and
+    The Integrations modal. Nexus-only (no navigation structure). Custom chrome
+    (DialogTitleBar) mirrors the Track A/D modal pattern. The Nexus section leads
+    with the OAuth block ("Sign in with Nexus"); the API-key block is demoted to
+    the bottom of the dialog (below the update-check settings + the nxm
+    download-links section) and
     carries a "testing only, removed at release" note reflecting its
     pre-registration status. The two remain alternative auth methods, only one
     active at a time:

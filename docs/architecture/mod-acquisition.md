@@ -50,9 +50,8 @@ handler exe  →  IPC  →  NxmRouter  →  INxmModDownloadHandler
 ## `IModAcquisitionService`: the reusable core
 
 Lives in the Integrations library (alongside `INexusClient`, which it
-consumes). The interface accommodates both Nexus and GitHub, but only the
-Nexus method is implemented; GitHub acquisition (`AcquireFromGitHubAsync`) is
-out of v1 (no trigger today, no "browse GitHub releases" UI).
+consumes). The interface is Nexus-only: it resolves the download link, fetches
+the mod's metadata, downloads the archive, and imports it.
 
 ```csharp
 public interface IModAcquisitionService
@@ -111,8 +110,8 @@ and `IHttpClientFactory` (for the raw CDN download) from the container.
    (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() +
    Path.GetExtension(fileName))`, where `fileName` is the matched
    `ModFile.FileName`) using a plain `HttpClient` from `IHttpClientFactory`
-   plus the 81920-byte buffered copy and `IProgress<long>` pattern from
-   `GitHubClient.DownloadAssetAsync`. The real file extension is preserved on
+   plus the 81920-byte buffered copy and `IProgress<long>` pattern. The real
+   file extension is preserved on
    the temp file for log clarity; archive detection is content-based
    (SharpCompress magic bytes), so the extension is cosmetic. The temp file
    is deleted once Import returns, always, success or failure (no partial

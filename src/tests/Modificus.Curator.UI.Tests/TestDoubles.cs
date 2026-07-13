@@ -955,10 +955,6 @@ internal class FakeModRepository : IModRepository
         {
             NexusSource n => _byId.Values.FirstOrDefault(c =>
                 c.Source is NexusSource ns && ns.ModId == n.ModId),
-            GitHubSource g => _byId.Values.FirstOrDefault(c =>
-                c.Source is GitHubSource gs
-                && string.Equals(gs.Owner, g.Owner, StringComparison.Ordinal)
-                && string.Equals(gs.Repo, g.Repo, StringComparison.Ordinal)),
             _ => null,
         };
     }

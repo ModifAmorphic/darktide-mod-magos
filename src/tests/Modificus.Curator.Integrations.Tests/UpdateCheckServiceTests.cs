@@ -28,7 +28,6 @@ public sealed class UpdateCheckServiceTests
     private static readonly Guid NexusUnlistedContainer = Guid.NewGuid();
     private static readonly Guid NexusPinnedContainer = Guid.NewGuid();
     private static readonly Guid UntrackedContainer = Guid.NewGuid();
-    private static readonly Guid GitHubContainer = Guid.NewGuid();
 
     private const int UpdatedModId = 100;
     private const int UnlistedModId = 200;
@@ -303,22 +302,18 @@ public sealed class UpdateCheckServiceTests
     [Fact]
     public async Task CheckAsync_short_circuits_when_no_nexus_mods()
     {
-        // No Nexus mods at all (only untracked + github) -> nothing to send in
-        // the batch -> the API is not called. (A profile with Pinned Nexus mods
-        // DOES run the batch for the name sync; that is covered by the name-sync
-        // tests.)
+        // No Nexus mods at all (only untracked) -> nothing to send in the batch
+        // -> the API is not called. (A profile with Pinned Nexus mods DOES run
+        // the batch for the name sync; that is covered by the name-sync tests.)
         var nexus = new FakeNexusClient(); // unset; would serve an empty default if called
         var repository = new FakeModRepository();
         repository.Containers[UntrackedContainer] =
             NonNexusContainer(UntrackedContainer, new UntrackedSource(), "Untracked Mod");
-        repository.Containers[GitHubContainer] =
-            NonNexusContainer(GitHubContainer, new GitHubSource { Owner = "o", Repo = "r" }, "GitHub Mod");
         var profiles = new FakeProfileService
         {
             Mods = new[]
             {
                 Entry(UntrackedContainer, new LatestPolicy()),
-                Entry(GitHubContainer, new LatestPolicy()),
             },
         };
         var service = CreateService(nexus, profiles, repository);
@@ -333,13 +328,13 @@ public sealed class UpdateCheckServiceTests
     // ---- source / policy filter -------------------------------------------
 
     [Fact]
-    public async Task CheckAsync_skips_untracked_and_github_but_sends_pinned_nexus_for_name_sync()
+    public async Task CheckAsync_skips_untracked_but_sends_pinned_nexus_for_name_sync()
     {
-        // A Nexus + Latest mod (would flag) PLUS a pinned Nexus mod, an untracked
-        // mod, and a GitHub mod. The Pinned Nexus mod rides along in the batch
-        // (its name syncs; Pinned mods are NOT flagged for updates). Untracked +
-        // GitHub are never sent. The 1-API-call contract holds, the batch carries
-        // both Nexus ids (Latest + Pinned), and only the Latest one flags.
+        // A Nexus + Latest mod (would flag) PLUS a pinned Nexus mod and an
+        // untracked mod. The Pinned Nexus mod rides along in the batch (its name
+        // syncs; Pinned mods are NOT flagged for updates). Untracked is never
+        // sent. The 1-API-call contract holds, the batch carries both Nexus ids
+        // (Latest + Pinned), and only the Latest one flags.
         var nexus = new FakeNexusClient
         {
             GraphQlResponse = new Response<ModUpdateStatus[]>(
@@ -357,8 +352,6 @@ public sealed class UpdateCheckServiceTests
             NexusContainer(NexusPinnedContainer, PinnedModId, "Mod 300", "1.0");
         repository.Containers[UntrackedContainer] =
             NonNexusContainer(UntrackedContainer, new UntrackedSource(), "Untracked Mod");
-        repository.Containers[GitHubContainer] =
-            NonNexusContainer(GitHubContainer, new GitHubSource { Owner = "o", Repo = "r" }, "GitHub Mod");
         var profiles = new FakeProfileService
         {
             Mods = new[]
@@ -366,7 +359,6 @@ public sealed class UpdateCheckServiceTests
                 Entry(NexusLatestContainer, new LatestPolicy()),
                 Entry(NexusPinnedContainer, new PinnedPolicy("v1")),
                 Entry(UntrackedContainer, new LatestPolicy()),
-                Entry(GitHubContainer, new LatestPolicy()),
             },
         };
         var service = CreateService(nexus, profiles, repository);
@@ -376,7 +368,7 @@ public sealed class UpdateCheckServiceTests
         var flagged = Assert.Single(result.Updates);
         Assert.Equal(NexusLatestContainer, flagged.ContainerId);
         Assert.Equal(1, nexus.GraphQlCallCount);
-        // Both Nexus ids sent (Latest + Pinned); untracked/github excluded.
+        // Both Nexus ids sent (Latest + Pinned); untracked excluded.
         Assert.Equal(new[] { UpdatedModId, PinnedModId }, nexus.LastModIds);
         // Names match the Status() helper's "Mod <id>" default -> no rename ->
         // NamesChanged is false (the rename paths are covered by the name-sync
@@ -1264,8 +1256,8 @@ public sealed class UpdateCheckServiceTests
         };
 
     /// <summary>
-    /// Builds a non-Nexus (untracked or github) <see cref="ModContainer"/> with
-    /// a single IsLatest version. Used to prove non-Nexus sources are skipped.
+    /// Builds a non-Nexus (untracked) <see cref="ModContainer"/> with a single
+    /// IsLatest version. Used to prove non-Nexus sources are skipped.
     /// </summary>
     private static ModContainer NonNexusContainer(Guid id, ModSource source, string name) =>
         new()

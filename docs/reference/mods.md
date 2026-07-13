@@ -27,7 +27,7 @@ public interface IModRepository
 {
     IReadOnlyList<ModContainer> List();
     ModContainer? Get(Guid containerId);
-    ModContainer? FindBySource(ModSource source);     // Nexus by ModId, GitHub by Owner/Repo; null for Untracked
+    ModContainer? FindBySource(ModSource source);     // Nexus by ModId; null for Untracked
     ModContainer? FindUntrackedByName(string name);   // Untracked identity is the container Name
     ModContainer CreateContainer(ModSource source, string name);
     ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder, DateTimeOffset? remoteUploadedAt = null);
@@ -42,9 +42,9 @@ public interface IModRepository
 
 - `List()`: every container, in scan order.
 - `Get(containerId)`: lookup by id. Null if absent.
-- `FindBySource(source)`: Nexus by `ModId`, GitHub by `Owner`/`Repo`. Returns
-  `null` for `UntrackedSource` (untracked identity is the container `Name`;
-  use `FindUntrackedByName`).
+- `FindBySource(source)`: Nexus by `ModId`. Returns `null` for
+  `UntrackedSource` (untracked identity is the container `Name`; use
+  `FindUntrackedByName`).
 - `FindUntrackedByName(name)`: lookup an untracked container by its `Name`
   (ordinal). The untracked dedup path: a re-import of the same name resolves to
   the existing container.
@@ -74,9 +74,9 @@ public interface IModRepository
   so it does not move. No-op returning the unchanged container when the stored
   name already equals `newName` (ordinal); returns `null` when the container id
   is unknown. For an `UntrackedSource` container the untracked-name index is
-  kept consistent; for other sources the index is untouched (Nexus/GitHub
-  identity is on the source record, not the name). Driven by the update-check
-  name sync (Nexus containers).
+  kept consistent; for other sources the index is untouched (Nexus identity is
+  on the source record, not the name). Driven by the update-check name sync
+  (Nexus containers).
 - `RemoveVersion(containerId, versionFolder)`: idempotent. Promotes the newest
   remaining version to `IsLatest` if the removed one carried it.
 - `PruneUnreferenced(referenced)`: GC. Drops every `(containerId, versionFolder)`
@@ -134,8 +134,8 @@ public interface IModImportService
 ```
 
 - Container resolution: `FindUntrackedByName` for untracked (dedup by `modName`),
-  `FindBySource` for Nexus/GitHub (dedup by source identity); `CreateContainer`
-  if absent.
+  `FindBySource` for Nexus (dedup by source identity); `CreateContainer` if
+  absent.
 - Version resolution: dedup by `versionString` (`AddVersion` reuses the existing
   folder + refreshes its files); a new `versionString` creates a new version +
   flips `IsLatest`.
@@ -215,7 +215,7 @@ A single mod in the repository (immutable record):
 | Field | Meaning |
 | --- | --- |
 | `Id` | Stable identity (Guid); the on-disk container directory name. |
-| `Source` | Where this mod came from: Untracked / Nexus / GitHub (`ModSource`, default `UntrackedSource`). |
+| `Source` | Where this mod came from: Untracked / Nexus (`ModSource`, default `UntrackedSource`). |
 | `Name` | The display name + the untracked dedup key. Set at import. |
 | `Versions` | The container's imported versions (`IReadOnlyList<ModVersion>`). One may carry `IsLatest`. |
 
@@ -250,17 +250,14 @@ A mod's source provenance. Three cases:
   dedup key is the container `Name`.
 - `NexusSource(int ModId)`: Nexus Mods (the game is fixed: Darktide; the
   canonical identity is just the numeric mod id).
-- `GitHubSource(string Owner, string Repo)`: GitHub (the canonical identity is
-  the owner/repo pair).
 
 Persisted polymorphically to `container.json` via a `$kind` discriminator with
-**stable identifiers** (`untracked` / `nexus` / `github`):
+**stable identifiers** (`untracked` / `nexus`):
 
 ```csharp
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$kind")]
 [JsonDerivedType(typeof(UntrackedSource), "untracked")]
 [JsonDerivedType(typeof(NexusSource),  "nexus")]
-[JsonDerivedType(typeof(GitHubSource), "github")]
 public abstract record ModSource;
 ```
 
@@ -309,9 +306,6 @@ public static class ModSourceParser
 {
     // "https://www.nexusmods.com/warhammer40kdarktide/mods/12345"  -> NexusSource(12345)
     public static bool TryParseNexus(string input, out NexusSource source);
-
-    // "https://github.com/owner/repo"  -> GitHubSource(owner, repo)
-    public static bool TryParseGitHub(string input, out GitHubSource source);
 }
 ```
 
@@ -386,11 +380,11 @@ UUIDs), never stored absolute.
   (drops/Adds index entries to match the live disk state).
 - `DirectoryCopy`: faithful recursive copy (files + nested subdirs reproduced,
   target created as it goes).
-- `ModSource` JSON `$kind` round-trip (untracked/nexus/github) + defaults +
-  record equality.
-- `ModSourceParser` URL/id parsing (valid variants, trailing slash, query,
-  `.git`, plain id; malformed rejections: wrong host, wrong game slug, too few
-  segments, non-numeric/zero/negative id).
+- `ModSource` JSON `$kind` round-trip (untracked/nexus) + defaults + record
+  equality.
+- `ModSourceParser` URL/id parsing (valid variants, trailing slash, query, plain
+  id; malformed rejections: wrong host, wrong game slug, too few segments,
+  non-numeric/zero/negative id).
 - `ModImportService`: container find/create + version dedup + `isLatest` flip +
   folder/archive import (zip, 7z via on-the-fly SharpCompress writers, rar via
   a committed RAR5 fixture under `Fixtures/`) + the source-structure validation

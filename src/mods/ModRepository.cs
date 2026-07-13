@@ -79,7 +79,7 @@ internal sealed class ModRepository : IModRepository
     private readonly Dictionary<Guid, ModContainer> _byId = new();
 
     // Untracked-name -> containerId (only untracked containers are entered).
-    // Nexus/GitHub lookups scan _byId (identity is fully on the source record).
+    // Nexus lookups scan _byId (identity is fully on the source record).
     private readonly Dictionary<string, Guid> _untrackedByName = new(StringComparer.Ordinal);
 
     /// <summary>
@@ -162,10 +162,6 @@ internal sealed class ModRepository : IModRepository
             {
                 NexusSource n => _byId.Values.FirstOrDefault(c =>
                     c.Source is NexusSource ns && ns.ModId == n.ModId),
-                GitHubSource g => _byId.Values.FirstOrDefault(c =>
-                    c.Source is GitHubSource gs
-                    && string.Equals(gs.Owner, g.Owner, StringComparison.Ordinal)
-                    && string.Equals(gs.Repo, g.Repo, StringComparison.Ordinal)),
                 _ => null,
             };
         }
@@ -317,10 +313,10 @@ internal sealed class ModRepository : IModRepository
             WriteContainer(updated, baseFolder);
 
             // Keep the untracked-name index consistent for untracked containers
-            // (their dedup key is the name). Nexus/GitHub identity is on the
-            // source record, so the index is not involved for those + stays
-            // untouched (the name-sync that drives this path targets Nexus
-            // containers, for which the index never held an entry).
+            // (their dedup key is the name). Nexus identity is on the source
+            // record, so the index is not involved for those + stays untouched
+            // (the name-sync that drives this path targets Nexus containers, for
+            // which the index never held an entry).
             if (container.Source is UntrackedSource)
             {
                 _untrackedByName.Remove(container.Name);

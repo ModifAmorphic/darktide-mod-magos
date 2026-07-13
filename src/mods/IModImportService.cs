@@ -11,7 +11,7 @@ namespace Modificus.Curator.Mods;
 /// source's structure, then extracts an archive / copies a folder into the
 /// repository-managed opaque version folder via
 /// <see cref="IModRepository.AddVersion"/>. Container dedup: Untracked by name,
-/// Nexus by mod id, GitHub by owner/repo. Version dedup: re-importing the same
+/// Nexus by mod id. Version dedup: re-importing the same
 /// <paramref name="version"/> tag reuses its folder (refreshed); a new tag
 /// creates a new version + flips <see cref="ModVersion.IsLatest"/>.</para>
 /// <para>
@@ -63,8 +63,8 @@ public interface IModImportService
     /// <param name="modName">The container display name + the untracked dedup
     /// key. Confined to a single direct child of the mod root: it must not
     /// contain path separators, <c>..</c>, or be an absolute path.</param>
-    /// <param name="source">The mod's source provenance (Untracked / Nexus /
-    /// GitHub). Nexus/GitHub dedup by their source identity; Untracked by
+    /// <param name="source">The mod's source provenance (Untracked / Nexus).
+    /// Nexus dedups by its source identity; Untracked by
     /// <paramref name="modName"/>.</param>
     /// <param name="version">The raw release tag string (e.g. <c>"1.2"</c>,
     /// <c>"v2.0.1"</c>); the version's dedup key within the container. Pass
@@ -147,7 +147,7 @@ public interface IModImportService
     /// create a new container.
     /// </summary>
     /// <param name="source">The mod's source provenance. Untracked dedups by
-    /// <paramref name="modName"/>; Nexus/GitHub dedup by source identity.</param>
+    /// <paramref name="modName"/>; Nexus dedups by source identity.</param>
     /// <param name="modName">The container display name + the untracked dedup
     /// key.</param>
     /// <returns>The existing container the import would reuse, or <c>null</c> if

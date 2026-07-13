@@ -4,8 +4,7 @@ namespace Modificus.Curator.Integrations;
 /// The Nexus Mods API client. Surface: auth validation (one method per
 /// auth mode) + the endpoints the rest of the app calls through (v2 GraphQL
 /// update check, v1 REST download links, mod-page metadata, mod files).
-/// Mirrors the existing
-/// <see cref="IGitHubClient"/> shape: typed <c>HttpClient</c> via
+/// Typed <c>HttpClient</c> via
 /// <c>AddHttpClient&lt;INexusClient, NexusClient&gt;</c>, auth applied per-request
 /// by the configured <see cref="INexusAuthMessageFactory"/>, and the parsed
 /// rate-limit headers carried on every response.

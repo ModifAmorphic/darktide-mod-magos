@@ -1166,17 +1166,14 @@ public sealed class ModListViewModelTests
         var profiles = TestDoubles.Profiles(a);
         var repo = new FakeModRepository();
         var nexus = repo.Seed(new NexusSource { ModId = 8 }, "DMF", "1.0");
-        var gh = repo.Seed(new GitHubSource { Owner = "octo", Repo = "cat" }, "GHMod", "1.0");
         var untracked = repo.Seed(new UntrackedSource(), "Local", "1.0");
         profiles.WithMods(a.Id,
             new ModListEntry { ContainerId = nexus.Id, Order = 0 },
-            new ModListEntry { ContainerId = gh.Id, Order = 1 },
-            new ModListEntry { ContainerId = untracked.Id, Order = 2 });
+            new ModListEntry { ContainerId = untracked.Id, Order = 1 });
         var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
 
         Assert.Equal("https://www.nexusmods.com/warhammer40kdarktide/mods/8",
             Row(vm, "DMF").SourceUrl);
-        Assert.Equal("https://github.com/octo/cat", Row(vm, "GHMod").SourceUrl);
         Assert.Null(Row(vm, "Local").SourceUrl);
     }
 
@@ -1185,24 +1182,21 @@ public sealed class ModListViewModelTests
     {
         // The update-available marker is a HyperlinkButton to the mod's Nexus
         // files tab (the user's instinct to click the marker lands on the files
-        // page). Nexus -> SourceUrl + "?tab=files"; GitHub / Untracked -> null
-        // (the marker no-ops, though the update check never flags non-Nexus
-        // rows anyway).
+        // page). Nexus -> SourceUrl + "?tab=files"; Untracked -> null (the
+        // marker no-ops, though the update check never flags non-Nexus rows
+        // anyway).
         var a = Profile("Alpha");
         var profiles = TestDoubles.Profiles(a);
         var repo = new FakeModRepository();
         var nexus = repo.Seed(new NexusSource { ModId = 8 }, "DMF", "1.0");
-        var gh = repo.Seed(new GitHubSource { Owner = "octo", Repo = "cat" }, "GHMod", "1.0");
         var untracked = repo.Seed(new UntrackedSource(), "Local", "1.0");
         profiles.WithMods(a.Id,
             new ModListEntry { ContainerId = nexus.Id, Order = 0 },
-            new ModListEntry { ContainerId = gh.Id, Order = 1 },
-            new ModListEntry { ContainerId = untracked.Id, Order = 2 });
+            new ModListEntry { ContainerId = untracked.Id, Order = 1 });
         var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
 
         Assert.Equal("https://www.nexusmods.com/warhammer40kdarktide/mods/8?tab=files",
             Row(vm, "DMF").UpdatePageUrl);
-        Assert.Null(Row(vm, "GHMod").UpdatePageUrl);
         Assert.Null(Row(vm, "Local").UpdatePageUrl);
     }
 
@@ -1420,10 +1414,10 @@ public sealed class ModListViewModelTests
     // ---- stable update-action cell (row UX) --------------------------------
 
     /// <summary>
-    /// Builds a VM with one Nexus+Latest row, one Pinned Nexus row, one GitHub
-    /// row, and one Untracked row so the per-row visibility + enabled + tooltip
-    /// assertions cover every row type. Returns the VM, the launcher-invocation
-    /// recorder, and the row lookup helpers.
+    /// Builds a VM with one Nexus+Latest row, one Pinned Nexus row, and one
+    /// Untracked row so the per-row visibility + enabled + tooltip assertions
+    /// cover every row type. Returns the VM, the launcher-invocation recorder,
+    /// and the row lookup helpers.
     /// </summary>
     private static (ModListViewModel Vm, FakeUpdateCheckService UpdateCheck, FakeUpdateStateStore UpdateState, List<Uri> Launches, FakeDialogService Dialogs)
         BuildForRowAction(bool premium = true, Func<Uri, bool>? launchExternal = null)
@@ -1434,13 +1428,11 @@ public sealed class ModListViewModelTests
         var nexusLatest = repo.Seed(new NexusSource { ModId = 8 }, "NexusLatest", "1.0");
         var nexusPinned = repo.Seed(new NexusSource { ModId = 9 }, "NexusPinned", "1.0");
         var pinnedVersion = repo.Get(nexusPinned.Id)!.Versions[0].Folder;
-        var gh = repo.Seed(new GitHubSource { Owner = "octo", Repo = "cat" }, "GHMod", "1.0");
         var untracked = repo.Seed(new UntrackedSource(), "Local", "1.0");
         profiles.WithMods(a.Id,
             new ModListEntry { ContainerId = nexusLatest.Id, Order = 0, Policy = ModVersionPolicy.Latest },
             new ModListEntry { ContainerId = nexusPinned.Id, Order = 1, Policy = new PinnedPolicy(pinnedVersion) },
-            new ModListEntry { ContainerId = gh.Id, Order = 2, Policy = ModVersionPolicy.Latest },
-            new ModListEntry { ContainerId = untracked.Id, Order = 3, Policy = ModVersionPolicy.Latest });
+            new ModListEntry { ContainerId = untracked.Id, Order = 2, Policy = ModVersionPolicy.Latest });
         var session = new FakeProfileSession { ActiveProfileId = a.Id };
 
         var updateCheck = new FakeUpdateCheckService();
@@ -1503,13 +1495,12 @@ public sealed class ModListViewModelTests
     }
 
     [Fact]
-    public void UpdateAction_pinned_github_and_untracked_rows_do_not_expose_an_action()
+    public void UpdateAction_pinned_and_untracked_rows_do_not_expose_an_action()
     {
         var (vm, _, _, _, _) = BuildForRowAction();
 
-        // Pinned Nexus, GitHub, and Untracked rows never show the action button.
+        // Pinned Nexus and Untracked rows never show the action button.
         Assert.False(Row(vm, "NexusPinned").CanShowUpdateAction);
-        Assert.False(Row(vm, "GHMod").CanShowUpdateAction);
         Assert.False(Row(vm, "Local").CanShowUpdateAction);
     }
 

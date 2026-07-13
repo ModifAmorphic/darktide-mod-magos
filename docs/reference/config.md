@@ -64,19 +64,12 @@ public sealed class LoggingConfig
   `Error`/`Fatal`); an unknown value falls back to `Information` at bootstrap.
 - `LogFile`: the structured log file; truncated on each manager startup.
 
-### `IntegrationsConfig` / `GitHubConfig` / `NexusConfig`
+### `IntegrationsConfig` / `NexusConfig`
 
 ```csharp
 public sealed class IntegrationsConfig
 {
-    public GitHubConfig GitHub { get; set; } = new();
     public NexusConfig Nexus { get; set; } = new();
-}
-
-public sealed class GitHubConfig
-{
-    public string BaseUrl { get; set; } = "https://api.github.com";
-    public string? Token { get; set; }   // optional PAT
 }
 
 public sealed class NexusConfig
@@ -102,16 +95,6 @@ public sealed record NexusOAuthTokens(
     string Scope,
     DateTimeOffset ExpiresAt);
 ```
-
-GitHub fields:
-
-- `BaseUrl`: the GitHub REST API root, without a trailing slash. Override for
-  GitHub Enterprise (`https://<host>/api/v3`). The Integrations library
-  normalizes the value to end with a trailing slash when configuring
-  `HttpClient.BaseAddress`.
-- `Token`: an optional personal access token sent as `Bearer <token>`; when
-  unset, requests are anonymous (public releases need no auth). There is no
-  token-management UI; supply via config only.
 
 Nexus fields:
 

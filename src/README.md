@@ -2,7 +2,7 @@
 
 The mod-manager application -- the user-facing layer on
 top of Modificus Relay. It owns profiles, mod staging, load order,
-dependency resolution, mod-source integrations (Nexus Mods, GitHub Releases,
+dependency resolution, mod-source integrations (Nexus Mods,
 Steam), and the "Launch Darktide" button that invokes the Relay launcher.
 Target architecture:
 [`../docs/architecture/MODIFICUS-CURATOR.md`](../docs/architecture/MODIFICUS-CURATOR.md).
@@ -33,7 +33,7 @@ src/
   config/                         Modificus.Curator.Config   the CuratorConfig schema + defaults (POCO)
   profiles/                       Modificus.Curator.Profiles          profile data + lifecycle + container-based staging
   mods/                           Modificus.Curator.Mods              unified mod repository + version-policy + source models + import
-  integrations/                   Modificus.Curator.Integrations      GitHub Releases client + Nexus v1 client/auth + mod acquisition + update check
+  integrations/                   Modificus.Curator.Integrations      Nexus v1 client/auth + mod acquisition + update check
   steam/                          Modificus.Curator.Steam             Steam/Darktide/Proton discovery + IsGameRunning
   relay-client/                   Modificus.Curator.RelayClient       the launch façade
   launcher/                       Modificus.Curator.Launcher          stub (Steam non-steam-shortcut target placeholder)
@@ -41,7 +41,7 @@ src/
     Modificus.Curator.General.Tests/         xUnit tests for the general library
     Modificus.Curator.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
     Modificus.Curator.Mods.Tests/            xUnit tests for the mod repository + import
-    Modificus.Curator.Integrations.Tests/    xUnit tests for the GitHub Releases client
+    Modificus.Curator.Integrations.Tests/    xUnit tests for the Nexus client + auth + acquisition + update check
     Modificus.Curator.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Modificus.Curator.RelayClient.Tests/     xUnit tests for the launch façade (dual-purpose: dotnet test / dotnet run smoke harness)
     Modificus.Curator.UI.Tests/              xUnit tests for the shell + manage-profiles + mod-list view models

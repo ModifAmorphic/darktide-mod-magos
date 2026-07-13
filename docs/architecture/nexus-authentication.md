@@ -143,12 +143,9 @@ A **separate Integrations dialog** (its own window, launched from an
 Integrations button on the shell, left of the profiles button), not a section
 crammed into the existing Settings window.
 
-**Nexus-only for now; no navigation structure.** The dialog houses just the
-Nexus section. GitHub integration stays config-file-only (the `GitHubConfig`
-PAT and base URL are power-user/dev settings; almost no user needs to
-configure them since the GitHub client works anonymously for public releases,
-so a UI section is not justified). If a future integration ever warrants a UI,
-add tab or sidebar navigation then; do not pre-build it.
+**Nexus-only; no navigation structure.** The dialog houses just the Nexus
+section. If a future integration ever warrants a UI, add tab or sidebar
+navigation then; do not pre-build it.
 
 The Nexus-section layout (operator-approved):
 

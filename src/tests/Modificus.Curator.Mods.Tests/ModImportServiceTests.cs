@@ -570,16 +570,15 @@ public sealed class ModImportServiceTests
         var (containerId, _) = fx.Service.Import(
             sourceDir,
             "WeaponTweaks",
-            new GitHubSource { Owner = "o", Repo = "r" },
+            new NexusSource { ModId = 4242 },
             "v1.2.3");
 
         var reloaded = fx.ReloadRepo();
         var container = reloaded.Get(containerId);
         Assert.NotNull(container);
         Assert.Equal("WeaponTweaks", container!.Name);
-        var gh = Assert.IsType<GitHubSource>(container.Source);
-        Assert.Equal("o", gh.Owner);
-        Assert.Equal("r", gh.Repo);
+        var nexus = Assert.IsType<NexusSource>(container.Source);
+        Assert.Equal(4242, nexus.ModId);
         var version = Assert.Single(container.Versions);
         Assert.Equal("v1.2.3", version.VersionString);
     }

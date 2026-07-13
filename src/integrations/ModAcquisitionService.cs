@@ -223,8 +223,7 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
 
     /// <summary>
     /// Downloads <paramref name="uri"/> to <paramref name="destinationPath"/>
-    /// using the 81920-byte buffered copy pattern from
-    /// <see cref="GitHubClient.DownloadAssetAsync"/>. Reports cumulative bytes to
+    /// using an 81920-byte buffered copy. Reports cumulative bytes to
     /// <paramref name="progress"/> when provided.
     /// </summary>
     private static async Task DownloadToFileAsync(
@@ -260,8 +259,7 @@ internal sealed class ModAcquisitionService : IModAcquisitionService
 
     /// <summary>
     /// Best-effort file delete that swallows I/O errors (the original exception
-    /// is what callers need to see). Mirrors <see cref="GitHubClient"/>'s
-    /// <c>TryDelete</c>.
+    /// is what callers need to see).
     /// </summary>
     private static void TryDelete(string path)
     {

@@ -81,17 +81,6 @@ public sealed class ModRepositoryTests
     }
 
     [Fact]
-    public void FindBySource_finds_GitHub_by_owner_and_repo_ordinal()
-    {
-        using var fx = new RepoFixture();
-        var created = fx.Repo.CreateContainer(new GitHubSource { Owner = "Curator", Repo = "WT" }, "WT");
-
-        Assert.NotNull(fx.Repo.FindBySource(new GitHubSource { Owner = "Curator", Repo = "WT" }));
-        Assert.Null(fx.Repo.FindBySource(new GitHubSource { Owner = "curator", Repo = "WT" })); // ordinal
-        Assert.Null(fx.Repo.FindBySource(new GitHubSource { Owner = "Curator", Repo = "other" }));
-    }
-
-    [Fact]
     public void FindBySource_returns_null_for_Untracked_and_for_unknown_sources()
     {
         // Untracked identity is the container Name; route through FindUntrackedByName.
@@ -642,7 +631,7 @@ public sealed class ModRepositoryTests
     public void Container_manifest_round_trips_through_a_new_repository_instance()
     {
         using var fx = new RepoFixture();
-        var container = fx.Repo.CreateContainer(new GitHubSource { Owner = "o", Repo = "r" }, "WT");
+        var container = fx.Repo.CreateContainer(new NexusSource { ModId = 4242 }, "WT");
         fx.Repo.AddVersion(container.Id, "v1.0", dir =>
         {
             Directory.CreateDirectory(dir);
@@ -651,7 +640,7 @@ public sealed class ModRepositoryTests
 
         var reloaded = fx.Reload();
 
-        var found = reloaded.FindBySource(new GitHubSource { Owner = "o", Repo = "r" });
+        var found = reloaded.FindBySource(new NexusSource { ModId = 4242 });
         Assert.NotNull(found);
         Assert.Equal("WT", found!.Name);
         var version = Assert.Single(found.Versions);
@@ -669,7 +658,7 @@ public sealed class ModRepositoryTests
         using var fx = new RepoFixture();
         var c1 = fx.Repo.CreateContainer(new UntrackedSource(), "A");
         var c2 = fx.Repo.CreateContainer(new NexusSource { ModId = 1 }, "B");
-        var c3 = fx.Repo.CreateContainer(new GitHubSource { Owner = "o", Repo = "r" }, "C");
+        var c3 = fx.Repo.CreateContainer(new NexusSource { ModId = 2 }, "C");
 
         var reloaded = fx.Reload();
 
@@ -703,12 +692,12 @@ public sealed class ModRepositoryTests
     {
         using var fx = new RepoFixture();
         var container = fx.Repo.CreateContainer(
-            new GitHubSource { Owner = "o", Repo = "r" },
+            new NexusSource { ModId = 4242 },
             "WT");
         fx.Repo.AddVersion(container.Id, "1.2", EmptyPopulate);
 
         var raw = File.ReadAllText(fx.ManifestPath(container.Id));
-        Assert.Contains("\"$kind\": \"github\"", raw);
+        Assert.Contains("\"$kind\": \"nexus\"", raw);
         // No BOM.
         var bytes = File.ReadAllBytes(fx.ManifestPath(container.Id));
         Assert.False(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF);

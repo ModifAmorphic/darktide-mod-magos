@@ -91,9 +91,9 @@ public interface IDialogService
 
     /// <summary>
     /// Opens the Integrations modal (Nexus auth: OAuth login + API-key validate
-    /// + sign-out). Nexus-only in v1; GitHub stays config-file-only. Each auth
-    /// action applies + persists immediately through <see cref="Integrations"/>'s
-    /// <c>NexusAuthService</c>; on completion the caller has nothing to do.
+    /// + sign-out). Nexus-only. Each auth action applies + persists immediately
+    /// through <see cref="Integrations"/>'s <c>NexusAuthService</c>; on
+    /// completion the caller has nothing to do.
     /// </summary>
     Task ShowIntegrationsAsync();
 

@@ -1,87 +1,8 @@
 # Integrations (`Modificus.Curator.Integrations`) -- reference
 
-> External mod-source clients: a read-only GitHub Releases client, the Nexus
-> Mods v1 client + OAuth/API-key auth machinery, a download + extract + place
-> mod acquisition service, and a Nexus-only update-check service that flags
-> mods whose imported version predates a newer Nexus file release.
-
-## GitHub client
-
-### `IGitHubClient`
-
-A read-only GitHub Releases client over the GitHub REST API.
-
-```csharp
-public interface IGitHubClient
-{
-    IReadOnlyList<GitHubRelease> ListReleases(GitHubRepo repo, CancellationToken ct = default);
-    GitHubRelease? GetLatestRelease(GitHubRepo repo, CancellationToken ct = default);
-    Task DownloadAssetAsync(
-        GitHubReleaseAsset asset,
-        string destinationPath,
-        IProgress<long>? progress = null,
-        CancellationToken ct = default);
-}
-```
-
-- `ListReleases(repo, ct)` -- a repository's published releases, newest first (per
-  the GitHub API). A `404` (unknown repo) yields an **empty list**, not an
-  exception. Returns up to GitHub's default page size (~30); pagination is out
-  of v1. Throws `GitHubApiException` on any other non-2xx;
-  `GitHubRateLimitException` when the rate limit is exhausted.
-- `GetLatestRelease(repo, ct)` -- the latest published release, or `null` if the
-  repo has no releases or is unknown (both surface as `404`). Same exception
-  behavior as `ListReleases`.
-- `DownloadAssetAsync(asset, destinationPath, progress, ct)` -- downloads the
-  asset's bytes to `destinationPath`, reporting cumulative byte count to
-  `progress` when provided. The destination's parent directory is created if
-  missing. Throws `GitHubApiException` on a non-2xx (e.g. a stale asset URL);
-  `GitHubRateLimitException` when rate-limited.
-
-`ListReleases` / `GetLatestRelease` are synchronous (fully-materialized results --
-the simple surface callers want); `DownloadAssetAsync` is async (it's a
-file download).
-
-### Key GitHub types
-
-```csharp
-public sealed record GitHubRepo(string Owner, string Name);
-public sealed record GitHubRelease(
-    string TagName,
-    string Name,
-    DateTimeOffset PublishedAt,
-    IReadOnlyList<GitHubReleaseAsset> Assets);
-public sealed record GitHubReleaseAsset(string Name, long Size, Uri BrowserDownloadUrl);
-```
-
-- `GitHubRepo` -- repo identity. e.g. `new GitHubRepo("Darktide-Mod-Framework", "DMF")`.
-- `GitHubRelease` -- a published release: tag, display name, publish time, assets.
-- `GitHubReleaseAsset` -- a downloadable asset. `BrowserDownloadUrl` is the
-  absolute URL served (and streamable) by GitHub's CDN.
-
-### Typed GitHub exceptions
-
-```csharp
-public class GitHubApiException : Exception            // unsealed
-{
-    public int StatusCode { get; }
-    public GitHubApiException(int statusCode, string message);
-}
-
-public sealed class GitHubRateLimitException : GitHubApiException
-{
-    public DateTimeOffset? ResetAt { get; }   // from X-RateLimit-Reset, or null
-}
-```
-
-- `GitHubApiException` -- a non-success response (other than the `404` cases the
-  client maps to `null`/empty). Carries the HTTP status + the API's `message`
-  field. Unsealed so callers can catch the base type to handle every GitHub API
-  failure uniformly.
-- `GitHubRateLimitException` -- the rate limit is exhausted, detected via a
-  `403`/`429` carrying `X-RateLimit-Remaining: 0`. Carries the reset time
-  (`X-RateLimit-Reset`) when GitHub reports it, so callers can advise when to
-  retry. `StatusCode` reflects the actual response status (403 or 429).
+> The Nexus Mods v1 client + OAuth/API-key auth machinery, a download + extract
+> + place mod acquisition service, and a Nexus-only update-check service that
+> flags mods whose imported version predates a newer Nexus file release.
 
 ## Nexus client + auth
 
@@ -317,8 +238,7 @@ public interface IModAcquisitionService
 
 - `AcquireFromNexusAsync`: downloads a Nexus mod file, extracts it into the
   repository via `IModImportService.Import`, and returns the
-  `(containerId, versionId)`. The caller handles profile registration. The
-  interface accommodates GitHub later; only the Nexus method is implemented.
+  `(containerId, versionId)`. The caller handles profile registration.
 - `AcquireLatestNexusAsync`: resolves the mod's newest non-archived MAIN file
   (category_id 1) via `ListModFilesAsync`, then delegates to
   `AcquireFromNexusAsync` with the resolved `fileId` + null nxm key/expires (the
@@ -354,7 +274,7 @@ affordance).
    (`Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() +
    Path.GetExtension(fileName))`) using a plain `HttpClient` from
    `IHttpClientFactory` + the 81920-byte buffered copy + `IProgress<long>`
-   pattern from `GitHubClient.DownloadAssetAsync`. The real file extension (from
+   pattern. The real file extension (from
    the matched `ModFile.FileName`) is preserved on the temp file for log
    clarity; archive detection is content-based (magic bytes), so the extension
    is cosmetic. The temp file is deleted once Import returns (always, success or
@@ -429,9 +349,8 @@ differ only in the result's `Thorough` flag. The same batch query also carries
 the current Nexus mod `name` for every id sent, so the check syncs each
 container's display name to its current Nexus name at zero extra API cost (this
 covers EVERY Nexus-sourced mod, Latest AND Pinned; the Nexus name wins, identity
-`Id` is unchanged). GitHub is out of scope (no GitHub code paths anywhere);
-`PinnedPolicy` mods are never flagged (only `LatestPolicy` + `NexusSource` are
-flagged), `UntrackedSource` and `GitHubSource` mods are not queried.
+`Id` is unchanged). `PinnedPolicy` mods are never flagged (only `LatestPolicy`
++ `NexusSource` are flagged), and `UntrackedSource` mods are not queried.
 
 ```csharp
 public interface IUpdateCheckService
@@ -516,8 +435,8 @@ the `Thorough` flag on the result).
 2. **Profile mods.** `IProfileService.GetModList(profileId)` -> the entries.
 3. **Enumerate the Nexus subset.** For each entry, resolve the container via
    `IModRepository.Get`. Keep every `NexusSource` entry (Latest AND Pinned).
-   Skip `UntrackedSource` + `GitHubSource`. Derive a `checkable` subset filtered
-   to `LatestPolicy` (the flag logic is scoped to it; Pinned mods are frozen
+   Skip `UntrackedSource`. Derive a `checkable` subset filtered to
+   `LatestPolicy` (the flag logic is scoped to it; Pinned mods are frozen
    version-wise and never flagged). If no Nexus mods at all -> empty result (API
    not called). A profile with only Pinned Nexus mods still runs the batch (for
    the name sync).
@@ -632,7 +551,7 @@ update flags.
 public static IServiceCollection AddIntegrations(this IServiceCollection services);
 ```
 
-Registers (alongside the existing GitHub typed HTTP client):
+Registers:
 
 - `INexusClient` → `NexusClient` as a **typed HTTP client** via
   `AddHttpClient<INexusClient, NexusClient>`, configured from
@@ -667,7 +586,7 @@ view. No construction-time cycle.
 
 ## Dependencies
 
-- **Curator libraries:** `config` (`CuratorConfig.Integrations.Nexus` + `.GitHub`),
+- **Curator libraries:** `config` (`CuratorConfig.Integrations.Nexus`),
   `general` (`IConfigLoader`), `mods` (`IModImportService`, `NexusSource`,
   `IModRepository` / `ModContainer` / `ModVersion` for the acquisition +
   update-check services), `profiles` (`IProfileService` for the update-check
@@ -685,12 +604,9 @@ view. No construction-time cycle.
 
 `Modificus.Curator.Integrations.Tests` covers:
 
-- **`GitHubClient`** against a fake `HttpMessageHandler` (`StubHttpMessageHandler`)
-  -- list/latest/download happy paths, `404`→empty/`null`, non-2xx →
-  `GitHubApiException`, rate-limit → `GitHubRateLimitException`.
-- **`NexusClient`** against the same fake handler -- v1 endpoint paths, response
-  parsing, rate-limit header parsing, error mapping, the auth gate, and the
-  401-retry-after-refresh path.
+- **`NexusClient`** against a fake `HttpMessageHandler` (`StubHttpMessageHandler`)
+  -- v1 endpoint paths, response parsing, rate-limit header parsing, error
+  mapping, the auth gate, and the 401-retry-after-refresh path.
 - **Auth message factories** -- `ApiKeyMessageFactory` adds the `apikey` header;
   `OAuth2MessageFactory` adds `Authorization: Bearer` + refreshes on 401 (via a
   fake `INexusTokenStore`); the selector picks the right one based on the live
@@ -704,9 +620,8 @@ view. No construction-time cycle.
   binds an ephemeral loopback port; an `HttpClient` simulates the browser
   redirect; the listener returns the callback query string; the friendly HTML
   response is served.
-- **`AddIntegrations`** DI wiring (the existing GitHub suite + the new Nexus
-  client + auth factory resolution + the acquisition service + the update-check
-  service).
+- **`AddIntegrations`** DI wiring (the Nexus client + auth factory resolution +
+  the acquisition service + the update-check service).
 - **`ModAcquisitionService`** against a fake `INexusClient` + a fake
   `IModImportService` + a stub HTTP handler for the CDN download: premium vs
   free-user overload selection, first-CDN-link use, metadata resolution (name +
@@ -718,7 +633,7 @@ view. No construction-time cycle.
 - **`UpdateCheckService`** against a fake `INexusClient` + a fake
   `IProfileService` + a fake `IModRepository` + the `FakeConfigLoader`: correct
   flagging (`viewerUpdateAvailable == true` flags, `false` + `null` do not),
-  `PinnedPolicy` (flag-wise) / `UntrackedSource` / `GitHubSource` skipping,
+  `PinnedPolicy` (flag-wise) / `UntrackedSource` skipping,
   no-auth short-circuit (no API call), no-Nexus-mods short-circuit,
   rate-limit guard (the `> 0` guard prevents a false positive on `NexusRateLimits.Unknown`,
   symmetric daily + hourly paths, + `NexusRateLimitException` surfacing),
@@ -758,7 +673,7 @@ dotnet test src/modificus-curator.sln -c Release
   section + the
   [Nexus authentication](../architecture/MODIFICUS-CURATOR.md#nexus-authentication)
   subsection.
-- [config](config.md) -- the `GitHubConfig` + `NexusConfig` schemas.
+- [config](config.md) -- the `NexusConfig` schema.
 - [nxm](nxm.md) -- the `nxm://` scheme handler, including the no-op default
   handler seam that the real `NxmModDownloadHandler` supersedes via DI
   last-registration-wins.
