@@ -15,8 +15,8 @@
 
   <!--
     The first-run Welcome modal. Custom chrome (DialogTitleBar) mirrors the
-    other modals. The content is a compact intro + three capability bullets,
-    each marked with a drawn Ellipse (no Unicode bullet glyphs, per AGENTS.md),
+    other modals. The content is a compact Nexus-focused intro + three setup
+    bullets, each marked with a drawn Ellipse (no Unicode bullet glyphs, per AGENTS.md),
     then two explicit actions: the accent primary "Set up Nexus" (opens the
     Integrations dialog after this window closes) and a secondary "Continue
     without Nexus". ESC, the title-bar close button, and a window close are all
@@ -36,7 +36,7 @@
           <TextBlock Text="{ReflectionBinding [Welcome_Intro], Source={StaticResource Loc}}"
                      TextWrapping="Wrap" />
 
-          <!-- Capability bullets: drawn Ellipse markers, never Unicode glyphs. -->
+          <!-- Setup bullets: drawn Ellipse markers, never Unicode glyphs. -->
           <StackPanel Spacing="8">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Ellipse Width="6" Height="6"

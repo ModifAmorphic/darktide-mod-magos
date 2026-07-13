@@ -418,11 +418,12 @@ apply.
 
 The first-run Welcome coordinator shows a compact modal over the main window the
 first time the app starts with `IAppStateStore.OnboardingCompleted` still
-`false`. It introduces Curator's three capabilities in user-facing prose
-(profile-based mod management, checking installed mods for updates, and handling
-Nexus "Download with manager" links), and offers two explicit actions: an accent
-"Set up Nexus" button and a secondary "Continue without Nexus" button. ESC, the
-title-bar close button, and a window close are all equivalent to Continue.
+`false`. It explains that Nexus setup is optional, describes the update-check,
+download-link, and Premium in-app update capabilities it enables, and summarizes
+the sign-in/API-key plus download-link settings available in Integrations. It
+offers two explicit actions: an accent "Set up Nexus" button and a secondary
+"Continue without Nexus" button. ESC, the title-bar close button, and a window
+close are all equivalent to Continue.
 
 `ShowWelcomeIfFirstRunAsync` is a one-shot: it reads the persisted flag (and an
 in-process guard) and no-ops when onboarding is already complete. On either

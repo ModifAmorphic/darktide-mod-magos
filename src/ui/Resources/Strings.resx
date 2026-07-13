@@ -972,20 +972,22 @@
     <comment>Title of the first-run Welcome window.</comment>
   </data>
   <data name="Welcome_Intro" xml:space="preserve">
-    <value>Curator organizes your Darktide mods into separate profiles and keeps them up to date.</value>
-    <comment>Intro paragraph in the Welcome window. Concise user-facing prose.</comment>
+    <value>Curator works without a Nexus connection, but connecting Nexus enables its most useful online features.
+
+Set up Nexus to check your installed mods for updates and enable download links on NexusMods.com that send mods directly to Curator. Nexus Premium members can also install updates from within the app.</value>
+    <comment>Intro in the Welcome window. Explains why Nexus setup is useful while making clear that it is optional.</comment>
   </data>
   <data name="Welcome_CapabilityProfiles" xml:space="preserve">
-    <value>Organize mods across separate profiles</value>
-    <comment>Bullet: profile-based mod management capability.</comment>
+    <value>Connect using Nexus sign-in or an API key</value>
+    <comment>Bullet: the two supported ways to connect Curator to Nexus.</comment>
   </data>
   <data name="Welcome_CapabilityUpdates" xml:space="preserve">
-    <value>Check your installed mods for updates</value>
-    <comment>Bullet: Nexus update-check capability.</comment>
+    <value>Enable Nexus download links so manager downloads open in Curator</value>
+    <comment>Bullet: the Nexus download-link setting available in Integrations.</comment>
   </data>
   <data name="Welcome_CapabilityNxm" xml:space="preserve">
-    <value>Use Nexus "Download with manager" links directly</value>
-    <comment>Bullet: nxm download-link handling capability.</comment>
+    <value>Change these options at any time from Integrations</value>
+    <comment>Bullet: reassures the user that onboarding choices are not permanent.</comment>
   </data>
   <data name="Welcome_SetUpNexus" xml:space="preserve">
     <value>Set up Nexus</value>
