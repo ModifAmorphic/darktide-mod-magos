@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.10.0...v0.10.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **mods:** remove GitHub source support ([#104](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/104)) ([c7538fe](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/c7538fe3948932e14a34cfd9dabf15093dbd7c5b))
+
 ## [0.10.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.9.1...v0.10.0) (2026-07-13)
 
 
