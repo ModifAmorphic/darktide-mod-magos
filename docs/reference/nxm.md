@@ -306,6 +306,7 @@ public interface INxmHandlerRegistrar
     bool IsRegistered();
     void Register();
     void Unregister();
+    void MaintainRegistration();
 }
 ```
 
@@ -328,7 +329,21 @@ DI registration time (mirroring `IPlatformLaunchStrategy`, `IProcessLookup`, and
   `xdg-mime` invocation is best-effort: if the tool is absent, the `.desktop`
   file is still the registration, and the failure is logged, not thrown.
   `IsRegistered` requires both the file present and `xdg-mime query` reporting
-  our handler as the default.
+  our handler as the default. In a standalone run, the desktop Exec points at
+  the packaged sibling handler. In an AppImage run, registration atomically
+  copies that handler to `<local-data>/Modificus Curator/nxm-handler/`, gives it
+  owner-only executable permissions, creates a sibling `Modificus.Curator`
+  symlink to the validated absolute `$APPIMAGE` path, and records the persistent
+  copied handler in Exec. `Unregister` removes only those exact managed files
+  and removes the managed directory only when empty; it never follows the
+  symlink or recursively deletes unexpected content.
+
+`MaintainRegistration()` is a no-op on Windows and standalone Linux. In an
+AppImage run it refreshes changed handler bytes and a stale AppImage symlink
+only after proving Curator owns the active registration: the desktop file must
+exist and `xdg-mime query default x-scheme-handler/nxm` must return Curator's
+exact desktop id. It never creates the desktop file, calls `xdg-mime default`,
+or replaces another manager's association. Failures are logged and swallowed.
 
 The handler-exe path is derived from `AppContext.BaseDirectory` plus the fixed
 handler assembly name via `NxmHandlerPaths.GetHandlerExePath()` (the handler ships
@@ -342,7 +357,9 @@ OS `nxm://` handler is an explicit user action from the Integrations dialog (a
 (it is a system-wide change that can affect Vortex, Mod Organizer 2, Nexus Mod
 Manager, or other mod managers); the unregister path only releases Curator's
 own registration (it re-checks `IsRegistered()` before `Unregister()`). The
-composition root never calls the registrar; it is resolved lazily by the
+composition root never calls `Register()` automatically. It does call
+`MaintainRegistration()` once after the fatal single-instance check succeeds;
+that operation cannot claim ownership. The registrar is also resolved by the
 Integrations view model and the shell status strip.
 
 ## DI registration
@@ -390,13 +407,17 @@ The composition root binds and starts the IPC server after building the provider
    exit is safe because nothing is initialized at that point (no window, no
    background tasks; the single-instance check runs first in `Bind`, before the
    pipe or accept loop).
+5. After `StartNxmServer` returns, the composition root calls the best-effort
+   registration-maintenance hook. A single-instance exception bypasses this
+   call. A degraded pipe bind still returns normally, so maintenance can repair
+   an existing AppImage registration even when IPC is unavailable this session.
 
 On a degraded pipe bind, `StartNxmServer` logs that the IPC server is not running
 and skips the accept loop; the app continues without nxm IPC.
 
 The composition root does **not** register the OS handler. Registration is an
-explicit user action from the Integrations dialog (the `INxmHandlerRegistrar`
-is resolved lazily there + by the shell status strip, never at startup).
+explicit user action from the Integrations dialog. Startup only maintains an
+already-owned AppImage registration.
 
 ## On-disk / process layout
 
@@ -466,7 +487,11 @@ Process model:
   non-zero without retrying).
 - **`LinuxNxmHandlerRegistrar`** (Linux-gated): Register writes the `.desktop`
   file with the expected content; `IsRegistered` reflects the faked `xdg-mime`;
-  `Unregister` removes the file; a missing `xdg-mime` is tolerated.
+  standalone registration stays direct; AppImage registration copies the
+  executable handler and creates the cold-start symlink; maintenance is
+  ownership-gated and atomically refreshes changed bytes and moved-AppImage
+  links; conservative unregister preserves unexpected files and the AppImage
+  target; a missing `xdg-mime` is tolerated.
 - **`AddNxm`** (service collection): the no-op mod-download default, router,
   server, and the platform registrar are registered; the override
   (last-registration-wins) convention is exercised for the mod-download handler.

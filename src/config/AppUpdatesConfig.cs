@@ -21,7 +21,8 @@ public sealed class AppUpdatesConfig
 
     /// <summary>
     /// Optional override for the Velopack update source: a local directory path
-    /// (containing a <c>releases.win.json</c> feed) or a URL. <c>null</c> (the
+    /// (containing the running Velopack package's channel feed) or a URL.
+    /// <c>null</c> (the
     /// default) uses the production GitHub Releases source. Used for local update
     /// testing and for self-hosted update feeds; set it in <c>config.json</c>
     /// under <c>AppUpdates</c>. Read once at <c>VelopackAppUpdateService</c>

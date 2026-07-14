@@ -1495,9 +1495,15 @@ internal sealed class FakeNxmHandlerRegistrar : INxmHandlerRegistrar
     /// recorded) so tests can exercise the unregister-failure path.</summary>
     public Exception? ThrowOnUnregister { get; set; }
 
+    /// <summary>When set, thrown from <see cref="MaintainRegistration"/> (after
+    /// the call is recorded) so tests can exercise the maintenance-failure
+    /// path.</summary>
+    public Exception? ThrowOnMaintain { get; set; }
+
     public int IsRegisteredCalls { get; private set; }
     public int RegisterCalls { get; private set; }
     public int UnregisterCalls { get; private set; }
+    public int MaintainCalls { get; private set; }
 
     public bool IsRegistered()
     {
@@ -1523,6 +1529,15 @@ internal sealed class FakeNxmHandlerRegistrar : INxmHandlerRegistrar
             throw ThrowOnUnregister;
         }
         Registered = false;
+    }
+
+    public void MaintainRegistration()
+    {
+        MaintainCalls++;
+        if (ThrowOnMaintain is not null)
+        {
+            throw ThrowOnMaintain;
+        }
     }
 }
 

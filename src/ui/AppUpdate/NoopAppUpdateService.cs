@@ -2,9 +2,10 @@ namespace Modificus.Curator.UI.AppUpdate;
 
 /// <summary>
 /// The no-op <see cref="IAppUpdateService"/> registered when
-/// <c>CURATOR_VELOPACK</c> is not defined (Linux builds, and Windows dev builds
-/// published without <c>CuratorUseVelopack=true</c>). Every member returns the
-/// neutral value: <see cref="IsUpdateSupported"/> is <c>false</c>,
+/// <c>CURATOR_VELOPACK</c> is not defined (non-Velopack builds: the standalone
+/// Linux tarball, and dev builds published without
+/// <c>CuratorUseVelopack=true</c>). Every member returns the neutral value:
+/// <see cref="IsUpdateSupported"/> is <c>false</c>,
 /// <see cref="CurrentVersion"/>, <see cref="LastCheckResult"/>, and
 /// <see cref="UpdatePendingRestart"/> are <c>null</c>, the check returns a
 /// completed <c>null</c> task, and <see cref="ApplyUpdatesAndRestart"/> is a

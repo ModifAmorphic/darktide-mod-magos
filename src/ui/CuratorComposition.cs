@@ -219,18 +219,18 @@ public static class CuratorComposition
             sp.GetRequiredService<ILogger<UpdateCheckRunner>>(),
             StartUpdateCheckPolling));
 
-        // The Curator self-update service (Velopack on Windows). Conditional on
-        // CURATOR_VELOPACK: a packaged Windows build gets the real
-        // VelopackAppUpdateService; everything else (Linux, dev builds without
-        // CuratorUseVelopack=true) gets the no-op implementation that reports
-        // IsUpdateSupported=false. Consumers talk to IAppUpdateService
-        // unconditionally and gate their affordances on IsUpdateSupported. The
-        // Velopack impl resolves IConfigLoader so it can read
-        // CuratorConfig.AppUpdates.SourceOverride once at construction: null
-        // (the default) builds the production anonymous GithubSource; a set
-        // value (a local directory path or URL) builds the manager from
-        // UpdateManager's urlOrPath overload, the local-testing / self-hosted
-        // feed path with no code change.
+        // The Curator self-update service (Velopack). Conditional on
+        // CURATOR_VELOPACK: a Velopack-packaged build (Windows install or Linux
+        // AppImage) gets the real VelopackAppUpdateService; everything else
+        // (standalone Linux, dev builds without CuratorUseVelopack=true) gets
+        // the no-op implementation that reports IsUpdateSupported=false.
+        // Consumers talk to IAppUpdateService unconditionally and gate their
+        // affordances on IsUpdateSupported. The Velopack impl resolves
+        // IConfigLoader so it can read CuratorConfig.AppUpdates.SourceOverride
+        // once at construction: null (the default) builds the production
+        // anonymous GithubSource; a set value (a local directory path or URL)
+        // builds the manager from UpdateManager's urlOrPath overload, the
+        // local-testing / self-hosted feed path with no code change.
 #if CURATOR_VELOPACK
         services.AddSingleton<IAppUpdateService>(sp => new VelopackAppUpdateService(
             sp.GetRequiredService<IConfigLoader>(),
@@ -315,6 +315,17 @@ public static class CuratorComposition
         // + discovery above): a single-instance violation is fatal-by-design for
         // this process. The pipe-bind degradation is handled inside Bind itself.
         StartNxmServer(provider, loggerFactory.CreateLogger(nameof(CuratorComposition)));
+
+        // Maintain the nxm handler registration AFTER StartNxmServer returns.
+        // StartNxmServer returns both on a successful pipe bind AND on a degraded
+        // bind (IOException swallowed inside Bind), so maintenance runs in either
+        // non-fatal case. A NxmSingleInstanceException propagates out of
+        // StartNxmServer (and out of Build) without reaching this call, so a
+        // single-instance violation never triggers maintenance. Best-effort:
+        // failures are logged + swallowed so maintenance never blocks startup.
+        // On Linux AppImage runs this refreshes the durable handler copy + the
+        // AppImage symlink; everywhere else it is a no-op.
+        MaintainNxmRegistration(provider, loggerFactory);
 
         // Start the update-check runner so a check fires on profile load
         // (startup with the restored id + active-profile switches).
@@ -545,5 +556,46 @@ public static class CuratorComposition
         });
 
         logger.LogInformation("nxm IPC server accept loop started.");
+    }
+
+    /// <summary>
+    /// Calls <see cref="INxmHandlerRegistrar.MaintainRegistration"/> once after
+    /// <see cref="StartNxmServer"/> has returned, so the fatal process-
+    /// enumeration single-instance check has already succeeded. Best-effort: any
+    /// failure is logged + swallowed so maintenance never blocks app startup.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why after StartNxmServer.</b> <see cref="StartNxmServer"/> calls
+    /// <see cref="NxmIpcServer.Bind"/>, which runs the single-instance guard
+    /// first (throws <see cref="NxmSingleInstanceException"/> on collision,
+    /// propagating out of <see cref="Build"/> before this method is reached) and
+    /// the pipe bind second (degrades gracefully on <see cref="IOException"/>).
+    /// So when this method runs, either the pipe bound or it degraded; both are
+    /// non-fatal and maintenance is safe in either case. A single-instance
+    /// violation never reaches here.</para>
+    /// <para>
+    /// <b>Why GetService (optional).</b> On unsupported platforms (not Windows
+    /// or Linux) no registrar is registered; maintenance is silently skipped
+    /// there. The registrar's own <see cref="INxmHandlerRegistrar.MaintainRegistration"/>
+    /// is a no-op when there is nothing to maintain (Windows, standalone
+    /// Linux).</para>
+    /// </remarks>
+    private static void MaintainNxmRegistration(IServiceProvider provider, ILoggerFactory loggerFactory)
+    {
+        try
+        {
+            // Optional: null on platforms with no registrar (not Windows or
+            // Linux). The registrar's own method is a no-op when there is
+            // nothing to maintain, so this call is safe unconditionally.
+            provider.GetService<INxmHandlerRegistrar>()?.MaintainRegistration();
+        }
+        catch (Exception ex)
+        {
+            // Swallow: maintenance is best-effort. Log + continue; the app works
+            // without it (the next startup retries).
+            loggerFactory.CreateLogger(nameof(CuratorComposition))
+                .LogWarning(ex, "nxm handler registration maintenance failed (best-effort).");
+        }
     }
 }

@@ -193,7 +193,10 @@ the platform implementations.
   (`modificus-curator-nxm-handler.desktop`, under the `applications/` subdirectory of the
   local data dir) with `Exec="<handler-exe>" %u` and
   `MimeType=x-scheme-handler/nxm;`, plus a best-effort `xdg-mime default` to
-  set it as the default for `x-scheme-handler/nxm`.
+  set it as the default for `x-scheme-handler/nxm`. In an AppImage run, Curator
+  atomically copies the native-AOT handler to its per-user data directory and
+  creates a sibling symlink to the AppImage, so the persistent desktop entry
+  never points into a temporary mount.
 - **Windows** writes `HKCU\Software\Classes\nxm` (per-user, no elevation) with
   the handler exe as the `shell\open\command`.
 

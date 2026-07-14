@@ -108,3 +108,154 @@ jobs:
 
       - name: Test (Release)
         run: dotnet test modificus-curator.sln --configuration Release --no-build --logger trx
+
+  appimage-packaging-smoke:
+    name: appimage-packaging-smoke
+    runs-on: ubuntu-22.04
+    needs: format
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install native AOT/AppImage prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev squashfs-tools
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore modificus-curator.sln
+
+      - name: Build (Release)
+        run: dotnet build modificus-curator.sln --configuration Release --no-restore
+
+      - name: Publish Curator UI (AppImage, self-contained)
+        run: |
+          dotnet publish ui --configuration Release --runtime linux-x64 --self-contained true --output stage/appimage \
+            -p:Version="0.0.1" -p:InformationalVersion="0.0.1" -p:CuratorUseVelopack=true
+
+      - name: Publish NXM handler (AOT linux-x64)
+        run: dotnet publish nxm-handler --configuration Release --runtime linux-x64 --output stage/appimage
+
+      - name: Stage relay fixture
+        run: |
+          mkdir -p stage/appimage/relay
+          printf 'AppImage smoke test relay fixture\n' > stage/appimage/relay/modificus_relay.exe
+
+      - name: Install vpk 1.2.0 (job-local)
+        run: |
+          dotnet tool install vpk --version 1.2.0 --tool-path .vpk-temp
+
+      - name: Pack AppImage
+        run: |
+          .vpk-temp/vpk pack \
+            --packId ModifAmorphic.ModificusCurator \
+            --packVersion "0.0.1" \
+            --packDir stage/appimage \
+            --mainExe Modificus.Curator \
+            --icon ui/Assets/app-icon.png \
+            --packTitle "Modificus Curator" \
+            --categories "Game;Utility" \
+            --channel linux-x64 \
+            --runtime linux-x64 \
+            --compression gzip \
+            -o stage/releases
+
+      - name: Rename AppImage to short asset name
+        run: |
+          cd stage/releases
+          mv ModifAmorphic.ModificusCurator-linux-x64.AppImage ModificusCurator-linux-x64.AppImage
+          [ -f ModifAmorphic.ModificusCurator-linux-x64.AppImage ] && { echo "FAIL: long AppImage still exists after rename"; exit 1; }
+          [ -f ModificusCurator-linux-x64.AppImage ] || { echo "FAIL: short AppImage does not exist after rename"; exit 1; }
+          [ -x ModificusCurator-linux-x64.AppImage ] || { echo "FAIL: short AppImage not executable after rename"; exit 1; }
+          echo "AppImage renamed successfully"
+
+      - name: Extract AppImage (no FUSE)
+        run: |
+          cd stage/releases
+          chmod +x ModificusCurator-linux-x64.AppImage
+          ./ModificusCurator-linux-x64.AppImage --appimage-extract
+
+      - name: Assert AppImage structure
+        run: |
+          root="stage/releases/squashfs-root"
+          # Required files
+          [ -f "$root/ModifAmorphic.ModificusCurator.desktop" ] || { echo "FAIL: missing desktop file"; exit 1; }
+          [ -f "$root/ModifAmorphic.ModificusCurator.png" ] || { echo "FAIL: missing icon"; exit 1; }
+          [ -f "$root/.DirIcon" ] || { echo "FAIL: missing .DirIcon"; exit 1; }
+          [ -f "$root/usr/bin/Modificus.Curator" ] || { echo "FAIL: missing main exe"; exit 1; }
+          [ -f "$root/usr/bin/Modificus.Curator.NxmHandler" ] || { echo "FAIL: missing NXM handler"; exit 1; }
+          [ -f "$root/usr/bin/relay/modificus_relay.exe" ] || { echo "FAIL: missing relay"; exit 1; }
+          [ -f "$root/usr/bin/UpdateNix" ] || { echo "FAIL: missing UpdateNix"; exit 1; }
+          [ -f "$root/usr/bin/sq.version" ] || { echo "FAIL: missing sq.version"; exit 1; }
+          [ -f "$root/AppRun" ] || { echo "FAIL: missing AppRun wrapper"; exit 1; }
+          # Executable modes
+          [ -x "$root/usr/bin/Modificus.Curator" ] || { echo "FAIL: main exe not executable"; exit 1; }
+          [ -x "$root/usr/bin/Modificus.Curator.NxmHandler" ] || { echo "FAIL: NXM handler not executable"; exit 1; }
+          [ -x "$root/usr/bin/UpdateNix" ] || { echo "FAIL: UpdateNix not executable"; exit 1; }
+          [ -x "$root/AppRun" ] || { echo "FAIL: AppRun not executable"; exit 1; }
+          echo "AppImage structure validated"
+
+      - name: Validate releases.linux-x64.json
+        run: |
+          set -euo pipefail
+          feed="stage/releases/releases.linux-x64.json"
+          full_pkg="stage/releases/ModifAmorphic.ModificusCurator-0.0.1-linux-x64-full.nupkg"
+
+          [ -f "$feed" ] || { echo "FAIL: missing feed"; exit 1; }
+          [ -f "$full_pkg" ] || { echo "FAIL: missing full package"; exit 1; }
+
+          # Get actual package metadata
+          actual_size=$(stat -c%s "$full_pkg")
+          actual_sha1=$(sha1sum "$full_pkg" | cut -d' ' -f1)
+          actual_sha256=$(sha256sum "$full_pkg" | cut -d' ' -f1)
+
+          # Velopack 1.2.0 schema: {"Assets":[{"PackageId":"...","Version":"...","Type":"Full","FileName":"...","SHA1":"...","SHA256":"...","Size":...}]}
+          # Require exactly one Assets[] entry for Version 0.0.1, Type Full, PackageId ModifAmorphic.ModificusCurator
+          ASSET_COUNT=$(jq '[.Assets[] | select(.Version == "0.0.1") | select(.Type == "Full") | select(.PackageId == "ModifAmorphic.ModificusCurator")] | length' "$feed")
+          if [ "$ASSET_COUNT" -ne 1 ]; then
+            echo "FAIL: expected exactly 1 Full asset for Version 0.0.1, found $ASSET_COUNT"
+            exit 1
+          fi
+
+          # Extract feed metadata
+          feed_filename=$(jq -r '.Assets[] | select(.Version == "0.0.1") | select(.Type == "Full") | .FileName' "$feed")
+          feed_size=$(jq -r '.Assets[] | select(.Version == "0.0.1") | select(.Type == "Full") | .Size' "$feed")
+          feed_sha1=$(jq -r '.Assets[] | select(.Version == "0.0.1") | select(.Type == "Full") | .SHA1' "$feed")
+          feed_sha256=$(jq -r '.Assets[] | select(.Version == "0.0.1") | select(.Type == "Full") | .SHA256' "$feed")
+
+          # Channel validation: exact feed filename "releases.linux-x64.json" plus exact "-linux-x64-" package filename
+          [ "$feed_filename" = "ModifAmorphic.ModificusCurator-0.0.1-linux-x64-full.nupkg" ] || { echo "FAIL: unexpected FileName: $feed_filename"; exit 1; }
+
+          # Verify feed size matches actual size (both as integers)
+          [ "$feed_size" -eq "$actual_size" ] || { echo "FAIL: size mismatch: feed=$feed_size, actual=$actual_size"; exit 1; }
+
+          # Verify SHA1 checksum matches (normalize to lowercase)
+          [ "${feed_sha1,,}" = "${actual_sha1,,}" ] || { echo "FAIL: SHA1 mismatch: feed=${feed_sha1,,}, actual=${actual_sha1,,}"; exit 1; }
+
+          # Verify SHA256 checksum matches (normalize to lowercase)
+          [ "${feed_sha256,,}" = "${actual_sha256,,}" ] || { echo "FAIL: SHA256 mismatch: feed=${feed_sha256,,}, actual=${actual_sha256,,}"; exit 1; }
+
+          echo "Feed validated: filename, size, SHA1, SHA256 all verified"
+
+      - name: Run AppImage installer tests
+        run: |
+          sh ../scripts/test-install-appimage.sh
+
+      - name: Run AppImage uninstaller tests
+        run: |
+          sh ../scripts/test-uninstall-appimage.sh

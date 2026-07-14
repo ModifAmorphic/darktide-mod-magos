@@ -73,36 +73,62 @@ opens Curator directly.
 > The installer is not code-signed yet, so Windows SmartScreen may warn on the
 > first run. Choose **More info** > **Run anyway** to continue.
 
-Curator checks for new versions on startup and can update itself in place.
-When one is available, a notice appears in the bottom status strip and the
-**Settings** window's **Updates** section lets you download and restart into
-the new version, so you never need to re-run the installer to stay current.
-(This is Windows-only; on Linux, re-run the install script to update.
-The portable Windows build does not support in-app self-update.)
+Velopack-installed builds check for new versions on startup and can update
+themselves in place. When one is available, a notice appears in the bottom
+status strip and the **Settings** window's **Updates** section lets you download
+and restart into the new version. This applies to the Windows installer and the
+Linux AppImage. The portable Windows and standalone Linux builds do not support
+in-app self-update.
 
 ### Linux
 
-Curator needs the **.NET 10 Runtime**. If it is not already installed, get it
-from <https://dotnet.microsoft.com/download/dotnet/10.0>.
+**Recommended AppImage:** The AppImage includes .NET 10, adds a desktop entry
+and icon, and supports Curator's in-app Download and Restart updates.
 
-One line, installs the latest stable release:
+Install the latest stable AppImage:
+
+```sh
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install-appimage.sh | sh
+```
+
+Install the latest prerelease AppImage:
+
+```sh
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install-appimage.sh | sh -s -- --prerelease
+```
+
+The installer resolves the AppImage from the release manifest without querying
+the GitHub API. It installs a stable file at
+`~/.local/share/Modificus Curator/appimage/Modificus.Curator.AppImage`, creates
+`~/.local/bin/modificus-curator`, and installs user-level desktop integration.
+It uses no root privileges and leaves profiles, mods, logs, config, app state,
+and any standalone installation untouched.
+
+To enable Nexus "Download with manager" links, open **Integrations** and enable
+"Nexus download links". Curator copies its AppImage-packaged handler to a
+durable per-user path so the registration survives AppImage unmounts and
+updates.
+
+**Standalone tarball:** This permanent alternative remains supported. It
+requires the **.NET 10 Runtime**, available from
+<https://dotnet.microsoft.com/download/dotnet/10.0>, and updates by re-running
+its installer.
+
+Install the latest stable standalone release:
 
 ```sh
 curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh
 ```
 
-To install the latest prerelease instead, pass `--prerelease`:
+Install the latest prerelease standalone release:
 
 ```sh
 curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install.sh | sh -s -- --prerelease
 ```
 
-The script resolves the archive from a manifest the release pipeline maintains
-(no GitHub API calls), installs into `~/.local/share/Modificus Curator/`,
-replaces only the `app/` and `relay/` folders (your profiles, mods, logs, and
-`config.json` are left alone), marks the binaries executable, and adds a
-`modificus-curator` symlink in `~/.local/bin/`. If the symlink cannot be
-created, it prints the executable path to run instead.
+The standalone installer resolves the archive from the same release manifest,
+replaces only `app/` and `relay/` under
+`~/.local/share/Modificus Curator/`, and leaves user data untouched.
 
 The Linux release archive contains two top-level folders:
 
@@ -123,6 +149,31 @@ Manual install:
    `chmod +x "$HOME/.local/share/Modificus Curator/app/Modificus.Curator"`.
 4. Optionally symlink it onto your PATH:
    `ln -sf "$HOME/.local/share/Modificus Curator/app/Modificus.Curator" "$HOME/.local/bin/modificus-curator"`.
+
+The AppImage and standalone distributions may coexist. The installer run most
+recently controls the shared `modificus-curator` convenience symlink; neither
+installer removes the other distribution.
+
+Uninstall only the AppImage distribution while preserving profiles, mods,
+config, logs, app state, and any standalone installation:
+
+```sh
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/uninstall-appimage.sh | sh
+```
+
+The default uninstall also removes Curator's app-specific Velopack cache and
+pending-update state. A local `AppUpdates.SourceOverride` in `config.json` is
+preserved and must be cleared separately before testing production updates.
+
+For a complete Linux removal, including all profiles, mods, config, logs, app
+state, and both Linux distributions under the shared Curator data root, use the
+explicit destructive option:
+
+```sh
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/uninstall-appimage.sh | sh -s -- --purge-data
+```
+
+Close Curator first. Do not run either uninstall command with `sudo`.
 
 ## License
 

@@ -8,12 +8,12 @@ namespace Modificus.Curator.UI.AppUpdate;
 
 /// <summary>
 /// The Velopack-backed <see cref="IAppUpdateService"/>: the implementation that
-/// is registered when <c>CURATOR_VELOPACK</c> is defined (a packaged Windows
-/// build). Wraps a <see cref="UpdateManager"/> pointed at the Curator GitHub
-/// releases (anonymous, prereleases included), or at a config-supplied source
-/// override for local testing / self-hosted feeds, and exposes the
-/// check / download / apply flow through the engine-neutral
-/// <see cref="IAppUpdateService"/> surface.
+/// is registered when <c>CURATOR_VELOPACK</c> is defined (a Velopack-packaged
+/// build: a Windows install or a Linux AppImage). Wraps a
+/// <see cref="UpdateManager"/> pointed at the Curator GitHub releases
+/// (anonymous, prereleases included), or at a config-supplied source override
+/// for local testing / self-hosted feeds, and exposes the check / download /
+/// apply flow through the engine-neutral <see cref="IAppUpdateService"/> surface.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -123,8 +123,8 @@ internal sealed class VelopackAppUpdateService : IAppUpdateService
             {
                 // Local testing / self-hosted feed: UpdateManager accepts a local
                 // directory path or a URL as its urlOrPath (the string overload;
-                // a directory is read straight off disk, expecting a
-                // releases.win.json feed alongside the .nupkg). Used only when the
+                // a directory is read straight off disk, expecting a Velopack
+                // releases feed alongside the .nupkg). Used only when the
                 // operator sets AppUpdates.SourceOverride in config.json; null in
                 // production (the GithubSource path below).
                 _manager = new UpdateManager(sourceOverride);

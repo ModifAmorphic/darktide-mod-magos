@@ -2,13 +2,13 @@ namespace Modificus.Curator.RelayClient.Tests;
 
 /// <summary>
 /// Precedence tests for <see cref="RelayLaunchService.ResolveLauncherPath"/>:
-/// the configured RelayDir wins when its launcher is present; otherwise the
-/// Windows app-local fallback (the Velopack payload's <c>relay/</c> folder) is
-/// used on Windows; otherwise the Windows sibling-folder fallback
-/// (<c>&lt;base&gt;/../relay/</c>, the portable archive layout) is used on
-/// Windows; otherwise <c>null</c>. The helper is a pure function of
-/// (configRelayDir, baseDirectory, isWindows), so the Windows branches are
-/// exercisable on any CI OS by passing <c>isWindows</c> explicitly.
+/// the configured RelayDir wins when its launcher is present (on both Linux and
+/// Windows); otherwise the app-local fallback (the Velopack payload's
+/// <c>relay/</c> folder, used on both OSes) is used; otherwise the Windows-only
+/// sibling-folder fallback (<c>&lt;base&gt;/../relay/</c>, the portable archive
+/// layout) is used on Windows; otherwise <c>null</c>. The helper is a pure
+/// function of (configRelayDir, baseDirectory, isWindows), so the Windows
+/// branches are exercisable on any CI OS by passing <c>isWindows</c> explicitly.
 /// </summary>
 public sealed class RelayLauncherResolutionTests
 {
@@ -20,6 +20,20 @@ public sealed class RelayLauncherResolutionTests
 
         var resolved = RelayLaunchService.ResolveLauncherPath(
             fx.Config.RelayDir, AppContext.BaseDirectory, isWindows: true);
+
+        Assert.Equal(fx.LauncherPath, resolved);
+    }
+
+    [Fact]
+    public void Configured_RelayDir_wins_on_linux_when_its_launcher_is_present()
+    {
+        // The configured RelayDir is honored on Linux too: the standalone
+        // layout deploys Relay at the data root, and that path takes priority
+        // over any packaged fallback.
+        using var fx = new RelayFixture();
+
+        var resolved = RelayLaunchService.ResolveLauncherPath(
+            fx.Config.RelayDir, AppContext.BaseDirectory, isWindows: false);
 
         Assert.Equal(fx.LauncherPath, resolved);
     }
@@ -40,18 +54,20 @@ public sealed class RelayLauncherResolutionTests
     }
 
     [Fact]
-    public void App_local_relay_is_ignored_on_linux()
+    public void App_local_relay_is_used_on_linux_when_configured_RelayDir_is_missing()
     {
-        // Linux never consults the app-local fallback, even when the payload is
-        // present: Relay lives at the data-root relay folder (config.RelayDir).
+        // AppImage on Linux: the data-root RelayDir has no launcher, but the
+        // app-local payload (mounted inside the AppImage) ships one under
+        // <appDir>/relay/. This is the AppImage case; the standalone layout
+        // keeps Relay at the data root and never reaches this fallback.
         using var fx = new RelayFixture();
         fx.DeleteLauncher();
-        var (appBase, _) = DeployAppLocalRelay(fx);
+        var (appBase, appLocalLauncher) = DeployAppLocalRelay(fx);
 
         var resolved = RelayLaunchService.ResolveLauncherPath(
             fx.Config.RelayDir, appBase, isWindows: false);
 
-        Assert.Null(resolved);
+        Assert.Equal(appLocalLauncher, resolved);
     }
 
     [Fact]
@@ -119,9 +135,11 @@ public sealed class RelayLauncherResolutionTests
     [Fact]
     public void Sibling_relay_is_ignored_on_linux()
     {
-        // Linux never consults either Windows fallback, even when the portable
-        // sibling layout is present: Relay lives at the data-root relay folder
-        // (config.RelayDir).
+        // Linux never consults the Windows-only sibling fallback
+        // (<base>/../relay/), even when the portable sibling layout is present
+        // and no app-local launcher is deployed: Relay lives at the data-root
+        // relay folder (config.RelayDir) or the app-local payload, never the
+        // sibling archive layout.
         using var fx = new RelayFixture();
         fx.DeleteLauncher();
         var (appBase, _, _) = DeployPortableLayout(fx, withAppLocal: false);
@@ -145,6 +163,22 @@ public sealed class RelayLauncherResolutionTests
 
         var resolved = RelayLaunchService.ResolveLauncherPath(
             fx.Config.RelayDir, appBase, isWindows: true);
+
+        Assert.Null(resolved);
+    }
+
+    [Fact]
+    public void Returns_null_on_linux_when_configured_and_app_local_both_miss()
+    {
+        // Linux has no sibling fallback, so "all missing" on Linux means the
+        // configured RelayDir and the app-local payload are both absent.
+        using var fx = new RelayFixture();
+        fx.DeleteLauncher();
+        var appBase = Path.Combine(fx.TempRoot, "empty-app");
+        Directory.CreateDirectory(appBase);
+
+        var resolved = RelayLaunchService.ResolveLauncherPath(
+            fx.Config.RelayDir, appBase, isWindows: false);
 
         Assert.Null(resolved);
     }

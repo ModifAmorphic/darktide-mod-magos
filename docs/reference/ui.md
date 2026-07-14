@@ -522,7 +522,8 @@ consumer side of that boundary.
 
 ### `IAppUpdateService`
 
-Curator's own self-update (the Velopack-managed installer on Windows). The
+Curator's own self-update in Velopack-packaged builds (the Windows installer
+and Linux AppImage). The
 shape mirrors `IUpdateCheckService`: a best-effort availability check that
 never throws to the caller for non-cancellation failures, plus a
 state-holding `LastCheckResult` / `UpdatePendingRestart` surface published
@@ -531,7 +532,7 @@ apply steps are user-initiated and DO surface their failures (a checksum
 mismatch or a locked-file error is something the user needs to see), so they
 propagate from those two methods. See
 [app auto-update architecture](../architecture/app-auto-update.md) for the
-Windows-only scope, the update source, and the lifecycle interaction.
+packaged-build scope, the update source, and the lifecycle interaction.
 
 ```csharp
 public sealed record AppUpdateInfo(string TargetVersion, string? Notes);
@@ -558,7 +559,7 @@ public interface IAppUpdateService
 - `IsUpdateSupported`: `true` only when the running app is a Velopack install
   and the update manager initialized. The UI gates the entire update surface
   (the shell notice, the Settings controls, apply) on this, so a non-Velopack
-  build (Linux, a dev run) shows nothing.
+  build (standalone Linux, portable Windows, or a dev run) shows nothing.
 - `CurrentVersion`: the installed app version as a string
   (`UpdateManager.CurrentVersion.ToString()`), or `null` when unsupported. The
   UI shows it alongside `AppUpdateInfo.TargetVersion`.
@@ -588,7 +589,7 @@ public interface IAppUpdateService
 
 Two implementations live behind the one interface, selected at compile time by
 the `CURATOR_VELOPACK` symbol (defined when `CuratorUseVelopack=true` is set at
-publish time, i.e. a packaged Windows build):
+publish time for the Windows installer or Linux AppImage):
 
 - **`VelopackAppUpdateService`** (`#if CURATOR_VELOPACK`): the real impl. Wraps
   a Velopack `UpdateManager` whose source is config-driven: the constructor
@@ -855,11 +856,17 @@ Key wiring notes:
   marshals its `Mods` collection iteration to the UI thread. `ShellViewModel`
   and `SettingsViewModel` use the same seam for their
   `IAppUpdateService.UpdateStateChanged` handlers.
-- `IAppUpdateService` is registered conditionally on `CURATOR_VELOPACK`: a
-  packaged Windows build gets `VelopackAppUpdateService`; every other build
-  (Linux, a dev run without `CuratorUseVelopack=true`) gets
+- `IAppUpdateService` is registered conditionally on `CURATOR_VELOPACK`: the
+  packaged Windows installer and Linux AppImage get
+  `VelopackAppUpdateService`; every other build (standalone Linux, portable
+  Windows, or a dev run without `CuratorUseVelopack=true`) gets
   `NoopAppUpdateService`. Consumers talk to `IAppUpdateService` unconditionally
   and gate their affordances on `IsUpdateSupported`.
+- After `StartNxmServer` establishes single-instance ownership, the composition
+  root calls `INxmHandlerRegistrar.MaintainRegistration()` best-effort. This
+  refreshes an already-owned Linux AppImage handler copy and symlink, but never
+  registers or takes ownership. A fatal single-instance exception bypasses the
+  maintenance call; a degraded pipe bind does not.
 - `INxmModDownloadHandler` is registered AFTER `AddNxm()` with a factory
   that resolves its dependencies lazily at first use (the handler is first
   resolved by the IPC router, by which point all dependencies are
@@ -898,7 +905,8 @@ instance violation) propagates out; `App` catches it and calls
   8.4.2 (`ObservableObject`, `[ObservableProperty]`, `[RelayCommand]`),
   `Microsoft.Extensions.DependencyInjection` 10.0.9,
   `Microsoft.Extensions.Logging` 10.0.9. `Velopack` 1.2.0 is conditionally
-  referenced (Windows packaging only, gated on `CuratorUseVelopack=true`),
+  referenced (Windows installer and Linux AppImage packaging, gated on
+  `CuratorUseVelopack=true`),
   which defines `CURATOR_VELOPACK` and brings in the app self-update engine.
 - **BCL otherwise:** `System.Resources.ResourceManager` (the i18n lookup),
   `System.Globalization.CultureInfo`, `Avalonia.Threading.DispatcherTimer`
@@ -1001,7 +1009,7 @@ dotnet test src/modificus-curator.sln -c Release
   layout, the profile session, the mod list, the update UI, the DMF prompt,
   and the dialog / preferences / i18n design.
 - [App auto-update architecture](../architecture/app-auto-update.md): the
-  Windows-only self-update flow behind `IAppUpdateService` (Velopack), the
+  Velopack-packaged self-update flow behind `IAppUpdateService`, the
   startup-only check, and the lifecycle interaction.
 - [Modificus Curator architecture](../architecture/MODIFICUS-CURATOR.md): the
   high-level tie-together (component model, the Relay contract Curator
