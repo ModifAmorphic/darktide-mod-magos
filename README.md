@@ -37,9 +37,9 @@ Initial releases are published on the
 [releases page](https://github.com/ModifAmorphic/darktide-modificus-curator/releases) and
 are marked as prereleases while the release pipeline settles. To build from
 source instead, see [`src/README.md`](src/README.md). The bundled runtime
-artifacts (launcher, shell DLL, mod loader) come from the latest stable
+artifacts (launcher, shell DLL, mod loader) come from the latest non-draft
 [Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay)
-release.
+prerelease available when the Curator release is built.
 
 ## Installation
 

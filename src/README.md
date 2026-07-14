@@ -100,7 +100,7 @@ component prefix). When release-please creates a release, the release workflow
 publishes each target as unsigned assets (Windows: a Velopack installer
 and a portable ZIP; Linux: a framework-dependent tar.gz bundle plus a
 self-contained Velopack AppImage and update feed), fetches
-the latest stable Modificus Relay release, and uploads a GitHub Artifact
+the latest non-draft Modificus Relay prerelease, and uploads a GitHub Artifact
 Attestation against each asset. Verify an asset's provenance with:
 
 ```

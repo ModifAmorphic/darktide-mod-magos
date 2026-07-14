@@ -526,8 +526,10 @@ scripts/            release.env: the install manifest (standalone RELEASE_URL /
                     AppImage publish/pack/extract/feed/installer/uninstaller smoke depend on the format
                     job; no artifact upload; release-please-only PRs are ignored via
                     paths-ignore; there is intentionally no push trigger),
-                    release (release-please cuts the release, then per-target jobs publish
-                    unsigned assets that diverge by platform: build-windows produces two
+                    release (release-please cuts the release; each platform job resolves
+                    the newest non-draft Relay prerelease and downloads its Windows x64
+                    asset, then per-target jobs publish unsigned assets that diverge by
+                    platform: build-windows produces two
                     Windows artifacts: (1) the Velopack installer from the Curator UI
                     published with -p:CuratorUseVelopack=true (adds the Velopack reference
                     + the CURATOR_VELOPACK symbol that wires VelopackApp.Build().Run()

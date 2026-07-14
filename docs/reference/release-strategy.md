@@ -68,11 +68,12 @@ Jobs:
 
     **build-windows** then produces both a Velopack installer and a portable
     ZIP:
-    - Extracts the latest stable, non-draft Relay release from
+    - Extracts the latest non-draft Relay prerelease from
       `ModifAmorphic/darktide-modificus-relay` into `stage/relay/` (for the
       portable ZIP) and `stage/app/relay/` (for the Velopack pack) so Relay
       ships in both artifacts. (Fetched via
-      `gh release list --exclude-drafts --exclude-pre-releases` +
+      `gh release list --exclude-drafts --order desc` with explicit
+      `isPrerelease` filtering +
       `gh release download --pattern '*-windows-x64.zip'`. The Relay tag is
       resolved per workflow run; there is no Relay version pinning and no
       Relay provenance sidecar.)
@@ -491,7 +492,7 @@ What the release pipeline provides today, and what it does not:
   Steam Deck uses the common Linux x64 AppImage path where installation and
   self-update work; no Steam Deck-specific UI or launch behavior is provided.
 - **Relay pinning or Relay provenance sidecar.** The bundled Relay is whatever
-  was latest stable (non-draft, non-prerelease) at workflow-run time.
+  was the newest non-draft prerelease at workflow-run time.
 - **AV/VT scanning for the portable ZIP.** The post-release AV/VT scan only
   covers the Velopack installer; the portable ZIP is not scanned.
 
