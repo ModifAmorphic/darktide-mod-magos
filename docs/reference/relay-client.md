@@ -77,14 +77,27 @@ public enum LaunchStatus { Launched, DiscoveryIncomplete, StagingFailed, Error }
   - Two implementations (`WindowsLaunchStrategy`, `LinuxLaunchStrategy`),
     selected once at DI time from the host OS (see
     [Cross-platform notes](#cross-platform-notes)).
-- `IProcessLauncher` -- `Start(filePath, arguments, environmentVariables) → bool`
-  (fire-and-forget; `true` if started, `false` if it could not start -- never
-  throws). Abstracted so the launch path is deterministic and mockable in tests
-  (the real `Process.Start` would spawn a real process). Injected into the
-  strategy (not the service) so tests can fake the spawn. The default
-  `ProcessLauncher` uses `ProcessStartInfo.ArgumentList` (argv-correct, no shell,
-  no injection surface) and applies env overrides directly to the child's
-  environment block.
+- `IProcessLauncher` -- `Start(ProcessLaunchRequest) → bool` (fire-and-forget;
+  `true` if started, `false` if it could not start -- never throws). Abstracted
+  so the launch path is deterministic and mockable in tests (the real
+  `Process.Start` would spawn a real process). Injected into the strategy (not
+  the service) so tests can fake the spawn. The default `ProcessLauncher` builds
+  a `ProcessStartInfo` with `UseShellExecute = false`, strips every key the
+  request lists in `EnvironmentVariablesToRemove` from the inherited parent
+  environment, then applies each `EnvironmentOverrides` entry on top (overrides
+  win when a key appears in both sets), and adds each argument verbatim to
+  `ArgumentList` (argv-correct, no shell, no injection surface). The
+  deterministic `ProcessStartInfo` construction is factored into an internal
+  `BuildStartInfo(ProcessLaunchRequest)` pure helper that production `Start`
+  uses verbatim, so tests can inspect the final environment + argument layout
+  without spawning a real process.
+
+  The request is the immutable public `ProcessLaunchRequest` sealed object
+  (`FilePath`, `Arguments`, `EnvironmentOverrides`, `EnvironmentVariablesToRemove`).
+  Collections are snapshotted into genuinely immutable containers at construction
+  and exposed as empty collections rather than `null`. The single-value API
+  keeps the launcher straightforward for the two strategies and any future
+  per-profile environment overrides.
 
 `WinePath.ToWine(posixPath)` (internal) translates an absolute POSIX path to its
 Wine `Z:\` form (`/` → `\`, `Z:` prefix) for the launcher-under-Wine flags; it is
@@ -129,7 +142,9 @@ so the precedence is unit-testable on any CI OS.
 
 `Process.Start(modificus_relay.exe, args)`. No Proton, no path translation --
 native Windows paths. Args: `--game-binary`, `--mod-path`, `--log-file`
-(verbatim, untranslated). No environment-variable overrides.
+(verbatim, untranslated). The request carries no environment removals and no
+overrides; the child inherits Curator's environment block verbatim (Windows
+never runs from an AppImage mount, so there is nothing to sanitize).
 
 ### Linux -- native Curator + Proton-at-launch
 
@@ -151,7 +166,28 @@ Command: `<proton> run <launcher.exe> <args>`, where:
 - Environment: `STEAM_COMPAT_DATA_PATH = <compatdata>` (the Wine prefix) +
   `STEAM_COMPAT_CLIENT_INSTALL_PATH = <steam-install>` -- both required for Proton
   to use the right prefix and find the Steam client. Discovery guaranteed both
-  non-null above.
+  non-null above. These are applied as overrides AFTER the AppImage-identity
+  removals below, so they win even if a key happened to collide (they do not).
+
+#### AppImage desktop-identity sanitization
+
+When Curator is launched from its installed AppImage, the AppImage runtime
+exports a handful of variables into Curator's environment (`APPDIR`,
+`APPIMAGE`, `ARGV0`, `OWD`, plus the desktop hint `BAMF_DESKTOP_FILE_HINT`).
+KDE Plasma's task manager reads `BAMF_DESKTOP_FILE_HINT` and then `APPDIR`
+from `/proc/<pid>/environ` to resolve a child's desktop identity, so if those
+leak through `proton run` into Relay and Darktide, the game window is grouped
+under Curator's launcher.
+
+To stop that, `LinuxLaunchStrategy` requests the launcher strip exactly those
+five keys from the inherited environment (`LinuxLaunchStrategy.AppImageIdentityVariables`):
+`APPDIR`, `APPIMAGE`, `ARGV0`, `OWD`, `BAMF_DESKTOP_FILE_HINT`. Only those are
+removed; every unrelated inherited variable passes through unchanged. The
+desktop-activation tokens `DESKTOP_STARTUP_ID`, `XDG_ACTIVATION_TOKEN`, and
+`GIO_LAUNCHED_DESKTOP_FILE` are intentionally NOT removed. The two
+`STEAM_COMPAT_*` overrides are applied AFTER the removals so they always win.
+On a non-AppImage launch (the standalone tarball, a dev build) none of those
+keys are present, so the removals are silent no-ops.
 
 ### `--log-level` is intentionally not emitted
 
@@ -202,7 +238,13 @@ from the container.
 test` runs the xUnit suite -- `RelayLaunchServiceTests` (Windows + Linux arg
 assembly via the concrete `WindowsLaunchStrategy` / `LinuxLaunchStrategy` + a
 fake `IProcessLauncher`, `DiscoveryIncomplete` missing-field derivation,
-`StagingFailed` + `Error` mapping), `WinePathTests`, the `AddRelayClient` DI wiring, all against the
+`StagingFailed` + `Error` mapping, plus the Linux AppImage-identity removal set
+and the Windows empty-removal/override assertion), `ProcessLauncherTests`
+(the deterministic `ProcessLauncher.BuildStartInfo` path: a requested inherited
+key is removed, an unrelated inherited key remains, an override is applied, an
+override wins after removal, `UseShellExecute` is false, arguments stay distinct
+including values with spaces and shell metacharacters), `WinePathTests`, the
+`AddRelayClient` DI wiring, all against the
 fakes in `TestDoubles.cs`. Tests inject the concrete strategy to exercise either
 path on any CI OS. `dotnet run -- <discover|list|launch>` runs the **composition
 smoke harness** under `SmokeHarness/Program.cs` -- it composes the **real**

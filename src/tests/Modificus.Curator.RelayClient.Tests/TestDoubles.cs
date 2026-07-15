@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Modificus.Curator.Config;
 using Modificus.Curator.General;
 using Modificus.Curator.Profiles;
@@ -112,29 +113,29 @@ internal sealed class FakeSteamService : ISteamService
 
 /// <summary>
 /// Hand-rolled test double for <see cref="IProcessLauncher"/>. Records the last
-/// invocation's filePath / arguments / environment and returns a configurable
-/// boolean (default <c>true</c> = started).
+/// invocation's immutable <see cref="ProcessLaunchRequest"/> and returns a
+/// configurable boolean (default <c>true</c> = started).
 /// </summary>
 internal sealed class FakeProcessLauncher : IProcessLauncher
 {
     /// <summary>The value returned by <see cref="Start"/> (default true = started).</summary>
     public bool Returns { get; set; } = true;
 
-    public string? FilePath { get; private set; }
-    public IReadOnlyList<string>? Arguments { get; private set; }
-    public IReadOnlyDictionary<string, string>? Environment { get; private set; }
+    public ProcessLaunchRequest? LastRequest { get; private set; }
     public int Calls { get; private set; }
 
+    // Convenience projections over the last recorded request, so tests stay
+    // readable for the common assertions (filePath / args / env overrides).
+    public string? FilePath => LastRequest?.FilePath;
+    public IReadOnlyList<string>? Arguments => LastRequest?.Arguments;
+    public IReadOnlyDictionary<string, string>? Environment => LastRequest?.EnvironmentOverrides;
+    public IReadOnlySet<string> RemovedVariables => LastRequest?.EnvironmentVariablesToRemove ?? ImmutableHashSet<string>.Empty;
+
     /// <inheritdoc />
-    public bool Start(
-        string filePath,
-        IReadOnlyList<string> arguments,
-        IReadOnlyDictionary<string, string>? environmentVariables)
+    public bool Start(ProcessLaunchRequest request)
     {
         Calls++;
-        FilePath = filePath;
-        Arguments = arguments;
-        Environment = environmentVariables;
+        LastRequest = request;
         return Returns;
     }
 }

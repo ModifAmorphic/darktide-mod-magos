@@ -39,10 +39,12 @@ internal sealed class WindowsLaunchStrategy : IPlatformLaunchStrategy
     {
         // Direct invocation -- no Proton, no path translation (native Windows paths).
         // `discovery` is unused on Windows: the caller already extracted gameBinary
-        // from it, and Windows needs no Proton/compat context.
+        // from it, and Windows needs no Proton/compat context. The request carries
+        // no environment removals or overrides: the child inherits Curator's
+        // environment block verbatim (Windows never runs from an AppImage mount).
         var args = BuildLauncherArgs(gameBinary, modPath, logFile);
         _logger.LogInformation("Launching (Windows) {Launcher} {Args}", launcherPath, FormatArgs(args));
-        return _launcher.Start(launcherPath, args, environmentVariables: null);
+        return _launcher.Start(new ProcessLaunchRequest(launcherPath, args));
     }
 
     /// <summary>

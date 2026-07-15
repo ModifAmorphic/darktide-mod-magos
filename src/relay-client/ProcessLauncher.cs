@@ -9,7 +9,10 @@ namespace Modificus.Curator.RelayClient;
 /// <see cref="Process.Start(ProcessStartInfo)"/> using
 /// <see cref="ProcessStartInfo.ArgumentList"/> (argv-correct, no shell), so paths
 /// containing spaces survive verbatim and there is no shell-injection surface.
-/// Environment overrides are applied directly to the child's environment block.
+/// The child starts from the parent's inherited environment, with each key in
+/// <see cref="ProcessLaunchRequest.EnvironmentVariablesToRemove"/> stripped and
+/// each <see cref="ProcessLaunchRequest.EnvironmentOverrides"/> entry applied on
+/// top (overrides win when a key appears in both sets).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,38 +34,11 @@ internal sealed class ProcessLauncher : IProcessLauncher
     }
 
     /// <inheritdoc />
-    public bool Start(
-        string filePath,
-        IReadOnlyList<string> arguments,
-        IReadOnlyDictionary<string, string>? environmentVariables)
+    public bool Start(ProcessLaunchRequest request)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        ArgumentNullException.ThrowIfNull(request);
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = filePath,
-            // UseShellExecute=false is required both to set environment variables
-            // and to use ArgumentList (no shell). The launcher is an .exe even on
-            // Linux (Proton runs it), so we never want the OS shell in the middle.
-            UseShellExecute = false,
-        };
-
-        // ArgumentList quotes/escapes per-platform; callers hand us argv form, so
-        // add each entry verbatim. A null entry would corrupt the argv layout --
-        // coerce to "" defensively rather than throw (the launch façade never
-        // produces nulls, but this stays safe for any IProcessLauncher caller).
-        foreach (var arg in arguments)
-        {
-            startInfo.ArgumentList.Add(arg ?? string.Empty);
-        }
-
-        if (environmentVariables is not null)
-        {
-            foreach (var pair in environmentVariables)
-            {
-                startInfo.Environment[pair.Key] = pair.Value;
-            }
-        }
+        var startInfo = BuildStartInfo(request);
 
         try
         {
@@ -71,13 +47,13 @@ internal sealed class ProcessLauncher : IProcessLauncher
             {
                 // Process.Start returns null only when a new process is reusing an
                 // already-running one's resources -- rare, but treat as "not started."
-                _logger.LogWarning("Process.Start returned null for {File}.", filePath);
+                _logger.LogWarning("Process.Start returned null for {File}.", request.FilePath);
                 return false;
             }
 
             _logger.LogInformation(
                 "Started process {Pid} for {File} ({Count} arguments).",
-                process.Id, filePath, arguments.Count);
+                process.Id, request.FilePath, request.Arguments.Count);
             return true;
         }
         catch (Exception ex) when (ex is InvalidOperationException
@@ -88,8 +64,65 @@ internal sealed class ProcessLauncher : IProcessLauncher
             // The common start failures: missing file, permission denied
             // (Win32Exception), or no platform support. Never throw -- the service
             // maps a false return to LaunchStatus.Error with a clear message.
-            _logger.LogWarning(ex, "Failed to start process {File}.", filePath);
+            _logger.LogWarning(ex, "Failed to start process {File}.", request.FilePath);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Builds the deterministic <see cref="ProcessStartInfo"/> for a request:
+    /// <see cref="ProcessStartInfo.UseShellExecute"/> set <c>false</c> (required
+    /// to modify the environment and to use <see cref="ProcessStartInfo.ArgumentList"/>),
+    /// each argument added separately to <see cref="ProcessStartInfo.ArgumentList"/>,
+    /// each requested key removed from <see cref="ProcessStartInfo.Environment"/>
+    /// (which lazily snapshots the inherited parent block on first access), and
+    /// then each override applied on top so an override wins for a key in both
+    /// sets. Pure: no process is started.
+    /// </summary>
+    /// <remarks>
+    /// Factored as an internal pure helper so tests can inspect the final
+    /// environment + argument layout without spawning a real process. Production
+    /// <see cref="Start"/> uses this exact path.
+    /// </remarks>
+    internal static ProcessStartInfo BuildStartInfo(ProcessLaunchRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        // FilePath is guaranteed non-blank by ProcessLaunchRequest's constructor;
+        // no redundant whitespace check here.
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = request.FilePath,
+            // UseShellExecute=false is required both to mutate the environment
+            // and to use ArgumentList (no shell). The launcher is an .exe even on
+            // Linux (Proton runs it), so we never want the OS shell in the middle.
+            UseShellExecute = false,
+        };
+
+        // ArgumentList quotes/escapes per-platform; callers hand us argv form, so
+        // add each entry verbatim. A null entry would corrupt the argv layout --
+        // coerce to "" defensively rather than throw (the launch façade never
+        // produces nulls, but this stays safe for any IProcessLauncher caller).
+        foreach (var arg in request.Arguments)
+        {
+            startInfo.ArgumentList.Add(arg ?? string.Empty);
+        }
+
+        // ProcessStartInfo.Environment lazily snapshots the parent's environment
+        // on first access. Remove every requested key before applying overrides;
+        // Remove is a no-op for a key the parent did not carry.
+        foreach (var key in request.EnvironmentVariablesToRemove)
+        {
+            startInfo.Environment.Remove(key);
+        }
+
+        // Overrides applied AFTER removals so a key listed in both sets ends up
+        // with the override's value (the override intentionally wins).
+        foreach (var pair in request.EnvironmentOverrides)
+        {
+            startInfo.Environment[pair.Key] = pair.Value;
+        }
+
+        return startInfo;
     }
 }

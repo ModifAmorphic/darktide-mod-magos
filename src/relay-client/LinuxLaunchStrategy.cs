@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Modificus.Curator.Steam;
 using Microsoft.Extensions.Logging;
 
@@ -11,8 +12,45 @@ namespace Modificus.Curator.RelayClient;
 /// <c>Z:\</c>-translates the launcher's path-valued flags. Selected at DI
 /// registration when the host is Linux.
 /// </summary>
+/// <remarks>
+/// <para>
+/// When Curator itself is launched from its installed AppImage, the AppImage
+/// runtime exports a handful of variables into Curator's environment
+/// (<c>APPDIR</c>, <c>APPIMAGE</c>, <c>ARGV0</c>, <c>OWD</c>, plus the desktop
+/// hint <c>BAMF_DESKTOP_FILE_HINT</c>). KDE Plasma's task manager reads
+/// <c>BAMF_DESKTOP_FILE_HINT</c> and then <c>APPDIR</c> from
+/// <c>/proc/&lt;pid&gt;/environ</c> to resolve a child's desktop identity, so
+/// if those leak through <c>proton run</c> into Relay and Darktide, the game
+/// window is grouped under Curator's launcher.</para>
+/// <para>
+/// To stop that, this strategy requests the launcher strip those five keys from
+/// the inherited environment. Only the AppImage-identity variables are removed;
+/// every unrelated inherited variable, the two required Steam compat vars
+/// (overridden below), and the desktop-activation tokens (<c>DESKTOP_STARTUP_ID</c>,
+/// <c>XDG_ACTIVATION_TOKEN</c>, <c>GIO_LAUNCHED_DESKTOP_FILE</c>) pass through
+/// unchanged.</para>
+/// </remarks>
 internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
 {
+    /// <summary>
+    /// The exact set of inherited environment variables Curator asks the
+    /// launcher to strip before invoking <c>proton run</c>: the four AppImage
+    /// runtime variables (<c>APPDIR</c>, <c>APPIMAGE</c>, <c>ARGV0</c>,
+    /// <c>OWD</c>) plus <c>BAMF_DESKTOP_FILE_HINT</c> (the desktop-file hint a
+    /// parent passes its children). Removing these stops KDE Plasma's task
+    /// manager from resolving Curator's desktop identity for Darktide, while
+    /// leaving every unrelated inherited variable intact.
+    /// </summary>
+    internal static readonly ImmutableArray<string> AppImageIdentityVariables =
+        ImmutableArray.Create(new[]
+        {
+            "APPDIR",
+            "APPIMAGE",
+            "ARGV0",
+            "OWD",
+            "BAMF_DESKTOP_FILE_HINT",
+        });
+
     private readonly IProcessLauncher _launcher;
     private readonly ILogger<LinuxLaunchStrategy> _logger;
 
@@ -57,7 +95,8 @@ internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
 
         // Both Steam compat vars are required for Proton to use the right Wine
         // prefix + find the Steam client; RequiredDiscoveryFields guaranteed both
-        // non-null above.
+        // non-null above. They are applied as overrides AFTER the AppImage-identity
+        // removals, so they win even if a key happened to collide (they do not).
         var env = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["STEAM_COMPAT_DATA_PATH"] = discovery.CompatdataPath!,
@@ -67,7 +106,13 @@ internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
         _logger.LogInformation(
             "Launching (Linux) {Proton} run {Launcher} {Args}",
             discovery.ProtonBinaryPath, launcherPath, FormatArgs(arguments));
-        return _launcher.Start(discovery.ProtonBinaryPath!, arguments, env);
+
+        var request = new ProcessLaunchRequest(
+            discovery.ProtonBinaryPath!,
+            arguments,
+            environmentOverrides: env,
+            environmentVariablesToRemove: AppImageIdentityVariables);
+        return _launcher.Start(request);
     }
 
     /// <summary>

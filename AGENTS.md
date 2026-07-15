@@ -406,7 +406,16 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
   relay-client/         Modificus.Curator.RelayClient -- the v1 launch façade
                         (IRelayLaunchService.Launch → LaunchResult; Windows: direct
                         launcher Process.Start; Linux: proton run with both STEAM_COMPAT_*
-                        env + Z:\-translated paths; ResolveLauncherPath prefers the
+                        env + Z:\-translated paths, scrubbing the five
+                        AppImage/desktop-identity variables APPDIR, APPIMAGE,
+                        ARGV0, OWD, BAMF_DESKTOP_FILE_HINT from the inherited
+                        environment so Darktide does not inherit Curator's
+                        AppImage identity; the spawn seam IProcessLauncher takes
+                        one immutable ProcessLaunchRequest with FilePath,
+                        Arguments, EnvironmentOverrides, and
+                        EnvironmentVariablesToRemove, applied by ProcessLauncher
+                        as UseShellExecute=false + ArgumentList + remove-then-override
+                        over the inherited environment; ResolveLauncherPath prefers the
                         configured RelayDir, then on both platforms falls back to the
                         app-local relay/ shipped inside a Velopack payload at
                         <BaseDirectory>/relay/, then uses the portable sibling fallback
@@ -464,7 +473,18 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                           source-changed/version-changed entries)
     Modificus.Curator.Steam.Tests/           xUnit tests for discovery + IsGameRunning
     Modificus.Curator.RelayClient.Tests/ xUnit tests for the launch façade (dual-purpose:
-                                            `dotnet test` = xUnit; `dotnet run` = composition smoke harness)
+                                            `dotnet test` = xUnit; `dotnet run` = composition smoke harness);
+                                            covers RelayLaunchServiceTests (Windows + Linux arg
+                                            assembly + DiscoveryIncomplete/StagingFailed/Error
+                                            mapping + the Linux five-key AppImage-identity
+                                            removal set + the Windows empty removals/overrides),
+                                            ProcessLauncherTests (the deterministic BuildStartInfo
+                                            path: a requested inherited key is removed, an
+                                            unrelated inherited key remains, an override is
+                                            applied, an override wins after removal,
+                                            UseShellExecute=false, arguments stay distinct with
+                                            spaces + shell metacharacters), WinePathTests, + the
+                                            AddRelayClient DI wiring
     Modificus.Curator.UI.Tests/              xUnit tests for the shell + manage-profiles
                                             view models (profile CRUD/switch, active-profile
                                             persist, switch-blocked-while-running; dialog via
@@ -523,7 +543,9 @@ scripts/            release.env: the install manifest (standalone RELEASE_URL /
                     auto-commits `dotnet format` as `style: dotnet format [skip ci]`
                     for same-repo PRs, verify-only for fork PRs and workflow_dispatch;
                     build + test on a Windows/Ubuntu matrix and a separate Ubuntu 22.04
-                    AppImage publish/pack/extract/feed/installer/uninstaller smoke depend on the format
+                    AppImage publish/pack/extract/feed/installer/uninstaller smoke (which
+                    also asserts the Velopack-generated internal desktop file carries
+                    StartupWMClass=ModifAmorphic.ModificusCurator) depend on the format
                     job; no artifact upload; release-please-only PRs are ignored via
                     paths-ignore; there is intentionally no push trigger),
                     release (release-please cuts the release; each platform job resolves
@@ -593,7 +615,11 @@ dotnet run   --project src/ui --configuration Release   # app shell window
 - The composition root is `src/ui/CuratorComposition.cs` (loads
   config → builds the Serilog logger → wires every `Add<Library>()` → runs the
   startup `ModCleanup.PruneUnreferenced` pass + the startup
-  `ISteamService.Discover()` validate/heal/persist pass).
+  `ISteamService.Discover()` validate/heal/persist pass). The Avalonia
+  `AppBuilder` is built in `src/ui/Program.cs`, which binds an explicit
+  `X11PlatformOptions.WmClass = "ModifAmorphic.ModificusCurator"` (via
+  `DesktopIdentityOptions`) so the running window's WM_CLASS matches the Velopack
+  pack id and the AppImage / installed desktop entries' StartupWMClass.
 - **Config** is `CuratorConfig` (`src/config/`) -- defaults under the
   OS local-app-data dir; loaded live from JSON by `general/ConfigLoader.cs`
   (consumers inject `IConfigLoader` and re-read per op, so runtime config

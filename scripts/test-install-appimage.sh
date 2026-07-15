@@ -97,7 +97,7 @@ if [ "$1" = "--appimage-extract" ]; then
     root=squashfs-root
     mkdir -p "$root/usr/bin/relay"
     [ "$OMIT" = "ModifAmorphic.ModificusCurator.desktop" ] || \
-        printf '[Desktop Entry]\nType=Application\nName=Modificus Curator\nIcon=ModifAmorphic.ModificusCurator\nExec=Modificus.Curator\nCategories=Game;Utility;\n' > "$root/ModifAmorphic.ModificusCurator.desktop"
+        printf '[Desktop Entry]\nType=Application\nName=Modificus Curator\nIcon=ModifAmorphic.ModificusCurator\nExec=Modificus.Curator\nCategories=Game;Utility;\nStartupWMClass=ModifAmorphic.ModificusCurator\n' > "$root/ModifAmorphic.ModificusCurator.desktop"
     [ "$OMIT" = "ModifAmorphic.ModificusCurator.png" ] || \
         printf 'FAKE_PNG_%s\n' "$VER" > "$root/ModifAmorphic.ModificusCurator.png"
     [ "$OMIT" = ".DirIcon" ] || \
@@ -215,6 +215,7 @@ assert_file_exists "$T_APPS/modificus-curator.desktop"
 assert_file_contains "$T_APPS/modificus-curator.desktop" "Name=Modificus Curator"
 assert_file_contains "$T_APPS/modificus-curator.desktop" "Icon=modificus-curator"
 assert_file_contains "$T_APPS/modificus-curator.desktop" "Categories=Game;Utility;"
+assert_file_contains "$T_APPS/modificus-curator.desktop" "StartupWMClass=ModifAmorphic.ModificusCurator"
 assert_file_contains "$T_APPS/modificus-curator.desktop" "$T_APPIMAGE"
 assert_file_not_contains "$T_APPS/modificus-curator.desktop" "APPIMAGE"
 assert_file_exists "$T_ICONS/modificus-curator.png"
