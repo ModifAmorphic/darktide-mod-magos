@@ -786,6 +786,48 @@ When `IsEnabled="True"` on a `TextBox`, focuses it and selects all its text the
 moment it becomes visible. Used by the Manage-profiles editable list so the
 inline rename and "+ New profile" entry boxes grab focus on appearance.
 
+## Avalonia app + explicit X11 desktop identity
+
+`Program.BuildAvaloniaApp` configures the Avalonia `AppBuilder` with the
+standard `UsePlatformDetect` + `LogToTrace` setup, plus an explicit X11 desktop
+identity via `AppBuilder.With`:
+
+```csharp
+internal static class Program
+{
+    public static AppBuilder BuildAvaloniaApp() =>
+        AppBuilder.Configure<App>()
+            .UsePlatformDetect()
+            .With(DesktopIdentityOptions.Build())
+            .LogToTrace(LogEventLevel.Warning);
+}
+
+internal static class DesktopIdentityOptions
+{
+    internal const string WmClass = "ModifAmorphic.ModificusCurator";
+    internal static X11PlatformOptions Build() => new() { WmClass = WmClass };
+}
+```
+
+`DesktopIdentityOptions.WmClass` is the single C# runtime constant for Curator's
+explicit X11 `WM_CLASS`. It is deliberately coupled to (must stay equal to) the
+Velopack pack id (`ModifAmorphic.ModificusCurator`), the `StartupWMClass` the
+release pipeline bakes into the generated AppImage desktop file, and the
+`StartupWMClass` `scripts/install-appimage.sh` writes into the user desktop
+entry; the AppImage packaging smoke (`curator-build.yml`) and the installer test
+harness (`scripts/test-install-appimage.sh`) assert that coupling from the
+packaging side, and this constant is the C# side. Avalonia 12's default
+`WmClass` is the entry-assembly name; setting it explicitly means a task manager
+groups the Curator window under Curator (and not, in particular, under Darktide
+when Curator launched Darktide from its AppImage). `AppBuilder.With<T>` binds the
+options before platform initialization; the platform reads `WmClass` only when an
+X11 window is created.
+
+The factory is factored separately so a unit test can read the configured value
+without starting X11 or requiring `DISPLAY`. Production binds the factory's
+result via `AppBuilder.With`, the normal app identity rather than a runtime
+heuristic.
+
 ## DI registration
 
 The composition root is `src/ui/CuratorComposition.cs` (a static
@@ -901,7 +943,12 @@ instance violation) propagates out; `App` catches it and calls
   (`INxmModDownloadHandler`, `NxmSingleInstanceException`, `NxmIpcServer`,
   `INxmHandlerRegistrar`), `launcher` (the stub).
 - **NuGet:** `Avalonia` 12.0.5 + `Avalonia.Desktop` 12.0.5 +
-  `Avalonia.Themes.Fluent` 12.0.5 (the UI framework), `CommunityToolkit.Mvvm`
+  `Avalonia.Themes.Fluent` 12.0.5 (the UI framework), plus an explicit
+  `Avalonia.X11` 12.0.5 compile-time reference so `Program.cs` can construct
+  `X11PlatformOptions` (the WmClass binding) directly; `Avalonia.Desktop`
+  already supplies the X11 runtime backend transitively, but excludes
+  `Avalonia.X11` from compile-time refs, so the options type is not otherwise
+  visible to code. Also `CommunityToolkit.Mvvm`
   8.4.2 (`ObservableObject`, `[ObservableProperty]`, `[RelayCommand]`),
   `Microsoft.Extensions.DependencyInjection` 10.0.9,
   `Microsoft.Extensions.Logging` 10.0.9. `Velopack` 1.2.0 is conditionally
@@ -993,6 +1040,10 @@ No backend library references the UI (the dependency direction is one-way).
   ESC-closes-dialogs behavior (true for `Key.Escape`, false for other keys).
   The KeyDown-to-Close wiring is rendered UI and not covered by a
   rendered-control test.
+- **`DesktopIdentityOptionsTests`**: the explicit X11 `WM_CLASS` constant
+  matches the Velopack pack id (`ModifAmorphic.ModificusCurator`) and the
+  factory builds an `X11PlatformOptions` carrying it, without starting Avalonia
+  or initializing X11 (no `DISPLAY` required).
 
 The internal `NxmModDownloadHandler` implementation is visible to the test
 assembly via `InternalsVisibleTo` (the handler is constructed by the

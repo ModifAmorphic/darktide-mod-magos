@@ -28,5 +28,40 @@ internal static class Program
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()
             .UsePlatformDetect()
+            .With(DesktopIdentityOptions.Build())
             .LogToTrace(LogEventLevel.Warning);
+}
+
+/// <summary>
+/// Curator's explicit X11 desktop identity. <see cref="WmClass"/> is the single
+/// C# runtime constant for the class Curator advertises on its top-level X11
+/// windows; it is deliberately coupled to (must stay equal to) the Velopack
+/// pack id, the <c>StartupWMClass</c> the release pipeline bakes into the
+/// generated AppImage desktop file, and the <c>StartupWMClass</c>
+/// <c>scripts/install-appimage.sh</c> writes into the user desktop entry. The
+/// AppImage packaging smoke (<c>curator-build.yml</c>) and the installer test
+/// harness (<c>scripts/test-install-appimage.sh</c>) assert that coupling from
+/// the packaging side; this constant is the C# side. This is the normal app
+/// identity, not a runtime heuristic.
+/// </summary>
+internal static class DesktopIdentityOptions
+{
+    /// <summary>
+    /// The X11 WM_CLASS Curator advertises on its top-level windows. Matches
+    /// the Velopack pack id (<c>ModifAmorphic.ModificusCurator</c>) and the
+    /// <c>StartupWMClass</c> the release pipeline + installer write into the
+    /// Linux desktop entries, so task managers group the Curator window under
+    /// Curator (not Darktide when Curator launched it from its AppImage).
+    /// </summary>
+    internal const string WmClass = "ModifAmorphic.ModificusCurator";
+
+    /// <summary>
+    /// Builds the <see cref="X11PlatformOptions"/> carrying Curator's
+    /// <see cref="WmClass"/>. Factored as a pure factory so a test can read the
+    /// configured value without initializing X11 or requiring <c>DISPLAY</c>.
+    /// Production wires it via <see cref="AppBuilder.With{T}(T)"/> in
+    /// <see cref="Program.BuildAvaloniaApp"/>; the platform reads WmClass from
+    /// the bound options only when an X11 window is created.
+    /// </summary>
+    internal static X11PlatformOptions Build() => new() { WmClass = WmClass };
 }

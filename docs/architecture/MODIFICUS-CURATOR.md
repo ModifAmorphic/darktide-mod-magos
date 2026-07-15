@@ -480,6 +480,20 @@ the prefix regardless. So the compatdata must be set by whoever invokes Proton
 when it invokes Proton.** (The live-validated working invocation set both env
 vars.) Steam discovers both; Relay-client sets both.
 
+**AppImage desktop-identity sanitization:** when Curator is launched from its
+installed AppImage, the AppImage runtime exports a handful of variables into
+Curator's environment (`APPDIR`, `APPIMAGE`, `ARGV0`, `OWD`, plus the desktop
+hint `BAMF_DESKTOP_FILE_HINT`). KDE Plasma's task manager reads
+`BAMF_DESKTOP_FILE_HINT` and then `APPDIR` from `/proc/<pid>/environ` to
+resolve a child's desktop identity, so if those leak through `proton run` into
+Relay and Darktide, the game window is grouped under Curator's launcher.
+Relay-client strips exactly those five keys from the inherited environment
+before invoking Proton; every unrelated inherited variable passes through
+unchanged, and the desktop-activation tokens (`DESKTOP_STARTUP_ID`,
+`XDG_ACTIVATION_TOKEN`, `GIO_LAUNCHED_DESKTOP_FILE`) are intentionally kept.
+On a non-AppImage launch (the standalone tarball, a dev build) none of those
+keys are present, so the removals are silent no-ops.
+
 Responsibilities:
 
 - **Steam library -- discovery + escape hatch + fail-fast:**

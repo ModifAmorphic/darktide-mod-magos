@@ -208,6 +208,11 @@ jobs:
           [ -x "$root/usr/bin/Modificus.Curator.NxmHandler" ] || { echo "FAIL: NXM handler not executable"; exit 1; }
           [ -x "$root/usr/bin/UpdateNix" ] || { echo "FAIL: UpdateNix not executable"; exit 1; }
           [ -x "$root/AppRun" ] || { echo "FAIL: AppRun not executable"; exit 1; }
+          # The Velopack-generated internal desktop entry carries the pack id
+          # (ModifAmorphic.ModificusCurator) as StartupWMClass, so the AppImage's
+          # window groups under Curator (matching the Curator UI's WM_CLASS).
+          grep -Fxq 'StartupWMClass=ModifAmorphic.ModificusCurator' "$root/ModifAmorphic.ModificusCurator.desktop" \
+            || { echo "FAIL: internal desktop entry missing exact line StartupWMClass=ModifAmorphic.ModificusCurator"; exit 1; }
           echo "AppImage structure validated"
 
       - name: Validate releases.linux-x64.json

@@ -346,9 +346,12 @@ workflow handles push-to-main.
 - **AppImage packaging smoke** (Ubuntu 22.04), also depends on format. It
   self-contained-publishes the UI, publishes the native-AOT handler, stages a
   deterministic Relay fixture, packs with `vpk` 1.2.0, extracts without FUSE,
-  checks package structure and executable modes, verifies the feed's filename,
-  size, SHA1, and SHA256 against the generated full nupkg, and runs the
-  AppImage installer and uninstaller tests. It uploads no artifact.
+  checks package structure and executable modes, asserts the
+  Velopack-generated internal desktop file carries
+  `StartupWMClass=ModifAmorphic.ModificusCurator` (matching the pack id and the
+  Curator window's WM_CLASS), verifies the feed's filename, size, SHA1, and
+  SHA256 against the generated full nupkg, and runs the AppImage installer and
+  uninstaller tests. It uploads no artifact.
 - **paths-ignore** skips release-please's bot-authored release PRs (they only
   touch `CHANGELOG.md` and `.release-please-manifest.json`), so those do not
   run the build gate.
@@ -414,8 +417,11 @@ local `CURATOR_APPIMAGE`, stages the candidate on the destination filesystem,
 sets executable mode, extracts it with `--appimage-extract`, validates the
 Velopack desktop/icon metadata plus the UI, NXM handler, Relay, `UpdateNix`, and
 `sq.version`, then atomically renames it over the stable installed AppImage.
-Only after validation does it update its user desktop entry, icon, and shared
-command symlink. A failed candidate leaves the previous AppImage usable.
+Only after validation does it update its user desktop entry (writing
+`StartupWMClass=ModifAmorphic.ModificusCurator` so the AppImage's window groups
+under Curator, matching the Curator window's WM_CLASS and the Velopack pack id),
+icon, and shared command symlink. A failed candidate leaves the previous
+AppImage usable.
 
 The AppImage installer supports `INSTALL_ROOT`, `BIN_LINK`, `CURATOR_REPO`,
 `CURATOR_APPIMAGE`, and `CURATOR_PRERELEASE`. Its deterministic shell harness

@@ -42,6 +42,13 @@
     <PackageReference Include="Avalonia" Version="12.0.5" />
     <PackageReference Include="Avalonia.Desktop" Version="12.0.5" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.5" />
+    <!--
+      Explicit Avalonia.X11 reference so Program.cs can construct
+      X11PlatformOptions (WmClass) directly. Avalonia.Desktop brings
+      Avalonia.X11 in at runtime but excludes it from compile-time refs, so the
+      options type is not otherwise visible to code.
+    -->
+    <PackageReference Include="Avalonia.X11" Version="12.0.5" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.9" />

@@ -28,7 +28,8 @@ public sealed class RelayLaunchServiceTests
 
         // Invoked the launcher directly -- not proton, no "run" prefix, no env.
         Assert.Equal(fx.LauncherPath, fx.Launcher.FilePath);
-        Assert.Null(fx.Launcher.Environment);
+        Assert.Empty(fx.Launcher.Environment!);
+        Assert.Empty(fx.Launcher.RemovedVariables);
         Assert.DoesNotContain("run", fx.Launcher.Arguments!);
 
         Assert.Equal(
@@ -136,6 +137,39 @@ public sealed class RelayLaunchServiceTests
         Assert.NotNull(env);
         Assert.Equal(FakeDiscovery.LinuxCompatdata, env!["STEAM_COMPAT_DATA_PATH"]);
         Assert.Equal(FakeDiscovery.LinuxSteam, env!["STEAM_COMPAT_CLIENT_INSTALL_PATH"]);
+    }
+
+    [Fact]
+    public void Linux_strips_exactly_the_appimage_identity_environment_variables()
+    {
+        // The five AppImage/desktop-identity variables (APPDIR, APPIMAGE, ARGV0,
+        // OWD, BAMF_DESKTOP_FILE_HINT) must be stripped from the inherited
+        // environment before proton runs, so KDE Plasma's task manager does not
+        // resolve Curator's desktop identity for Darktide. The two STEAM_COMPAT_*
+        // overrides must still be applied; nothing unrelated may be requested
+        // for removal.
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteLinux;
+        var svc = fx.BuildLinuxService();
+
+        svc.Launch(Guid.NewGuid());
+
+        var expectedRemovals = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "APPDIR", "APPIMAGE", "ARGV0", "OWD", "BAMF_DESKTOP_FILE_HINT",
+        };
+        Assert.True(
+            expectedRemovals.SetEquals(fx.Launcher.RemovedVariables),
+            "expected exactly the five AppImage/desktop-identity variables to be removed");
+        Assert.Equal(expectedRemovals.Count, fx.Launcher.RemovedVariables.Count);
+
+        // The Steam compat overrides are still present (overrides apply AFTER removals).
+        var env = fx.Launcher.Environment!;
+        Assert.Equal(FakeDiscovery.LinuxCompatdata, env["STEAM_COMPAT_DATA_PATH"]);
+        Assert.Equal(FakeDiscovery.LinuxSteam, env["STEAM_COMPAT_CLIENT_INSTALL_PATH"]);
+
+        // Only the two overrides are present (no stray additions beyond them).
+        Assert.Equal(2, env.Count);
     }
 
     [Fact]
