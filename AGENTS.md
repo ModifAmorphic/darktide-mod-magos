@@ -657,8 +657,9 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   Latest/Pinned policy, auto-sort identity stub, and local folder/archive import
   via file picker + drag-and-drop, joined to containers via `IModRepository` by
   `ContainerId`), and Launch (`LaunchCommand` -> `IRelayLaunchService.Launch`
-  -> branch on `LaunchResult.Status` (`Launched` -> status note + immediate
-  `IsGameRunning` refresh; `DiscoveryIncomplete` -> the focused discovery
+  -> branch on `LaunchResult.Status` (`Launched` -> an immediate
+  `IsGameRunning` refresh (the session's `Refresh`) so the running indicator +
+  launch/switch gates react at once; `DiscoveryIncomplete` -> the focused discovery
   escape-hatch modal over the shared `DiscoveryField` descriptor; `StagingFailed`
   -> a localized modal alert whose body appends the raised staging exception's
   message (a runtime/OS error) to the localized framing; `Error` -> modal alert) + a Settings window editing `CuratorConfig.Discovery` user

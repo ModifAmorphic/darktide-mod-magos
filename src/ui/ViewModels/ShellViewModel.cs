@@ -37,7 +37,7 @@ namespace Modificus.Curator.UI.ViewModels;
 /// in-step with the rest of the UI on a language switch.</para>
 /// <para><b>Track C is wired:</b> <see cref="LaunchCommand"/> invokes
 /// <see cref="IRelayLaunchService.Launch"/> and branches on
-/// <see cref="LaunchResult.Status"/> (Launched -> status note + an immediate
+/// <see cref="LaunchResult.Status"/> (Launched -> an immediate
 /// <see cref="IsGameRunning"/> refresh; DiscoveryIncomplete -> the focused
 /// escape-hatch dialog over the missing fields; Error -> a modal alert), and
 /// <see cref="OpenSettingsCommand"/> opens the Settings window (discovery
@@ -200,21 +200,6 @@ public partial class ShellViewModel : ObservableObject
         IsGameRunning
             ? _localization["Status_GameRunning"]
             : _localization["Status_GameNotRunning"];
-
-    /// <summary>
-    /// A transient launch-status note surfaced in the status strip ("Launched
-    /// 'X'" on success, or the launch error title on failure). Overwritten on
-    /// each launch attempt; null when no launch has happened since the shell
-    /// loaded. Localized.
-    /// </summary>
-    /// <remarks>
-    /// Brief by design: a subsequent launch overwrites it, and the durable
-    /// running-state signal is the <see cref="IsGameRunning"/> indicator + the
-    /// localized <see cref="GameRunningText"/>. The note is the immediate
-    /// confirmation that the click did something.
-    /// </remarks>
-    [ObservableProperty]
-    private string? _launchStatusNote;
 
     /// <summary>
     /// Whether Curator is currently the OS <c>nxm://</c> handler (per the
@@ -396,9 +381,6 @@ public partial class ShellViewModel : ObservableObject
         OnPropertyChanged(nameof(AppUpdateNoticeText));
         OnPropertyChanged(nameof(AppUpdateNoticeTooltip));
         OnPropertyChanged(nameof(AppUpdateDismissTooltip));
-        // LaunchStatusNote is a transient formatted string (not a key), so a
-        // culture flip while it happens to be visible is not re-translated. The
-        // next launch overwrites it; the durable signal is GameRunningText.
     }
 
     /// <summary>
@@ -664,10 +646,9 @@ public partial class ShellViewModel : ObservableObject
     /// Launches the active profile modded. Branches on
     /// <see cref="LaunchResult.Status"/>:
     /// <list type="bullet">
-    /// <item><term><see cref="LaunchStatus.Launched"/></term><description>a
-    /// brief localized "Launched 'X'" note in the status strip + an immediate
-    /// <see cref="IsGameRunning"/> refresh so the indicator + CanLaunch react at
-    /// once (not on the next poll).</description></item>
+    /// <item><term><see cref="LaunchStatus.Launched"/></term><description>an
+    /// immediate <see cref="IsGameRunning"/> refresh so the indicator + CanLaunch
+    /// react at once (not on the next poll).</description></item>
     /// <item><term><see cref="LaunchStatus.DiscoveryIncomplete"/></term><description>
     /// opens the escape-hatch dialog with the missing fields. No retry: the user
     /// clicks Launch again after submitting.</description></item>
@@ -690,7 +671,6 @@ public partial class ShellViewModel : ObservableObject
         switch (result.Status)
         {
             case LaunchStatus.Launched:
-                LaunchStatusNote = _localization.Format("Launch_LaunchedNote", profile.Name);
                 // Refresh running-state right away so the indicator + CanLaunch
                 // react at once. The session's polling timer would catch up
                 // eventually, but the user just clicked Launch; they should see
@@ -704,7 +684,6 @@ public partial class ShellViewModel : ObservableObject
                 // No retry: the user explicitly clicks Launch again after
                 // submitting. A loop here would trap them if they could not get
                 // the paths right.
-                LaunchStatusNote = null;
                 await _dialogs.ShowDiscoveryEscapeHatchAsync(result.MissingDiscoveryFields);
                 _logger.LogInformation(
                     "Discovery incomplete on launch of {Id}; showed escape-hatch for fields: {Fields}.",
@@ -717,7 +696,6 @@ public partial class ShellViewModel : ObservableObject
                 // the result. The user sees the localized framing + hint, then
                 // the runtime/OS detail appended, mirroring the Update/Import
                 // failure alerts.
-                LaunchStatusNote = null;
                 await _dialogs.ShowAlertAsync(
                     _localization["Launch_StagingFailedTitle"],
                     _localization["Launch_StagingFailedMessage"] + " " + (result.Message ?? string.Empty));
@@ -725,7 +703,6 @@ public partial class ShellViewModel : ObservableObject
                 break;
 
             case LaunchStatus.Error:
-                LaunchStatusNote = null;
                 await _dialogs.ShowAlertAsync(
                     _localization["Launch_ErrorTitle"],
                     result.Message ?? string.Empty);

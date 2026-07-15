@@ -139,8 +139,9 @@
          shell's ModList VM so the view's x:DataType resolves. -->
     <views:ModListView Grid.Row="1" DataContext="{Binding ModList}" />
 
-    <!-- Status strip: game-running indicator + the transient launch-status note
-         + the nxm handler status (enabled / disabled / unavailable). -->
+    <!-- Status strip: game-running indicator + the nxm handler status
+         (enabled / disabled / unavailable) + the dismissible app-update
+         notice. -->
     <Border Grid.Row="2"
             BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
             BorderThickness="0,1,0,0"
@@ -155,11 +156,6 @@
         <TextBlock Text="{Binding GameRunningText}"
                    FontSize="{DynamicResource AppStatusFontSize}" Opacity="0.8"
                    VerticalAlignment="Center" />
-        <TextBlock Text="{Binding LaunchStatusNote}"
-                   FontSize="{DynamicResource AppStatusFontSize}" Opacity="0.8"
-                   VerticalAlignment="Center"
-                   Margin="12,0,0,0"
-                   IsVisible="{Binding LaunchStatusNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
         <!-- nxm handler indicator: green when Curator is the registered handler
              (IsNxmEnabled), grey otherwise (covers not registered + no platform
              registrar). Mirrors the game-running Ellipse pair directly above. -->

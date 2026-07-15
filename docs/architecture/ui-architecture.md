@@ -36,7 +36,7 @@ dialogs, preferences, and i18n fit together.
 │  │           update-action cell (button) · up · down · remove            │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 │  ┌─ Status strip ──────────────────────────────────────────────────────┐ │
-│  │ Drawn Ellipse (running / stopped) · GameRunningText · LaunchStatusNote│ │
+│  │ Drawn Ellipse (running / stopped) · GameRunningText · NxmHandlerStatus│ │
 │  │ · AppUpdateNotice pill (dismissible; shown when a self-update exists) │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -159,9 +159,10 @@ use this pattern.
 `LaunchCommand` calls `IRelayLaunchService.Launch(activeProfileId)` and
 branches on `LaunchResult.Status`:
 
-- **`Launched`**: a brief localized status note ("Launched 'X'") plus an
-  immediate `_session.Refresh()` so the indicator and launch-availability
-  react at once, not on the next poll.
+- **`Launched`**: an immediate `_session.Refresh()` so the indicator and
+  launch-availability react at once, not on the next poll. Successful launch
+  surfaces no status note or other confirmation; the running indicator is the
+  durable signal.
 - **`DiscoveryIncomplete`**: opens the focused escape-hatch dialog with the
   missing fields. No auto-retry: the user submits the paths, closes the
   dialog, and clicks Launch again. A loop here would trap the user if they

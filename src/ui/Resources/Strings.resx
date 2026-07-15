@@ -646,13 +646,9 @@
   </data>
 
   <!-- ============================================================ -->
-  <!-- Launch outcomes (status strip + alert)                       -->
+  <!-- Launch outcomes (alert)                                      -->
   <!-- ============================================================ -->
 
-  <data name="Launch_LaunchedNote" xml:space="preserve">
-    <value>Launched '{0}'.</value>
-    <comment>The transient status-strip note after a successful launch. {0} is the profile name.</comment>
-  </data>
   <data name="Launch_ErrorTitle" xml:space="preserve">
     <value>Launch failed</value>
     <comment>Title of the modal alert shown when a launch returns LaunchStatus.Error.</comment>
