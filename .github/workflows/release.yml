@@ -75,13 +75,18 @@ jobs:
             -p:Version="$version" -p:InformationalVersion="$version" -p:CuratorUseVelopack=true
       - name: Publish NXM handler (AOT win-x64)
         run: dotnet publish nxm-handler --configuration Release --runtime win-x64 --output stage/app
-      - name: Fetch latest Relay release
+      - name: Fetch latest Relay prerelease
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-modificus-relay \
-            --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName')
+            --limit 100 --exclude-drafts --order desc --json tagName,isPrerelease,publishedAt \
+            --jq '[.[] | select(.isPrerelease == true)] | .[0].tagName // empty')
+          if [ -z "$RELAY_TAG" ]; then
+            echo "::error::No non-draft Relay prerelease found"
+            exit 1
+          fi
           echo "RELAY_TAG=$RELAY_TAG" >> "$GITHUB_ENV"
           echo "Relay tag: $RELAY_TAG"
           gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \
@@ -179,7 +184,7 @@ jobs:
   build-linux:
     needs: release-please
     if: ${{ needs.release-please.outputs.releases_created == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
       id-token: write
@@ -198,7 +203,7 @@ jobs:
       - name: Install native AOT prerequisites (clang, zlib)
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev
+          sudo apt-get install -y clang zlib1g-dev squashfs-tools
       - name: Cache NuGet packages
         uses: actions/cache@v6
         with:
@@ -210,42 +215,163 @@ jobs:
         run: dotnet restore modificus-curator.sln
       - name: Build (Release)
         run: dotnet build modificus-curator.sln --configuration Release --no-restore
-      - name: Publish Curator UI (framework-dependent)
+      - name: Publish Curator UI (framework-dependent, standalone)
         run: |
           VERSION="${{ needs.release-please.outputs.version }}"
           VERSION="${VERSION#v}"
           dotnet publish ui --configuration Release --runtime linux-x64 --self-contained false --output stage/app \
             -p:Version="$VERSION" -p:InformationalVersion="$VERSION"
-      - name: Publish NXM handler (AOT linux-x64)
+      - name: Publish NXM handler (AOT linux-x64, standalone)
         run: dotnet publish nxm-handler --configuration Release --runtime linux-x64 --output stage/app
-      - name: Fetch latest Relay release
+      - name: Fetch latest Relay prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-modificus-relay \
-            --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName')
+            --limit 100 --exclude-drafts --order desc --json tagName,isPrerelease,publishedAt \
+            --jq '[.[] | select(.isPrerelease == true)] | .[0].tagName // empty')
+          if [ -z "$RELAY_TAG" ]; then
+            echo "::error::No non-draft Relay prerelease found"
+            exit 1
+          fi
           echo "RELAY_TAG=$RELAY_TAG" >> "$GITHUB_ENV"
           echo "Relay tag: $RELAY_TAG"
           gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \
             --pattern "*-windows-x64.zip" --dir stage
-      - name: Extract Relay to relay/ directory
+      - name: Extract Relay to relay/ directory (standalone)
         run: |
           mkdir -p stage/relay
           unzip -q stage/*-windows-x64.zip -d stage/relay
-          rm stage/*-windows-x64.zip
-      - name: Create release archive
+      - name: Create standalone release archive
         run: |
           tar czf "curator-${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz" -C stage app relay
-      - name: Upload release asset
+      - name: Upload standalone release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ needs.release-please.outputs.tag_name }}" \
             "curator-${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz" --clobber
-      - name: Attest release asset
+      - name: Attest standalone release asset
         uses: actions/attest@v4
         with:
           subject-path: src/curator-${{ needs.release-please.outputs.tag_name }}-linux-x64.tar.gz
+
+      # AppImage packaging (separate from standalone)
+      - name: Publish Curator UI (AppImage, self-contained)
+        run: |
+          VERSION="${{ needs.release-please.outputs.version }}"
+          VERSION="${VERSION#v}"
+          dotnet publish ui --configuration Release --runtime linux-x64 --self-contained true --output stage/appimage \
+            -p:Version="$VERSION" -p:InformationalVersion="$VERSION" -p:CuratorUseVelopack=true
+      - name: Publish NXM handler (AOT linux-x64, AppImage)
+        run: dotnet publish nxm-handler --configuration Release --runtime linux-x64 --output stage/appimage
+      - name: Stage Relay for AppImage
+        run: |
+          mkdir -p stage/appimage/relay
+          unzip -q stage/*-windows-x64.zip -d stage/appimage/relay
+          rm stage/*-windows-x64.zip
+      - name: Seed prior Velopack feed and full package (for delta generation)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p stage/releases
+
+          # Query GitHub API for published releases (non-draft), considering both
+          # stable and prerelease. Exclude the current release. Require exact
+          # releases.linux-x64.json asset. Choose the newest prior published release.
+          PRIOR_RELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq -r --arg current "$CURRENT_TAG" '[.[] | select(.draft == false) | select(.tag_name != $current) | select(any(.assets[]?; .name == "releases.linux-x64.json"))] | sort_by(.published_at) | reverse | .[0].tag_name // empty')
+
+          if [ -z "$PRIOR_RELEASE" ]; then
+            printf '%s\n' "No prior linux-x64 release with releases.linux-x64.json found; first AppImage release (no delta)"
+            exit 0
+          fi
+
+          printf '%s\n' "Seeding with prior release: $PRIOR_RELEASE"
+
+          # Download only the releases.linux-x64.json feed
+          gh release download "$PRIOR_RELEASE" --repo "${GITHUB_REPOSITORY}" \
+            --pattern "releases.linux-x64.json" --dir stage/releases
+
+          # Fetch the selected release JSON once and resolve the actual full-package asset name
+          RELEASE_JSON=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${PRIOR_RELEASE}")
+
+          # Count assets ending with -linux-x64-full.nupkg and require exactly one
+          FULL_PKG_COUNT=$(printf '%s\n' "$RELEASE_JSON" | jq '[.assets[] | select(.name | test("-linux-x64-full\\.nupkg$"))] | length')
+          if [ "$FULL_PKG_COUNT" -ne 1 ]; then
+            printf '%s\n' "::error::Prior release $PRIOR_RELEASE has $FULL_PKG_COUNT matching full-package assets; expected exactly 1. Delta seeding failed."
+            exit 1
+          fi
+
+          # Extract the exact full-package filename (raw filename, not JSON array)
+          FULL_PKG_NAME=$(printf '%s\n' "$RELEASE_JSON" | jq -r '.assets[] | select(.name | test("-linux-x64-full\\.nupkg$")) | .name')
+
+          # Download the exact full package (never download delta or AppImage)
+          gh release download "$PRIOR_RELEASE" --repo "${GITHUB_REPOSITORY}" \
+            --pattern "$FULL_PKG_NAME" --dir stage/releases
+
+          printf '%s\n' "Seeded prior full package: $FULL_PKG_NAME"
+      - name: Install vpk 1.2.0 (job-local)
+        run: |
+          dotnet tool install vpk --version 1.2.0 --tool-path .vpk-temp
+      - name: Resolve version for vpk
+        id: rel
+        run: |
+          version="${{ needs.release-please.outputs.version }}"
+          version="${version#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Pack AppImage
+        run: |
+          .vpk-temp/vpk pack \
+            --packId ModifAmorphic.ModificusCurator \
+            --packVersion "${{ steps.rel.outputs.version }}" \
+            --packDir stage/appimage \
+            --mainExe Modificus.Curator \
+            --icon ui/Assets/app-icon.png \
+            --packTitle "Modificus Curator" \
+            --categories "Game;Utility" \
+            --channel linux-x64 \
+            --runtime linux-x64 \
+            --compression gzip \
+            -o stage/releases
+      - name: Rename AppImage to short asset name
+        run: |
+          cd stage/releases
+          mv ModifAmorphic.ModificusCurator-linux-x64.AppImage ModificusCurator-linux-x64.AppImage
+          [ -f ModifAmorphic.ModificusCurator-linux-x64.AppImage ] && { echo "FAIL: long AppImage still exists after rename"; exit 1; }
+          [ -f ModificusCurator-linux-x64.AppImage ] || { echo "FAIL: short AppImage does not exist after rename"; exit 1; }
+          [ -x ModificusCurator-linux-x64.AppImage ] || { echo "FAIL: short AppImage not executable after rename"; exit 1; }
+          echo "AppImage renamed successfully"
+
+      - name: Upload AppImage assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${{ steps.rel.outputs.version }}"
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            "stage/releases/ModificusCurator-linux-x64.AppImage" \
+            "stage/releases/ModifAmorphic.ModificusCurator-${version}-linux-x64-full.nupkg" \
+            stage/releases/releases.linux-x64.json \
+            --clobber
+          # Upload delta.nupkg if present (will exist for non-first releases)
+          if [ -f "stage/releases/ModifAmorphic.ModificusCurator-${version}-linux-x64-delta.nupkg" ]; then
+            gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+              "stage/releases/ModifAmorphic.ModificusCurator-${version}-linux-x64-delta.nupkg" --clobber
+          fi
+      - name: Attest AppImage
+        uses: actions/attest@v4
+        with:
+          subject-path: src/stage/releases/ModificusCurator-linux-x64.AppImage
+      - name: Attest AppImage full nupkg
+        uses: actions/attest@v4
+        with:
+          subject-path: src/stage/releases/ModifAmorphic.ModificusCurator-${{ steps.rel.outputs.version }}-linux-x64-full.nupkg
+      - name: Attest AppImage delta nupkg (if present)
+        if: hashFiles('src/stage/releases/ModifAmorphic.ModificusCurator-*-linux-x64-delta.nupkg') != ''
+        uses: actions/attest@v4
+        with:
+          subject-path: src/stage/releases/ModifAmorphic.ModificusCurator-${{ steps.rel.outputs.version }}-linux-x64-delta.nupkg
 
   dispatch-av-vt:
     needs: [release-please, build-windows, build-linux]
@@ -285,24 +411,35 @@ jobs:
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           prerelease=$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' || echo true)
-          asset_url=$(gh release view "$TAG" --json assets --jq '.assets[] | select(.contentType=="application/x-gtar") | .url' | head -n1)
-          if [ -z "$asset_url" ]; then
+          # Resolve standalone tarball by content type (existing behavior)
+          standalone_url=$(gh release view "$TAG" --json assets --jq '.assets[] | select(.contentType=="application/x-gtar") | .url' | head -n1)
+          if [ -z "$standalone_url" ]; then
             echo "::error::No Linux tar.gz asset (contentType application/x-gtar) found in release $TAG"
             exit 1
           fi
+          # Resolve AppImage by exact asset name (not first asset/order/content type)
+          appimage_url=$(gh release view "$TAG" --json assets --jq '.assets[] | select(.name=="ModificusCurator-linux-x64.AppImage") | .url')
+          if [ -z "$appimage_url" ]; then
+            echo "::error::No Linux AppImage asset (ModificusCurator-linux-x64.AppImage) found in release $TAG"
+            exit 1
+          fi
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "asset_url=$asset_url" >> "$GITHUB_OUTPUT"
+          echo "standalone_url=$standalone_url" >> "$GITHUB_OUTPUT"
+          echo "appimage_url=$appimage_url" >> "$GITHUB_OUTPUT"
       - name: Update scripts/release.env
         shell: bash
         env:
           PRERELEASE: ${{ steps.rel.outputs.prerelease }}
-          ASSET_URL: ${{ steps.rel.outputs.asset_url }}
+          STANDALONE_URL: ${{ steps.rel.outputs.standalone_url }}
+          APPIMAGE_URL: ${{ steps.rel.outputs.appimage_url }}
         run: |
           # Rewrite the manifest. Preserve the file's comment header.
           if [ "$PRERELEASE" = "false" ]; then
-            sed -i "s#^RELEASE_URL=.*#RELEASE_URL=$ASSET_URL#" scripts/release.env
+            sed -i "s#^RELEASE_URL=.*#RELEASE_URL=$STANDALONE_URL#" scripts/release.env
+            sed -i "s#^APPIMAGE_RELEASE_URL=.*#APPIMAGE_RELEASE_URL=$APPIMAGE_URL#" scripts/release.env
           else
-            sed -i "s#^PRE_RELEASE_URL=.*#PRE_RELEASE_URL=$ASSET_URL#" scripts/release.env
+            sed -i "s#^PRE_RELEASE_URL=.*#PRE_RELEASE_URL=$STANDALONE_URL#" scripts/release.env
+            sed -i "s#^APPIMAGE_PRE_RELEASE_URL=.*#APPIMAGE_PRE_RELEASE_URL=$APPIMAGE_URL#" scripts/release.env
           fi
       - name: Commit manifest
         run: |

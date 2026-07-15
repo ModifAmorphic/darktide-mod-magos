@@ -63,7 +63,8 @@ a UI-layer singleton that the shell (and other view models) inject:
   │                             active-profile switch, a periodic timer, and
   │                             the manual "check now" affordance
   │
-  ├── IAppUpdateService ─────── Curator's own self-update (Velopack, Windows);
+  ├── IAppUpdateService ─────── Curator's own self-update (Velopack-packaged
+  │                             Windows installer and Linux AppImage);
   │   │                         the shell notice + Settings section read it.
   │   │                         Conditional impl behind CURATOR_VELOPACK
   │   │                         (NoopAppUpdateService everywhere else).
@@ -379,7 +380,8 @@ re-hydrates from the store when the result lands.
 ## The app self-update UI
 
 The shell and the Settings window surface Curator's own self-update through
-`IAppUpdateService` (Windows only, via Velopack). The check is fired once on
+`IAppUpdateService` in Velopack-packaged builds (the Windows installer and Linux
+AppImage). The check is fired once on
 startup by `AppUpdateCheckRunner` and the result lands through the service's
 `UpdateStateChanged` event; the UI reads `LastCheckResult`. Full detail on the
 service, the update source, and the lifecycle is in
@@ -396,8 +398,8 @@ Two surfaces:
   process; Velopack relaunches). Cancel on the confirm leaves the pill
   visible; only the drawn close button dismisses it, and dismissal is
   session-only (not persisted, so a later update is not hidden).
-- **The Settings "Updates" section.** Always rendered (so Linux and dev
-  builds still see their version), with the current version, a "Check for
+- **The Settings "Updates" section.** Always rendered (so standalone, portable,
+  and dev builds still see their version), with the current version, a "Check for
   Updates" button plus an inline indeterminate spinner and status line, and a
   "Download and Restart" button visible only when an update is available. The
   manual check calls `CheckForUpdatesAsync` off the UI thread; "Download and
@@ -596,5 +598,5 @@ dismiss an in-flight operation.
 - [Nexus API rate limiting](nexus-rate-limiting.md): how the update check's
   rate-limit signal becomes the mod-list "check incomplete" notice.
 - [App auto-update architecture](app-auto-update.md): Curator's own
-  self-update (Velopack, Windows) behind `IAppUpdateService`, surfaced in the
+  self-update in Velopack-packaged builds behind `IAppUpdateService`, surfaced in the
   shell status-strip pill and the Settings "Updates" section.

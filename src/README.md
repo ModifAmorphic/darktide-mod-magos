@@ -84,7 +84,10 @@ The PR gate (`.github/workflows/curator-build.yml`) runs on `pull_request`
 targeting `main` (and `workflow_dispatch`). There is intentionally no `push`
 trigger; the release workflow handles push-to-main. It runs an Ubuntu-only
 format job, then `dotnet build` and `dotnet test` on a Windows + Ubuntu
-matrix that depends on the format job. For same-repo PRs the format job
+matrix that depends on the format job. A separate Ubuntu 22.04 packaging-smoke
+job publishes, packs, extracts, and validates the Linux AppImage and its
+Velopack feed, then runs the AppImage installer and uninstaller tests. For
+same-repo PRs the format job
 runs `dotnet format` and commits any changes as
 `style: dotnet format [skip ci]`; for fork PRs and `workflow_dispatch` it
 runs `dotnet format --verify-no-changes`. `paths-ignore` skips release-please's
@@ -94,9 +97,10 @@ produced by the release workflow instead.
 Releases are cut by `release-please` (`.release-please-config.json` +
 `.release-please-manifest.json` at the repo root; tag style `v0.1.0`, no
 component prefix). When release-please creates a release, the release workflow
-publishes each target as an unsigned asset (Windows: a Velopack installer
-and a portable ZIP; Linux: a framework-dependent tar.gz bundle), fetches
-the latest stable Modificus Relay release, and uploads a GitHub Artifact
+publishes each target as unsigned assets (Windows: a Velopack installer
+and a portable ZIP; Linux: a framework-dependent tar.gz bundle plus a
+self-contained Velopack AppImage and update feed), fetches
+the latest non-draft Modificus Relay prerelease, and uploads a GitHub Artifact
 Attestation against each asset. Verify an asset's provenance with:
 
 ```
@@ -116,8 +120,19 @@ The Windows releases are:
   installed separately. The portable build does not include Velopack and
   does not support in-app self-update; download a newer ZIP manually to update.
 
-The Linux release archive is two top-level folders, extracted into the
-Linux app-data root (`~/.local/share/Modificus Curator`):
+Linux has two permanent distributions:
+
+- **AppImage** (`ModificusCurator-linux-x64.AppImage`): a
+  self-contained .NET 10 payload with the UI, native-AOT NXM handler, and Relay
+  under its app-local `relay/` directory. It is packed on channel `linux-x64`
+  with `releases.linux-x64.json`, a full nupkg, and a delta when a predecessor
+  exists. Velopack's generated AppImage is renamed after packing for the public
+  download; the internal pack ID and nupkg names remain
+  `ModifAmorphic.ModificusCurator`. It uses `VelopackAppUpdateService` and
+  supports in-app self-update.
+- **Standalone tarball** (`curator-<tag>-linux-x64.tar.gz`): the existing
+  framework-dependent archive, with two top-level folders extracted into the
+  Linux app-data root (`~/.local/share/Modificus Curator`):
 
 - `app/` - the Curator UI + the `nxm://` handler (+ the launcher stub, pending
   later cleanup).
@@ -145,10 +160,22 @@ publication, but red means the scan signal is invalid or VirusTotal upload faile
 Releases created with `GITHUB_TOKEN` do not fire `release: published`, which is
 why the AV/VT workflow runs on `repository_dispatch` instead.
 
-The Linux install script (`scripts/install.sh`, served from `raw/main`) installs
-the latest stable release (prereleases opt-in via `--prerelease`), resolving the
-archive from `scripts/release.env`, into
-`${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`.
+The Linux standalone installer (`scripts/install.sh`) installs the tarball into
+`${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`. The AppImage installer
+(`scripts/install-appimage.sh`) installs the self-contained image at
+`<root>/appimage/Modificus.Curator.AppImage`, plus user desktop integration.
+Both are served from `raw/main`, default to stable, accept `--prerelease`, and
+resolve independent URLs from `scripts/release.env` without querying the GitHub
+API. They preserve shared user data and may coexist; the most recently run
+installer repoints the common `~/.local/bin/modificus-curator` symlink.
+
+The AppImage uninstaller (`scripts/uninstall-appimage.sh`) defaults to removing
+only the AppImage payload, its owned desktop/NXM integration, and app-specific
+Velopack update state. It preserves user data and the standalone distribution.
+The explicit `--purge-data` mode removes the entire Linux Curator data root,
+including both distributions and all profiles, mods, config, logs, and app
+state. `scripts/test-uninstall-appimage.sh` exercises both modes in isolated
+HOME/XDG and Velopack-state paths.
 See the root [`README.md`](../README.md) for the user-facing install steps.
 
 ## Storage model (unified repository)

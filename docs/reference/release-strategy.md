@@ -2,7 +2,7 @@
 
 Reference for how Modificus Curator releases are produced, attested, scanned,
 and installed. Covers the release workflow, the post-release AV/VT scan, the
-PR gate, and the Linux installer.
+PR gate, the two Linux installers, and AppImage uninstall.
 
 ## Versioning
 
@@ -50,14 +50,16 @@ Jobs:
 2. **build-windows** and **build-linux** run in parallel, each gated on
    `releases_created == 'true'` and checked out at the release commit. The
    Windows leg runs on `windows-latest` (native AOT for the `nxm://` handler
-   requires a Windows runner); the Linux leg runs on `ubuntu-latest`.
+   requires a Windows runner); the Linux leg runs on `ubuntu-22.04` for a
+   conservative native-AOT/glibc build environment.
 
    **Common to both legs:**
    - Sets up .NET 10.
    - Publishes the Curator UI framework-dependent into `stage/app/` with
      `-p:Version` + `-p:InformationalVersion`, targeting `win-x64` or `linux-x64`
      RIDs with `--self-contained false` to filter native libraries to one platform.
-     The Windows publish additionally sets `-p:CuratorUseVelopack=true`, which
+      The Windows installer publish and the separate Linux AppImage publish set
+      `-p:CuratorUseVelopack=true`, which
      adds the Velopack package reference and the `CURATOR_VELOPACK` compilation
      symbol that wires the `VelopackApp.Build().Run()` lifecycle hook in
      `Program.cs`.
@@ -66,11 +68,12 @@ Jobs:
 
     **build-windows** then produces both a Velopack installer and a portable
     ZIP:
-    - Extracts the latest stable, non-draft Relay release from
+    - Extracts the latest non-draft Relay prerelease from
       `ModifAmorphic/darktide-modificus-relay` into `stage/relay/` (for the
       portable ZIP) and `stage/app/relay/` (for the Velopack pack) so Relay
       ships in both artifacts. (Fetched via
-      `gh release list --exclude-drafts --exclude-pre-releases` +
+      `gh release list --exclude-drafts --order desc` with explicit
+      `isPrerelease` filtering +
       `gh release download --pattern '*-windows-x64.zip'`. The Relay tag is
       resolved per workflow run; there is no Relay version pinning and no
       Relay provenance sidecar.)
@@ -103,30 +106,48 @@ Jobs:
       - Uploads the ZIP to the release with `gh release upload --clobber`.
       - Attests the ZIP with `actions/attest@v4`.
 
-   **build-linux** keeps the portable-archive flow:
-   - Fetches the same Relay Windows zip (Linux runs Relay under Proton, so
-     there is no Relay Linux asset) and extracts it into `stage/relay/`.
-   - Builds the release archive from `stage/` so it has a top-level `app/` +
-     `relay/` layout: `curator-<tag>-linux-x64.tar.gz` (tar).
-   - Uploads the archive to the release with `gh release upload --clobber`.
-   - Attests the uploaded asset with `actions/attest@v4`.
+   **build-linux** produces both permanent Linux distributions:
+   - **Standalone tarball:**
+     - Fetches the same Relay Windows zip (Linux runs Relay under Proton, so
+       there is no Relay Linux asset) and extracts it into `stage/relay/`.
+     - Builds the release archive from `stage/` so it has a top-level `app/` +
+       `relay/` layout: `curator-<tag>-linux-x64.tar.gz` (tar).
+     - Uploads the archive to the release with `gh release upload --clobber`.
+     - Attests the uploaded asset with `actions/attest@v4`.
+   - **Self-contained AppImage:**
+     - Publishes a second `linux-x64` UI payload with `--self-contained true`
+       and `-p:CuratorUseVelopack=true`, publishes the native-AOT NXM handler
+       into the same root, and stages Relay under its app-local `relay/`.
+     - Installs job-local `vpk` 1.2.0 and packs with channel/runtime
+       `linux-x64`, producing
+       `ModificusCurator-linux-x64.AppImage` (renamed from Velopack's generated
+       filename after packing),
+       `releases.linux-x64.json`, and the current full nupkg.
+     - Searches prior stable and prerelease releases for the newest release
+       carrying the exact `linux-x64` feed, then seeds that feed and its one
+       full nupkg before packing so Velopack can generate a delta. The first
+       AppImage release proceeds without a predecessor.
+     - Uploads only the current AppImage, feed, full nupkg, and optional delta.
+       It attests the AppImage and current nupkgs.
 3. **dispatch-av-vt**, gated on both build legs succeeding, fires a
    `repository_dispatch` event (`event_type: curator-release-assets-published`,
    carrying the tag + asset names) to trigger the post-release AV/VT workflow.
 4. **update-manifest**, gated on `releases_created == 'true'` and `build-linux`
-   success, rewrites `scripts/release.env` (the install manifest the Linux
-   installer consumes) to point at the new Linux tar.gz. It resolves the asset
-   from the release by `content_type=="application/x-gtar"` via
-   `gh release view`, selects `RELEASE_URL` (stable) or `PRE_RELEASE_URL`
-   (prerelease) from the release's `prerelease` flag, and commits the change as
+   success, rewrites `scripts/release.env` (the install manifest both Linux
+   installers consume) to point at the new tarball and AppImage. It resolves
+   the tarball independently by content type and the AppImage by its exact
+   asset name. A stable release updates `RELEASE_URL` plus
+   `APPIMAGE_RELEASE_URL`; a prerelease updates `PRE_RELEASE_URL` plus
+   `APPIMAGE_PRE_RELEASE_URL`. It commits the change as
    `chore(release): update install manifest [skip ci]`. The `[skip ci]` in the
    commit message suppresses re-triggering this workflow, and the `chore` type
-   keeps release-please from picking it up. Only the one matching var line is
-   rewritten; the other (and the comment header) is left untouched.
+   keeps release-please from picking it up. Only the two matching channel lines
+   are rewritten; the opposite channel and the comment header are left untouched.
 
 ### Deployment model
 
-Windows and Linux now ship differently.
+Windows and Linux each offer an installed/self-updating distribution and a
+portable or standalone distribution.
 
 **Windows** ships as a [Velopack](https://github.com/velopack/velopack) installer
 plus auto-update payload, and as a portable ZIP. Both artifacts are built from the
@@ -161,12 +182,26 @@ separate from the install root, at `%LOCALAPPDATA%\ModifAmorphic\Modificus Curat
 place on update, so user data must not live there. The portable ZIP has no
 install root; user data is always at the data root.
 
-**Linux** is unchanged: a framework-dependent tar.gz. Users install the .NET 10
-Runtime themselves; the base `Microsoft.NETCore.App` runtime is sufficient
-(Curator uses Avalonia, not WPF/WinForms, so the Windows Desktop Runtime is not
-required). Framework-dependent deployment also avoids the single-file
-extract-to-temp pattern that attracts dropper heuristics. The tar.gz has a
-top-level `app/` + `relay/` layout extracted into `~/.local/share/Modificus Curator/`.
+**Linux AppImage** (`ModificusCurator-linux-x64.AppImage`) is the
+recommended installed distribution. It is self-contained, so no host .NET
+runtime is required. `scripts/install-appimage.sh` installs it per-user at
+`~/.local/share/Modificus Curator/appimage/Modificus.Curator.AppImage`, adds a
+desktop entry, icon, and command symlink, and uses no root privileges. The
+AppImage is a Velopack package on channel `linux-x64`, so the existing startup
+check and Download and Restart flow replace the stable installed file and
+relaunch it.
+
+The public AppImage asset is renamed after `vpk pack` to keep the download name
+short. The Velopack pack ID remains `ModifAmorphic.ModificusCurator`; feed and
+nupkg identities are unchanged. Linux updates extract the internal AppImage
+from the nupkg and replace the current `$APPIMAGE` path, so the public initial
+download filename is not part of the update contract.
+
+**Linux standalone tarball** remains a permanent supported alternative. Users
+install the .NET 10 Runtime themselves; the base `Microsoft.NETCore.App` runtime
+is sufficient. The tar.gz has a top-level `app/` + `relay/` layout extracted
+into `~/.local/share/Modificus Curator/`. It omits Velopack and updates by
+re-running `scripts/install.sh` or installing the archive manually.
 
 Two executables ship together in `app/`: `Modificus.Curator[.exe]` (the
 Avalonia UI, `WinExe`) and `Modificus.Curator.NxmHandler[.exe]` (the
@@ -177,9 +212,10 @@ every bundle.
 
 `CuratorConfig.RelayDir` defaults to `<app-data>/relay/` (the Windows data root
 or `~/.local/share/Modificus Curator/` on Linux; see `config/AppPaths.cs`).
-`RelayLaunchService.ResolveLauncherPath` looks there first, then (Windows only)
-falls back to the app-local `relay/` shipped inside the Velopack payload. There
-is no first-run Relay provisioning logic; a missing launcher maps to
+`RelayLaunchService.ResolveLauncherPath` looks there first, then on both Windows
+and Linux falls back to app-local `relay/` inside a Velopack payload. Windows
+alone has a final portable sibling fallback. There is no first-run Relay
+provisioning logic; a missing launcher maps to
 `LaunchStatus.Error`. Manual `RelayDir` overrides via JSON config are the
 user's responsibility.
 
@@ -187,9 +223,13 @@ user's responsibility.
 installer or the Linux install script. `WindowsNxmHandlerRegistrar` writes
 `HKCU\Software\Classes\nxm` (per-user, no elevation); `LinuxNxmHandlerRegistrar`
 writes `~/.local/share/applications/modificus-curator-nxm-handler.desktop` + a
-best-effort `xdg-mime default`. Both encode an absolute path to the handler
-exe. On Windows the Velopack `current\` directory is replaced in place on
-update, so the registered path stays stable.
+best-effort `xdg-mime default`. The standalone Linux build records the sibling
+handler directly. In an AppImage run, Curator copies the handler to a durable
+per-user integration directory and creates a sibling symlink to `$APPIMAGE`, so
+the desktop entry never records a temporary mount path. Startup maintenance
+refreshes those files only while Curator still owns the active registration.
+On Windows the Velopack `current\` directory is replaced in place on update, so
+the registered path stays stable.
 
 ## Supply-chain integrity (artifact attestations)
 
@@ -202,8 +242,9 @@ on this commit"; moving attestation to a separate workflow that just
 downloads the artifact would attest to nothing useful.
 
 Windows attests three assets: `modificus-curator-setup.exe`, the
-`*-full.nupkg`, and `curator-<tag>-windows-x64.zip`. Linux attests one asset:
-`curator-<tag>-linux-x64.tar.gz`. Anyone can verify an asset:
+`*-full.nupkg`, and `curator-<tag>-windows-x64.zip`. Linux attests the
+standalone tarball, AppImage, full nupkg, and optional delta nupkg. Anyone can
+verify an asset:
 
 ```
 gh attestation verify <file> --repo ModifAmorphic/darktide-modificus-curator
@@ -302,15 +343,22 @@ workflow handles push-to-main.
   auto-commit any changes as `style: dotnet format [skip ci]`. Fork PRs and
   `workflow_dispatch` invocations run `dotnet format --verify-no-changes` (no commit).
 - **Build + test matrix** (Windows + Ubuntu), depends on the format job.
+- **AppImage packaging smoke** (Ubuntu 22.04), also depends on format. It
+  self-contained-publishes the UI, publishes the native-AOT handler, stages a
+  deterministic Relay fixture, packs with `vpk` 1.2.0, extracts without FUSE,
+  checks package structure and executable modes, verifies the feed's filename,
+  size, SHA1, and SHA256 against the generated full nupkg, and runs the
+  AppImage installer and uninstaller tests. It uploads no artifact.
 - **paths-ignore** skips release-please's bot-authored release PRs (they only
   touch `CHANGELOG.md` and `.release-please-manifest.json`), so those do not
   run the build gate.
 - No `actions/upload-artifact` step. Release assets are produced by the
   release workflow.
 
-## Linux installer
+## Linux installers
 
-`scripts/install.sh` is served from `raw/main`. By default it installs the
+`scripts/install.sh` is the standalone tarball installer served from `raw/main`.
+By default it installs the
 latest STABLE release; pass `--prerelease` (or set `CURATOR_PRERELEASE=1`) to
 install the latest prerelease:
 
@@ -348,8 +396,8 @@ install root, then:
 - Warns (non-fatal) if `dotnet --list-runtimes` does not list
   `Microsoft.NETCore.App 10.`.
 
-Curator's own first run handles `.desktop` registration for the `nxm://`
-handler; the script does not duplicate that.
+The Integrations dialog handles explicit `nxm://` registration; the script does
+not duplicate that system association.
 
 The script supports testing overrides (`INSTALL_ROOT`, `BIN_LINK`,
 `CURATOR_REPO`, `CURATOR_ARCHIVE`, `CURATOR_PRERELEASE`) so extraction +
@@ -358,6 +406,42 @@ real user data or hitting the network. The script in `main` is authoritative;
 users always get the current version, installing the latest stable by default
 or the latest prerelease on request. Users wanting a specific release manage
 the install themselves.
+
+`scripts/install-appimage.sh` is the separate self-contained AppImage installer.
+It follows the same stable-by-default and `--prerelease` contract, but reads
+`APPIMAGE_RELEASE_URL` or `APPIMAGE_PRE_RELEASE_URL`. It downloads or accepts a
+local `CURATOR_APPIMAGE`, stages the candidate on the destination filesystem,
+sets executable mode, extracts it with `--appimage-extract`, validates the
+Velopack desktop/icon metadata plus the UI, NXM handler, Relay, `UpdateNix`, and
+`sq.version`, then atomically renames it over the stable installed AppImage.
+Only after validation does it update its user desktop entry, icon, and shared
+command symlink. A failed candidate leaves the previous AppImage usable.
+
+The AppImage installer supports `INSTALL_ROOT`, `BIN_LINK`, `CURATOR_REPO`,
+`CURATOR_APPIMAGE`, and `CURATOR_PRERELEASE`. Its deterministic shell harness
+(`scripts/test-install-appimage.sh`) uses a fake extractable AppImage and
+isolated HOME/XDG paths, so it needs neither FUSE nor network. Both Linux
+distributions share user data and may coexist; whichever installer ran most
+recently controls the common convenience symlink.
+
+`scripts/uninstall-appimage.sh` is the official per-user AppImage uninstaller.
+With no flags it removes the installed AppImage, AppImage-owned desktop/icon
+integration, AppImage-managed NXM files, and the app-specific Velopack state at
+`/var/tmp/velopack/ModifAmorphic.ModificusCurator`. Removing the Velopack state
+also clears retained or pending local update packages, preventing them from
+immediately advancing a newly installed acceptance-test base. Default mode
+preserves profiles, mods, config, logs, app state, and standalone `app/` and
+`relay/` payloads. It preserves `AppUpdates.SourceOverride` and reminds the user
+to clear it separately before testing production update sources.
+
+The explicit `--purge-data` mode performs a clean Linux removal by recursively
+deleting the strictly validated `Modificus Curator` data root. This intentionally
+removes all user data and both Linux distributions under that root. Both modes
+remove only exact external desktop/icon files and qualifying command links,
+reject root execution, and validate all destructive paths before mutation. The
+isolated `scripts/test-uninstall-appimage.sh` harness covers preserved-data and
+purge behavior, path safety, NXM ownership, pending Velopack state, and
+idempotency.
 
 ## Sandbox rehearsal (operator procedure)
 
@@ -379,8 +463,8 @@ rehearsal is temporary and leaves `main` untouched:
 4. Push the branch and land a conventional commit so release-please opens a
    release PR against the sandbox branch.
 5. Merge the release PR on the sandbox branch and let the release workflow
-   run end to end: release-please cuts the release, the Windows + Linux
-   archives are built and attested, and the AV/VT dispatch fires.
+   run end to end: release-please cuts the release, the Windows artifacts plus
+   both Linux distributions are built and attested, and the AV/VT dispatch fires.
 6. Inspect the produced release, archives, attestations, and AV/VT result.
 7. Delete the sandbox release and its tag.
 8. Strip the sandbox settings (revert `target-branch` and the workflow
@@ -400,16 +484,15 @@ What the release pipeline provides today, and what it does not:
 
 - **Code signing.** Releases are unsigned, so Windows SmartScreen warns on the
   installer's first run. SmartScreen reputation is not established.
-- **In-app update-check UI.** Velopack's lifecycle hook is wired (pending
-  updates auto-apply on the next startup for the installer), but the
-  `UpdateManager`-driven in-app update check is not implemented yet; discovering
-  updates still goes through GitHub releases. The portable Windows build does
-  not support in-app self-update. Relay is bundled as latest-per-Curator-release
-  and is not updated independently in-app.
-- **Linux arm64 / Steam Deck builds.** Only `win-x64` and `linux-x64` are
-  published.
+- **In-app update-check UI.** The Windows installer and Linux AppImage support
+  startup/manual checks plus Download and Restart through Velopack. The portable
+  Windows and standalone Linux builds do not. Relay is bundled as
+  latest-per-Curator-release and is not updated independently in-app.
+- **Linux arm64.** Only `win-x64` and `linux-x64` are published. SteamOS on
+  Steam Deck uses the common Linux x64 AppImage path where installation and
+  self-update work; no Steam Deck-specific UI or launch behavior is provided.
 - **Relay pinning or Relay provenance sidecar.** The bundled Relay is whatever
-  was latest stable (non-draft, non-prerelease) at workflow-run time.
+  was the newest non-draft prerelease at workflow-run time.
 - **AV/VT scanning for the portable ZIP.** The post-release AV/VT scan only
   covers the Velopack installer; the portable ZIP is not scanned.
 
@@ -419,8 +502,10 @@ What the release pipeline provides today, and what it does not:
   attestation + dispatch), `.github/workflows/curator-post-release-av.yml`
   (repository_dispatch AV/VT scan), `.github/workflows/curator-build.yml`
   (PR gate).
-- `scripts/install.sh` (the Linux installer).
-- `scripts/release.env` (the install manifest the installer reads and the
+- `scripts/install.sh` and `scripts/install-appimage.sh` (the Linux installers),
+  `scripts/uninstall-appimage.sh` (preserving and clean-uninstall modes), plus
+  the isolated install/uninstall harnesses.
+- `scripts/release.env` (the install manifest both installers read and the
   `update-manifest` job maintains).
 - Release-please config: `.release-please-config.json` +
   `.release-please-manifest.json`.
@@ -431,6 +516,7 @@ What the release pipeline provides today, and what it does not:
   `CURATOR_VELOPACK`), `src/nxm/NxmHandlerRelay.cs`
   (sibling-exe resolution), `src/nxm/{Windows,Linux}NxmHandlerRegistrar.cs`
   (runtime scheme registration), `src/relay-client/RelayLaunchService.cs`
-  (launch-time Relay resolution: configured `RelayDir` first, then the Windows
-  app-local `relay/` fallback; no first-run provisioning),
+  (launch-time Relay resolution: configured `RelayDir` first, then the
+  cross-platform app-local `relay/` fallback, then the Windows-only portable
+  sibling; no first-run provisioning),
   `src/config/AppPaths.cs` (the app-data root and default `RelayDir`).

@@ -8,7 +8,7 @@ namespace Modificus.Curator.UI.Tests;
 /// throws <see cref="NotSupportedException"/> (a wiring mistake worth surfacing
 /// loudly), and <see cref="IAppUpdateService.UpdateStateChanged"/> is never
 /// raised. The no-op is the default registration when CURATOR_VELOPACK is not
-/// defined (Linux, dev builds).
+/// defined (non-Velopack builds: standalone Linux, dev builds).
 /// </summary>
 public sealed class NoopAppUpdateServiceTests
 {

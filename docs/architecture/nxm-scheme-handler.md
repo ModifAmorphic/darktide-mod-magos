@@ -150,7 +150,13 @@ selected by runtime OS at DI time (mirroring `IPlatformLaunchStrategy`,
   most desktops honor) with `Exec="<handler-exe>" %u` and
   `MimeType=x-scheme-handler/nxm;`, plus a best-effort `xdg-mime default`
   invocation. The `.desktop` file is still the registration if `xdg-mime` is
-  absent; the failure is logged, not thrown.
+  absent; the failure is logged, not thrown. In the standalone layout, Exec
+  points directly to the sibling handler. In an AppImage run, the registrar
+  atomically copies the handler to
+  `${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/nxm-handler/`, creates
+  a sibling `Modificus.Curator` symlink to `$APPIMAGE`, and points Exec to the
+  persistent copy. The handler's existing sibling lookup then cold-starts the
+  AppImage without recording a temporary mount path.
 
 **Explicit registration, not startup auto-registration.** Registration is a
 user action from the Integrations dialog (a "Nexus download links" section with
@@ -160,15 +166,22 @@ that can take `nxm://` clicks away from Vortex, Mod Organizer 2, Nexus Mod
 Manager, or other mod managers, so the user must opt in knowingly. The
 unregister path only releases Curator's own registration (it re-checks
 `IsRegistered()` before `Unregister()` so it never deletes another program's
-handler). The composition root never registers; `INxmHandlerRegistrar` is
-resolved lazily by the Integrations view model + the shell status strip. The
+handler). The composition root never registers, but after single-instance
+ownership succeeds it performs best-effort maintenance of an existing
+Curator-owned AppImage registration. Maintenance refreshes the copied handler
+and symlink only when the desktop file exists and `xdg-mime query default`
+still reports Curator. It never calls `xdg-mime default` or takes ownership from
+another manager. `INxmHandlerRegistrar` is resolved lazily by the Integrations
+view model + the shell status strip. The
 main-window status strip surfaces the current state ("Nexus links: enabled" /
 "Nexus links: disabled" / "Nexus links: unavailable") and refreshes after the
 Integrations dialog closes. No polling: the OS registration rarely changes
 out-of-band.
 
-The handler-exe path is derived from `AppContext.BaseDirectory` plus the fixed
-handler assembly name. The handler ships as a sibling of the main Curator exe.
+The packaged handler-exe path is derived from `AppContext.BaseDirectory` plus
+the fixed handler assembly name. The handler ships as a sibling of the main
+Curator exe; the AppImage registration copies it to the durable integration
+directory described above.
 
 ## URL parsing and routing
 

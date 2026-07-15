@@ -13,7 +13,8 @@ namespace Modificus.Curator.Nxm;
 /// path confirms first (it is a system-wide change that can affect other mod
 /// managers), and the unregister path only releases Curator's own registration
 /// by re-checking <see cref="IsRegistered"/> before <see cref="Unregister"/>.
-/// The composition root does not auto-register on startup.
+/// The composition root calls <see cref="MaintainRegistration"/> once after
+/// startup (best-effort) but never auto-registers.
 /// </remarks>
 public interface INxmHandlerRegistrar
 {
@@ -35,4 +36,31 @@ public interface INxmHandlerRegistrar
     /// file). Best-effort: idempotent on an absent registration.
     /// </summary>
     void Unregister();
+
+    /// <summary>
+    /// Best-effort maintenance of an existing Curator-owned registration. Called
+    /// by the composition root once after the process has established
+    /// single-instance ownership, so the fatal process-enumeration check has
+    /// already succeeded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Must never claim ownership.</b> This method refreshes the persistent
+    /// handler bytes and the AppImage symlink ONLY when Curator already owns the
+    /// active <c>nxm://</c> association (the desktop file exists AND
+    /// <c>xdg-mime query default</c> reports Curator's exact desktop id). It
+    /// must never call <c>xdg-mime default</c>, create the desktop file, or
+    /// replace another mod manager's registration. When Curator does not own the
+    /// association, the method is a silent no-op.</para>
+    /// <para>
+    /// <b>Failure is non-fatal.</b> Any error is logged and swallowed (either by
+    /// this method or by the composition root's try/catch), so maintenance never
+    /// blocks Curator startup.</para>
+    /// <para>
+    /// <b>Platform no-ops.</b> Windows has no AppImage-style temporary mount, so
+    /// its implementation is a no-op. The standalone Linux layout (no
+    /// <c>$APPIMAGE</c>) is also a no-op: the packaged handler path is already
+    /// stable. Only an AppImage run performs work.</para>
+    /// </remarks>
+    void MaintainRegistration();
 }

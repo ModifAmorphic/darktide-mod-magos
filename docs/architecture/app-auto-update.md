@@ -1,17 +1,18 @@
 # App auto-update: architecture
 
-Curator can update itself in place, but only on **Windows**, where it ships as a
-[Velopack](https://github.com/velopack/velopack) install. On startup the app
+Curator can update itself in place when it runs from a
+[Velopack](https://github.com/velopack/velopack) package: the Windows installer
+or the self-contained Linux AppImage. On startup the app
 checks GitHub Releases for a newer version of itself; when one is available a
 dismissible pill appears in the shell status strip and an "Updates" section in
 Settings surfaces the current version, a manual check, and a Download and
 Restart action. The download, apply, and relaunch are handled by Velopack, so
-routine updates need no installer re-run. A manual installer upgrade works too:
+routine updates need no installer re-run. On Windows, a manual installer upgrade works too:
 running a newer `Setup.exe` over an existing install offers an Upgrade button
 (an older version offers Downgrade, the same version offers Repair), so users
 who download the latest installer get the latest version the conventional way.
-Linux stays on its manual install script:
-Curator does not package Velopack's Linux (AppImage) output there.
+The portable Windows ZIP and standalone Linux tarball remain non-Velopack
+distributions and update manually.
 
 > Public surface, exact signatures, and DI registration are documented in the
 > [UI reference](../reference/ui.md). This doc covers the architecture and
@@ -42,10 +43,11 @@ Curator does not package Velopack's Linux (AppImage) output there.
                                                                              (process exits; Velopack relaunches)
 ```
 
-## Scope: Windows only
+## Packaged-build scope
 
 Self-update is meaningful only when the running app is itself a Velopack
-install, which is the Windows distribution. The Velopack package (1.2.0) is
+package. The Windows installer and Linux AppImage meet that condition. The
+Velopack package (1.2.0) is
 conditionally referenced in `src/ui/Modificus.Curator.UI.csproj`, gated on the
 MSBuild property `CuratorUseVelopack=true`, which defines the
 `CURATOR_VELOPACK` compilation symbol. The Velopack lifecycle hook
@@ -53,15 +55,15 @@ MSBuild property `CuratorUseVelopack=true`, which defines the
 symbol, so Velopack can manage the app lifecycle (install hooks, an update
 applied on a previous shutdown, fast-startup hooking) before Avalonia starts.
 
-The release workflow produces the Velopack feed and payload for each Windows
-release: `releases.win.json` (the update feed Velopack's `GithubSource`
-downloads) and `full.nupkg` (the payload). Those are the two artifacts the
-update check and download resolve against.
+The release workflow produces platform-specific feeds and payloads. Windows
+publishes `releases.win.json` and its nupkg. Linux publishes
+`releases.linux-x64.json`, the self-contained AppImage, a full nupkg, and a
+delta when a prior Linux package exists. Velopack embeds the `linux-x64`
+channel in the AppImage, so `UpdateManager` selects that feed automatically.
 
-Linux never references Velopack (its Linux output is an AppImage, which Curator
-does not use), so the `CURATOR_VELOPACK` symbol is never defined there and the
-no-op service is registered. Linux keeps the manual install script as its only
-update path.
+The Linux standalone publish omits `CuratorUseVelopack`, as does the portable
+Windows publish. Those builds register the no-op update service and continue to
+update manually.
 
 ## The update source
 
@@ -100,8 +102,8 @@ it is set (a local directory path or a URL, in `config.json` under
 instead:
 
 ```csharp
-// A directory path is read straight off disk (expecting a releases.win.json
-// feed alongside the .nupkg); a URL is fetched.
+// A directory path is read straight off disk (expecting the running package's
+// channel feed alongside the .nupkg); a URL is fetched.
 var manager = new UpdateManager(sourceOverride);
 ```
 
@@ -148,7 +150,8 @@ together with the `UpdateStateChanged` event.
 - `IsUpdateSupported`: `true` only when the running app is a Velopack install
   and the `UpdateManager` initialized. The entire UI update surface (the
   notice, the download button, apply) is gated on this, so a non-Velopack build
-  (Linux, a dev run from `bin/`) simply shows nothing in the pill and a
+  (the standalone Linux tarball, portable Windows ZIP, or a dev run from
+  `bin/`) simply shows nothing in the pill and a
   disabled check in Settings.
 - `CurrentVersion`: the installed app version as a string
   (`UpdateManager.CurrentVersion.ToString()`), or `null` when unsupported. The
@@ -182,7 +185,8 @@ Two implementations live behind the one interface, selected at compile time in
 the composition root:
 
 - **`VelopackAppUpdateService`** (`#if CURATOR_VELOPACK`): the real impl,
-  registered on a packaged Windows build. Wraps a Velopack `UpdateManager`.
+  registered in the packaged Windows installer and Linux AppImage. Wraps a
+  Velopack `UpdateManager`.
 - **`NoopAppUpdateService`**: the default, registered everywhere else. Every
   member returns the neutral value: `IsUpdateSupported` is `false`,
   `CurrentVersion` / `LastCheckResult` / `UpdatePendingRestart` are `null`, the
@@ -297,8 +301,8 @@ notice re-shows next startup if an update is still available.
 
 ### The Settings "Updates" section
 
-The Settings window adds an "Updates" section that always renders (so Linux
-and dev builds still see their version) with: the current version (or a
+The Settings window adds an "Updates" section that always renders (so
+standalone, portable, and dev builds still see their version) with: the current version (or a
 localized "unknown" when it cannot be resolved), a "Check for Updates" button
 with an inline indeterminate spinner while a check runs, an inline status line
 ("up to date" or "vX is available"), and a "Download and Restart" button
@@ -376,8 +380,10 @@ but `ApplyUpdatesAndRestart(info.TargetFullRelease, restartArgs: null)` takes
 
 ## What is deliberately not done
 
-- **Delta updates.** Velopack supports binary deltas; this layer does nothing
-  to enable or disable them, and the payload shipped is the full `full.nupkg`.
+- **Delta policy in the UI.** The UI does not choose full versus delta packages;
+  Velopack does. The Linux release workflow seeds the prior `linux-x64` feed and
+  full package so `vpk` can emit a delta. The first AppImage update downloads a
+  full package because no local base nupkg exists yet.
 - **Channel switching.** There is one feed (the repo's releases, prereleases
   included). No stable/beta channel toggle and no user-facing feed switcher. The
   feed source itself is operator-configurable for local testing and self-hosting
@@ -399,13 +405,15 @@ but `ApplyUpdatesAndRestart(info.TargetFullRelease, restartArgs: null)` takes
   notes. Plumbing the release body into the pack step is the follow-up.
 - **Periodic polling.** One check per startup, plus the manual check. No
   background timer.
-- **Linux.** Out of scope; the no-op service is registered and the manual
-  install script remains the update path.
+- **Portable distributions.** The standalone Linux tarball and portable
+  Windows ZIP intentionally register the no-op service and retain their manual
+  update paths.
 
 ## Verifying
 
 The check, download, and apply path cannot be unit-tested end to end (it needs
-a real Velopack install and a real feed), so it is verified manually on Windows.
+a real Velopack package and a real feed), so it is verified manually on Windows
+and with an installed Linux AppImage.
 The `VelopackAppUpdateService` *consuming* logic IS unit-tested through the
 `IAppUpdateService` interface (fakes drive the shell and Settings view models);
 the Velopack integration itself is the manual path.
@@ -428,10 +436,10 @@ To stage a newer version locally:
    `AppUpdates.SourceOverride` to that directory path in Curator's `config.json`
    (`VelopackAppUpdateService` reads it once at construction via the injected
    `IConfigLoader`; `UpdateManager`'s `urlOrPath` overload reads
-   `releases.win.json` straight off disk, so the local feed is tested without
+   the package's channel feed straight off disk, so the local feed is tested without
    GitHub and without any code edit). Clear the field to revert to the
-   production source. Alternatively, upload the `releases.win.json` and the
-   `full.nupkg` to a GitHub prerelease.
+   production source. Alternatively, upload the platform feed and nupkg to a
+   GitHub prerelease.
 
 Then verify:
 
@@ -443,12 +451,15 @@ Then verify:
   check and the pill entirely (the manual Settings check still works).
 - Auto-apply-on-startup: download, then quit without applying; on the next
   launch the update applies before the window shows.
-- The `nxm://` handler still works after an update (the `current\` install path
-  is stable, so the OS registration survives).
-- The app-local Relay still resolves after an update (`current\relay\`).
-- On Linux and in a dev run (`bin/Debug`, no Velopack install) the check never
-  fires: no crash, `IsUpdateSupported` is false, the pill never shows, and the
-  Settings check is disabled.
+- The `nxm://` handler still works after an update. Windows keeps its stable
+  install path; Linux startup maintenance refreshes the persistent copied
+  handler and its AppImage symlink only when Curator already owns the
+  registration.
+- The app-local Relay still resolves after an update (`current\relay\` on
+  Windows, the mounted AppImage payload's `relay/` on Linux).
+- In a standalone Linux, portable Windows, or dev run (`bin/Debug`, no Velopack
+  package), the check never fires: no crash, `IsUpdateSupported` is false, the
+  pill never shows, and the Settings check is disabled.
 - A rate-limited GitHub API response does not crash the app (the pill simply
   does not appear that session).
 

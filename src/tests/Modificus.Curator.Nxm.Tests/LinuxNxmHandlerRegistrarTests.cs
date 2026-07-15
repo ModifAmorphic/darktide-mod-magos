@@ -4,14 +4,20 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Modificus.Curator.Nxm.Tests;
 
 /// <summary>
-/// <see cref="LinuxNxmHandlerRegistrar"/> (gated to Linux): Register writes the
-/// <c>.desktop</c> file with the expected content + path; IsRegistered reflects
-/// the (faked) xdg-mime result; Unregister removes the file. The xdg invocation
-/// is faked so the test is deterministic and does not depend on a desktop
-/// environment being installed.
+/// <see cref="LinuxNxmHandlerRegistrar"/> standalone-mode tests (gated to
+/// Linux): Register writes the <c>.desktop</c> file with the expected content +
+/// path; IsRegistered reflects the (faked) xdg-mime result; Unregister removes
+/// the file. The xdg invocation is faked so the test is deterministic and does
+/// not depend on a desktop environment being installed. Each registrar is built
+/// with an explicit null <c>$APPIMAGE</c> accessor so the standalone path is
+/// exercised regardless of whether the test host itself runs from an AppImage.
 /// </summary>
 public sealed class LinuxNxmHandlerRegistrarTests
 {
+    // Forces standalone mode (no $APPIMAGE) so these tests exercise the direct
+    // handler path regardless of the test host environment.
+    private static Func<string?> NoAppImage => () => null;
+
     [Fact]
     public void Register_writes_desktop_file_with_expected_content()
     {
@@ -25,7 +31,8 @@ public sealed class LinuxNxmHandlerRegistrarTests
                 "/opt/curator/Modificus.Curator.NxmHandler",
                 NullLogger<LinuxNxmHandlerRegistrar>.Instance,
                 applicationsDir: dir,
-                runXdg: _ => (0, "modificus-curator-nxm-handler.desktop\n"));
+                runXdg: _ => (0, "modificus-curator-nxm-handler.desktop\n"),
+                appImagePathAccessor: NoAppImage);
 
             registrar.Register();
 
@@ -57,7 +64,8 @@ public sealed class LinuxNxmHandlerRegistrarTests
                 "/opt/curator/Modificus.Curator.NxmHandler",
                 NullLogger<LinuxNxmHandlerRegistrar>.Instance,
                 applicationsDir: dir,
-                runXdg: _ => (0, "modificus-curator-nxm-handler.desktop\n"));
+                runXdg: _ => (0, "modificus-curator-nxm-handler.desktop\n"),
+                appImagePathAccessor: NoAppImage);
 
             registrar.Register();
             Assert.True(registrar.IsRegistered());
@@ -81,7 +89,8 @@ public sealed class LinuxNxmHandlerRegistrarTests
                 "/opt/curator/Modificus.Curator.NxmHandler",
                 NullLogger<LinuxNxmHandlerRegistrar>.Instance,
                 applicationsDir: dir,
-                runXdg: _ => (0, "some-other-app.desktop\n"));
+                runXdg: _ => (0, "some-other-app.desktop\n"),
+                appImagePathAccessor: NoAppImage);
 
             registrar.Register();
             Assert.False(registrar.IsRegistered());
@@ -105,7 +114,8 @@ public sealed class LinuxNxmHandlerRegistrarTests
                 "/opt/curator/Modificus.Curator.NxmHandler",
                 NullLogger<LinuxNxmHandlerRegistrar>.Instance,
                 applicationsDir: dir,
-                runXdg: _ => (0, "modificus-curator-nxm-handler.desktop\n"));
+                runXdg: _ => (0, "modificus-curator-nxm-handler.desktop\n"),
+                appImagePathAccessor: NoAppImage);
 
             Assert.False(registrar.IsRegistered());
         }
@@ -128,7 +138,8 @@ public sealed class LinuxNxmHandlerRegistrarTests
                 "/opt/curator/Modificus.Curator.NxmHandler",
                 NullLogger<LinuxNxmHandlerRegistrar>.Instance,
                 applicationsDir: dir,
-                runXdg: _ => (0, ""));
+                runXdg: _ => (0, ""),
+                appImagePathAccessor: NoAppImage);
 
             registrar.Register();
             Assert.True(File.Exists(Path.Combine(dir, NxmHandlerPaths.LinuxDesktopFileId)));
@@ -158,7 +169,8 @@ public sealed class LinuxNxmHandlerRegistrarTests
                 "/opt/curator/Modificus.Curator.NxmHandler",
                 NullLogger<LinuxNxmHandlerRegistrar>.Instance,
                 applicationsDir: dir,
-                runXdg: _ => throw new FileNotFoundException("xdg-mime not installed"));
+                runXdg: _ => throw new FileNotFoundException("xdg-mime not installed"),
+                appImagePathAccessor: NoAppImage);
 
             registrar.Register();
             Assert.True(File.Exists(Path.Combine(dir, NxmHandlerPaths.LinuxDesktopFileId)));

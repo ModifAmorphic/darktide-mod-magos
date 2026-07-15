@@ -106,10 +106,11 @@ strategy:
 1. **Configured `CuratorConfig.RelayDir`** -- `<RelayDir>/modificus_relay.exe`.
    Honors an explicit user override and the data-root default once Relay is
    deployed there (the Linux layout, and the Windows dev/data layout).
-2. **App-local fallback (Windows only)** -- `<AppContext.BaseDirectory>/relay/
-   modificus_relay.exe`. A Velopack install ships Relay app-local inside the
-   payload; the `current\` directory is replaced in place on update, so the path
-   is stable.
+2. **App-local fallback (Windows and Linux)** --
+   `<AppContext.BaseDirectory>/relay/modificus_relay.exe`. Velopack packages
+   Relay app-local inside the payload. On Windows this is under the installed
+   `current\` directory; on Linux it is under the mounted AppImage's `usr/bin/`
+   payload. Velopack replaces the owning package on update.
 3. **Sibling-folder fallback (Windows only)** -- `<AppContext.BaseDirectory>/../relay/
    modificus_relay.exe` (normalized to no `..` segment). The portable Windows
    archive ships Curator under `<root>/app/` and Relay under `<root>/relay/` (a
@@ -118,11 +119,11 @@ strategy:
 4. **`null`** -- none of the applicable locations had the launcher; the service
    returns `Error` reporting the configured path.
 
-Linux consults only the configured `RelayDir`: both Windows packaged fallbacks
-(the app-local Velopack payload and the portable sibling layout) are skipped, so
-Relay stays at the data-root `relay/` folder. The helper is a pure function of
-`(configRelayDir, baseDirectory, isWindows)` so the precedence is unit-testable
-on any CI OS.
+Linux uses the configured `RelayDir` first, preserving the standalone tarball
+layout and user overrides. If that launcher is absent, it uses the app-local
+AppImage payload. Linux does not use the Windows portable sibling fallback.
+The helper is a pure function of `(configRelayDir, baseDirectory, isWindows)`
+so the precedence is unit-testable on any CI OS.
 
 ### Windows -- direct invocation
 

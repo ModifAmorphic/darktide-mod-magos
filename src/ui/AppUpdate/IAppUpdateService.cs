@@ -15,7 +15,7 @@ public sealed record AppUpdateInfo(string TargetVersion, string? Notes);
 
 /// <summary>
 /// Checks for, downloads, and applies Curator's own application updates (the
-/// Velopack-managed installer on Windows). The shape mirrors
+/// Velopack-managed install on Windows or Linux). The shape mirrors
 /// <see cref="Modificus.Curator.Integrations.IUpdateCheckService"/>: a
 /// best-effort availability check that never throws to the caller for
 /// non-cancellation failures, plus a state-holding
@@ -28,12 +28,13 @@ public sealed record AppUpdateInfo(string TargetVersion, string? Notes);
 /// <remarks>
 /// <para>
 /// <b>Conditional availability.</b> Self-update is meaningful only when the
-/// running app is itself a Velopack install (a packaged Windows build). When it
-/// is not, <see cref="IsUpdateSupported"/> is <c>false</c>: the check returns
-/// <c>null</c>, <see cref="CurrentVersion"/> is <c>null</c>, and the download /
-/// apply steps are not driven by the UI. A no-op implementation is registered
-/// in that case, so every consumer can talk to this interface unconditionally
-/// and gate its affordances on <see cref="IsUpdateSupported"/>.</para>
+/// running app is itself a Velopack install (a packaged Windows build or a
+/// Linux AppImage). When it is not, <see cref="IsUpdateSupported"/> is
+/// <c>false</c>: the check returns <c>null</c>, <see cref="CurrentVersion"/> is
+/// <c>null</c>, and the download / apply steps are not driven by the UI. A
+/// no-op implementation is registered in that case, so every consumer can talk
+/// to this interface unconditionally and gate its affordances on
+/// <see cref="IsUpdateSupported"/>.</para>
 /// <para>
 /// <b>State holding, lock-protected write, lock-free read.</b>
 /// <see cref="LastCheckResult"/> and <see cref="UpdatePendingRestart"/> are

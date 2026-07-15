@@ -74,6 +74,20 @@ internal sealed class WindowsNxmHandlerRegistrar : INxmHandlerRegistrar
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Windows has no AppImage-style temporary mount: the registered handler
+    /// path is already stable (the Velopack install root, replaced in place on
+    /// update). Maintenance is therefore a no-op. The composition root still
+    /// calls this method unconditionally through <see cref="INxmHandlerRegistrar"/>
+    /// so the Linux AppImage path gets its refresh.
+    /// </remarks>
+    [SupportedOSPlatform("windows")]
+    public void MaintainRegistration()
+    {
+        // Intentionally a no-op: no AppImage symlink or copied handler to refresh.
+    }
+
     private string? ReadCommandValue()
     {
         try

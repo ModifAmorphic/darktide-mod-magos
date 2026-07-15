@@ -30,7 +30,8 @@ game-binary constraints now live with the runtime, in
   Launch flow + Settings window + discovery escape-hatch, the nxm:// scheme
   handler, Nexus auth + Integrations dialog, mod acquisition, the update-check
   service, the mod-list update UI, the DMF new-profile install prompt, the
-  first-run Welcome onboarding, and Windows in-app self-update (Velopack).
+  first-run Welcome onboarding, and in-app self-update for the Windows
+  installer plus Linux AppImage (Velopack).
   The app is user-usable:
   create profiles, import mods (folder/archive, Nexus/Untracked), manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
@@ -184,7 +185,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           read once at construction via the injected
                           `IConfigLoader`)
                           vs `NoopAppUpdateService` (default, IsUpdateSupported
-                          false, registered everywhere else incl. Linux + dev)
+                          false, registered in standalone Linux, portable
+                          Windows, and dev builds)
                           split, registered conditionally in CuratorComposition;
                           `AppUpdateCheckRunner` (ui/Session/) fires ONE
                           availability check on startup (fire-and-forget,
@@ -405,8 +407,10 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         (IRelayLaunchService.Launch → LaunchResult; Windows: direct
                         launcher Process.Start; Linux: proton run with both STEAM_COMPAT_*
                         env + Z:\-translated paths; ResolveLauncherPath prefers the
-                        configured RelayDir, then on Windows falls back to the app-local
-                        relay/ shipped inside the Velopack payload at <BaseDirectory>/relay/)
+                        configured RelayDir, then on both platforms falls back to the
+                        app-local relay/ shipped inside a Velopack payload at
+                        <BaseDirectory>/relay/, then uses the portable sibling fallback
+                        on Windows only)
   launcher/             Modificus.Curator.Launcher -- stub (the Steam non-steam-shortcut
                           target placeholder)
   nxm/                  Modificus.Curator.Nxm -- the nxm:// scheme-handler plumbing:
@@ -423,7 +427,10 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         scheme-handler registrar
                         (INxmHandlerRegistrar: WindowsNxmHandlerRegistrar writes
                         HKCU\Software\Classes\nxm; LinuxNxmHandlerRegistrar writes a .desktop
-                        file + xdg-mime default), + NxmHandlerRelay (the testable core the
+                        file + xdg-mime default; AppImage registration atomically copies the
+                        handler to a durable per-user directory + creates a sibling symlink
+                        to $APPIMAGE; startup maintenance refreshes those files only while
+                        Curator owns the active association), + NxmHandlerRelay (the testable core the
                         handler exe calls: hot-path IPC delivery + cold-start launch+retry,
                         UseShellExecute=false on both OSes). AOT-friendly (IsAotCompatible;
                         only raw byte/UTF-8 IO in the handler path).
@@ -486,30 +493,43 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             Continue, the in-process one-shot guard), against in-memory fakes)
     Modificus.Curator.Nxm.Tests/             xUnit tests for the nxm library (parser, framing,
                                             IPC server resilience, SingleInstanceGuard, router,
-                                            relay helper, Linux registrar, AddNxm wiring;
+                                            relay helper, standalone + AppImage Linux registrar,
+                                            owned-registration maintenance, AddNxm wiring;
                                             serialized via DisableTestParallelization since
                                             real named pipes are an OS-level shared resource)
 docs/               architecture/ + reference/ (src/ per-library API refs + the release strategy reference)
-scripts/            release.env: the install manifest (RELEASE_URL +
-                    PRE_RELEASE_URL Linux x64 asset URLs; Windows is not tracked here, it ships
-                    through Velopack), written by the release
-                    workflow's update-manifest job; install.sh: the Linux installer
+scripts/            release.env: the install manifest (standalone RELEASE_URL /
+                    PRE_RELEASE_URL plus APPIMAGE_RELEASE_URL /
+                    APPIMAGE_PRE_RELEASE_URL; Windows is not tracked here), written by the
+                    release workflow's update-manifest job; install.sh: the standalone Linux installer
                     served from raw/main (stable by default, prerelease opt-in via
                     --prerelease or CURATOR_PRERELEASE=1; resolves the archive from
                     scripts/release.env rather than querying the GitHub API; installs
                     into ${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/;
                     replaces only app/ + relay/, never the user-data root; symlinks the
-                    UI into ~/.local/bin/modificus-curator). Testing overrides:
+                    UI into ~/.local/bin/modificus-curator); install-appimage.sh: the separate
+                    self-contained AppImage installer (stable/prerelease manifest selection,
+                    structural extraction validation, atomic replacement, desktop entry + icon,
+                    same command symlink, no root, preserves standalone + shared data), with
+                    test-install-appimage.sh as its isolated fake-AppImage harness;
+                    uninstall-appimage.sh: the official per-user AppImage uninstaller
+                    (default removes AppImage/integration + Velopack pending/cache state while
+                    preserving user data + standalone; explicit --purge-data removes the whole
+                    strictly-validated Linux Curator data root), with
+                    test-uninstall-appimage.sh covering both modes. Testing overrides:
                     INSTALL_ROOT / BIN_LINK / CURATOR_REPO / CURATOR_ARCHIVE (local tar.gz
                     in place of the download, for offline extraction tests).
 .github/workflows/  curator-build (the PR gate: an Ubuntu-only format job
                     auto-commits `dotnet format` as `style: dotnet format [skip ci]`
                     for same-repo PRs, verify-only for fork PRs and workflow_dispatch;
-                    build + test on a Windows/Ubuntu matrix depends on the format
+                    build + test on a Windows/Ubuntu matrix and a separate Ubuntu 22.04
+                    AppImage publish/pack/extract/feed/installer/uninstaller smoke depend on the format
                     job; no artifact upload; release-please-only PRs are ignored via
                     paths-ignore; there is intentionally no push trigger),
-                    release (release-please cuts the release, then per-target jobs publish
-                    unsigned assets that diverge by platform: build-windows produces two
+                    release (release-please cuts the release; each platform job resolves
+                    the newest non-draft Relay prerelease and downloads its Windows x64
+                    asset, then per-target jobs publish unsigned assets that diverge by
+                    platform: build-windows produces two
                     Windows artifacts: (1) the Velopack installer from the Curator UI
                     published with -p:CuratorUseVelopack=true (adds the Velopack reference
                     + the CURATOR_VELOPACK symbol that wires VelopackApp.Build().Run()
@@ -524,18 +544,25 @@ scripts/            release.env: the install manifest (RELEASE_URL +
                     (native-AOT win-x64), and Relay staged under relay/ at the top
                     level, creating curator-<tag>-windows-x64.zip with app/ + relay/
                     roots via PowerShell Compress-Archive, uploading + attesting it;
-                    build-linux keeps the portable-archive flow, publishing the
-                    framework-dependent curator-<tag>-linux-x64.tar.gz with a top-level
-                    app/ + relay/ layout, bundling the latest stable Relay release,
-                    uploading + attesting it; all legs target win-x64 / linux-x64 RIDs
-                    with --self-contained false to filter native libs, and an
+                    build-linux publishes two permanent distributions on ubuntu-22.04:
+                    (1) the existing framework-dependent curator-<tag>-linux-x64.tar.gz
+                    with a top-level app/ + relay/ layout; (2) a self-contained Velopack
+                    AppImage from the Curator UI published with CuratorUseVelopack=true,
+                    the native-AOT handler + Relay app-local, packed with vpk 1.2.0 on
+                    channel/runtime linux-x64; the generated AppImage is renamed to
+                    ModificusCurator-linux-x64.AppImage for the public asset while the
+                    ModifAmorphic.ModificusCurator pack/nupkg identity stays unchanged,
+                    yielding the AppImage, full nupkg, optional
+                    delta, and releases.linux-x64.json; it seeds the newest prior feed +
+                    full package across stable/prerelease releases for delta generation,
+                    uploads only current assets, and attests the AppImage/nupkgs; portable
+                    legs target win-x64 / linux-x64 RIDs with --self-contained false, and an
                     AfterTargets=Publish target strips all .pdb files; then
                     repository_dispatch the post-release workflow; an update-manifest
                     job (after build-linux, gated on releases_created + build-linux
-                    success) rewrites the matching var in scripts/release.env
-                    (RELEASE_URL for a stable release, PRE_RELEASE_URL for a prerelease,
-                    selected by the release's prerelease flag; the Linux tar.gz asset
-                    resolved from the release by content_type==application/x-gtar) and
+                    success) rewrites the matching standalone + AppImage vars in
+                    scripts/release.env (stable or prerelease selected by the release flag;
+                    tarball resolved independently by content type, AppImage by exact name) and
                     commits it as "chore(release): update install manifest [skip ci]"),
                     and curator-post-release-av (repository_dispatch event_type
                     curator-release-assets-published, or manual workflow_dispatch;
