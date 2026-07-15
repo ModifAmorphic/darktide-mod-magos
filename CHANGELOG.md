@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.11.0...v0.11.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **linux:** prevent AppImage identity leaking to Darktide ([#110](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/110)) ([2b55612](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/2b55612636c88416086fced79efad8512e55d189))
+
 ## [0.11.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.10.1...v0.11.0) (2026-07-15)
 
 
