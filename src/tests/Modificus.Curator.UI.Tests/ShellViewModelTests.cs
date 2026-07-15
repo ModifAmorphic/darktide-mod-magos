@@ -324,22 +324,19 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task Launch_Launched_sets_a_status_note_and_refreshes_running_state()
+    public async Task Launch_Launched_refreshes_running_state_immediately()
     {
-        // On a successful launch: a brief "Launched 'X'" note surfaces in the
-        // status strip, and the session's Refresh is called so the running
-        // indicator + CanLaunch react immediately (not on the next poll).
+        // On a successful launch: the session's Refresh is called so the
+        // running indicator + CanLaunch react immediately (not on the next
+        // poll). Successful launch surfaces no status note or other
+        // confirmation; the running indicator is the durable signal.
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
         var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = false };
         var launch = new FakeLaunchService(); // default: Launched
         var vm = Build(TestDoubles.Profiles(a), session, launch: launch);
 
-        Assert.Null(vm.LaunchStatusNote);
-
         await vm.LaunchCommand.ExecuteAsync(null);
 
-        Assert.NotNull(vm.LaunchStatusNote);
-        Assert.Contains("Alpha", vm.LaunchStatusNote);
         Assert.Equal(1, session.RefreshCalls); // immediate refresh, not deferred to the poll
     }
 
@@ -457,7 +454,6 @@ public sealed class ShellViewModelTests
         Assert.Equal(Localization["Launch_StagingFailedTitle"], dialogs.AlertCalls[0].Title);
         Assert.Contains(Localization["Launch_StagingFailedMessage"], dialogs.AlertCalls[0].Message);
         Assert.Contains("The parameter is incorrect", dialogs.AlertCalls[0].Message);
-        Assert.Null(vm.LaunchStatusNote);
     }
 
     [Fact]

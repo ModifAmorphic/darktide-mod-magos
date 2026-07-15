@@ -530,9 +530,10 @@ The shell's `LaunchCommand` invokes `IRelayLaunchService.Launch(activeProfileId)
 (gated by `CanLaunch`: a profile is selected and the game is not running) and
 branches on `LaunchResult.Status`:
 
-- **`Launched`**: a brief localized status note ("Launched 'X'") + an immediate
-  `IsGameRunning` refresh (the session's `Refresh`), so the running indicator +
-  launch-availability react at once rather than waiting for the next poll.
+- **`Launched`**: an immediate `IsGameRunning` refresh (the session's
+  `Refresh`), so the running indicator + launch-availability react at once
+  rather than waiting for the next poll. Successful launch surfaces no status
+  note or other confirmation; the running indicator is the durable signal.
 - **`DiscoveryIncomplete`**: opens the focused escape-hatch dialog (below) with
   `LaunchResult.MissingDiscoveryFields`. **No auto-retry:** the user submits the
   paths, closes the dialog, and clicks Launch again. This avoids a loop if the
