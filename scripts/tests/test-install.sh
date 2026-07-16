@@ -1,5 +1,5 @@
 #!/bin/sh
-# Deterministic tests for scripts/install-appimage.sh.
+# Deterministic tests for scripts/install.sh (the AppImage installer).
 #
 # Runs without network or FUSE: a fake AppImage fixture implements
 # --appimage-extract and emits the Velopack 1.2.0 squashfs-root structure, and
@@ -7,7 +7,7 @@
 # XDG_DATA_HOME are redirected to an isolated temp tree so no real user home or
 # desktop integration is touched.
 #
-# Usage: sh scripts/test-install-appimage.sh
+# Usage: sh scripts/tests/test-install.sh
 # Exits nonzero on any failed assertion.
 set -u
 
@@ -16,7 +16,8 @@ set -u
 REAL_HOME="${HOME:-}"
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
-installer="$script_dir/install-appimage.sh"
+scripts_dir=$(dirname "$script_dir")
+installer="$scripts_dir/install.sh"
 
 passes=0
 fails=0
@@ -85,7 +86,7 @@ make_fixture() {
     out="$1"; ver="$2"; omit="${3:-}"; fail_flag="${4:-}"
     cat > "$out" <<'FIX'
 #!/bin/sh
-# Fake Type 2 AppImage for install-appimage.sh tests.
+# Fake Type 2 AppImage for install.sh (AppImage installer) tests.
 VER='@@VER@@'
 OMIT='@@OMIT@@'
 FAIL='@@FAIL@@'
@@ -127,7 +128,7 @@ make_fake_curl() {
     bin_dir="$1"
     cat > "$bin_dir/curl" <<'CURL'
 #!/bin/sh
-# Fake curl for install-appimage.sh tests.
+# Fake curl for install.sh (AppImage installer) tests.
 out=""
 url=""
 while [ $# -gt 0 ]; do

@@ -521,30 +521,42 @@ docs/               architecture/ + reference/ (src/ per-library API refs + the 
 scripts/            release.env: the install manifest (standalone RELEASE_URL /
                     PRE_RELEASE_URL plus APPIMAGE_RELEASE_URL /
                     APPIMAGE_PRE_RELEASE_URL; Windows is not tracked here), written by the
-                    release workflow's update-manifest job; install.sh: the standalone Linux installer
+                    release workflow's update-manifest job; install.sh: the recommended
+                    self-contained AppImage installer (stable/prerelease manifest selection,
+                    structural extraction validation, atomic replacement, desktop entry + icon,
+                    same command symlink, no root, preserves standalone + shared data);
+                    install-standalone.sh: the standalone tarball installer
                     served from raw/main (stable by default, prerelease opt-in via
                     --prerelease or CURATOR_PRERELEASE=1; resolves the archive from
                     scripts/release.env rather than querying the GitHub API; installs
                     into ${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/;
                     replaces only app/ + relay/, never the user-data root; symlinks the
-                    UI into ~/.local/bin/modificus-curator); install-appimage.sh: the separate
-                    self-contained AppImage installer (stable/prerelease manifest selection,
-                    structural extraction validation, atomic replacement, desktop entry + icon,
-                    same command symlink, no root, preserves standalone + shared data), with
-                    test-install-appimage.sh as its isolated fake-AppImage harness;
-                    uninstall-appimage.sh: the official per-user AppImage uninstaller
+                    UI into ~/.local/bin/modificus-curator);
+                    uninstall.sh: the default per-user AppImage uninstaller
                     (default removes AppImage/integration + Velopack pending/cache state while
                     preserving user data + standalone; explicit --purge-data removes the whole
-                    strictly-validated Linux Curator data root), with
-                    test-uninstall-appimage.sh covering both modes. Testing overrides:
+                    strictly-validated Linux Curator data root);
+                    uninstall-standalone.sh: the per-user standalone uninstaller
+                    (default removes standalone app/ + relay/ + the exact standalone
+                    command link + the exact standalone NXM desktop while preserving
+                    user data + the AppImage distribution + Velopack state; explicit
+                    --purge-data mirrors uninstall.sh --purge-data so either
+                    purge is a complete Linux removal); tests/ contains the isolated
+                    test-install.sh, test-uninstall.sh, and
+                    test-uninstall-standalone.sh harnesses. Testing overrides:
                     INSTALL_ROOT / BIN_LINK / CURATOR_REPO / CURATOR_ARCHIVE (local tar.gz
-                    in place of the download, for offline extraction tests).
+                    in place of the download, for offline extraction tests) /
+                    CURATOR_APPIMAGE (local AppImage) / VELOPACK_STATE_DIR.
 .github/workflows/  curator-build (the PR gate: an Ubuntu-only format job
                     auto-commits `dotnet format` as `style: dotnet format [skip ci]`
                     for same-repo PRs, verify-only for fork PRs and workflow_dispatch;
                     build + test on a Windows/Ubuntu matrix and a separate Ubuntu 22.04
-                    AppImage publish/pack/extract/feed/installer/uninstaller smoke (which
-                    also asserts the Velopack-generated internal desktop file carries
+                    AppImage publish/pack/extract/feed/syntax-check/installer/uninstaller
+                    smoke (shell syntax checks on all four production Linux scripts
+                    install.sh, install-standalone.sh, uninstall.sh,
+                    uninstall-standalone.sh; runs the AppImage installer + AppImage
+                    uninstaller + standalone uninstaller harnesses; also asserts the
+                    Velopack-generated internal desktop file carries
                     StartupWMClass=ModifAmorphic.ModificusCurator) depend on the format
                     job; no artifact upload; release-please-only PRs are ignored via
                     paths-ignore; there is intentionally no push trigger),

@@ -2,7 +2,7 @@
 
 Reference for how Modificus Curator releases are produced, attested, scanned,
 and installed. Covers the release workflow, the post-release AV/VT scan, the
-PR gate, the two Linux installers, and AppImage uninstall.
+PR gate, the two Linux installers, and both Linux uninstallers.
 
 ## Versioning
 
@@ -184,7 +184,8 @@ install root; user data is always at the data root.
 
 **Linux AppImage** (`ModificusCurator-linux-x64.AppImage`) is the
 recommended installed distribution. It is self-contained, so no host .NET
-runtime is required. `scripts/install-appimage.sh` installs it per-user at
+runtime is required. `scripts/install.sh` (the recommended Linux installer)
+installs it per-user at
 `~/.local/share/Modificus Curator/appimage/Modificus.Curator.AppImage`, adds a
 desktop entry, icon, and command symlink, and uses no root privileges. The
 AppImage is a Velopack package on channel `linux-x64`, so the existing startup
@@ -201,7 +202,7 @@ download filename is not part of the update contract.
 install the .NET 10 Runtime themselves; the base `Microsoft.NETCore.App` runtime
 is sufficient. The tar.gz has a top-level `app/` + `relay/` layout extracted
 into `~/.local/share/Modificus Curator/`. It omits Velopack and updates by
-re-running `scripts/install.sh` or installing the archive manually.
+re-running `scripts/install-standalone.sh` or installing the archive manually.
 
 Two executables ship together in `app/`: `Modificus.Curator[.exe]` (the
 Avalonia UI, `WinExe`) and `Modificus.Curator.NxmHandler[.exe]` (the
@@ -350,8 +351,11 @@ workflow handles push-to-main.
   Velopack-generated internal desktop file carries
   `StartupWMClass=ModifAmorphic.ModificusCurator` (matching the pack id and the
   Curator window's WM_CLASS), verifies the feed's filename, size, SHA1, and
-  SHA256 against the generated full nupkg, and runs the AppImage installer and
-  uninstaller tests. It uploads no artifact.
+  SHA256 against the generated full nupkg, runs shell syntax checks on the four
+  production Linux scripts (`install.sh`, `install-standalone.sh`,
+  `uninstall.sh`, `uninstall-standalone.sh`), and runs the AppImage
+  installer, AppImage uninstaller, and standalone uninstaller test harnesses.
+  It uploads no artifact.
 - **paths-ignore** skips release-please's bot-authored release PRs (they only
   touch `CHANGELOG.md` and `.release-please-manifest.json`), so those do not
   run the build gate.
@@ -360,9 +364,9 @@ workflow handles push-to-main.
 
 ## Linux installers
 
-`scripts/install.sh` is the standalone tarball installer served from `raw/main`.
-By default it installs the
-latest STABLE release; pass `--prerelease` (or set `CURATOR_PRERELEASE=1`) to
+`scripts/install.sh` is the recommended Linux installer. It installs the
+self-contained AppImage served from `raw/main`. By default it installs the
+latest STABLE AppImage; pass `--prerelease` (or set `CURATOR_PRERELEASE=1`) to
 install the latest prerelease:
 
 ```sh
@@ -373,15 +377,40 @@ curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/
 ```
 
 The script does NOT query the GitHub API or infer the asset filename. It
-resolves the archive from `scripts/release.env`, a small `KEY=value` manifest
-the release pipeline maintains on every release (see the `update-manifest` job
-above). It fetches the manifest from
+resolves the AppImage URL from `scripts/release.env`, a small `KEY=value`
+manifest the release pipeline maintains on every release (see the
+`update-manifest` job above). It fetches the manifest from
 `https://raw.githubusercontent.com/<repo>/main/scripts/release.env` (CDN, no
-auth, no rate limit), parses `RELEASE_URL` and `PRE_RELEASE_URL` line by line
-(not sourced, for safety even though the file is ours), and downloads the URL
-matching the selected channel. If the chosen URL is empty (for example,
-`RELEASE_URL` is empty until the first stable release ships), the script exits
-with a message pointing the user at `--prerelease`.
+auth, no rate limit), parses `APPIMAGE_RELEASE_URL` and
+`APPIMAGE_PRE_RELEASE_URL` line by line (not sourced, for safety even though
+the file is ours), and downloads the URL matching the selected channel. It
+downloads or accepts a local `CURATOR_APPIMAGE`, stages the candidate on the
+destination filesystem, sets executable mode, extracts it with
+`--appimage-extract`, validates the Velopack desktop/icon metadata plus the UI,
+NXM handler, Relay, `UpdateNix`, and `sq.version`, then atomically renames it
+over the stable installed AppImage at
+`~/.local/share/Modificus Curator/appimage/Modificus.Curator.AppImage`. Only
+after validation does it update its user desktop entry (writing
+`StartupWMClass=ModifAmorphic.ModificusCurator` so the AppImage's window groups
+under Curator, matching the Curator window's WM_CLASS and the Velopack pack id),
+icon, and shared command symlink. A failed candidate leaves the previous
+AppImage usable. It uses no root privileges.
+
+The AppImage installer supports `INSTALL_ROOT`, `BIN_LINK`, `CURATOR_REPO`,
+`CURATOR_APPIMAGE`, and `CURATOR_PRERELEASE`. Its deterministic shell harness
+(`scripts/tests/test-install.sh`) uses a fake extractable AppImage and
+isolated HOME/XDG paths, so it needs neither FUSE nor network.
+
+`scripts/install-standalone.sh` is the standalone tarball installer. It follows
+the same stable-by-default and `--prerelease` contract, but reads `RELEASE_URL`
+or `PRE_RELEASE_URL`:
+
+```sh
+# stable (default)
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install-standalone.sh | sh
+# prerelease
+curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/main/scripts/install-standalone.sh | sh -s -- --prerelease
+```
 
 After downloading, the script extracts to a temp dir, validates
 `app/Modificus.Curator` + `relay/modificus_relay.exe` before touching the
@@ -399,55 +428,86 @@ install root, then:
 - Warns (non-fatal) if `dotnet --list-runtimes` does not list
   `Microsoft.NETCore.App 10.`.
 
-The Integrations dialog handles explicit `nxm://` registration; the script does
-not duplicate that system association.
+The Integrations dialog handles explicit `nxm://` registration; neither
+installer duplicates that system association.
 
-The script supports testing overrides (`INSTALL_ROOT`, `BIN_LINK`,
+The standalone installer supports testing overrides (`INSTALL_ROOT`, `BIN_LINK`,
 `CURATOR_REPO`, `CURATOR_ARCHIVE`, `CURATOR_PRERELEASE`) so extraction +
 install can be exercised against a fake archive in a temp dir without touching
-real user data or hitting the network. The script in `main` is authoritative;
+real user data or hitting the network. The scripts in `main` are authoritative;
 users always get the current version, installing the latest stable by default
 or the latest prerelease on request. Users wanting a specific release manage
 the install themselves.
 
-`scripts/install-appimage.sh` is the separate self-contained AppImage installer.
-It follows the same stable-by-default and `--prerelease` contract, but reads
-`APPIMAGE_RELEASE_URL` or `APPIMAGE_PRE_RELEASE_URL`. It downloads or accepts a
-local `CURATOR_APPIMAGE`, stages the candidate on the destination filesystem,
-sets executable mode, extracts it with `--appimage-extract`, validates the
-Velopack desktop/icon metadata plus the UI, NXM handler, Relay, `UpdateNix`, and
-`sq.version`, then atomically renames it over the stable installed AppImage.
-Only after validation does it update its user desktop entry (writing
-`StartupWMClass=ModifAmorphic.ModificusCurator` so the AppImage's window groups
-under Curator, matching the Curator window's WM_CLASS and the Velopack pack id),
-icon, and shared command symlink. A failed candidate leaves the previous
-AppImage usable.
+Both Linux distributions share user data and may coexist; whichever installer
+ran most recently controls the common convenience symlink.
 
-The AppImage installer supports `INSTALL_ROOT`, `BIN_LINK`, `CURATOR_REPO`,
-`CURATOR_APPIMAGE`, and `CURATOR_PRERELEASE`. Its deterministic shell harness
-(`scripts/test-install-appimage.sh`) uses a fake extractable AppImage and
-isolated HOME/XDG paths, so it needs neither FUSE nor network. Both Linux
-distributions share user data and may coexist; whichever installer ran most
-recently controls the common convenience symlink.
+## Linux uninstallers
 
-`scripts/uninstall-appimage.sh` is the official per-user AppImage uninstaller.
-With no flags it removes the installed AppImage, AppImage-owned desktop/icon
-integration, AppImage-managed NXM files, and the app-specific Velopack state at
+Each distribution has its own per-user uninstaller. Both are self-contained
+(POSIX `/bin/sh`, no sourced or downloaded helper) so a raw-piped invocation
+stays standalone and network-independent. Both reject root execution, validate
+all destructive paths (nonempty, absolute, not `/`) before mutation, use
+explicit `--` option terminators on destructive utilities, never follow symlink
+targets (a symlink is unlinked, its target left in place), treat absent owned
+paths as success (idempotent re-runs), count any owned-item removal failure
+toward a nonzero exit, and accept `INSTALL_ROOT`, `BIN_LINK`,
+`VELOPACK_STATE_DIR`, `HOME`, and `XDG_DATA_HOME` testing overrides.
+`VELOPACK_STATE_DIR`'s final component must be exactly
+`ModifAmorphic.ModificusCurator`; in `--purge-data` mode `INSTALL_ROOT`'s final
+component must be exactly `Modificus Curator`.
+
+`scripts/uninstall.sh` is the default AppImage uninstaller. With no flags it
+removes the installed AppImage, AppImage-owned desktop/icon integration,
+AppImage-managed NXM files, and the app-specific Velopack state at
 `/var/tmp/velopack/ModifAmorphic.ModificusCurator`. Removing the Velopack state
 also clears retained or pending local update packages, preventing them from
 immediately advancing a newly installed acceptance-test base. Default mode
 preserves profiles, mods, config, logs, app state, and standalone `app/` and
-`relay/` payloads. It preserves `AppUpdates.SourceOverride` and reminds the user
-to clear it separately before testing production update sources.
+`relay/` payloads. It removes the shared command link only when its immediate
+readlink target is the exact installed AppImage path, and removes the NXM
+desktop entry only when it contains the exact full line
+`Exec="<managed handler path>" %u` (fixed full-line ownership, never a
+substring).
+It preserves `AppUpdates.SourceOverride` and reminds the user to clear it
+separately before testing production update sources.
 
-The explicit `--purge-data` mode performs a clean Linux removal by recursively
-deleting the strictly validated `Modificus Curator` data root. This intentionally
-removes all user data and both Linux distributions under that root. Both modes
-remove only exact external desktop/icon files and qualifying command links,
-reject root execution, and validate all destructive paths before mutation. The
-isolated `scripts/test-uninstall-appimage.sh` harness covers preserved-data and
-purge behavior, path safety, NXM ownership, pending Velopack state, and
-idempotency.
+`scripts/uninstall-standalone.sh` is the standalone uninstaller. With no flags
+it removes the standalone `app/` and `relay/` directories (recursively) under
+the install root. It removes the shared command link only when its immediate
+readlink value is exactly `<install root>/app/Modificus.Curator`, and removes
+the NXM desktop entry only when it contains the exact full line
+`Exec="<install root>/app/Modificus.Curator.NxmHandler" %u` (fixed-line
+ownership via `grep -Fx`, never a substring match, mirroring
+`LinuxNxmHandlerRegistrar.FormatExec`). Default mode preserves profiles, mods,
+config, logs, app state, the AppImage distribution (`appimage/`,
+`nxm-handler/`, the AppImage-owned desktop/icon), and the app-specific Velopack
+state (the standalone build does not use Velopack).
+
+Either uninstaller's explicit `--purge-data` mode performs a clean Linux
+removal. The purge semantics match between the two scripts (the small
+safety-critical purge block is mirrored, not shared, so either raw-piped script
+remains standalone): remove the exact main Curator desktop entry and
+application icon, remove the app-specific Velopack state, remove the shared
+command link when its target is the install root itself or anything under it
+(covering both the standalone and AppImage links; external targets and regular
+files are preserved), remove the exact Curator NXM desktop entry regardless of
+whether its Exec points at the standalone or AppImage-managed handler (no
+`xdg-mime` call), and recursively delete the strictly basename-validated
+`Modificus Curator` data root. This intentionally removes all user data and
+both Linux distributions under that root. Shared XDG parent directories
+(`applications/`, the icon hierarchy) are never removed, only the exact
+desktop/icon files. The full-removal success banner prints only when there were
+no failures. Because the purge semantics match, one `--purge-data` invocation
+is a complete Linux removal regardless of which uninstaller runs it.
+
+The isolated harnesses `scripts/tests/test-uninstall.sh` and
+`scripts/tests/test-uninstall-standalone.sh` cover default-mode ownership and
+preservation, exact desktop/command-link matching, path safety, NXM ownership,
+pending Velopack state (AppImage only), purge behavior for both distributions,
+BIN_LINK ownership rules, paths with spaces, injected `rm` failure, and
+idempotency, all under isolated HOME/XDG and Velopack-state paths with no real
+`HOME` or `/var/tmp` use.
 
 ## Sandbox rehearsal (operator procedure)
 
@@ -508,9 +568,11 @@ What the release pipeline provides today, and what it does not:
   attestation + dispatch), `.github/workflows/curator-post-release-av.yml`
   (repository_dispatch AV/VT scan), `.github/workflows/curator-build.yml`
   (PR gate).
-- `scripts/install.sh` and `scripts/install-appimage.sh` (the Linux installers),
-  `scripts/uninstall-appimage.sh` (preserving and clean-uninstall modes), plus
-  the isolated install/uninstall harnesses.
+- `scripts/install.sh` (the recommended AppImage installer) and
+  `scripts/install-standalone.sh` (the standalone tarball installer), plus
+  `scripts/uninstall.sh` and `scripts/uninstall-standalone.sh` (each
+  with preserving and clean-uninstall modes), and the isolated
+  install/uninstall harnesses.
 - `scripts/release.env` (the install manifest both installers read and the
   `update-manifest` job maintains).
 - Release-please config: `.release-please-config.json` +

@@ -38,9 +38,9 @@ internal static class Program
 /// windows; it is deliberately coupled to (must stay equal to) the Velopack
 /// pack id, the <c>StartupWMClass</c> the release pipeline bakes into the
 /// generated AppImage desktop file, and the <c>StartupWMClass</c>
-/// <c>scripts/install-appimage.sh</c> writes into the user desktop entry. The
+/// <c>scripts/install.sh</c> writes into the user desktop entry. The
 /// AppImage packaging smoke (<c>curator-build.yml</c>) and the installer test
-/// harness (<c>scripts/test-install-appimage.sh</c>) assert that coupling from
+/// harness (<c>scripts/tests/test-install.sh</c>) assert that coupling from
 /// the packaging side; this constant is the C# side. This is the normal app
 /// identity, not a runtime heuristic.
 /// </summary>

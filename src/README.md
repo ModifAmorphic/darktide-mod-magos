@@ -86,7 +86,10 @@ trigger; the release workflow handles push-to-main. It runs an Ubuntu-only
 format job, then `dotnet build` and `dotnet test` on a Windows + Ubuntu
 matrix that depends on the format job. A separate Ubuntu 22.04 packaging-smoke
 job publishes, packs, extracts, and validates the Linux AppImage and its
-Velopack feed, then runs the AppImage installer and uninstaller tests. For
+Velopack feed, runs shell syntax checks on all four production Linux scripts
+(`install.sh`, `install-standalone.sh`, `uninstall.sh`,
+`uninstall-standalone.sh`), and runs the AppImage installer, AppImage
+uninstaller, and standalone uninstaller test harnesses. For
 same-repo PRs the format job
 runs `dotnet format` and commits any changes as
 `style: dotnet format [skip ci]`; for fork PRs and `workflow_dispatch` it
@@ -160,22 +163,37 @@ publication, but red means the scan signal is invalid or VirusTotal upload faile
 Releases created with `GITHUB_TOKEN` do not fire `release: published`, which is
 why the AV/VT workflow runs on `repository_dispatch` instead.
 
-The Linux standalone installer (`scripts/install.sh`) installs the tarball into
-`${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`. The AppImage installer
-(`scripts/install-appimage.sh`) installs the self-contained image at
+The AppImage installer (`scripts/install.sh`, the recommended Linux installer)
+installs the self-contained image at
 `<root>/appimage/Modificus.Curator.AppImage`, plus user desktop integration.
-Both are served from `raw/main`, default to stable, accept `--prerelease`, and
-resolve independent URLs from `scripts/release.env` without querying the GitHub
-API. They preserve shared user data and may coexist; the most recently run
-installer repoints the common `~/.local/bin/modificus-curator` symlink.
+The standalone tarball installer (`scripts/install-standalone.sh`) installs the
+framework-dependent archive into `${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`
+(replacing only `app/` + `relay/`). Both are served from `raw/main`, default to
+stable, accept `--prerelease`, and resolve independent URLs from
+`scripts/release.env` (the AppImage reads `APPIMAGE_*` keys, the standalone
+reads `RELEASE_*`/`PRE_RELEASE_*`) without querying the GitHub API. They
+preserve shared user data and may coexist; the most recently run installer
+repoints the common `~/.local/bin/modificus-curator` symlink.
 
-The AppImage uninstaller (`scripts/uninstall-appimage.sh`) defaults to removing
-only the AppImage payload, its owned desktop/NXM integration, and app-specific
-Velopack update state. It preserves user data and the standalone distribution.
-The explicit `--purge-data` mode removes the entire Linux Curator data root,
-including both distributions and all profiles, mods, config, logs, and app
-state. `scripts/test-uninstall-appimage.sh` exercises both modes in isolated
-HOME/XDG and Velopack-state paths.
+Each distribution has its own per-user uninstaller with a default mode and a
+`--purge-data` mode:
+
+- `scripts/uninstall.sh` defaults to removing only the AppImage
+  payload, its owned desktop/NXM integration, and app-specific Velopack update
+  state. It preserves user data and the standalone distribution.
+- `scripts/uninstall-standalone.sh` defaults to removing only the standalone
+  `app/` + `relay/` payload, the command symlink when it points at the
+  standalone UI, and the NXM desktop entry when its Exec points at the
+  standalone handler. It preserves user data, the AppImage distribution, and
+  Velopack state (the standalone build does not use Velopack).
+- Either uninstaller's `--purge-data` mode removes the entire Linux Curator
+  data root, including both distributions and all profiles, mods, config, logs,
+  and app state. The purge semantics match, so one `--purge-data` invocation is
+  a complete Linux removal regardless of which uninstaller runs it.
+
+`scripts/tests/test-install.sh`, `scripts/tests/test-uninstall.sh`, and
+`scripts/tests/test-uninstall-standalone.sh` exercise the install and both uninstall
+modes in isolated HOME/XDG and Velopack-state paths.
 See the root [`README.md`](../README.md) for the user-facing install steps.
 
 ## Storage model (unified repository)
