@@ -1,20 +1,29 @@
 #!/bin/sh
-# Modificus Curator Linux AppImage uninstaller.
+# Modificus Curator Linux standalone tarball uninstaller.
 #
-# Removes the AppImage distribution and its owned integration/update state from
-# this Linux user account. Must not be run as root; no processes are killed
-# (close Curator before running). All paths are user-space and absolute.
+# Removes the standalone distribution (app/ + relay/) and its owned integration
+# from this Linux user account. Must not be run as root; no processes are
+# killed (close Curator before running). All paths are user-space and absolute.
 #
 # Two modes:
-#   (default)         Uninstall the AppImage and its owned integration/update
-#                     state while preserving shared user data (profiles, mods,
-#                     config, app-state, logs) and the standalone Linux
-#                     distribution (app/, relay/) and its command link.
-#   --purge-data      Full clean Linux uninstall: also remove the entire Curator
-#                     Linux data root, including profiles, mods, config,
-#                     app-state, logs, AppImage payload, AppImage NXM managed
-#                     files, and any standalone app/ + relay/ payload.
+#   (default)         Uninstall the standalone app/ + relay/ payload and the
+#                     standalone-owned command link + NXM desktop entry while
+#                     preserving shared user data (profiles, mods, config,
+#                     app-state, logs) and the AppImage distribution
+#                     (appimage/, nxm-handler/, AppImage desktop/icon, and
+#                     app-specific Velopack state).
+#   --purge-data      Full clean Linux uninstall: remove the exact main Curator
+#                     desktop/icon files, the app-specific Velopack state, the
+#                     command link when it points into the install root, the
+#                     Curator NXM desktop entry regardless of its target, and
+#                     the entire Curator Linux data root (both distributions
+#                     plus profiles, mods, config, app-state, logs).
 #   --help            Print usage and exit without changing anything.
+#
+# The purge semantics mirror scripts/uninstall.sh --purge-data so
+# either uninstaller performs a complete Linux removal. This script is
+# intentionally self-contained (no sourced or downloaded helper) so a raw-piped
+# invocation stays standalone and network-independent.
 #
 # Testing overrides (env vars, not needed for normal use):
 #   INSTALL_ROOT=<dir>          the Curator data root (default XDG/Modificus Curator)
@@ -25,14 +34,14 @@
 #   HOME / XDG_DATA_HOME        select the default user-data tree
 set -u
 
-# Stable installed filenames (mirror install-appimage.sh + the nxm registrar).
-APPIMAGE_FILENAME="Modificus.Curator.AppImage"
+# Stable installed filenames (mirror the installers + the nxm registrar). The
+# standalone UI + handler land under app/; the AppImage-owned main desktop/icon
+# + the nxm-handler managed dir are only touched in purge mode.
+STANDALONE_UI_NAME="Modificus.Curator"
+STANDALONE_HANDLER_NAME="Modificus.Curator.NxmHandler"
 DESKTOP_FILENAME="modificus-curator.desktop"
 NXM_DESKTOP_FILENAME="modificus-curator-nxm-handler.desktop"
 ICON_NAME="modificus-curator"
-MANAGED_DIR_NAME="nxm-handler"
-MANAGED_HANDLER_NAME="Modificus.Curator.NxmHandler"
-MANAGED_SYMLINK_NAME="Modificus.Curator"
 VELOPACK_APP_ID="ModifAmorphic.ModificusCurator"
 EXPECTED_ROOT_BASE="Modificus Curator"
 
@@ -47,55 +56,64 @@ failures=0
 
 print_help() {
     cat <<'HELP'
-Usage: uninstall-appimage.sh [--purge-data | --help]
+Usage: uninstall-standalone.sh [--purge-data | --help]
 
-Removes the Modificus Curator AppImage distribution from this Linux user
-account. Must not be run as root (sudo); no processes are killed (close Curator
-first). All paths are user-space and absolute.
+Removes the Modificus Curator standalone tarball distribution from this Linux
+user account. Must not be run as root (sudo); no processes are killed (close
+Curator first). All paths are user-space and absolute.
 
 Modes:
-  (default)      Uninstall the AppImage and its owned integration/update state
-                 while preserving shared user data and the standalone Linux
-                 distribution.
-  --purge-data   Full clean Linux uninstall: also remove the entire Curator
-                 Linux data root (profiles, mods, config, app-state, logs,
-                 AppImage payload, AppImage NXM managed files, and any
-                 standalone app/ + relay/ payload).
+  (default)      Uninstall the standalone app/ + relay/ payload and the
+                 standalone-owned command link + NXM desktop entry while
+                 preserving shared user data and the AppImage distribution.
+  --purge-data   Full clean Linux uninstall: remove the exact main Curator
+                 desktop/icon files, the app-specific Velopack state, the
+                 command link when it points into the install root, the Curator
+                 NXM desktop entry regardless of its target, and the entire
+                 Curator Linux data root (both distributions plus all shared
+                 user data).
   --help         Print this help and exit without changing anything.
 
 Default mode removes:
-  - The installed AppImage, then the appimage/ dir only if empty afterward.
-  - The AppImage-owned main desktop entry and application icon.
-  - The shared command link only when it is a symlink whose immediate target
-    equals the exact installed AppImage path.
-  - The AppImage NXM desktop entry only when its Exec points at the exact
-    managed nxm-handler copy; plus the exact managed handler copy and its
-    sibling AppImage symlink (the managed dir is removed only if empty).
-  - The app-specific Velopack update state (cached/pending packages, lock,
-    beta id, temp patch state). Removed in both modes so a pending local
-    target cannot advance a freshly installed base.
+  - The standalone app/ and relay/ directories (recursively) under the install
+    root. These are the standalone installer's owned payload.
+  - The shared command link only when it is a symlink whose immediate readlink
+    value is exactly <install root>/app/Modificus.Curator.
+  - The Curator NXM desktop entry only when it contains the exact full line
+    Exec="<install root>/app/Modificus.Curator.NxmHandler" %u (fixed-line
+    ownership, not a substring match).
 
 Default mode preserves byte-for-byte:
   - profiles/, mods/, config.json (including AppUpdates.SourceOverride),
     app-state.json, and logs/.
-  - The standalone Linux distribution (app/, relay/) and its command link.
-  - A regular file or standalone/unrelated command link at the bin path.
-  - A standalone NXM desktop entry whose Exec points into app/ or elsewhere.
-  - Unexpected files left inside appimage/ or nxm-handler/.
+  - The AppImage distribution: appimage/, nxm-handler/ (managed handler copy +
+    sibling symlink), the AppImage-owned main desktop entry and application
+    icon, and the app-specific Velopack update state.
+  - A regular file or AppImage-target/unrelated-target command link at the bin
+    path (only the exact standalone-target symlink is removed).
+  - An AppImage-managed or unrelated NXM desktop entry whose Exec does not match
+    the exact standalone-handler line.
+  - Shared parent directories (the install root, the user applications/ and icon
+    hierarchies) are never removed.
 
 After a default uninstall, local AppUpdates.SourceOverride is preserved and
 must be cleared in config.json before testing production update sources.
 
 --purge-data additionally:
-  - Removes the shared command link when its target is the AppImage path or
-    anything under the Curator install root (covers the standalone link too).
+  - Removes the exact main Curator desktop entry and application icon
+    (AppImage-owned integration) and the app-specific Velopack state.
+  - Removes the shared command link when its target is the install root itself
+    or anything under it (covers both the standalone and AppImage links).
   - Removes the exact Curator NXM desktop entry whether it points at the
-    AppImage-managed or the standalone handler. It does not invoke xdg-mime
+    standalone or the AppImage-managed handler. It does not invoke xdg-mime
     or claim another association.
   - Recursively deletes the entire Curator install root after strict basename
     validation. This removes ALL Curator Linux user data and BOTH Linux
     distributions under that shared root. The user-level applications/ and
     icon hierarchies are never removed, only the exact desktop/icon files.
+
+The purge behavior matches scripts/uninstall.sh --purge-data, so one
+uninstaller command is sufficient for a complete Linux removal.
 
 Exit status is nonzero if any owned item could not be removed (see warnings).
 Absent items are not errors, so re-running on an already-uninstalled tree
@@ -151,16 +169,13 @@ INSTALL_ROOT="${INSTALL_ROOT:-$xdg_data/$EXPECTED_ROOT_BASE}"
 BIN_LINK="${BIN_LINK:-$HOME/.local/bin/modificus-curator}"
 VELOPACK_STATE_DIR="${VELOPACK_STATE_DIR:-/var/tmp/velopack/$VELOPACK_APP_ID}"
 
-appimage_dir="$INSTALL_ROOT/appimage"
-appimage_path="$appimage_dir/$APPIMAGE_FILENAME"
+standalone_ui_path="$INSTALL_ROOT/app/$STANDALONE_UI_NAME"
+standalone_handler_path="$INSTALL_ROOT/app/$STANDALONE_HANDLER_NAME"
 apps_dir="$xdg_data/applications"
 icon_apps_dir="$xdg_data/icons/hicolor/256x256/apps"
 desktop_path="$apps_dir/$DESKTOP_FILENAME"
 nxm_desktop_path="$apps_dir/$NXM_DESKTOP_FILENAME"
 icon_path="$icon_apps_dir/$ICON_NAME.png"
-managed_dir="$INSTALL_ROOT/$MANAGED_DIR_NAME"
-managed_handler_path="$managed_dir/$MANAGED_HANDLER_NAME"
-managed_symlink_path="$managed_dir/$MANAGED_SYMLINK_NAME"
 
 # --- validate BEFORE any filesystem mutation --------------------------------
 # Reject empty, root (/), or relative paths. Absolute-path validation also
@@ -189,6 +204,13 @@ if [ "$mode" = "purge" ]; then
     fi
 fi
 
+# The exact standalone-target command link + the exact standalone NXM desktop
+# Exec line. Default-mode ownership is matched against these verbatim.
+expected_bin_target="$standalone_ui_path"
+# Build the exact Exec line the standalone registrar emits:
+# Exec="<handler path>" %u  (see LinuxNxmHandlerRegistrar.FormatExec).
+expected_nxm_exec_line='Exec="'"$standalone_handler_path"'" %u'
+
 # --- status ----------------------------------------------------------------
 msg "Close Curator before continuing. This script will not kill any process."
 msg "Mode:        $mode"
@@ -215,17 +237,18 @@ remove_owned_file() {
     fi
 }
 
-# Remove a directory only when empty. Never recursive: an unexpected entry
-# keeps the directory in place rather than risk deleting something unowned.
-# A non-empty (or otherwise non-removable) dir is reported as preserved and is
-# NOT counted as a failure (conditional cleanup, not an owned item).
-rmdir_if_empty() {
+# Remove an owned directory tree (the standalone payload). Never follows a
+# symlink target: rm -rf on a path that is itself a symlink removes the link,
+# not its target; on a real directory it removes the directory and its
+# contents. A removal failure is recorded; an absent path is not an error.
+remove_owned_tree() {
     _d="$1"
-    if [ -d "$_d" ]; then
-        if rmdir -- "$_d" 2>/dev/null; then
-            msg "Removed empty directory: $_d"
+    if [ -d "$_d" ] || [ -L "$_d" ]; then
+        if rm -rf -- "$_d" 2>/dev/null; then
+            msg "Removed: $_d"
         else
-            msg "Preserved (not empty): $_d"
+            warn "Could not remove (left in place): $_d"
+            failures=$((failures + 1))
         fi
     else
         msg "Absent: $_d"
@@ -247,32 +270,28 @@ remove_velopack_state() {
     fi
 }
 
-# --- common external integration cleanup (both modes) ----------------------
-msg "== External integration =="
-remove_owned_file "$desktop_path"
-remove_owned_file "$icon_path"
-remove_velopack_state
-
-# --- mode-specific cleanup --------------------------------------------------
 if [ "$mode" = "default" ]; then
-    msg ""
-    msg "== AppImage payload =="
-    remove_owned_file "$appimage_path"
-    rmdir_if_empty "$appimage_dir"
+    # --- default mode: standalone payload + standalone-owned integration ---
+    msg "== Standalone payload =="
+    remove_owned_tree "$INSTALL_ROOT/app"
+    remove_owned_tree "$INSTALL_ROOT/relay"
 
     msg ""
     msg "== Command link =="
+    # Remove only the exact standalone-target symlink. AppImage-target,
+    # unrelated-target, dangling-unrelated, and regular-file entries are
+    # preserved; the symlink target itself is never followed or deleted.
     if [ -L "$BIN_LINK" ]; then
         bin_target=$(readlink "$BIN_LINK")
-        if [ "$bin_target" = "$appimage_path" ]; then
+        if [ "$bin_target" = "$expected_bin_target" ]; then
             if rm -f -- "$BIN_LINK" 2>/dev/null; then
-                msg "Removed: $BIN_LINK (symlink to AppImage)"
+                msg "Removed: $BIN_LINK (symlink to standalone UI)"
             else
                 warn "Could not remove (left in place): $BIN_LINK"
                 failures=$((failures + 1))
             fi
         else
-            msg "Preserved: $BIN_LINK (symlink target is not the AppImage: $bin_target)"
+            msg "Preserved: $BIN_LINK (symlink target is not the standalone UI: $bin_target)"
         fi
     elif [ -e "$BIN_LINK" ]; then
         msg "Preserved: $BIN_LINK (regular file, not a symlink)"
@@ -281,35 +300,44 @@ if [ "$mode" = "default" ]; then
     fi
 
     msg ""
-    msg "== AppImage NXM handler integration =="
-    # Desktop: remove only when its content points at the exact managed handler.
+    msg "== Standalone NXM handler desktop =="
+    # Remove the NXM desktop entry only when it contains the exact full Exec
+    # line the standalone registrar emits. Fixed-line ownership (-Fx), never a
+    # substring, so an AppImage-managed or near-match entry is preserved.
     if [ -f "$nxm_desktop_path" ]; then
-        if grep -qF "$managed_handler_path" "$nxm_desktop_path" 2>/dev/null; then
+        if grep -Fxq -- "$expected_nxm_exec_line" "$nxm_desktop_path" 2>/dev/null; then
             if rm -f -- "$nxm_desktop_path" 2>/dev/null; then
-                msg "Removed: $nxm_desktop_path (AppImage-managed)"
+                msg "Removed: $nxm_desktop_path (standalone-managed)"
             else
                 warn "Could not remove (left in place): $nxm_desktop_path"
                 failures=$((failures + 1))
             fi
         else
-            msg "Preserved: $nxm_desktop_path (Exec does not point at the AppImage-managed handler)"
+            msg "Preserved: $nxm_desktop_path (Exec does not match the standalone handler)"
         fi
     else
         msg "Absent: $nxm_desktop_path"
     fi
-    # Exact managed handler copy + sibling AppImage symlink. The symlink target
-    # is never followed or deleted; a dangling symlink is removed correctly.
-    remove_owned_file "$managed_handler_path"
-    remove_owned_file "$managed_symlink_path"
-    rmdir_if_empty "$managed_dir"
 
+    msg ""
+    msg "Preserved: AppImage distribution (appimage/, nxm-handler/, AppImage"
+    msg "desktop/icon), Velopack update state, and shared user data (profiles,"
+    msg "mods, config, app-state, logs)."
     msg ""
     msg "Reminder: local AppUpdates.SourceOverride is preserved. Clear it in"
     msg "config.json before testing production update sources."
 else
-    # --purge-data
+    # --- purge mode: complete Linux removal (mirrors uninstall.sh) ---
+    msg "== External integration =="
+    remove_owned_file "$desktop_path"
+    remove_owned_file "$icon_path"
+    remove_velopack_state
+
     msg ""
     msg "== Command link =="
+    # Remove when the symlink target is the install root itself or anything
+    # under it (covers both the standalone and AppImage links). External
+    # targets and regular files are preserved; the target is never followed.
     if [ -L "$BIN_LINK" ]; then
         bin_target=$(readlink "$BIN_LINK")
         case "$bin_target" in
@@ -334,7 +362,7 @@ else
     msg ""
     msg "== NXM handler desktop =="
     # Clean uninstall removes the exact Curator NXM desktop entry whether it
-    # points at the AppImage-managed or the standalone handler. Does not invoke
+    # points at the standalone or the AppImage-managed handler. Does not invoke
     # xdg-mime or claim another association. Only the file is removed; the
     # shared applications/ directory is never touched.
     remove_owned_file "$nxm_desktop_path"

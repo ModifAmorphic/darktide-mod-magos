@@ -813,9 +813,9 @@ internal static class DesktopIdentityOptions
 explicit X11 `WM_CLASS`. It is deliberately coupled to (must stay equal to) the
 Velopack pack id (`ModifAmorphic.ModificusCurator`), the `StartupWMClass` the
 release pipeline bakes into the generated AppImage desktop file, and the
-`StartupWMClass` `scripts/install-appimage.sh` writes into the user desktop
+`StartupWMClass` `scripts/install.sh` writes into the user desktop
 entry; the AppImage packaging smoke (`curator-build.yml`) and the installer test
-harness (`scripts/test-install-appimage.sh`) assert that coupling from the
+harness (`scripts/tests/test-install.sh`) assert that coupling from the
 packaging side, and this constant is the C# side. Avalonia 12's default
 `WmClass` is the entry-assembly name; setting it explicitly means a task manager
 groups the Curator window under Curator (and not, in particular, under Darktide
