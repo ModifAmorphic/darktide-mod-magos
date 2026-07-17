@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.11.1...v0.12.0) (2026-07-17)
+
+
+### Features
+
+* add per-profile launch settings ([#116](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/116)) ([dc47e3d](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/dc47e3d27edbb5165e91183198a7d73180aaf035))
+
 ## [0.11.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.11.0...v0.11.1) (2026-07-15)
 
 
