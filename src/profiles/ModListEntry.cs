@@ -21,12 +21,11 @@ namespace Modificus.Curator.Profiles;
 /// version directly, so a container rename or an <c>isLatest</c> flip is
 /// reflected without a profile-entry change.</para>
 /// <para>
-/// <b>Fresh-start tolerance:</b> a legacy <c>profile.json</c> (the pre-refactor
-/// storage shape) carries mod entries with a <c>Name</c> field instead of
-/// <see cref="ContainerId"/>. Those entries deserialize with
-/// <see cref="ContainerId"/> = <see cref="Guid.Empty"/>; the profile service
-/// drops them on read + logs (the operator's data is dev-only at this stage;
-/// the spec specifies a fresh start, not a migration shim).</para>
+/// <b>Fresh-start tolerance:</b> an old <c>profile.json</c> that carries mod
+/// entries with a <c>Name</c> field instead of <see cref="ContainerId"/>
+/// deserializes those entries with <see cref="ContainerId"/> =
+/// <see cref="Guid.Empty"/>; the profile service drops them on read + logs
+/// (Curator does not migrate that shape: a fresh start, not a shim).</para>
 /// </remarks>
 public sealed record ModListEntry
 {

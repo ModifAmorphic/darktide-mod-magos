@@ -14,7 +14,7 @@ namespace Modificus.Curator.Integrations;
 /// newest MAIN file + clears the flag when it matches the installed version;
 /// best-effort + cached). Tier 1 is authoritative and never second-guessed. The
 /// two shapes differ only in the result's <see cref="UpdateCheckResult.Thorough"/>
-/// flag (kept for interface compatibility).
+/// flag.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,21 +31,19 @@ namespace Modificus.Curator.Integrations;
 /// compared to the container's stored <see cref="ModContainer.Name"/> and the
 /// container is renamed when they differ (the Nexus name wins; identity
 /// <see cref="ModContainer.Id"/> is unchanged). The result's
-/// <see cref="UpdateCheckResult.NamesChanged"/> flag signals the UI to refresh
-/// row names after a check that renamed at least one container.</para>
+/// <see cref="UpdateCheckResult.NamesChanged"/> flag signals that a check
+/// renamed at least one container, so callers can refresh displayed names.</para>
 /// <para>
 /// <b>One query, all mods.</b> The v2 <c>modsByUid</c> query takes a batch of
 /// mod UIDs (<c>game_id * 2^32 + mod_id</c>) and returns the update status for
-/// each in a single call. There is no Month-window limitation, no client-side
-/// timestamp comparison, no tolerance, and no per-mod reconciliation: the server
-/// tracks the user's downloads and computes the signal directly.</para>
+/// each in a single call. The server tracks the user's downloads and computes
+/// the signal directly.</para>
 /// <para>
-/// <b>Best-effort, never throws to the caller.</b> The check is fire-and-forget;
-/// the UI layer fires it on profile load. A transient API failure, a missing
-/// auth config, or an exhausted rate limit all surface as an empty result (with
-/// <see cref="UpdateCheckResult.RateLimited"/> set when applicable) rather than a
-/// thrown exception; cancellation alone propagates. The caller has nothing to
-/// gain from catching.</para>
+/// <b>Best-effort, never throws to the caller.</b> A transient API failure, a
+/// missing auth config, or an exhausted rate limit all surface as an empty
+/// result (with <see cref="UpdateCheckResult.RateLimited"/> set when applicable)
+/// rather than a thrown exception; cancellation alone propagates. The caller has
+/// nothing to gain from catching.</para>
 /// </remarks>
 public interface IUpdateCheckService
 {
@@ -54,8 +52,7 @@ public interface IUpdateCheckService
     /// endpoint once (one API call for all checkable mods) and flags each mod via
     /// three tiers (tier 1 <see cref="ModUpdateStatus.ViewerUpdateAvailable"/>,
     /// tier 2 a mod-level version compare, tier 3 a best-effort latest-file-version
-    /// confirmation that clears tier-2-only false positives). Used by the periodic
-    /// timer + the profile-load trigger. The result has
+    /// confirmation that clears tier-2-only false positives). The result has
     /// <see cref="UpdateCheckResult.Thorough"/> = <c>false</c>.
     /// </summary>
     /// <param name="profileId">The profile whose mods to check.</param>
@@ -72,11 +69,9 @@ public interface IUpdateCheckService
 
     /// <summary>
     /// The thorough check. Runs the same v2 GraphQL <c>modsByUid</c> batch
-    /// query as <see cref="CheckAsync"/> (the v2 query covers all mods in one
-    /// call; there is no Month-only vs thorough distinction). Kept for
-    /// interface compatibility: the result has
+    /// query as <see cref="CheckAsync"/>; the result has
     /// <see cref="UpdateCheckResult.Thorough"/> = <c>true</c>. Both paths run
-    /// the same query, so the flag no longer signals a coverage difference.
+    /// the same query, so the flag signals no coverage difference.
     /// </summary>
     /// <param name="profileId">The profile whose mods to check.</param>
     /// <param name="ct">Cancellation token. <see cref="OperationCanceledException"/>
@@ -86,26 +81,24 @@ public interface IUpdateCheckService
 
     /// <summary>
     /// The last check result, or <c>null</c> before the first check completes.
-    /// The mod-list view reads this to render badges without awaiting a check. Holds the
-    /// most recent result regardless of which method (<see cref="CheckAsync"/>
-    /// or <see cref="CheckThoroughAsync"/>) produced it.
+    /// Holds the most recent result regardless of which method
+    /// (<see cref="CheckAsync"/> or <see cref="CheckThoroughAsync"/>) produced
+    /// it; useful for rendering update state without awaiting a check.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Written from a background task (the fire-and-forget check invocation)
-    /// and read by the UI thread. The write is taken under an internal lock
-    /// together with the <see cref="CheckCompleted"/> invocation so an event
-    /// subscriber observes the result that was just published; reads are
-    /// lock-free. Reference assignment is atomic on every target runtime, so
-    /// the lock-free read can at worst observe a one-check-stale value
-    /// (corrected on the next <see cref="CheckCompleted"/>).</para>
+    /// Written from the completing task and read by other threads. The write is
+    /// taken under an internal lock together with the <see cref="CheckCompleted"/>
+    /// invocation so an event subscriber observes the result that was just
+    /// published; reads are lock-free. Reference assignment is atomic on every
+    /// target runtime, so the lock-free read can at worst observe a one-check-stale
+    /// value (corrected on the next <see cref="CheckCompleted"/>).</para>
     /// </remarks>
     UpdateCheckResult? LastResult { get; }
 
     /// <summary>
     /// Raised (on the completing thread) when a check finishes, successful or
-    /// not. The mod-list view subscribes to refresh badges without awaiting a check.
-    /// Always raised exactly once per <see cref="CheckAsync"/> /
+    /// not. Always raised exactly once per <see cref="CheckAsync"/> /
     /// <see cref="CheckThoroughAsync"/> call (including the no-auth
     /// short-circuit and the rate-limited / failure paths), with the same
     /// result that was just set on <see cref="LastResult"/>.
@@ -116,8 +109,7 @@ public interface IUpdateCheckService
 /// <summary>
 /// The result of an update check: the mods with an update available, the check
 /// timestamp, whether the check was rate-limited, whether it was the
-/// thorough path, and whether the name-sync pass renamed at least one container
-/// (so the UI can refresh the displayed names without a full reload).
+/// thorough path, and whether the name-sync pass renamed at least one container.
 /// </summary>
 /// <param name="Updates">The mods with an update available (flagged by any of the
 /// three tiers: tier 1 <c>viewerUpdateAvailable</c>, tier 2 a version mismatch, or
@@ -126,28 +118,23 @@ public interface IUpdateCheckService
 /// API failure).</param>
 /// <param name="CheckedAt">When the check ran (UTC).</param>
 /// <param name="RateLimited"><c>true</c> if the check was skipped (or aborted)
-/// because the Nexus daily or hourly quota was reported exhausted. The mod-list
-/// view surfaces a "check incomplete" indicator rather than "all up to date" in
-/// this case, so the user understands the badges may not reflect the latest
-/// state.</param>
+/// because the Nexus daily or hourly quota was reported exhausted. The result's
+/// update set may not reflect the latest state in this case.</param>
 /// <param name="Thorough"><c>true</c> if this result came from
 /// <see cref="IUpdateCheckService.CheckThoroughAsync"/> (the manual "check now"
 /// path); <c>false</c> if it came from the periodic
 /// <see cref="IUpdateCheckService.CheckAsync"/>. Both paths run the same v2
-/// batch query (the query covers all mods regardless), so the flag no longer
-/// signals a coverage difference; it is kept for interface compatibility.</param>
+/// batch query, so the flag signals no coverage difference.</param>
 /// <param name="NamesChanged"><c>true</c> when the name-sync pass (which
 /// piggybacks on the batch query at no extra API cost) renamed at least one
-/// Nexus-sourced container to match its current Nexus mod name. The mod-list
-/// view refreshes the affected rows' displayed names in place when this is set,
-/// avoiding a full list reload. Only the normal completion path can set this
-/// <c>true</c>; the short-circuit paths (no auth, no Nexus mods, rate-limited,
-/// failure) leave it <c>false</c>.</param>
+/// Nexus-sourced container to match its current Nexus mod name. Callers can
+/// refresh the affected displayed names in place rather than reloading. Only the
+/// normal completion path can set this <c>true</c>; the short-circuit paths (no
+/// auth, no Nexus mods, rate-limited, failure) leave it <c>false</c>.</param>
 /// <param name="Outcome">The authoritative outcome of the check, distinguishing a
 /// real API success from the short-circuit / failure paths. <see cref="CheckOutcome.Success"/>
 /// is the only outcome that may replace persisted known-update state; every other
-/// outcome preserves it. Used by the automatic-update service to gate execution
-/// (only a real success with updates starts installs).</param>
+/// outcome preserves it.</param>
 public sealed record UpdateCheckResult(
     IReadOnlyList<ModUpdateInfo> Updates,
     DateTimeOffset CheckedAt,
@@ -158,9 +145,8 @@ public sealed record UpdateCheckResult(
 
 /// <summary>
 /// The authoritative outcome of an update check, distinguishing a real API
-/// success from the short-circuit + failure paths. The mod-list view + the
-/// automatic-update service use this to decide whether a result may replace
-/// persisted known-update state and whether to act on it.
+/// success from the short-circuit + failure paths. Used to decide whether a
+/// result may replace persisted known-update state and whether to act on it.
 /// </summary>
 public enum CheckOutcome
 {
@@ -174,8 +160,7 @@ public enum CheckOutcome
     /// <summary>
     /// The check queried the API + completed normally. This is the ONLY outcome
     /// that authoritatively replaces a profile's known-update state (including
-    /// clearing it when the API reports no updates). The automatic-update service
-    /// may run after a success that found updates.
+    /// clearing it when the API reports no updates).
     /// </summary>
     Success,
 
@@ -196,15 +181,14 @@ public enum CheckOutcome
     /// <summary>
     /// The check was rate-limited (the API call threw a rate-limit exception, or
     /// the response headers reported an exhausted window). Prior known updates are
-    /// preserved; the mod-list view surfaces a "check incomplete" notice.
+    /// preserved.
     /// </summary>
     RateLimited,
 }
 
 /// <summary>
-/// One mod flagged by an update check. Mirrors the identifying fields the
-/// mod-list view needs to render a per-row "update available" badge and drive the
-/// per-mod update button (which calls <c>IModAcquisitionService</c>).
+/// One mod flagged by an update check: the identifying fields needed to act on
+/// a flagged mod.
 /// </summary>
 /// <param name="ContainerId">The flagged mod's container id (the join key back
 /// to <see cref="ModContainer"/> and the profile entry).</param>
@@ -215,8 +199,7 @@ public enum CheckOutcome
 /// (from <see cref="ModVersion.VersionString"/>, resolved via
 /// <see cref="ModContainer.ResolveVersion"/> with a <see cref="LatestPolicy"/>).</param>
 /// <param name="LatestUpdateAt">The mod's last update time on Nexus (UTC),
-/// from the v2 <c>updatedAt</c> field. The mod-list view may show this as
-/// "updated &lt;date&gt;" context.</param>
+/// from the v2 <c>updatedAt</c> field.</param>
 public sealed record ModUpdateInfo(
     Guid ContainerId,
     int ModId,

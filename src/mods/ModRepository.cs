@@ -30,8 +30,8 @@ namespace Modificus.Curator.Mods;
 /// <para>
 /// Registered as a singleton: it holds the in-memory index (cheap to rebuild).
 /// The mods root folder is read live from <see cref="IConfigLoader"/> on each
-/// operation (one snapshot per op), so a runtime folder change via the upcoming
-/// Settings window takes effect immediately; <see cref="Directory.CreateDirectory"/>
+/// operation (one snapshot per op), so a runtime folder change via the Settings
+/// window takes effect immediately; <see cref="Directory.CreateDirectory"/>
 /// runs per-op (idempotent) on the live path. All public methods are
 /// synchronized via an internal lock (<c>_sync</c>), serializing reads and
 /// writes so a background-thread mutation (e.g. a reconciliation write from
@@ -352,14 +352,12 @@ internal sealed class ModRepository : IModRepository
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This is the transactional core of <see cref="AddVersion"/>. The previous
-    /// implementation cleaned <paramref name="versionDir"/> first and then
-    /// invoked <paramref name="populateFolder"/> directly on it, so an
-    /// extraction failure (CRC error, disk full, I/O error, anything) left the
-    /// old version already deleted and the new one partial, while the manifest
-    /// still referenced that folder: a manifest/disk inconsistency on a mod
-    /// potentially referenced by a profile, with no recovery (the startup prune
-    /// only reclaims containers no profile references).</para>
+    /// This is the transactional core of <see cref="AddVersion"/>. Populating
+    /// the temp succeeds BEFORE the existing version folder is touched, so any
+    /// exception from <paramref name="populateFolder"/> (CRC error, disk full,
+    /// I/O error) leaves the old version intact and the manifest unchanged: no
+    /// manifest/disk inconsistency on a mod potentially referenced by a profile
+    /// (the startup prune only reclaims containers no profile references).</para>
     /// <para>
     /// <b>tempDir location:</b> a sibling of <paramref name="versionDir"/> under
     /// the same container dir, named <c>&lt;versionFolder&gt;.tmp.&lt;guid&gt;</c>.

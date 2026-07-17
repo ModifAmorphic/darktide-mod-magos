@@ -1,39 +1,36 @@
 namespace Modificus.Curator.Steam;
 
 /// <summary>
-/// Steam discovery + game-running detection. Steam **discovers** everything
+/// Steam discovery + game-running detection. Steam <b>discovers</b> everything
 /// needed to launch Darktide modded on the current OS (Steam install, Darktide
 /// install, compatdata, Proton version) and reports missing pieces via
 /// <see cref="DiscoveryResult.Status"/>; it does NOT set env vars or invoke
-/// Proton -- that is Relay-client's job (consuming the <see cref="DiscoveryResult"/>).
+/// Proton (that is the launch layer's job, consuming the
+/// <see cref="DiscoveryResult"/>).
 /// </summary>
 /// <remarks>
-/// <para><b>Discovery result shape:</b> the discovery result is a flat
-/// record of nullables -- the UI reads it and the null fields drive the
-/// escape-hatch prompt form. The interface exposes discovery + game-running
-/// detection only.</para>
+/// The discovery result is a flat record of nullables: the null fields are the
+/// missing pieces a caller should prompt for (the escape hatch).
 /// </remarks>
 public interface ISteamService
 {
     /// <summary>
     /// Validates + heals + selectively persists discovery, then returns the
-    /// result. Delegates the platform <c>ISteamDiscoverer</c> (selected once at
-    /// DI registration from <see cref="SteamDiscoveryOptions.Platform"/>) only
-    /// when a field needs healing; when every persisted override is valid (path
-    /// exists on disk) the discoverer is skipped entirely (fast path). Never
-    /// throws on missing pieces: those are reported via
-    /// <see cref="DiscoveryResult.Status"/> + the nullable fields (the escape
-    /// hatch).
+    /// result. Delegates the platform discoverer (selected from
+    /// <see cref="SteamDiscoveryOptions.Platform"/>) only when a field needs
+    /// healing; when every persisted override is valid (path exists on disk) the
+    /// discoverer is skipped entirely (fast path). Never throws on missing
+    /// pieces: those are reported via <see cref="DiscoveryResult.Status"/> + the
+    /// nullable fields (the escape hatch).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Validate + heal + persist:</b> see
-    /// <see cref="SteamService"/>'s remarks for the four-step pipeline. In
-    /// short: read the live <see cref="DiscoveryConfig"/> user overrides,
-    /// validate each platform-relevant field's path on disk, heal the invalid
-    /// ones from the discoverer (one run), persist ONLY the healed fields back
-    /// to config (preserving valid fields + any hand-edit between the read +
-    /// save), and return a result with the final paths.</para>
+    /// <b>Validate + heal + persist:</b> read the live
+    /// <see cref="DiscoveryConfig"/> user overrides, validate each
+    /// platform-relevant field's path on disk, heal the invalid ones from the
+    /// discoverer (one run), persist ONLY the healed fields back to config
+    /// (preserving valid fields + any hand-edit between the read + save), and
+    /// return a result with the final paths.</para>
     /// <para>
     /// <b>Platform-gating:</b> on Windows only Steam install + Darktide binary
     /// are checked + healed (compatdata + Proton are Linux-only and stay null).
@@ -43,8 +40,7 @@ public interface ISteamService
 
     /// <summary>
     /// Whether Darktide is currently running. Cross-platform best-effort check
-    /// against the game's process name; this uses the simple name match
-    /// (Linux-under-Proton naming may differ, refine if it proves wrong).
+    /// against the game's process name.
     /// </summary>
     bool IsGameRunning();
 }

@@ -78,7 +78,7 @@ internal sealed class RelayLaunchService : IRelayLaunchService
         {
             // One live config snapshot for the whole launch. RelayDir
             // + Logging.LogFile are read once here; a runtime config change via
-            // the upcoming Settings window takes effect on the next launch.
+            // the Settings window takes effect on the next launch.
             var config = _configLoader.Load();
 
             // Discovery first: if we cannot launch, do not touch the profile's

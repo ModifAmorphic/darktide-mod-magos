@@ -10,11 +10,9 @@ namespace Modificus.Curator.UI.Preferences;
 /// <summary>
 /// The single authority for applying user-facing preferences (theme, font scale,
 /// language) to the running app and persisting them to <see cref="CuratorConfig"/>.
-/// The composition root applies the loaded config at startup; the
-/// <c>PreferencesViewModel</c> calls <see cref="ApplyAndPersist"/> on each
-/// change. All three concerns (theme variant, global font scale, UI culture)
-/// live behind one method so the values stay consistent: nothing else in the UI
-/// touches <c>RequestedThemeVariant</c>, the font-scale resource, or
+/// All three concerns (theme variant, global font scale, UI culture) live behind
+/// one method so the values stay consistent: nothing else should touch
+/// <c>RequestedThemeVariant</c>, the font-scale resource, or
 /// <see cref="LocalizationService.Culture"/> directly.
 /// </summary>
 public interface IPreferencesService
@@ -86,7 +84,7 @@ public sealed class PreferencesService : IPreferencesService
         //    Preferences section, save. There is no cached singleton; each
         //    Load() is a fresh snapshot, so this carries the user's change onto
         //    the current disk state without clobbering sibling sections written
-        //    by another flow (the upcoming Settings window, etc.). Save is best-
+        //    by another flow (the Settings window, etc.). Save is best-
         //    effort (ConfigLoader.Save swallows write errors), so a persistence
         //    failure never crashes the dialog mid-interaction.
         var config = _configLoader.Load();
