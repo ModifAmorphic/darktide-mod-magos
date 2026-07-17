@@ -64,6 +64,17 @@ public partial class ManageProfilesWindow : Window
         }
     }
 
+    private void LaunchSettings_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button b && b.DataContext is ProfileItemViewModel item)
+        {
+            // Async fire-and-forget: the command opens the launch-settings modal
+            // (awaited inside the command). The void return mirrors the existing
+            // row-action handlers; exceptions are surfaced through the dialog.
+            ViewModel?.EditLaunchSettingsCommand.Execute(item);
+        }
+    }
+
     // ---- inline rename key/focus handling ---------------------------------
 
     private void EditBox_KeyDown(object? sender, KeyEventArgs e)

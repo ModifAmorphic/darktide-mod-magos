@@ -113,31 +113,60 @@ public sealed class DialogService : IDialogService
 
     /// <summary>
     /// Disables the owner window for the duration of a modal <c>ShowDialog</c>
-    /// call, returning an <see cref="IDisposable"/> that re-enables it. Used to
-    /// work around the X11 custom-chrome modality gap (the class remarks explain
-    /// why). Wrap in a <c>using</c> so the parent is always re-enabled, even on
-    /// exception. No-op-safe on Win32 + macOS (where <c>ShowDialog</c> is
-    /// already modal at the platform level); on X11 it is what actually blocks
-    /// parent interaction.
+    /// call, returning an <see cref="IDisposable"/> that releases that hold on
+    /// dispose. Used to work around the X11 custom-chrome modality gap (the
+    /// class remarks explain why). Wrap in a <c>using</c> so the parent is
+    /// always re-enabled, even on exception. No-op-safe on Win32 + macOS (where
+    /// <c>ShowDialog</c> is already modal at the platform level); on X11 it is
+    /// what actually blocks parent interaction.
     /// </summary>
+    /// <remarks>
+    /// <b>Nesting-safe:</b> a reference count tracks overlapping modals (a
+    /// launch-settings modal opened from inside the manage-profiles modal). The
+    /// owner is only re-enabled when the <em>outermost</em> modal's guard
+    /// disposes; an inner modal closing does not prematurely re-enable the owner
+    /// while an outer modal is still open. For the common single-modal case
+    /// (depth 0 -> 1 -> 0) the behavior is unchanged.
+    /// </remarks>
     private IDisposable DisableOwnerForModal()
     {
+        _modalDepth++;
         _owner.IsEnabled = false;
-        return new OwnerReenabler(_owner);
+        return new ModalDepthGuard(this);
+    }
+
+    private int _modalDepth;
+
+    /// <summary>
+    /// Releases one hold from <see cref="DisableOwnerForModal"/>; re-enables the
+    /// owner only when the outermost modal closes (the depth drops to 0). Called
+    /// by <see cref="ModalDepthGuard.Dispose"/>. All <c>ShowDialog</c> calls run
+    /// sequentially on the UI thread, so a plain int counter is sufficient.
+    /// </summary>
+    private void ReleaseModal()
+    {
+        if (_modalDepth == 0)
+        {
+            return;
+        }
+        _modalDepth--;
+        if (_modalDepth == 0)
+        {
+            _owner.IsEnabled = true;
+        }
     }
 
     /// <summary>
-    /// The disposable returned by <see cref="DisableOwnerForModal"/>. Re-enables
-    /// the owner on <see cref="Dispose"/>. Re-enabling a window that is already
-    /// enabled is a harmless no-op, so a duplicate <c>Dispose</c> (e.g. nested
-    /// modals or an exception path) is safe.
+    /// The disposable returned by <see cref="DisableOwnerForModal"/>. Decrements
+    /// the modal depth on <see cref="Dispose"/>; the owner is re-enabled only
+    /// when the outermost modal closes. A duplicate <c>Dispose</c> is a no-op.
     /// </summary>
-    private sealed class OwnerReenabler : IDisposable
+    private sealed class ModalDepthGuard : IDisposable
     {
-        private readonly Window _owner;
+        private readonly DialogService _service;
         private bool _disposed;
 
-        public OwnerReenabler(Window owner) => _owner = owner;
+        public ModalDepthGuard(DialogService service) => _service = service;
 
         public void Dispose()
         {
@@ -146,7 +175,7 @@ public sealed class DialogService : IDialogService
                 return;
             }
             _disposed = true;
-            _owner.IsEnabled = true;
+            _service.ReleaseModal();
         }
     }
 
@@ -182,6 +211,23 @@ public sealed class DialogService : IDialogService
     {
         var viewModel = new ManageProfilesViewModel(_profiles, this, _session, _localization);
         var window = new ManageProfilesWindow
+        {
+            DataContext = viewModel,
+        };
+
+        using var _ = DisableOwnerForModal();
+        await window.ShowDialog(_owner);
+    }
+
+    /// <inheritdoc />
+    public async Task ShowLaunchSettingsAsync(Guid profileId)
+    {
+        // Loaded from GetLaunchSettings at construction; Save persists via
+        // SetLaunchSettings (closing only on success). Editing is unlocked while
+        // Darktide runs (a profile.json write that does not touch the running
+        // process).
+        var viewModel = new LaunchSettingsViewModel(profileId, _profiles, _localization);
+        var window = new LaunchSettingsWindow
         {
             DataContext = viewModel,
         };

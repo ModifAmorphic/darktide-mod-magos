@@ -216,6 +216,84 @@
     <value>Delete profile {0}? This removes its mod list and staged launch root (the mod repository is untouched).</value>
     <comment>Body of the delete-profile confirmation prompt. {0} is the profile name.</comment>
   </data>
+  <data name="ManageProfiles_LaunchSettingsTooltip" xml:space="preserve">
+    <value>Launch settings…</value>
+    <comment>Tooltip on the launch-settings (tune) button on each profile row.</comment>
+  </data>
+
+  <!-- ============================================================ -->
+  <!-- Launch settings dialog (LaunchSettingsWindow / VM)           -->
+  <!-- (per-profile environment variables + Darktide command args)  -->
+  <!-- ============================================================ -->
+
+  <data name="LaunchSettings_Title" xml:space="preserve">
+    <value>Launch settings</value>
+    <comment>Title of the per-profile launch-settings modal (environment variables + game arguments).</comment>
+  </data>
+  <data name="LaunchSettings_EnvHeader" xml:space="preserve">
+    <value>Environment variables</value>
+    <comment>Header over the environment-variable rows in the launch-settings modal.</comment>
+  </data>
+  <data name="LaunchSettings_GameArgsHeader" xml:space="preserve">
+    <value>Game arguments</value>
+    <comment>Header over the game-argument rows in the launch-settings modal.</comment>
+  </data>
+  <data name="LaunchSettings_AddEnvVar" xml:space="preserve">
+    <value>Add variable</value>
+    <comment>The add-row button under the environment-variable section.</comment>
+  </data>
+  <data name="LaunchSettings_AddGameArg" xml:space="preserve">
+    <value>Add argument</value>
+    <comment>The add-row button under the game-argument section.</comment>
+  </data>
+  <data name="LaunchSettings_RemoveTooltip" xml:space="preserve">
+    <value>Remove</value>
+    <comment>Tooltip on the remove button on each launch-settings row.</comment>
+  </data>
+  <data name="LaunchSettings_EnvNamePlaceholder" xml:space="preserve">
+    <value>NAME</value>
+    <comment>Watermark in the environment-variable name field.</comment>
+  </data>
+  <data name="LaunchSettings_EnvValuePlaceholder" xml:space="preserve">
+    <value>value</value>
+    <comment>Watermark in the environment-variable value field.</comment>
+  </data>
+  <data name="LaunchSettings_GameArgPlaceholder" xml:space="preserve">
+    <value>--argument</value>
+    <comment>Watermark in the game-argument field.</comment>
+  </data>
+  <data name="LaunchSettings_NextLaunchHint" xml:space="preserve">
+    <value>Changes apply on the next launch.</value>
+    <comment>Static hint in the launch-settings modal. Editing is unlocked while Darktide runs because these are read at launch time.</comment>
+  </data>
+  <data name="LaunchSettings_SaveButton" xml:space="preserve">
+    <value>Save</value>
+    <comment>The Save button at the bottom of the launch-settings modal.</comment>
+  </data>
+  <data name="LaunchSettings_CancelButton" xml:space="preserve">
+    <value>Cancel</value>
+    <comment>The Cancel button at the bottom of the launch-settings modal.</comment>
+  </data>
+  <data name="LaunchSettings_ErrNameRequired" xml:space="preserve">
+    <value>Name is required.</value>
+    <comment>Inline validation error when an environment-variable name is empty.</comment>
+  </data>
+  <data name="LaunchSettings_ErrNameInvalid" xml:space="preserve">
+    <value>Name must not contain '=' or a NUL character.</value>
+    <comment>Inline validation error when an environment-variable name contains '=' or NUL.</comment>
+  </data>
+  <data name="LaunchSettings_ErrNameReserved" xml:space="preserve">
+    <value>'{0}' is reserved and set by Curator.</value>
+    <comment>Inline validation error when an environment-variable name is in the reserved set. {0} is the offending name.</comment>
+  </data>
+  <data name="LaunchSettings_ErrNameDuplicate" xml:space="preserve">
+    <value>Duplicate name (names are case-insensitive).</value>
+    <comment>Inline validation error when two environment-variable entries share a name case-insensitively.</comment>
+  </data>
+  <data name="LaunchSettings_ErrValueInvalid" xml:space="preserve">
+    <value>Value must not contain a NUL character.</value>
+    <comment>Inline validation error when an environment-variable value contains NUL.</comment>
+  </data>
 
   <!-- ============================================================ -->
   <!-- Shared dialog chrome (custom title bar on the modal windows) -->

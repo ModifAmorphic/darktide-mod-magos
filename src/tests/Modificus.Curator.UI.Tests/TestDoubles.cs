@@ -462,6 +462,33 @@ internal sealed class FakeProfileService : IProfileService
         return GetBaseNameCollisionResult;
     }
 
+    /// <summary>Per-profile launch settings (read + written directly by tests).
+    /// Default empty, mirroring a fresh / no-settings profile.</summary>
+    public Dictionary<Guid, LaunchSettings> LaunchSettingsByProfile { get; } = new();
+
+    /// <summary>The (profileId, settings) pairs passed to
+    /// <see cref="SetLaunchSettings"/>, in call order.</summary>
+    public IReadOnlyList<(Guid Id, LaunchSettings Settings)> SetLaunchSettingsCalls { get; }
+        = new List<(Guid, LaunchSettings)>();
+
+    /// <summary>
+    /// Returns the recorded launch settings for the profile (empty when none
+    /// recorded), mirroring the production service's non-null default.
+    /// </summary>
+    public LaunchSettings GetLaunchSettings(Guid id) =>
+        LaunchSettingsByProfile.TryGetValue(id, out var s) ? s : new LaunchSettings();
+
+    /// <summary>
+    /// Records the call + stores the settings so a subsequent
+    /// <see cref="GetLaunchSettings"/> returns them (mirrors the real service's
+    /// round-trip through the disk file).
+    /// </summary>
+    public void SetLaunchSettings(Guid id, LaunchSettings settings)
+    {
+        ((List<(Guid, LaunchSettings)>)SetLaunchSettingsCalls).Add((id, settings));
+        LaunchSettingsByProfile[id] = settings;
+    }
+
     public string PrepareModRoot(Guid id) => throw new NotImplementedException();
 }
 
@@ -736,6 +763,23 @@ internal sealed class FakeDialogService : IDialogService
     {
         ManageProfilesCalls++;
         OnManageProfiles?.Invoke();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The profile ids passed to <see cref="ShowLaunchSettingsAsync"/>,
+    /// in call order. Tests assert on this to verify the modal opened for the
+    /// selected row, not the active profile.</summary>
+    public IReadOnlyList<Guid> LaunchSettingsCalls { get; } = new List<Guid>();
+
+    /// <summary>Optional callback invoked when the launch-settings modal opens;
+    /// lets a test simulate a save inside the dialog (mutating the wired
+    /// FakeProfileService) before the call returns.</summary>
+    public Action<Guid>? OnLaunchSettings { get; set; }
+
+    public Task ShowLaunchSettingsAsync(Guid profileId)
+    {
+        ((List<Guid>)LaunchSettingsCalls).Add(profileId);
+        OnLaunchSettings?.Invoke(profileId);
         return Task.CompletedTask;
     }
 

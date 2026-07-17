@@ -208,6 +208,56 @@ public sealed class ManageProfilesViewModelTests
         Assert.Equal("Alpha", row.Name); // unchanged
     }
 
+    // ---- launch settings (per-row action) ---------------------------------
+
+    [Fact]
+    public async Task EditLaunchSettings_opens_the_modal_for_the_selected_row()
+    {
+        // The launch-settings action opens for the row the user clicked, NOT
+        // implicitly the active profile. The dialog seam receives the row's id.
+        var a = Profile("Alpha");
+        var b = Profile("Bravo");
+        var profiles = TestDoubles.Profiles(a, b);
+        var dialogs = new FakeDialogService();
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, dialogs, session);
+
+        await vm.EditLaunchSettingsCommand.ExecuteAsync(Row(vm, "Bravo"));
+
+        Assert.Equal(b.Id, Assert.Single(dialogs.LaunchSettingsCalls));
+    }
+
+    [Fact]
+    public async Task EditLaunchSettings_noops_on_a_null_row()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var dialogs = new FakeDialogService();
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = Build(profiles, dialogs, session);
+
+        await vm.EditLaunchSettingsCommand.ExecuteAsync(null);
+
+        Assert.Empty(dialogs.LaunchSettingsCalls);
+    }
+
+    [Fact]
+    public async Task EditLaunchSettings_is_unlocked_while_the_game_runs()
+    {
+        // Editing launch settings is unlocked while Darktide runs (a profile.json
+        // write that does not touch the running process). The command always
+        // opens the modal regardless of the running state.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var dialogs = new FakeDialogService();
+        var session = new FakeProfileSession { ActiveProfileId = a.Id, IsRunning = true };
+        var vm = Build(profiles, dialogs, session);
+
+        await vm.EditLaunchSettingsCommand.ExecuteAsync(Row(vm, "Alpha"));
+
+        Assert.Equal(a.Id, Assert.Single(dialogs.LaunchSettingsCalls));
+    }
+
     // ---- delete ------------------------------------------------------------
 
     [Fact]
