@@ -485,6 +485,113 @@ internal sealed class ProfileService : IProfileService
         return null;
     }
 
+    // ---- launch settings ----------------------------------------------------
+
+    /// <inheritdoc />
+    public LaunchSettings GetLaunchSettings(Guid id)
+    {
+        var baseFolder = EnsureBaseFolder();
+        // ReadProfileFile throws KeyNotFoundException via EnsureReadable when the
+        // profile is unknown, and coerces a null LaunchSettings to empty.
+        return ReadProfileFile(ProfileDir(baseFolder, id)).LaunchSettings;
+    }
+
+    /// <inheritdoc />
+    public void SetLaunchSettings(Guid id, LaunchSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        ValidateLaunchSettings(settings);
+
+        var baseFolder = EnsureBaseFolder();
+        // Rebuild the aggregate preserving Name/Id/CreatedAt/Mods: only the
+        // LaunchSettings field changes. ReadProfileFile throws KeyNotFoundException
+        // when the profile is unknown (the caller's contract).
+        var profile = ReadProfileFile(ProfileDir(baseFolder, id));
+        profile.LaunchSettings = settings;
+        WriteProfileFile(profile, baseFolder);
+
+        // Log only counts (profile files are plaintext; values must never reach
+        // the logs). Names are not logged either to keep this conservative.
+        _logger.LogInformation(
+            "Set launch settings for profile {Id}: {EnvCount} env var(s), {ArgCount} game arg(s).",
+            id, settings.EnvironmentVariables.Count, settings.GameArguments.Count);
+    }
+
+    /// <summary>
+    /// Validates a <see cref="LaunchSettings"/> per the brief. Throws
+    /// <see cref="ArgumentException"/> on the first violation with a clear,
+    /// field-identifying message (the UI surfaces a localized error and keeps
+    /// the modal open; the service is the authoritative check).
+    /// </summary>
+    /// <remarks>
+    /// Per entry: name non-empty after trim; name contains neither <c>=</c> nor
+    /// NUL; value contains no NUL. Across entries: duplicate names rejected
+    /// case-insensitively (profile portability Windows/Linux); name not in the
+    /// reserved set (<see cref="LaunchSettings.ReservedEnvironmentNames"/>,
+    /// case-insensitive). Values are otherwise stored exactly (spaces + empty
+    /// values preserved). Game arguments are not validated: any string is a
+    /// legal argv value, and Relay owns the final quoting.
+    /// </remarks>
+    private static void ValidateLaunchSettings(LaunchSettings settings)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < settings.EnvironmentVariables.Count; i++)
+        {
+            var entry = settings.EnvironmentVariables[i];
+
+            // Name checks. Trim only for the emptiness test; the stored value is
+            // the original (a name that is only whitespace is useless as an env
+            // name, but we reject it rather than store a trimmed variant the
+            // user did not type).
+            var name = entry.Name ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new ArgumentException(
+                    $"Environment variable at position {i} has an empty name.",
+                    nameof(settings));
+            }
+
+            if (name.IndexOf('=') >= 0)
+            {
+                throw new ArgumentException(
+                    $"Environment variable name '{name}' must not contain '='.",
+                    nameof(settings));
+            }
+
+            if (name.IndexOf('\0') >= 0)
+            {
+                throw new ArgumentException(
+                    $"Environment variable name '{name}' must not contain a NUL character.",
+                    nameof(settings));
+            }
+
+            if (LaunchSettings.ReservedEnvironmentNames.Contains(name))
+            {
+                throw new ArgumentException(
+                    $"Environment variable name '{name}' is reserved and cannot be set on a profile.",
+                    nameof(settings));
+            }
+
+            if (!seen.Add(name))
+            {
+                throw new ArgumentException(
+                    $"Duplicate environment variable name '{name}' (names are case-insensitive).",
+                    nameof(settings));
+            }
+
+            // Value checks. Spaces + empty values are legal (stored exactly);
+            // only NUL is rejected (it cannot be carried by an environment block).
+            var value = entry.Value ?? string.Empty;
+            if (value.IndexOf('\0') >= 0)
+            {
+                throw new ArgumentException(
+                    $"Environment variable value for '{name}' must not contain a NUL character.",
+                    nameof(settings));
+            }
+        }
+    }
+
     /// <summary>
     /// Clears <c>staged/</c> for a rebuild: <b>symlink-aware</b>. It removes
     /// each top-level entry via <see cref="DeleteStagedEntry"/>, which deletes
@@ -595,6 +702,12 @@ internal sealed class ProfileService : IProfileService
         // file explicitly carries null (e.g. a hand-edit). Coerce Mods so
         // downstream enumeration never NRE.
         profile.Mods ??= Array.Empty<ModListEntry>();
+
+        // Same coercion for LaunchSettings (missing property or explicit JSON
+        // null both deserialize to null for the ref-type prop). Mirrors the
+        // Mods ??= Empty normalization above: a pre-launch-settings profile.json
+        // loads as empty settings, and a hand-edited null is healed.
+        profile.LaunchSettings ??= new LaunchSettings();
 
         // Fresh-start tolerance + null-Policy coercion. Two passes:
         //   - drop entries whose ContainerId is Guid.Empty (a legacy entry

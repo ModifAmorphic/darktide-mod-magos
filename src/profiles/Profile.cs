@@ -28,4 +28,15 @@ public sealed class Profile
     /// <see cref="IProfileService"/> methods, which rebuild + persist.
     /// </summary>
     public IReadOnlyList<ModListEntry> Mods { get; set; } = Array.Empty<ModListEntry>();
+
+    /// <summary>
+    /// The profile's launch settings (environment variables + Darktide
+    /// command-line arguments). Defaults to a non-null empty instance so a
+    /// freshly-created profile serializes it. Mutable setter for STJ
+    /// deserialization (like <see cref="Mods"/>); changes go through
+    /// <see cref="IProfileService.SetLaunchSettings"/>, which validates +
+    /// rebuilds + persists. Coerced from JSON <c>null</c> / missing property to
+    /// an empty instance on read (mirrors <see cref="Mods"/>'s normalization).
+    /// </summary>
+    public LaunchSettings LaunchSettings { get; set; } = new();
 }
