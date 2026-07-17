@@ -275,30 +275,39 @@ public partial class LaunchSettingsViewModel : ObservableObject
 
     /// <summary>
     /// Recomputes every env row's <see cref="EnvVarRow.ErrorMessage"/> from the
-    /// current set of rows: name (empty / <c>=</c> / NUL / reserved /
-    /// duplicate), then value (NUL). Clears the top-level save error so a stale
-    /// error does not linger after an edit, and invalidates the cached
-    /// <see cref="CanSave"/> so the Save button re-enables.
+    /// shared <see cref="LaunchSettingsValidator"/> (the single source of truth,
+    /// shared with <c>IProfileService.SetLaunchSettings</c>): builds a
+    /// <see cref="LaunchSettings"/> from the rows, asks the validator, and maps
+    /// each structured error to the corresponding row's localized message. Clears
+    /// the top-level save error so a stale error does not linger after an edit,
+    /// and invalidates the cached <see cref="CanSave"/> so the Save button
+    /// re-enables.
     /// </summary>
     private void RecomputeValidation()
     {
-        // Count non-empty names (trimmed) case-insensitively for duplicate
-        // detection across rows.
-        var nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var r in EnvironmentVariables)
+        var settings = new LaunchSettings
         {
-            var n = (r.Name ?? string.Empty).Trim();
-            if (n.Length == 0)
-            {
-                continue;
-            }
-            nameCounts.TryGetValue(n, out var c);
-            nameCounts[n] = c + 1;
-        }
+            EnvironmentVariables = EnvironmentVariables
+                .Select(r => new EnvVar(r.Name, r.Value))
+                .ToArray(),
+            // GameArguments need no validation (any string is legal); the
+            // validator ignores them, so they are omitted for brevity.
+        };
+        var errors = LaunchSettingsValidator.Validate(settings);
 
+        // Clear every row, then apply the validator's per-entry errors. A row
+        // with no error stays clear (the validator reports at most one error per
+        // entry, in entry order, so indices line up with the rows).
         foreach (var row in EnvironmentVariables)
         {
-            row.ErrorMessage = ComputeEnvError(row, nameCounts);
+            row.ErrorMessage = string.Empty;
+        }
+        foreach (var error in errors)
+        {
+            if (error.Index >= 0 && error.Index < EnvironmentVariables.Count)
+            {
+                EnvironmentVariables[error.Index].ErrorMessage = LocalizeError(error);
+            }
         }
 
         SaveError = string.Empty;
@@ -306,38 +315,21 @@ public partial class LaunchSettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(CanSave));
     }
 
-    private string ComputeEnvError(EnvVarRow row, IReadOnlyDictionary<string, int> nameCounts)
+    /// <summary>
+    /// Maps one structured validation error to the localized inline message the
+    /// row shows. The structured error carries no localization (the Profiles
+    /// library is backend-only); this is the single place the kind -> resx key
+    /// mapping lives, so the inline messages track the shared rules exactly.
+    /// </summary>
+    private string LocalizeError(LaunchSettingsValidationError error) => error.Kind switch
     {
-        var name = row.Name ?? string.Empty;
-
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return _localization["LaunchSettings_ErrNameRequired"];
-        }
-
-        if (name.IndexOf('=') >= 0 || name.IndexOf('\0') >= 0)
-        {
-            return _localization["LaunchSettings_ErrNameInvalid"];
-        }
-
-        if (LaunchSettings.ReservedEnvironmentNames.Contains(name))
-        {
-            return _localization.Format("LaunchSettings_ErrNameReserved", name);
-        }
-
-        if (nameCounts.TryGetValue(name.Trim(), out var count) && count > 1)
-        {
-            return _localization["LaunchSettings_ErrNameDuplicate"];
-        }
-
-        var value = row.Value ?? string.Empty;
-        if (value.IndexOf('\0') >= 0)
-        {
-            return _localization["LaunchSettings_ErrValueInvalid"];
-        }
-
-        return string.Empty;
-    }
+        LaunchSettingsValidationErrorKind.NameEmpty => _localization["LaunchSettings_ErrNameRequired"],
+        LaunchSettingsValidationErrorKind.NameInvalid => _localization["LaunchSettings_ErrNameInvalid"],
+        LaunchSettingsValidationErrorKind.NameReserved => _localization.Format("LaunchSettings_ErrNameReserved", error.Name),
+        LaunchSettingsValidationErrorKind.NameDuplicate => _localization["LaunchSettings_ErrNameDuplicate"],
+        LaunchSettingsValidationErrorKind.ValueNul => _localization["LaunchSettings_ErrValueInvalid"],
+        _ => string.Empty,
+    };
 
     /// <summary>Computes whether every env row is valid (no inline error).</summary>
     private bool ComputeEnvRowsValid()

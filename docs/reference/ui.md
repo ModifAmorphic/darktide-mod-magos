@@ -131,7 +131,10 @@ public interface IDialogService
   (environment variables + Darktide command-line arguments), opened over the
   Manage-profiles dialog. Loads the profile's existing settings via
   `GetLaunchSettings`, lets the user add/remove env-var + game-arg rows with
-  inline localized validation, and persists on Save through `SetLaunchSettings`
+  inline localized validation (delegated to the shared
+  `LaunchSettingsValidator` from the Profiles library -- the same source of truth
+  `SetLaunchSettings` uses -- so the per-field messages track the service rules
+  exactly), and persists on Save through `SetLaunchSettings`
   (closing only on success). Cancel / ESC / close make no change. Editing is
   unlocked while Darktide runs (a `profile.json` write that does not touch the
   running process); changes apply on the next launch.
@@ -998,7 +1001,8 @@ No backend library references the UI (the dependency direction is one-way).
   unlocked while Darktide runs).
 - **`LaunchSettingsViewModelTests`**: the launch-settings modal VM (existing
   settings load, add/remove rows, inline localized validation -- empty / `=` /
-  NUL name, NUL value, case-insensitive duplicate, reserved name -- Save
+  NUL name, NUL value, case-insensitive duplicate, reserved name, all delegated
+  to the shared `LaunchSettingsValidator` from the Profiles library -- Save
   persists once via `SetLaunchSettings` and closes only on success, Cancel no
   change).
 - **`ModListViewModelTests`**: enable / disable, reorder, per-mod policy,
