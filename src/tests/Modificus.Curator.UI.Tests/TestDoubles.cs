@@ -472,6 +472,14 @@ internal sealed class FakeProfileService : IProfileService
         = new List<(Guid, LaunchSettings)>();
 
     /// <summary>
+    /// When set, <see cref="SetLaunchSettings"/> throws this exception (after
+    /// recording the call), simulating the service rejecting the settings on a
+    /// path the inline validator did not cover. Default <c>null</c> = no throw.
+    /// Used by the defense-in-depth Save test.
+    /// </summary>
+    public Exception? SetLaunchSettingsThrows { get; set; }
+
+    /// <summary>
     /// Returns the recorded launch settings for the profile (empty when none
     /// recorded), mirroring the production service's non-null default.
     /// </summary>
@@ -481,11 +489,16 @@ internal sealed class FakeProfileService : IProfileService
     /// <summary>
     /// Records the call + stores the settings so a subsequent
     /// <see cref="GetLaunchSettings"/> returns them (mirrors the real service's
-    /// round-trip through the disk file).
+    /// round-trip through the disk file). Throws <see cref="SetLaunchSettingsThrows"/>
+    /// when set, after recording the call.
     /// </summary>
     public void SetLaunchSettings(Guid id, LaunchSettings settings)
     {
         ((List<(Guid, LaunchSettings)>)SetLaunchSettingsCalls).Add((id, settings));
+        if (SetLaunchSettingsThrows is not null)
+        {
+            throw SetLaunchSettingsThrows;
+        }
         LaunchSettingsByProfile[id] = settings;
     }
 

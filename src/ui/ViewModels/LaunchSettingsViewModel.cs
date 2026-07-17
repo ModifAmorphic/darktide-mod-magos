@@ -230,11 +230,15 @@ public partial class LaunchSettingsViewModel : ObservableObject
         }
         catch (ArgumentException)
         {
-            // The inline pass should have caught any violation; if it did not
-            // (or a programmatic call slipped through), keep the modal open with
-            // the authoritative reason. The offending row's inline message is
-            // already shown by RecomputeValidation; this just blocks the close.
-            SaveError = _localization["LaunchSettings_ErrNameInvalid"];
+            // Defense-in-depth: the inline pass should have caught any violation
+            // (the Save button is disabled while invalid), so reaching here means
+            // the inline validator and the service diverged. Keep the modal open
+            // with a generic, localized message; never surface the raw service
+            // message (it is non-localized English, and any rule-specific text
+            // would be actively misleading for a cause the inline pass did not
+            // cover). The offending row's inline message, if any, is already
+            // shown by RecomputeValidation; this just blocks the close.
+            SaveError = _localization["LaunchSettings_ErrSaveFailed"];
             return;
         }
 

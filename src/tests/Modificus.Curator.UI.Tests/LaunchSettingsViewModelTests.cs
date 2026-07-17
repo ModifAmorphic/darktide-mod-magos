@@ -157,6 +157,35 @@ public sealed class LaunchSettingsViewModelTests
     }
 
     [Fact]
+    public void Save_surfaces_a_generic_error_when_the_service_rejects_the_settings()
+    {
+        // Defense-in-depth: the inline pass should have caught any violation
+        // (the Save button is disabled while invalid), so the service rejecting
+        // a valid-looking input means the two validators diverged. The surfaced
+        // message must be a generic, localized "save failed" -- never the
+        // rule-specific ErrNameInvalid (which would be actively misleading for,
+        // say, a reserved-name or duplicate cause) and never the raw service
+        // message (non-localized English). The modal stays open (SaveResult
+        // false) and the call reached the service.
+        var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "P"));
+        var id = profiles.ListProfiles().First().Id;
+        profiles.SetLaunchSettingsThrows = new ArgumentException("reserved name APPDIR");
+        var vm = Build(profiles, id);
+        vm.AddEnvVarCommand.Execute(null);
+        vm.EnvironmentVariables[0].Name = "PROTON_LOG";
+        vm.EnvironmentVariables[0].Value = "1";
+        Assert.True(vm.CanSave); // inline-valid, so Save is enabled
+
+        vm.SaveCommand.Execute(null);
+
+        Assert.False(vm.SaveResult); // modal stays open
+        Assert.Single(profiles.SetLaunchSettingsCalls); // it tried + the service threw
+        Assert.False(string.IsNullOrEmpty(vm.SaveError)); // a message surfaced
+        Assert.NotEqual(Localization["LaunchSettings_ErrNameInvalid"], vm.SaveError);
+        Assert.Equal(Localization["LaunchSettings_ErrSaveFailed"], vm.SaveError);
+    }
+
+    [Fact]
     public void An_empty_profile_saves_empty_settings()
     {
         // A profile with no rows is a valid (empty) save: clears any prior

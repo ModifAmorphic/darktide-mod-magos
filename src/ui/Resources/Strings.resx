@@ -294,6 +294,10 @@
     <value>Value must not contain a NUL character.</value>
     <comment>Inline validation error when an environment-variable value contains NUL.</comment>
   </data>
+  <data name="LaunchSettings_ErrSaveFailed" xml:space="preserve">
+    <value>Couldn't save launch settings. Check the entries and try again.</value>
+    <comment>Generic top-level error surfaced by the launch-settings modal Save when the profile service rejects the settings on a path the inline validator did not cover (defense-in-depth). Generic, not rule-specific, and never carries a raw service message.</comment>
+  </data>
 
   <!-- ============================================================ -->
   <!-- Shared dialog chrome (custom title bar on the modal windows) -->
