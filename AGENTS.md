@@ -66,6 +66,12 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           via `IPreferencesService` + the i18n infrastructure: `Strings.resx`
                           + `LocalizationService` for dynamic culture switching;
                           the mod-list UI;
+                          per-profile launch settings (the
+                          `LaunchSettingsViewModel`/`LaunchSettingsWindow` modal
+                          opened from a per-row drawn tune action in Manage
+                          Profiles, env-var + game-arg rows with inline localized
+                          validation; `ShowLaunchSettingsAsync` over
+                          `IDialogService`; editing unlocked while Darktide runs);
                           Launch wiring + Settings window +
                           discovery escape-hatch over the shared `Settings/DiscoveryField`
                           descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist +
@@ -296,7 +302,17 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           junction vs symlink per OS) + SetModPolicy transitions + the
                         import-time base-name collision hard-block
                         (GetBaseNameCollision; two same-folder mods can't coexist
-                        in a profile) + the auto-sort seam
+                        in a profile) + per-profile launch settings
+                        (EnvVar/LaunchSettings: ordered env-var entries + game
+                        args; GetLaunchSettings/SetLaunchSettings validate at the
+                        setter via the shared LaunchSettingsValidator
+                        (LaunchSettingsValidationError: index + field + kind;
+                        single source of truth consumed by both the service and
+                        the UI) -- names non-empty/no =/no NUL, no NUL in values,
+                        case-insensitive duplicate rejection, reserved-name block
+                        of 12 Curator-owned OS/launch + Relay config env; backward-
+                        compat null/missing normalization to empty, mirroring Mods;
+                        apply at launch) + the auto-sort seam
                         (IModOrderResolver/IdentityModOrderResolver, identity stub now;
                         real dependency-driven resolver later) + ModCleanup (the startup
                         prune orchestration)
@@ -404,13 +420,20 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         via process comm on Windows; LinuxProcessLookup via /proc
                         argv[0] under Proton -- selected once by DI), injectable seams
   relay-client/         Modificus.Curator.RelayClient -- the v1 launch façade
-                        (IRelayLaunchService.Launch → LaunchResult; Windows: direct
-                        launcher Process.Start; Linux: proton run with both STEAM_COMPAT_*
-                        env + Z:\-translated paths, scrubbing the five
+                        (IRelayLaunchService.Launch → LaunchResult; reads the
+                        profile's GetLaunchSettings per launch + threads them
+                        through the strategy; Windows: direct
+                        launcher Process.Start with profile env as overrides;
+                        Linux: proton run with both STEAM_COMPAT_*
+                        env + Z:\-translated paths + profile env merged
+                        inherited -> AppImage removals -> profile env ->
+                        Curator-owned STEAM_COMPAT_* last, scrubbing the five
                         AppImage/desktop-identity variables APPDIR, APPIMAGE,
                         ARGV0, OWD, BAMF_DESKTOP_FILE_HINT from the inherited
                         environment so Darktide does not inherit Curator's
-                        AppImage identity; the spawn seam IProcessLauncher takes
+                        AppImage identity; game args append one bare -- then
+                        each arg as its own ArgumentList entry (Relay's --
+                        contract; no version preflight); the spawn seam IProcessLauncher takes
                         one immutable ProcessLaunchRequest with FilePath,
                         Arguments, EnvironmentOverrides, and
                         EnvironmentVariablesToRemove, applied by ProcessLauncher
@@ -451,7 +474,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
     Modificus.Curator.General.Tests/         xUnit tests for the general library
                                           (incl. the AppStateStore KnownUpdates round-trip +
                                           old-file-without-field compatibility)
-    Modificus.Curator.Profiles.Tests/        xUnit tests for the profiles library (incl. staging)
+    Modificus.Curator.Profiles.Tests/        xUnit tests for the profiles library (incl. staging
+                                          + the launch-settings round-trip/normalization/validation)
     Modificus.Curator.Mods.Tests/      xUnit tests for the mod repository + import
     Modificus.Curator.Integrations.Tests/    xUnit tests for the Nexus client
                                           (against a fake HttpMessageHandler),
@@ -477,7 +501,13 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             covers RelayLaunchServiceTests (Windows + Linux arg
                                             assembly + DiscoveryIncomplete/StagingFailed/Error
                                             mapping + the Linux five-key AppImage-identity
-                                            removal set + the Windows empty removals/overrides),
+                                            removal set + the Windows empty removals/overrides
+                                            + the launch-settings merge: Linux profile env
+                                            before Proton startup alongside the AppImage
+                                            removals + STEAM_COMPAT_* overrides, Windows
+                                            profile env as overrides, empty/legacy when no
+                                            settings) + GameArgumentsTests (the bare-`--`
+                                            contract via the pure BuildLauncherArgs seam),
                                             ProcessLauncherTests (the deterministic BuildStartInfo
                                             path: a requested inherited key is removed, an
                                             unrelated inherited key remains, an override is
@@ -488,7 +518,15 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
     Modificus.Curator.UI.Tests/              xUnit tests for the shell + manage-profiles
                                             view models (profile CRUD/switch, active-profile
                                             persist, switch-blocked-while-running; dialog via
-                                            an injectable IDialogService seam; + the
+                                            an injectable IDialogService seam; the per-row
+                                            launch-settings action (opens for the selected row,
+                                            not the active profile; unlocked while Darktide runs)
+                                            + the LaunchSettingsViewModel (existing-settings
+                                            load, add/remove rows, inline localized validation --
+                                            empty/`=`/NUL name, NUL value, case-insensitive
+                                            duplicate, reserved name -- Save persists once via
+                                            SetLaunchSettings + closes only on success, Cancel no
+                                            change) + the
                                             NxmModDownloadHandler auth/profile gates + error
                                             wiring + the mod-list update flow: profile-scoped
                                             known-update persistence/hydration, the stable
@@ -647,12 +685,16 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   then writes `mods.lst`; the base name, not the container's display name, is the
   link + mods.lst name; no per-profile mod files) + the import-time base-name
   collision hard-block (`GetBaseNameCollision`; two same-folder mods can't
-  coexist in a profile), **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
+  coexist in a profile) + per-profile launch settings
+  (`GetLaunchSettings`/`SetLaunchSettings`: ordered env-var entries + game args;
+  validated at the setter, applied at launch),
+  **Steam** (Steam + Darktide + Proton discovery + `IsGameRunning`),
   **Integrations** (the Nexus v1 client/auth +
   `IModAcquisitionService` the download + extract + place orchestrator +
   `IUpdateCheckService` the Nexus-only update-check service),
   **Relay-client** (the launch
-  façade), **Mods** (the unified `IModRepository`: UUID containers per
+  façade, reading per-profile launch settings + threading env vars + game args
+  through the platform strategies; no version preflight), **Mods** (the unified `IModRepository`: UUID containers per
   (source, identity), opaque-ID version subfolders, per-container
   `container.json` manifests, in-memory index rebuilt from a scan,
   `PruneUnreferenced` GC; the version-policy model `ModVersionPolicy`; the

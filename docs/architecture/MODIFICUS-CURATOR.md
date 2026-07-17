@@ -172,6 +172,14 @@ for the full contract (env-var table, logging, the hook-ready handshake).
 
 - A profile owns its own mods, mod settings, and load order. All settings
   except global are per-profile.
+- A profile also owns its **launch settings**: ordered environment-variable
+  entries (name/value pairs) + ordered Darktide command-line arguments. These
+  persist with the profile (`profile.json`) and apply at launch (env reaches
+  Proton before it starts on Linux and the Relay process on Windows; game args
+  flow through Relay's bare-`--` contract). Editing is unlocked while Darktide
+  runs (changes apply next launch). Env names are validated against a reserved
+  set (Curator-owned OS/launch + Relay config env) so a profile can't fight
+  Curator's own launch values.
 - The profile's mod root is what Curator passes to Relay as `--mod-path`;
   Curator writes `mods.lst` into it on each launch.
 - **DMF on profile creation:** the new-profile flow surfaces a Yes/No confirm
@@ -453,8 +461,21 @@ is in [UI reference](../reference/ui.md).
 ## Launch
 
 The launch path **diverges by OS**. In both cases Curator resolves the profile,
-writes `mods.lst` into the profile's mod root, then invokes the Relay
-launcher with `--game-binary`, `--mod-path`, `--log-file`, `--log-level`.
+writes `mods.lst` into the profile's mod root, reads the profile's launch
+settings (environment variables + Darktide command-line arguments), then invokes
+the Relay launcher with `--game-binary`, `--mod-path`, `--log-file`. (Curator
+does not emit `--log-level`; the Relay shell's level vocabulary differs from
+Curator's Serilog level, so the shell's `info` default is used.)
+
+A profile's launch settings apply at launch: environment variables reach Proton
+before it starts on Linux (inherited by Proton/Relay/Darktide) and the Relay
+launcher process on Windows; game arguments flow through Relay's bare-`--`
+contract verbatim, in order (one `--` then each arg as its own argv entry; empty
+game args emit no `--` = legacy launch). Env-var names are validated (non-empty,
+no `=`/NUL, no NUL in values, case-insensitive duplicate rejection, reserved-name
+block: the two `STEAM_COMPAT_*`, the five AppImage-identity vars, and the Relay
+config env that Curator supplies as flags). Editing launch settings is unlocked
+while Darktide runs (a `profile.json` write); changes apply next launch.
 
 ### Windows (trivial)
 

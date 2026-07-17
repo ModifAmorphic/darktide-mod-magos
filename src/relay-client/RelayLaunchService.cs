@@ -138,7 +138,12 @@ internal sealed class RelayLaunchService : IRelayLaunchService
             var gameBinary = discovery.DarktideGameBinaryPath!;
             var logFile = config.Logging.LogFile;
 
-            var started = _strategy.Start(launcherPath, discovery, gameBinary, modPath, logFile);
+            // Read the profile's launch settings fresh on each launch (they apply next launch; editing
+            // is unlocked while Darktide runs). GetLaunchSettings throws KeyNotFoundException for an
+            // unknown profile, caught below as Error (PrepareModRoot would have thrown it first).
+            var launchSettings = _profiles.GetLaunchSettings(profileId);
+
+            var started = _strategy.Start(launcherPath, discovery, gameBinary, modPath, logFile, launchSettings);
 
             if (!started)
             {

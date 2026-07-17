@@ -202,6 +202,23 @@ public partial class ManageProfilesViewModel : ObservableObject
     // ---- delete -----------------------------------------------------------
 
     /// <summary>
+    /// Opens the per-profile launch-settings modal for the row's profile. Editing
+    /// is unlocked while Darktide runs (the modal persists a profile.json write
+    /// that does not touch the running process; changes apply on the next
+    /// launch). The dialog's save/close lifecycle is owned by the dialog seam.
+    /// </summary>
+    [RelayCommand]
+    private async Task EditLaunchSettings(ProfileItemViewModel? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        await _dialogs.ShowLaunchSettingsAsync(item.Id);
+    }
+
+    /// <summary>
     /// Deletes the row's profile after a confirmation (real data loss: the profile's
     /// config + its mod list; the mod repository itself is untouched). The active profile is locked while
     /// Darktide runs: <see cref="IProfileSession.CanDeleteProfile"/> is the single

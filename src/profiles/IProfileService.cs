@@ -152,6 +152,40 @@ public interface IProfileService
     ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId);
 
     /// <summary>
+    /// The profile's launch settings (environment variables + game arguments).
+    /// A focused read (no full profile + mod-list load) used by the launch path
+    /// and the launch-settings modal.
+    /// </summary>
+    /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
+    LaunchSettings GetLaunchSettings(Guid id);
+
+    /// <summary>
+    /// Replaces the profile's launch settings. Validates the
+    /// <paramref name="settings"/> (names non-empty + no <c>=</c>/NUL, no NUL in
+    /// values, case-insensitive duplicate rejection, reserved-name block),
+    /// rebuilds the profile aggregate preserving Name/Id/CreatedAt/Mods, and
+    /// persists. Callers cannot mutate persisted state in place.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Profile files are plaintext, so this is not secret storage. The values
+    /// are stored exactly (spaces + empty values preserved); validation never
+    /// normalizes or rejects on value content other than NUL.</para>
+    /// <para>
+    /// Editing launch settings is unlocked while Darktide runs: this is a
+    /// <c>profile.json</c> write that does not touch the running process, and
+    /// the launch path reads the settings fresh at <c>Launch()</c> time.</para>
+    /// </remarks>
+    /// <exception cref="KeyNotFoundException"><paramref name="id"/> is unknown.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="settings"/> is
+    /// null.</exception>
+    /// <exception cref="ArgumentException">A name is empty after trim, contains
+    /// <c>=</c> or NUL; a value contains NUL; two names collide
+    /// case-insensitively; or a name is in the reserved set
+    /// (Curator-owned OS/launch + Relay config env, case-insensitive).</exception>
+    void SetLaunchSettings(Guid id, LaunchSettings settings);
+
+    /// <summary>
     /// Regenerates the profile's staged mod root (the <c>--mod-path</c>) from the
     /// current per-mod version resolution, and writes <c>mods.lst</c> from the
     /// successfully-staged enabled mods in <see cref="ModListEntry.Order"/>.

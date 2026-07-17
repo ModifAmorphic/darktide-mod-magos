@@ -62,6 +62,20 @@ public interface IDialogService
     Task ShowManageProfilesAsync();
 
     /// <summary>
+    /// Opens the per-profile launch-settings modal (environment variables +
+    /// Darktide command-line arguments) for the given profile. The modal loads
+    /// the profile's existing settings, lets the user add/remove env-var +
+    /// game-arg rows with inline validation, and persists on Save through
+    /// <c>IProfileService.SetLaunchSettings</c> (closing only on success).
+    /// Cancel / ESC / close make no change. Editing is unlocked while Darktide
+    /// runs (a <c>profile.json</c> write that does not touch the running
+    /// process); changes apply on the next launch.
+    /// </summary>
+    /// <param name="profileId">The profile whose launch settings to edit (the
+    /// selected row's id, not implicitly the active profile).</param>
+    Task ShowLaunchSettingsAsync(Guid profileId);
+
+    /// <summary>
     /// Opens the Preferences modal dialog (theme / font scale / language). Each
     /// change applies immediately through <c>IPreferencesService</c> (which also
     /// persists), so by the time this completes the running app + the persisted

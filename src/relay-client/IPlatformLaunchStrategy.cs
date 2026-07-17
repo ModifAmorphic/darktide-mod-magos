@@ -1,3 +1,4 @@
+using Modificus.Curator.Profiles;
 using Modificus.Curator.Steam;
 
 namespace Modificus.Curator.RelayClient;
@@ -47,5 +48,12 @@ internal interface IPlatformLaunchStrategy
     /// discovery completeness was checked by the caller).</param>
     /// <param name="modPath">The prepared mod root (the <c>--mod-path</c>).</param>
     /// <param name="logFile">The shell log file (the <c>--log-file</c>).</param>
-    bool Start(string launcherPath, DiscoveryResult discovery, string gameBinary, string modPath, string logFile);
+    /// <param name="launchSettings">The profile's launch settings. Environment
+    /// variables are merged into the spawn request (Linux: inherited -> AppImage
+    /// removals -> profile env -> Curator-owned <c>STEAM_COMPAT_*</c> last;
+    /// Windows: profile env as overrides on the Relay process). Game arguments
+    /// are appended after the launcher's own flags as a single bare <c>--</c>
+    /// separator then one argv entry each (Relay's <c>--</c> contract); empty
+    /// game args emit no <c>--</c>.</param>
+    bool Start(string launcherPath, DiscoveryResult discovery, string gameBinary, string modPath, string logFile, LaunchSettings launchSettings);
 }

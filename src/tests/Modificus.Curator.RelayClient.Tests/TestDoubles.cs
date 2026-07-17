@@ -60,6 +60,20 @@ internal sealed class FakeProfileService : IProfileService
     /// <see cref="LaunchStatus.StagingFailed"/> path.</summary>
     public bool PrepareModRootThrows { get; set; }
 
+    /// <summary>
+    /// The <see cref="LaunchSettings"/> returned by
+    /// <see cref="GetLaunchSettings"/> (the launch path reads it on each launch
+    /// + passes it through to the strategy). Default empty (a fresh / no-settings
+    /// profile).
+    /// </summary>
+    public LaunchSettings LaunchSettingsResult { get; set; } = new();
+
+    /// <summary>The (profileId, settings) pairs passed to
+    /// <see cref="SetLaunchSettings"/>, in call order. The launch path never
+    /// calls the setter; the launch-settings UI does.</summary>
+    public IReadOnlyList<(Guid Id, LaunchSettings Settings)> SetLaunchSettingsCalls { get; }
+        = new List<(Guid, LaunchSettings)>();
+
     public Guid LastPrepareModRootId { get; private set; }
     public int PrepareModRootCalls { get; private set; }
 
@@ -92,6 +106,11 @@ internal sealed class FakeProfileService : IProfileService
     public void SetModPolicy(Guid id, Guid containerId, ModVersionPolicy policy) => throw new NotSupportedException();
     public void RemoveMod(Guid id, Guid containerId) => throw new NotSupportedException();
     public ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId) => throw new NotSupportedException();
+
+    public LaunchSettings GetLaunchSettings(Guid id) => LaunchSettingsResult;
+
+    public void SetLaunchSettings(Guid id, LaunchSettings settings) =>
+        ((List<(Guid, LaunchSettings)>)SetLaunchSettingsCalls).Add((id, settings));
 }
 
 /// <summary>Hand-rolled test double for <see cref="ISteamService"/>.</summary>

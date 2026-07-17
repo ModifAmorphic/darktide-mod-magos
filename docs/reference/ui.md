@@ -2,8 +2,8 @@
 
 > The Avalonia 12 front end of Modificus Curator. Owns the shell, profile
 > management, the mod list, every dialog (Settings, Preferences,
-> Integrations, Manage profiles, import, discovery escape-hatch, progress),
-> global preferences (theme, font scale, language), the i18n infrastructure,
+> Integrations, Manage profiles, import, discovery escape-hatch, progress, launch
+> settings), global preferences (theme, font scale, language), the i18n infrastructure,
 > the DMF install-prompt coordinator, the update-check runner, and the app
 > self-update service. The UI never touches the filesystem or the network
 > directly; every data operation flows through a backend library service.
@@ -107,6 +107,7 @@ public interface IDialogService
 {
     Task<bool> ConfirmAsync(string title, string message);
     Task ShowManageProfilesAsync();
+    Task ShowLaunchSettingsAsync(Guid profileId);
     Task ShowPreferencesAsync();
     Task<ImportModResult?> ShowImportModAsync(ImportModRequest request);
     Task ShowSettingsAsync();
@@ -124,7 +125,19 @@ public interface IDialogService
   delete). Active changes are applied live through `IProfileSession` during
   the dialog's session, so on completion the session already reflects
   whatever the gate allowed. The caller refreshes its profile-list snapshot
-  on completion.
+  on completion. Each row carries a launch-settings action (a drawn tune
+  icon) that opens `ShowLaunchSettingsAsync` for that row's profile.
+- `ShowLaunchSettingsAsync(profileId)`: the per-profile launch-settings modal
+  (environment variables + Darktide command-line arguments), opened over the
+  Manage-profiles dialog. Loads the profile's existing settings via
+  `GetLaunchSettings`, lets the user add/remove env-var + game-arg rows with
+  inline localized validation (delegated to the shared
+  `LaunchSettingsValidator` from the Profiles library -- the same source of truth
+  `SetLaunchSettings` uses -- so the per-field messages track the service rules
+  exactly), and persists on Save through `SetLaunchSettings`
+  (closing only on success). Cancel / ESC / close make no change. Editing is
+  unlocked while Darktide runs (a `profile.json` write that does not touch the
+  running process); changes apply on the next launch.
 - `ShowPreferencesAsync()`: the Preferences modal (theme / font scale /
   language). Each change applies immediately through `IPreferencesService`
   (which also persists), so on completion the running app and the persisted
@@ -766,9 +779,10 @@ public static class EscapeClosesBehavior
 }
 ```
 
-Applied to the seven closeable modal dialogs: `ConfirmDialog`,
+Applied to the eight closeable modal dialogs: `ConfirmDialog`,
 `ImportModDialog`, `DiscoveryEscapeHatchDialog`, `IntegrationsWindow`,
-`ManageProfilesWindow`, `PreferencesWindow`, `SettingsWindow`. `ProgressDialog`
+`LaunchSettingsWindow`, `ManageProfilesWindow`, `PreferencesWindow`,
+`SettingsWindow`. `ProgressDialog`
 (non-closeable by design, `DialogTitleBar.ShowClose="False"`) and the main
 window do not opt in, so ESC never dismisses a spinner or exits the app. ESC
 bubbles from focused children (TextBox, ComboBox) to the window; the
@@ -982,7 +996,15 @@ No backend library references the UI (the dependency direction is one-way).
   running), persistence, `CanDeleteProfile`, `ReconcileActive` (delete of
   active clears to null; never auto-selects), `Refresh`.
 - **`ManageProfilesViewModelTests`**: the create / rename / delete dialog
-  view model (via an injectable `IDialogService` seam).
+  view model (via an injectable `IDialogService` seam) + the per-row
+  launch-settings action (opens for the selected row, not the active profile;
+  unlocked while Darktide runs).
+- **`LaunchSettingsViewModelTests`**: the launch-settings modal VM (existing
+  settings load, add/remove rows, inline localized validation -- empty / `=` /
+  NUL name, NUL value, case-insensitive duplicate, reserved name, all delegated
+  to the shared `LaunchSettingsValidator` from the Profiles library -- Save
+  persists once via `SetLaunchSettings` and closes only on success, Cancel no
+  change).
 - **`ModListViewModelTests`**: enable / disable, reorder, per-mod policy,
   remove (with confirm), auto-sort (identity stub), the add flow (peek,
   collision hard-block, import, add-mod), `CheckCompleted` per-row state,
