@@ -1,3 +1,4 @@
+using Modificus.Curator.Profiles;
 using Modificus.Curator.Steam;
 
 namespace Modificus.Curator.RelayClient.Tests;
@@ -303,6 +304,165 @@ public sealed class RelayLaunchServiceTests
         var modPath = args[modIndex + 1];
         Assert.Equal(WinePath.ToWine(PreparedRoot), modPath);
     }
+
+    // ---- Launch settings: environment + game args ---------------------------
+
+    [Fact]
+    public void Launch_reads_the_profile_launch_settings_each_launch()
+    {
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteWindows;
+        fx.Profiles.LaunchSettingsResult = new LaunchSettings
+        {
+            EnvironmentVariables = new[] { new EnvVar("PROTON_LOG", "1") },
+            GameArguments = new[] { "-windowed" },
+        };
+        var svc = fx.BuildWindowsService();
+
+        svc.Launch(Guid.NewGuid());
+
+        // The profile env reached the Windows Relay process overrides.
+        var env = fx.Launcher.Environment!;
+        Assert.Equal("1", env["PROTON_LOG"]);
+        // The game arg reached the argv as a bare -- then the arg.
+        var args = fx.Launcher.Arguments!;
+        Assert.Equal("--", args[^2]);
+        Assert.Equal("-windowed", args[^1]);
+    }
+
+    [Fact]
+    public void Linux_request_contains_profile_env_before_proton_startup()
+    {
+        // Profile env values must reach Proton's environment. They land in the
+        // request's EnvironmentOverrides, applied by the launcher onto the
+        // ProcessStartInfo.Environment snapshot before the proton process starts.
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteLinux;
+        fx.Profiles.LaunchSettingsResult = new LaunchSettings
+        {
+            EnvironmentVariables = new[]
+            {
+                new EnvVar("PROTON_LOG", "1"),
+                new EnvVar("DXVK_HUD", "fps"),
+            },
+        };
+        var svc = fx.BuildLinuxService();
+
+        svc.Launch(Guid.NewGuid());
+
+        var env = fx.Launcher.Environment!;
+        Assert.Equal("1", env["PROTON_LOG"]);
+        Assert.Equal("fps", env["DXVK_HUD"]);
+    }
+
+    [Fact]
+    public void Linux_still_removes_all_appimage_identity_variables_with_profile_env_present()
+    {
+        // The five AppImage/desktop-identity removals hold alongside profile env.
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteLinux;
+        fx.Profiles.LaunchSettingsResult = new LaunchSettings
+        {
+            EnvironmentVariables = new[] { new EnvVar("PROTON_LOG", "1") },
+        };
+        var svc = fx.BuildLinuxService();
+
+        svc.Launch(Guid.NewGuid());
+
+        var expectedRemovals = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "APPDIR", "APPIMAGE", "ARGV0", "OWD", "BAMF_DESKTOP_FILE_HINT",
+        };
+        Assert.True(
+            expectedRemovals.SetEquals(fx.Launcher.RemovedVariables),
+            "expected exactly the five AppImage/desktop-identity variables to be removed");
+    }
+
+    [Fact]
+    public void Linux_still_applies_steam_compat_with_profile_env_present()
+    {
+        // Curator-owned STEAM_COMPAT_* win: they are layered AFTER profile env,
+        // so even a profile env with the same key (blocked by validation in
+        // practice) would be overridden. The two compat vars are present with
+        // the discovery values, alongside the profile env.
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteLinux;
+        fx.Profiles.LaunchSettingsResult = new LaunchSettings
+        {
+            EnvironmentVariables = new[]
+            {
+                new EnvVar("PROTON_LOG", "1"),
+                new EnvVar("MY_VAR", "kept"),
+            },
+        };
+        var svc = fx.BuildLinuxService();
+
+        svc.Launch(Guid.NewGuid());
+
+        var env = fx.Launcher.Environment!;
+        Assert.Equal(FakeDiscovery.LinuxCompatdata, env["STEAM_COMPAT_DATA_PATH"]);
+        Assert.Equal(FakeDiscovery.LinuxSteam, env["STEAM_COMPAT_CLIENT_INSTALL_PATH"]);
+        Assert.Equal("1", env["PROTON_LOG"]);
+        Assert.Equal("kept", env["MY_VAR"]);
+    }
+
+    [Fact]
+    public void Windows_request_contains_profile_env_as_overrides()
+    {
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteWindows;
+        fx.Profiles.LaunchSettingsResult = new LaunchSettings
+        {
+            EnvironmentVariables = new[]
+            {
+                new EnvVar("MY_VAR", "win-value"),
+                new EnvVar("DXVK_HUD", "fps"),
+            },
+        };
+        var svc = fx.BuildWindowsService();
+
+        svc.Launch(Guid.NewGuid());
+
+        var env = fx.Launcher.Environment!;
+        Assert.Equal("win-value", env["MY_VAR"]);
+        Assert.Equal("fps", env["DXVK_HUD"]);
+        // No Steam-compat vars on Windows, no removals (unchanged).
+        Assert.False(env.ContainsKey("STEAM_COMPAT_DATA_PATH"));
+        Assert.Empty(fx.Launcher.RemovedVariables);
+    }
+
+    [Fact]
+    public void Windows_request_has_no_env_overrides_when_profile_env_is_empty()
+    {
+        // Preserves the legacy Windows path: an empty profile env yields no
+        // environment overrides on the Relay process (the child inherits the
+        // parent env verbatim).
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteWindows;
+        var svc = fx.BuildWindowsService();
+
+        svc.Launch(Guid.NewGuid());
+
+        Assert.Empty(fx.Launcher.Environment!);
+    }
+
+    [Fact]
+    public void Linux_launch_with_no_settings_launches_as_before()
+    {
+        // A profile with empty settings launches exactly as the pre-launch-
+        // settings path: no profile env beyond STEAM_COMPAT_*, no game args, no --.
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteLinux;
+        var svc = fx.BuildLinuxService();
+
+        svc.Launch(Guid.NewGuid());
+
+        var env = fx.Launcher.Environment!;
+        Assert.Equal(2, env.Count); // only the two STEAM_COMPAT_* overrides
+        Assert.DoesNotContain("--", fx.Launcher.Arguments!);
+    }
+
+    // ---- Profile integration ------------------------------------------------
 
     // ---- Error ---------------------------------------------------------------
 

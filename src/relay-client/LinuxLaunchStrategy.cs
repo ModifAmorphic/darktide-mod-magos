@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Modificus.Curator.Profiles;
 using Modificus.Curator.Steam;
 using Microsoft.Extensions.Logging;
 
@@ -78,13 +79,16 @@ internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
     }
 
     /// <inheritdoc />
-    public bool Start(string launcherPath, DiscoveryResult discovery, string gameBinary, string modPath, string logFile)
+    public bool Start(string launcherPath, DiscoveryResult discovery, string gameBinary, string modPath, string logFile, LaunchSettings launchSettings)
     {
+        ArgumentNullException.ThrowIfNull(launchSettings);
+
         // The launcher's OWN args (--game-binary, --mod-path, --log-file) are
         // Windows paths (the launcher runs under Wine); the proton command + the
         // launcher.exe path are native Linux (Proton resolves the .exe from a
-        // native path).
-        var launcherArgs = BuildLauncherArgs(gameBinary, modPath, logFile);
+        // native path). Game args append a bare -- then one argv entry each
+        // (Relay's -- contract; empty game args emit no --).
+        var launcherArgs = BuildLauncherArgs(gameBinary, modPath, logFile, launchSettings.GameArguments);
 
         var arguments = new List<string>(capacity: launcherArgs.Count + 2)
         {
@@ -93,15 +97,25 @@ internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
         };
         arguments.AddRange(launcherArgs);
 
+        // Env merge, layered so Curator-owned wins (item-1 invariants + the
+        // profile launch-settings brief):
+        //   1. inherited Curator environment (the request's implicit base,
+        //      snapshotted lazily by ProcessLauncher);
+        //   2. AppImage identity removals (EnvironmentVariablesToRemove);
+        //   3. profile env values (EnvironmentOverrides);
+        //   4. Curator-owned STEAM_COMPAT_* layered AFTER profile values so they
+        //      win even though validation already blocks reserved names (defense
+        //      in depth). The dictionary is ordinal to match ProcessLaunchRequest.
+        var env = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in launchSettings.EnvironmentVariables)
+        {
+            env[entry.Name] = entry.Value;
+        }
         // Both Steam compat vars are required for Proton to use the right Wine
         // prefix + find the Steam client; RequiredDiscoveryFields guaranteed both
-        // non-null above. They are applied as overrides AFTER the AppImage-identity
-        // removals, so they win even if a key happened to collide (they do not).
-        var env = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["STEAM_COMPAT_DATA_PATH"] = discovery.CompatdataPath!,
-            ["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = discovery.SteamInstallPath!,
-        };
+        // non-null above.
+        env["STEAM_COMPAT_DATA_PATH"] = discovery.CompatdataPath!;
+        env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = discovery.SteamInstallPath!;
 
         _logger.LogInformation(
             "Launching (Linux) {Proton} run {Launcher} {Args}",
@@ -118,21 +132,51 @@ internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
     /// <summary>
     /// Builds the launcher's own argument list (the flags AFTER
     /// <c>... proton run launcher.exe</c>). The path-valued flags are converted
-    /// to Wine <c>Z:\</c> form so the launcher-under-Wine can resolve them.
+    /// to Wine <c>Z:\</c> form so the launcher-under-Wine can resolve them. When
+    /// <paramref name="gameArguments"/> is non-empty, appends a single bare
+    /// <c>--</c> separator then each game arg as its own argv entry (Relay's
+    /// <c>--</c> contract); empty game args emit no <c>--</c> (legacy launch).
     /// </summary>
     /// <remarks>
     /// <c>--log-file</c> is a path the launcher-under-Wine opens, so it must be
     /// <c>Z:\</c>-translated too (otherwise the Relay shell log can't be
     /// written where Curator expects). <c>--log-level</c> is intentionally NOT
-    /// emitted (the shell's level vocabulary differs from Serilog's).
+    /// emitted (the shell's level vocabulary differs from Serilog's). Game args
+    /// are NOT <c>Z:\</c>-translated: they are Darktide's own args, opaque to
+    /// Curator, forwarded verbatim; any path-like arg is the game's concern.
     /// </remarks>
-    internal static List<string> BuildLauncherArgs(string gameBinary, string modPath, string logFile) =>
-        new()
+    internal static List<string> BuildLauncherArgs(string gameBinary, string modPath, string logFile, IReadOnlyList<string> gameArguments) =>
+        AppendGameArguments(new List<string>
         {
             "--game-binary", WinePath.ToWine(gameBinary),
             "--mod-path", WinePath.ToWine(modPath),
             "--log-file", WinePath.ToWine(logFile),
-        };
+        }, gameArguments);
+
+    /// <summary>
+    /// Appends the profile's game arguments to <paramref name="args"/> per
+    /// Relay's bare-<c>--</c> contract: when non-empty, one <c>--</c> element
+    /// then each game arg as its own element (verbatim, in order). When empty
+    /// (or null), no <c>--</c> is emitted (legacy launch). Shared by the Linux
+    /// + Windows <c>BuildLauncherArgs</c> so the two paths cannot drift.
+    /// </summary>
+    internal static List<string> AppendGameArguments(List<string> args, IReadOnlyList<string>? gameArguments)
+    {
+        if (gameArguments is null || gameArguments.Count == 0)
+        {
+            return args;
+        }
+
+        args.Add("--");
+        foreach (var arg in gameArguments)
+        {
+            // A null entry would corrupt the argv layout; coerce to "" so the
+            // element count matches the profile list length (defense in depth;
+            // LaunchSettings stores non-null entries).
+            args.Add(arg ?? string.Empty);
+        }
+        return args;
+    }
 
     private static string FormatArgs(IReadOnlyList<string> args) => string.Join(' ', args);
 }
