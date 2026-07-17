@@ -507,6 +507,7 @@ public interface IDialogService
     Task<WelcomeChoice> ShowWelcomeAsync();
     Task<bool> ConfirmAsync(string title, string message);
     Task ShowManageProfilesAsync();
+    Task ShowLaunchSettingsAsync(Guid profileId);
     Task ShowPreferencesAsync();
     Task<ImportModResult?> ShowImportModAsync(ImportModRequest request);
     Task ShowSettingsAsync();
@@ -522,6 +523,19 @@ spinner (the `DialogTitleBar.ShowClose` styled property is set to false on
 the progress dialog, so the user cannot dismiss an in-flight operation whose
 partial result would be useless). The spinner is closed in either case; the
 work's exception (if any) propagates to the caller.
+
+`ShowLaunchSettingsAsync(profileId)` opens the per-profile launch-settings modal
+over the Manage-profiles dialog (the first nested modal). The Manage-profiles
+row carries a drawn tune icon that opens it for that row's profile (not the
+active profile). It loads the profile's environment variables + game arguments,
+offers add/remove rows with inline localized validation (the reserved-name set
+and case-insensitive duplicate detection match `IProfileService.SetLaunchSettings`),
+and persists on Save (closing only on success). Editing is unlocked while
+Darktide runs (a `profile.json` write); changes apply next launch. Because this
+is the first nested modal, `DialogService`'s owner-disabling workaround is
+reference-counted: the owner window re-enables only when the outermost modal
+closes, so an inner modal closing does not prematurely re-enable it while the
+outer modal is still open (single-modal behavior is unchanged).
 
 ### `IPreferencesService`
 

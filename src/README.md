@@ -211,7 +211,7 @@ copying would duplicate repository files). On-disk layout:
     container.json                   # { id, source, name, versions: [{ folder, versionString, isLatest, importedAt }] }
     <versionFolder>/                 # opaque-ID version subfolder; the mod files for that version
 <ProfilesBaseFolder>/<guid>/
-  profile.json                       # metadata + mod list (entries carry ContainerId + Policy)
+  profile.json                       # metadata + mod list + launch settings (entries carry ContainerId + Policy; launch settings carry ordered env vars + game args)
   staged/                            # the staged mod root = the --mod-path (REGENERATED each launch)
     <baseName>                       #   staging link → <versionFolder>/<baseName>/ (junction on Windows, symlink on Linux; Latest → isLatest; Pinned(versionId) → matching Folder); the base name, not the container display name
     mods.lst                         #   successfully-staged enabled mods, in order
@@ -247,4 +247,7 @@ for the schema.
 | `ModsFolder`           | `<app-data>/mods`                               |
 | `RelayDir`             | `<app-data>/relay`                              |
 
-Per-profile settings live with the profile, not in the global config.
+Per-profile settings live with the profile, not in the global config. This
+includes the launch settings (environment variables + Darktide command-line
+arguments, edited from a per-row action in Manage Profiles and applied at
+launch).

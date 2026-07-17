@@ -32,6 +32,11 @@ expected conditions:
   exception's body on `Message` (the full exception is also logged). An unknown
   profile (`KeyNotFoundException` from PrepareModRoot) is caught and mapped to
   `Error`.
+- Reads the profile's launch settings (`IProfileService.GetLaunchSettings`) fresh
+  on each launch + passes them to the strategy (environment merge + game-arg
+  emission). No Relay version preflight: `--` + game args are emitted
+  unconditionally when the profile has them (Curator bundles Relay >= the `--`
+  contract; a deliberately-old external `RelayDir` is an accepted failure).
 - Resolves the launcher path (see [Launcher path resolution](#launcher-path-resolution)).
   If it cannot be found in any applicable location, returns `Error` reporting the
   configured `<RelayDir>/modificus_relay.exe` path.
@@ -69,10 +74,13 @@ public enum LaunchStatus { Launched, DiscoveryIncomplete, StagingFailed, Error }
   - `RequiredDiscoveryFields(discovery)` -- the discovery fields this platform
     requires but could not resolve (Windows: Steam + game binary; Linux: +
     compatdata + Proton).
-  - `Start(launcherPath, discovery, gameBinary, modPath, logFile) → bool` -- the
-    spawn. Windows: a direct invocation of the launcher with native
+  - `Start(launcherPath, discovery, gameBinary, modPath, logFile, launchSettings) → bool`
+    -- the spawn. Windows: a direct invocation of the launcher with native
     (untranslated) args; Linux: `<proton> run <launcher.exe> <args>` with both
-    `STEAM_COMPAT_*` env vars and the path-valued flags `Z:\`-translated.
+    `STEAM_COMPAT_*` env vars and the path-valued flags `Z:\`-translated. The
+    `launchSettings` parameter carries the profile's environment variables
+    (merged into the spawn request) + game arguments (appended after the
+    launcher's own flags as a bare `--` separator then one argv entry each).
   - `Name` -- a short label ("Windows" / "Linux") for log messages.
   - Two implementations (`WindowsLaunchStrategy`, `LinuxLaunchStrategy`),
     selected once at DI time from the host OS (see
@@ -142,9 +150,12 @@ so the precedence is unit-testable on any CI OS.
 
 `Process.Start(modificus_relay.exe, args)`. No Proton, no path translation --
 native Windows paths. Args: `--game-binary`, `--mod-path`, `--log-file`
-(verbatim, untranslated). The request carries no environment removals and no
-overrides; the child inherits Curator's environment block verbatim (Windows
-never runs from an AppImage mount, so there is nothing to sanitize).
+(verbatim, untranslated), then (when the profile has game arguments) one bare
+`--` + each game arg as its own argv entry. The profile's environment variables
+are applied as overrides on the Relay process; Relay creates Darktide with an
+inherited environment, so the values reach the game. No removals (Windows never
+runs from an AppImage mount, so there is nothing to sanitize); an empty profile
+env yields no overrides (the child inherits Curator's environment verbatim).
 
 ### Linux -- native Curator + Proton-at-launch
 
@@ -167,7 +178,33 @@ Command: `<proton> run <launcher.exe> <args>`, where:
   `STEAM_COMPAT_CLIENT_INSTALL_PATH = <steam-install>` -- both required for Proton
   to use the right prefix and find the Steam client. Discovery guaranteed both
   non-null above. These are applied as overrides AFTER the AppImage-identity
-  removals below, so they win even if a key happened to collide (they do not).
+  removals (below) AND after the profile environment values, so they win even
+  if a key happened to collide (the reserved-name validation block makes that
+  impossible in normal use; the layering is defense in depth).
+
+#### Launch settings merge (environment + game arguments)
+
+The profile's launch settings (`GetLaunchSettings`, read fresh on each launch)
+are merged into the spawn request so Curator-owned values always win:
+
+1. **Inherited Curator environment** (the request's implicit base, snapshotted
+   lazily by `ProcessLauncher`).
+2. **AppImage identity removals** (`EnvironmentVariablesToRemove`; see below).
+3. **Profile environment values** (as `EnvironmentOverrides`).
+4. **Curator-owned `STEAM_COMPAT_*`** as `EnvironmentOverrides` layered LAST, so
+   they win even though validation already blocks reserved names (defense in
+   depth).
+
+On Windows the merge is simpler: profile environment values as overrides on the
+Relay process (no Steam-compat vars, no removals).
+
+**Game arguments** follow Relay's bare-`--` contract (item 4): when the profile's
+`GameArguments` is non-empty, Curator appends one `--` element to the launcher's
+argv, then each game argument as its own `ArgumentList` entry (verbatim, in
+order). When empty, no `--` is emitted (legacy launch). Curator uses
+`ProcessStartInfo.ArgumentList` throughout; it never prequotes or joins the
+values -- Relay owns the final Windows `CreateProcess` quoting. No Relay version
+preflight is performed.
 
 #### AppImage desktop-identity sanitization
 
@@ -185,9 +222,11 @@ five keys from the inherited environment (`LinuxLaunchStrategy.AppImageIdentityV
 removed; every unrelated inherited variable passes through unchanged. The
 desktop-activation tokens `DESKTOP_STARTUP_ID`, `XDG_ACTIVATION_TOKEN`, and
 `GIO_LAUNCHED_DESKTOP_FILE` are intentionally NOT removed. The two
-`STEAM_COMPAT_*` overrides are applied AFTER the removals so they always win.
-On a non-AppImage launch (the standalone tarball, a dev build) none of those
-keys are present, so the removals are silent no-ops.
+`STEAM_COMPAT_*` overrides are applied AFTER the removals (and after the profile
+environment values) so they always win. On a non-AppImage launch (the standalone
+tarball, a dev build) none of those keys are present, so the removals are silent
+no-ops. The five AppImage-identity names are also in the profile launch-settings
+reserved set, so a profile cannot re-add them.
 
 ### `--log-level` is intentionally not emitted
 
@@ -228,7 +267,8 @@ from the container.
 ## Dependencies
 
 - **Curator libraries:** `config` (`RelayDir`, `Logging.LogFile`),
-  `profiles` (`IProfileService.PrepareModRoot`), `steam` (`ISteamService.Discover`).
+  `profiles` (`IProfileService.PrepareModRoot` + `GetLaunchSettings`),
+  `steam` (`ISteamService.Discover`).
 - **NuGet:** `Microsoft.Extensions.DependencyInjection.Abstractions`,
   `Microsoft.Extensions.Logging.Abstractions`.
 
@@ -239,7 +279,13 @@ test` runs the xUnit suite -- `RelayLaunchServiceTests` (Windows + Linux arg
 assembly via the concrete `WindowsLaunchStrategy` / `LinuxLaunchStrategy` + a
 fake `IProcessLauncher`, `DiscoveryIncomplete` missing-field derivation,
 `StagingFailed` + `Error` mapping, plus the Linux AppImage-identity removal set
-and the Windows empty-removal/override assertion), `ProcessLauncherTests`
+and the Windows empty-removal/override assertion, plus the launch-settings merge --
+Linux profile env before Proton startup alongside the AppImage removals + the
+`STEAM_COMPAT_*` overrides; Windows profile env as overrides; empty/legacy when no
+settings), `GameArgumentsTests` (the bare-`--` contract via the pure
+`BuildLauncherArgs` seam: empty emits no `--`, multiple emit one `--` then each
+arg as its own element in order, values with spaces + quotes stay one element),
+`ProcessLauncherTests`
 (the deterministic `ProcessLauncher.BuildStartInfo` path: a requested inherited
 key is removed, an unrelated inherited key remains, an override is applied, an
 override wins after removal, `UseShellExecute` is false, arguments stay distinct

@@ -1454,6 +1454,9 @@ public sealed class UpdateCheckServiceTests
             => throw new NotImplementedException();
         public ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId)
             => throw new NotImplementedException();
+        public LaunchSettings GetLaunchSettings(Guid id) => throw new NotImplementedException();
+        public void SetLaunchSettings(Guid id, LaunchSettings settings)
+            => throw new NotImplementedException();
         public string PrepareModRoot(Guid id) => throw new NotImplementedException();
     }
 

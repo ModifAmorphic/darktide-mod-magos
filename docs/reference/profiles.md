@@ -40,6 +40,9 @@ public interface IProfileService
 
     ModListEntry? GetBaseNameCollision(Guid id, string baseName, Guid? excludeContainerId);  // import-time hard-block
 
+    LaunchSettings GetLaunchSettings(Guid id);                  // per-profile env vars + game args
+    void SetLaunchSettings(Guid id, LaunchSettings settings);   // validate + rebuild + persist
+
     string PrepareModRoot(Guid id);
 }
 ```
@@ -106,6 +109,15 @@ Method behavior:
   the manager never silently copies); the relay-client launch façade catches
   that and maps it to `LaunchStatus.StagingFailed`, carrying the exception's
   body, and the UI surfaces it after the localized framing.
+- `GetLaunchSettings(id)` -- a focused read of the profile's launch settings
+  (environment variables + Darktide command-line arguments), used by the launch
+  path (relay-client reads it on each launch) and the launch-settings modal. The
+  launch path applies the settings next launch; editing is unlocked while
+  Darktide runs (a `profile.json` write that does not touch the running process).
+- `SetLaunchSettings(id, settings)` -- validates, rebuilds the profile aggregate
+  preserving Name/Id/CreatedAt/Mods, and persists. Throws `ArgumentException` on
+  the first violation (see [Launch settings](#launch-settings)). Editing is
+  unlocked while Darktide runs; settings apply on the next launch.
 
 ### Key types
 
@@ -119,7 +131,9 @@ Method behavior:
   `<ProfilesBaseFolder>/<Id>/profile.json`. Identity is `Id` (a `Guid`, stable
   across renames and the on-disk directory name); `Name` is a display label, not
   unique, not a path. `CreatedAt` is UTC. `Mods` is exposed as an immutable
-  `IReadOnlyList<ModListEntry>`.
+  `IReadOnlyList<ModListEntry>`. `LaunchSettings` defaults to a non-null empty
+  instance (coerced from JSON `null` / missing property on read, mirroring
+  `Mods`); changes go through `SetLaunchSettings`.
 - `ProfileSummary(Guid Id, string Name)` -- a lightweight projection for profile
   pickers (no mod list loaded).
 - `StagingLinkCreator` -- a `delegate` that creates a directory staging link.
@@ -135,6 +149,50 @@ Method behavior:
 `ModVersionPolicy` (PinnedPolicy/LatestPolicy), `ModSource`, `ModContainer`, and
 `ModVersion` live in the [mods](mods.md) library; Profiles consumes
 them.
+
+### Launch settings (`EnvVar` + `LaunchSettings`)
+
+Per-profile environment variables + Darktide command-line arguments, persisted
+with the profile and applied at launch. Environment values reach Proton before
+it starts on Linux (inherited by Proton/Relay/Darktide) and the Relay launcher
+process on Windows; game arguments flow through Relay's bare-`--` contract
+verbatim, in order.
+
+```csharp
+public sealed record EnvVar(string Name, string Value);
+
+public sealed record LaunchSettings
+{
+    public static readonly IReadOnlyCollection<string> ReservedEnvironmentNames;  // 12, case-insensitive
+    public IReadOnlyList<EnvVar> EnvironmentVariables { get; init; }  // ordered, default empty
+    public IReadOnlyList<string> GameArguments { get; init; }        // ordered, default empty
+}
+```
+
+- Ordered lists (not dictionaries) so JSON order is explicit and game-argument
+  order + duplicates survive persistence; duplicate-name detection happens in
+  `SetLaunchSettings` validation, not silent storage collapse.
+- Backward compatible: an existing `profile.json` without `LaunchSettings`, and
+  an explicit JSON `null`, both deserialize to an empty (non-null) instance
+  (`ReadProfileFile` coerces `null` to `new()`, mirroring `Mods ??= Empty`).
+- `ReservedEnvironmentNames` (case-insensitive, 12 names) is the central
+  reserved-name policy exposed publicly so the launch-settings UI pre-validates
+  inline. Two groups: Curator-owned OS/launch env (7: the two `STEAM_COMPAT_*`,
+  `APPDIR`, `APPIMAGE`, `ARGV0`, `OWD`, `BAMF_DESKTOP_FILE_HINT` -- a profile
+  value would fight Curator or break the AppImage-identity invariant) and Relay
+  config env (5: `MODIFICUS_GAME_BINARY`, `MODIFICUS_MOD_PATH`,
+  `RELAY_LOG_FILE`, `RELAY_LOG_LEVEL`, `MODIFICUS_STEAM_APP_ID` -- Curator
+  supplies these as flags so the env fallback is inert; blocked to avoid a
+  silently-ignored value).
+
+`SetLaunchSettings` validates and throws `ArgumentException` on the first
+violation (field-identifying message): per entry, name non-empty after trim,
+name contains neither `=` nor NUL, value contains no NUL (values otherwise
+stored exactly, including spaces + empty values); across entries, duplicate
+names rejected case-insensitively (profile portability Windows/Linux) and names
+not in the reserved set. Game arguments are not validated (any string is a legal
+argv value). Profile files are plaintext, so this is not secret storage; logs
+never print environment values (only the profile id + counts).
 
 ### `IModOrderResolver` + `IdentityModOrderResolver`
 
@@ -201,7 +259,7 @@ only config source) is itself a singleton.
 ```
 <ProfilesBaseFolder>/              (auto-created on first run)
   <guid>/                          (profile dir; id-named)
-    profile.json                   (metadata + mod list - the source of truth)
+    profile.json                   (metadata + mod list + launch settings - the source of truth)
     staged/                        (the staged mod root = the --mod-path;
                                      REGENERATED each launch - a projection)
       <baseName>                   (staging link -> <versionFolder>/<baseName>/)
@@ -270,10 +328,15 @@ only), file reparse points use `File.Delete` -- so it stays data-safe on both OS
 `Modificus.Curator.Profiles.Tests` covers profile CRUD (`ProfileCrudTests`), mod
 list ordering/enable/policy + the base-name collision hard-block
 (`ModListTests`, including the legacy-Name-entry drop + null-Policy coercion +
-`GetBaseNameCollision` over all/none/disabled/excluded/corrupted cases),
-`PrepareModRoot` + staging-link staging (junction on Windows, symlink on Linux)
-+ the data-safe `ClearStagedDir` (`PrepareModRootTests`, `StagingTests`), and the
-`AddProfiles` DI wiring (including the `TryAdd` `StagingLinkCreator` override).
+`GetBaseNameCollision` over all/none/disabled/excluded/corrupted cases), the
+launch-settings model + service (`LaunchSettingsTests`: round-trip across a
+fresh instance, old-JSON-loads-empty + explicit-null normalization, order +
+duplicate preservation, the full validation surface -- empty / `=` / NUL name,
+NUL value, case-insensitive duplicate, reserved names -- + the guarantee that an
+update preserves Name/Id/CreatedAt/Mods), `PrepareModRoot` + staging-link
+staging (junction on Windows, symlink on Linux) + the data-safe `ClearStagedDir`
+(`PrepareModRootTests`, `StagingTests`), and the `AddProfiles` DI wiring
+(including the `TryAdd` `StagingLinkCreator` override).
 
 ```sh
 dotnet test src/modificus-curator.sln -c Release
