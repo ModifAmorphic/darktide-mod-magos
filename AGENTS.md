@@ -305,7 +305,10 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         in a profile) + per-profile launch settings
                         (EnvVar/LaunchSettings: ordered env-var entries + game
                         args; GetLaunchSettings/SetLaunchSettings validate at the
-                        setter -- names non-empty/no =/no NUL, no NUL in values,
+                        setter via the shared LaunchSettingsValidator
+                        (LaunchSettingsValidationError: index + field + kind;
+                        single source of truth consumed by both the service and
+                        the UI) -- names non-empty/no =/no NUL, no NUL in values,
                         case-insensitive duplicate rejection, reserved-name block
                         of 12 Curator-owned OS/launch + Relay config env; backward-
                         compat null/missing normalization to empty, mirroring Mods;

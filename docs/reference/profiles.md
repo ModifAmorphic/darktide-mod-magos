@@ -171,13 +171,15 @@ public sealed record LaunchSettings
 
 - Ordered lists (not dictionaries) so JSON order is explicit and game-argument
   order + duplicates survive persistence; duplicate-name detection happens in
-  `SetLaunchSettings` validation, not silent storage collapse.
+  `SetLaunchSettings` validation (the shared `LaunchSettingsValidator`), not
+  silent storage collapse.
 - Backward compatible: an existing `profile.json` without `LaunchSettings`, and
   an explicit JSON `null`, both deserialize to an empty (non-null) instance
   (`ReadProfileFile` coerces `null` to `new()`, mirroring `Mods ??= Empty`).
 - `ReservedEnvironmentNames` (case-insensitive, 12 names) is the central
-  reserved-name policy exposed publicly so the launch-settings UI pre-validates
-  inline. Two groups: Curator-owned OS/launch env (7: the two `STEAM_COMPAT_*`,
+  reserved-name policy consumed by the shared `LaunchSettingsValidator` (below)
+  so the launch-settings UI pre-validates inline from the same source of truth.
+  Two groups: Curator-owned OS/launch env (7: the two `STEAM_COMPAT_*`,
   `APPDIR`, `APPIMAGE`, `ARGV0`, `OWD`, `BAMF_DESKTOP_FILE_HINT` -- a profile
   value would fight Curator or break the AppImage-identity invariant) and Relay
   config env (5: `MODIFICUS_GAME_BINARY`, `MODIFICUS_MOD_PATH`,
@@ -185,14 +187,56 @@ public sealed record LaunchSettings
   supplies these as flags so the env fallback is inert; blocked to avoid a
   silently-ignored value).
 
-`SetLaunchSettings` validates and throws `ArgumentException` on the first
-violation (field-identifying message): per entry, name non-empty after trim,
-name contains neither `=` nor NUL, value contains no NUL (values otherwise
-stored exactly, including spaces + empty values); across entries, duplicate
-names rejected case-insensitively (profile portability Windows/Linux) and names
-not in the reserved set. Game arguments are not validated (any string is a legal
-argv value). Profile files are plaintext, so this is not secret storage; logs
-never print environment values (only the profile id + counts).
+### Launch-settings validation (`LaunchSettingsValidator`)
+
+The single source of truth for launch-settings validation, shared by the
+authoritative `SetLaunchSettings` (the trust boundary) and the launch-settings UI
+(inline per-field feedback). Pure: no localization, no I/O, no side effects. It
+returns **structured, machine-readable errors**, not localized strings (the
+Profiles library is backend-only; each consumer localizes the kinds its own way).
+
+```csharp
+public enum LaunchSettingsValidationErrorKind
+{
+    NameEmpty, NameInvalid, NameReserved, NameDuplicate, ValueNul,
+}
+
+public enum LaunchSettingsErrorField { Name, Value }
+
+public sealed record LaunchSettingsValidationError(
+    int Index,                                  // env entry index
+    LaunchSettingsValidationErrorKind Kind,
+    string Name)                                // offending name (empty for NameEmpty)
+{
+    public LaunchSettingsErrorField Field { get; }  // derived from Kind
+}
+
+public static class LaunchSettingsValidator
+{
+    public static IReadOnlyList<LaunchSettingsValidationError> Validate(LaunchSettings settings);
+    public static bool IsValid(LaunchSettings settings);  // Validate(...).Count == 0
+}
+```
+
+Rules: per entry, name non-empty after trim; name contains neither `=` nor NUL;
+name not in the reserved set (case-insensitive); name not a case-insensitive
+duplicate of another entry; value contains no NUL. Values are otherwise stored
+exactly (spaces + empty values preserved). Game arguments are not validated (any
+string is a legal argv value). Per-entry precedence: NameEmpty, NameInvalid,
+NameReserved, NameDuplicate, ValueNul (the first applicable kind wins; at most
+one error per entry). **Duplicates are reported on every colliding entry** (a
+name that appears more than once case-insensitively), so the UI can flag every
+row involved; the service throws on the first error in entry order.
+
+`SetLaunchSettings` delegates to `Validate`, then throws `ArgumentException` on
+the first error with a clear, developer-facing (English) message that echoes the
+offending name. The structured errors carry no localization; the per-kind
+exception messages here are developer-facing only. A parameterized agreement
+test (`LaunchSettingsValidatorTests`) feeds the same inputs through both
+verdicts (does the validator report errors? does `SetLaunchSettings` throw?) and
+asserts they agree, guarding against drift. Profile files are plaintext, so this
+is not secret storage; logs never print environment values (only the profile id
++ counts).
 
 ### `IModOrderResolver` + `IdentityModOrderResolver`
 
@@ -333,7 +377,11 @@ launch-settings model + service (`LaunchSettingsTests`: round-trip across a
 fresh instance, old-JSON-loads-empty + explicit-null normalization, order +
 duplicate preservation, the full validation surface -- empty / `=` / NUL name,
 NUL value, case-insensitive duplicate, reserved names -- + the guarantee that an
-update preserves Name/Id/CreatedAt/Mods), `PrepareModRoot` + staging-link
+update preserves Name/Id/CreatedAt/Mods) + the shared validator
+(`LaunchSettingsValidatorTests`: the structured result's index/kind/field shape,
+per-kind verdicts, and a parameterized agreement test that feeds the same
+inputs through both `SetLaunchSettings`'s verdict and the validator's verdict
+across valid + every invalid case), `PrepareModRoot` + staging-link
 staging (junction on Windows, symlink on Linux) + the data-safe `ClearStagedDir`
 (`PrepareModRootTests`, `StagingTests`), and the `AddProfiles` DI wiring
 (including the `TryAdd` `StagingLinkCreator` override).

@@ -519,78 +519,55 @@ internal sealed class ProfileService : IProfileService
     }
 
     /// <summary>
-    /// Validates a <see cref="LaunchSettings"/> per the brief. Throws
-    /// <see cref="ArgumentException"/> on the first violation with a clear,
-    /// field-identifying message (the UI surfaces a localized error and keeps
-    /// the modal open; the service is the authoritative check).
+    /// Validates a <see cref="LaunchSettings"/> by delegating to the shared
+    /// <see cref="LaunchSettingsValidator"/> (the single source of truth, shared
+    /// with the launch-settings UI). Throws <see cref="ArgumentException"/> on
+    /// the first violation with a clear, developer-facing (English) message
+    /// identifying the offending entry; the UI surfaces a localized error and
+    /// keeps the modal open, while this is the authoritative check at the trust
+    /// boundary.
     /// </summary>
     /// <remarks>
-    /// Per entry: name non-empty after trim; name contains neither <c>=</c> nor
-    /// NUL; value contains no NUL. Across entries: duplicate names rejected
-    /// case-insensitively (profile portability Windows/Linux); name not in the
-    /// reserved set (<see cref="LaunchSettings.ReservedEnvironmentNames"/>,
-    /// case-insensitive). Values are otherwise stored exactly (spaces + empty
-    /// values preserved). Game arguments are not validated: any string is a
-    /// legal argv value, and Relay owns the final quoting.
+    /// The structured errors carry no localization (the Profiles library is
+    /// backend-only); the per-kind messages here are developer-facing only. The
+    /// <see cref="LaunchSettingsValidationError.Name"/> is echoed in the message
+    /// so a log reader can diagnose. Per-entry precedence (empty -> invalid ->
+    /// reserved -> duplicate -> value-NUL) is owned by the shared validator.
     /// </remarks>
     private static void ValidateLaunchSettings(LaunchSettings settings)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < settings.EnvironmentVariables.Count; i++)
+        var errors = LaunchSettingsValidator.Validate(settings);
+        if (errors.Count == 0)
         {
-            var entry = settings.EnvironmentVariables[i];
-
-            // Name checks. Trim only for the emptiness test; the stored value is
-            // the original (a name that is only whitespace is useless as an env
-            // name, but we reject it rather than store a trimmed variant the
-            // user did not type).
-            var name = entry.Name ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                throw new ArgumentException(
-                    $"Environment variable at position {i} has an empty name.",
-                    nameof(settings));
-            }
-
-            if (name.IndexOf('=') >= 0)
-            {
-                throw new ArgumentException(
-                    $"Environment variable name '{name}' must not contain '='.",
-                    nameof(settings));
-            }
-
-            if (name.IndexOf('\0') >= 0)
-            {
-                throw new ArgumentException(
-                    $"Environment variable name '{name}' must not contain a NUL character.",
-                    nameof(settings));
-            }
-
-            if (LaunchSettings.ReservedEnvironmentNames.Contains(name))
-            {
-                throw new ArgumentException(
-                    $"Environment variable name '{name}' is reserved and cannot be set on a profile.",
-                    nameof(settings));
-            }
-
-            if (!seen.Add(name))
-            {
-                throw new ArgumentException(
-                    $"Duplicate environment variable name '{name}' (names are case-insensitive).",
-                    nameof(settings));
-            }
-
-            // Value checks. Spaces + empty values are legal (stored exactly);
-            // only NUL is rejected (it cannot be carried by an environment block).
-            var value = entry.Value ?? string.Empty;
-            if (value.IndexOf('\0') >= 0)
-            {
-                throw new ArgumentException(
-                    $"Environment variable value for '{name}' must not contain a NUL character.",
-                    nameof(settings));
-            }
+            return;
         }
+
+        // The validator reports one error per offending entry in entry order;
+        // throw on the first (matches the prior throw-on-first-violation
+        // behavior the service exposed).
+        var first = errors[0];
+        throw new ArgumentException(ValidationMessage(first), nameof(settings));
     }
+
+    /// <summary>
+    /// Maps a structured validation error to the developer-facing message the
+    /// service surfaces in its <see cref="ArgumentException"/>. Echoes the
+    /// offending name where relevant; never localized.
+    /// </summary>
+    private static string ValidationMessage(LaunchSettingsValidationError error) => error.Kind switch
+    {
+        LaunchSettingsValidationErrorKind.NameEmpty =>
+            $"Environment variable at position {error.Index} has an empty name.",
+        LaunchSettingsValidationErrorKind.NameInvalid =>
+            $"Environment variable name '{error.Name}' must not contain '=' or a NUL character.",
+        LaunchSettingsValidationErrorKind.NameReserved =>
+            $"Environment variable name '{error.Name}' is reserved and cannot be set on a profile.",
+        LaunchSettingsValidationErrorKind.NameDuplicate =>
+            $"Duplicate environment variable name '{error.Name}' (names are case-insensitive).",
+        LaunchSettingsValidationErrorKind.ValueNul =>
+            $"Environment variable value for '{error.Name}' must not contain a NUL character.",
+        _ => $"Environment variable at position {error.Index} is invalid.",
+    };
 
     /// <summary>
     /// Clears <c>staged/</c> for a rebuild: <b>symlink-aware</b>. It removes
