@@ -1,19 +1,11 @@
 namespace Modificus.Curator.Mods;
 
 /// <summary>
-/// The unified mod repository: storage CRUD over per-container
-/// <c>container.json</c> manifests. Replaces the earlier per-profile
-/// diverged-copies model. Owns <c>&lt;ModsFolder&gt;/&lt;containerUUID&gt;/container.json</c>
-/// (one manifest per container) plus the opaque-ID version subfolders.
+/// The unified mod repository: storage CRUD keyed by container, each holding
+/// one or more versioned mod copies. One container per <c>(source, identity)</c>
+/// pair; profiles reference a mod by container id + a version policy.
 /// </summary>
 /// <remarks>
-/// <para>
-/// The repository builds an in-memory index at construction by scanning every
-/// <c>&lt;ModsFolder&gt;/&lt;*&gt;/container.json</c> (dozens of
-/// containers, cheap). There is no global databank file: the per-container
-/// manifests are self-describing, so the index rebuilds from a scan. This makes
-/// the repository resilient (no single corruption/loss point) + relocatable
-/// (paths derive from the config root + UUIDs, never stored absolute).</para>
 /// <para>
 /// Container identity is by source: Nexus by <see cref="NexusSource.ModId"/>,
 /// Untracked by <see cref="ModContainer.Name"/> (the source record carries no
@@ -21,14 +13,12 @@ namespace Modificus.Curator.Mods;
 /// <see cref="FindUntrackedByName"/>). Different source-types never collide and
 /// never share.</para>
 /// <para>
-/// Registered via <c>AddMods()</c>; <c>ProfileService</c> depends on this
-/// for staging (the version-folder resolution seam). The default implementation
-/// (<c>ModRepository</c>) synchronizes all public methods via an internal lock,
-/// so background-thread mutations are safe alongside UI-thread access.</para>
+/// Safe for concurrent callers: the repository is read and mutated from both
+/// the UI thread and background update-check work.</para>
 /// </remarks>
 public interface IModRepository
 {
-    /// <summary>All containers, in scan order (no guaranteed sort).</summary>
+    /// <summary>All containers, in no guaranteed order.</summary>
     IReadOnlyList<ModContainer> List();
 
     /// <summary>Looks up a container by id. Null if absent.</summary>
@@ -44,9 +34,7 @@ public interface IModRepository
 
     /// <summary>
     /// Looks up an untracked container by its <see cref="ModContainer.Name"/>
-    /// (ordinal). Null if absent. The untracked dedup path: a re-import of the
-    /// same name resolves to the existing container instead of creating a new
-    /// one.
+    /// (ordinal). Returns <c>null</c> if absent.
     /// </summary>
     ModContainer? FindUntrackedByName(string name);
 
@@ -152,12 +140,10 @@ public interface IModRepository
     void RemoveVersion(Guid containerId, string versionFolder);
 
     /// <summary>
-    /// Resolves the absolute on-disk path of a container's version folder:
-    /// <c>&lt;ModsFolder&gt;/&lt;containerUUID&gt;/&lt;versionFolder&gt;</c>.
-    /// The repository is the path authority (it owns <c>&lt;ModsFolder&gt;</c>);
-    /// paths are derived, never stored. Callers use this for symlink targets at
-    /// stage time. Does not check existence (the caller decides what to do when
-    /// the folder is absent).
+    /// Resolves the absolute on-disk path of a container's version folder. The
+    /// repository is the path authority; paths are derived, never stored. Does
+    /// not check existence (the caller decides what to do when the folder is
+    /// absent).
     /// </summary>
     string GetVersionFolderPath(Guid containerId, string versionFolder);
 

@@ -5,16 +5,15 @@ namespace Modificus.Curator.Nxm;
 /// <c>nxm://</c> clicks to the handler exe. A single interface with two
 /// platform implementations (Windows writes <c>HKCU\Software\Classes\nxm</c>;
 /// Linux writes a <c>.desktop</c> file + <c>xdg-mime default</c>), selected by
-/// runtime OS at DI registration time.
+/// runtime OS.
 /// </summary>
 /// <remarks>
-/// The service is shipped. Registration is an explicit user action surfaced in
-/// the Integrations dialog (a "Nexus download links" section): the register
-/// path confirms first (it is a system-wide change that can affect other mod
-/// managers), and the unregister path only releases Curator's own registration
-/// by re-checking <see cref="IsRegistered"/> before <see cref="Unregister"/>.
-/// The composition root calls <see cref="MaintainRegistration"/> once after
-/// startup (best-effort) but never auto-registers.
+/// Registration is an explicit user action: the register path confirms first
+/// (it is a system-wide change that can affect other mod managers), and the
+/// unregister path only releases Curator's own registration by re-checking
+/// <see cref="IsRegistered"/> before <see cref="Unregister"/>.
+/// <see cref="MaintainRegistration"/> runs best-effort after startup but never
+/// auto-registers.
 /// </remarks>
 public interface INxmHandlerRegistrar
 {
@@ -38,10 +37,9 @@ public interface INxmHandlerRegistrar
     void Unregister();
 
     /// <summary>
-    /// Best-effort maintenance of an existing Curator-owned registration. Called
-    /// by the composition root once after the process has established
-    /// single-instance ownership, so the fatal process-enumeration check has
-    /// already succeeded.
+    /// Best-effort maintenance of an existing Curator-owned registration. Run
+    /// once after the process has established single-instance ownership, so the
+    /// fatal process-enumeration check has already succeeded.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -53,9 +51,8 @@ public interface INxmHandlerRegistrar
     /// replace another mod manager's registration. When Curator does not own the
     /// association, the method is a silent no-op.</para>
     /// <para>
-    /// <b>Failure is non-fatal.</b> Any error is logged and swallowed (either by
-    /// this method or by the composition root's try/catch), so maintenance never
-    /// blocks Curator startup.</para>
+    /// <b>Failure is non-fatal.</b> Any error is logged and swallowed, so
+    /// maintenance never blocks Curator startup.</para>
     /// <para>
     /// <b>Platform no-ops.</b> Windows has no AppImage-style temporary mount, so
     /// its implementation is a no-op. The standalone Linux layout (no

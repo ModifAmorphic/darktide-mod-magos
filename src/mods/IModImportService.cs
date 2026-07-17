@@ -1,9 +1,8 @@
 namespace Modificus.Curator.Mods;
 
 /// <summary>
-/// Imports a local mod source (a folder OR an archive) into the
-/// global mod repository. The mod-list UI's add flow (picker + drag-and-drop)
-/// goes through this seam: the UI never touches the filesystem directly.
+/// Imports a local mod source (a folder OR an archive) into the global mod
+/// repository.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -11,9 +10,9 @@ namespace Modificus.Curator.Mods;
 /// source's structure, then extracts an archive / copies a folder into the
 /// repository-managed opaque version folder via
 /// <see cref="IModRepository.AddVersion"/>. Container dedup: Untracked by name,
-/// Nexus by mod id. Version dedup: re-importing the same
-/// <paramref name="version"/> tag reuses its folder (refreshed); a new tag
-/// creates a new version + flips <see cref="ModVersion.IsLatest"/>.</para>
+/// Nexus by mod id. Version dedup: re-importing the same version tag reuses its
+/// folder (refreshed); a new tag creates a new version + flips
+/// <see cref="ModVersion.IsLatest"/>.</para>
 /// <para>
 /// <b>Source validation (both kinds):</b> the source must contain exactly one
 /// base directory with a <c>&lt;base&gt;.mod</c> descriptor inside it (the
@@ -29,25 +28,20 @@ namespace Modificus.Curator.Mods;
 /// so the base folder name is load-bearing at staging time.</para>
 /// <para>
 /// This service does NOT touch profile mod lists: the caller adds the profile
-/// reference via <c>IProfileService.AddMod</c> after the import succeeds (order
-/// matters: import the repository copy, then reference it from the profile). The
-/// caller is expected to catch a structure-validation (or I/O) failure per mod
-/// and surface it rather than crash.</para>
+/// reference via <c>IProfileService.AddMod</c> after the import succeeds (import
+/// the repository copy, then reference it from the profile). The caller is
+/// expected to catch a structure-validation (or I/O) failure per mod and surface
+/// it rather than crash.</para>
 /// <para>
-/// <b>Base-name collision hard-block:</b> the add flow peeks the base name (via
-/// <see cref="GetBaseName"/>) + the would-be container (via
-/// <see cref="FindExistingContainer"/>) BEFORE importing, then asks
+/// <b>Base-name collision hard-block is the caller's responsibility, not
+/// <see cref="Import"/>'s.</b> Before importing, the caller may peek the base
+/// name (via <see cref="GetBaseName"/>) + the would-be container (via
+/// <see cref="FindExistingContainer"/>) and ask
 /// <c>IProfileService.GetBaseNameCollision</c> whether any existing profile mod
-/// (a different container) resolves to the same base name. If so, the import is
-/// refused: nothing is created. Two mods with the same base folder name can't
-/// coexist in one profile (the loader can't tell them apart). The collision
-/// block lives at the add flow (not in <see cref="Import"/> itself), so direct
-/// programmatic imports remain unconditional.</para>
-/// <para>
-/// Registered via <c>AddMods()</c>. Resolves <see cref="IModRepository"/>,
-/// <see cref="Modificus.Curator.General.IConfigLoader"/> (for the live
-/// <c>ModsFolder</c>), and an <c>ILogger&lt;ModImportService&gt;</c> from the
-/// container.</para>
+/// (a different container) resolves to the same base name. Two mods with the
+/// same base folder name can't coexist in one profile (the loader can't tell
+/// them apart). <see cref="Import"/> itself is unconditional so direct
+/// programmatic imports remain usable.</para>
 /// </remarks>
 public interface IModImportService
 {

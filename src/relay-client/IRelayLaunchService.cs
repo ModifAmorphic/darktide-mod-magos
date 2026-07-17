@@ -1,11 +1,11 @@
 namespace Modificus.Curator.RelayClient;
 
 /// <summary>
-/// The v1 launch façade over Modificus Relay. Resolves the profile +
-/// Steam discovery, assembles the launcher args, and invokes
+/// The launch façade over Modificus Relay. Resolves the profile + Steam
+/// discovery, assembles the launcher args, and invokes
 /// <c>modificus_relay.exe</c> -- directly on Windows, under <c>proton run</c> on
-/// Linux. Fire-and-forget in v1: <see cref="Launch"/> starts the launcher and
-/// returns; it does not track the game process.
+/// Linux. Fire-and-forget: <see cref="Launch"/> starts the launcher and returns;
+/// it does not track the game process.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,12 +16,7 @@ namespace Modificus.Curator.RelayClient;
 /// <para>
 /// Relay-client does NOT prompt -- on incomplete discovery it returns
 /// <see cref="LaunchStatus.DiscoveryIncomplete"/> carrying the missing field
-/// names so the UI (a later phase) can drive an escape-hatch prompt.</para>
-/// <para>
-/// A future overload accepting a cached <c>DiscoveryResult</c> (to avoid
-/// redundant discovery on repeated launches) is an intended clean addition:
-/// <see cref="Launch"/> is designed so a <c>Launch(Guid, DiscoveryResult)</c>
-/// sibling slots in without breaking existing callers.</para>
+/// names so the caller can drive an escape-hatch prompt.</para>
 /// </remarks>
 public interface IRelayLaunchService
 {
@@ -50,7 +45,7 @@ public interface IRelayLaunchService
 /// <param name="MissingDiscoveryFields">The discovery fields the current OS
 /// requires but could not be resolved; populated only for
 /// <see cref="LaunchStatus.DiscoveryIncomplete"/> (empty otherwise). Field names
-/// mirror the <c>DiscoveryResult</c> properties so the UI can map them to a prompt.</param>
+/// mirror the <c>DiscoveryResult</c> properties so they map to a prompt.</param>
 public sealed record LaunchResult(
     LaunchStatus Status,
     string? Message,
@@ -61,7 +56,8 @@ public sealed record LaunchResult(
 /// </summary>
 public enum LaunchStatus
 {
-    /// <summary>The launcher process was started (fire-and-forget -- no game-process tracking in v1).</summary>
+    /// <summary>The launcher process was started (fire-and-forget -- no
+    /// game-process tracking).</summary>
     Launched,
 
     /// <summary>Steam discovery is missing required fields for the current OS;
@@ -72,8 +68,7 @@ public enum LaunchStatus
     /// could not be created (e.g. Windows on a non-NTFS volume, or no write
     /// access to the profile's <c>staged/</c> directory). <see cref="LaunchResult.Message"/>
     /// carries the raised exception's body (a runtime/OS error, not a string we
-    /// invented); the UI surfaces it after the localized framing. The full
-    /// exception is logged.</summary>
+    /// invented); the full exception is logged.</summary>
     StagingFailed,
 
     /// <summary>Anything else: unknown profile, missing runtime dir, or a

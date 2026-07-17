@@ -3,8 +3,7 @@ namespace Modificus.Curator.Steam;
 /// <summary>
 /// Reads the Windows registry for the Steam install path. Abstracted so the
 /// discoverer's Windows path resolution is unit-testable on Linux (where the
-/// real registry is unavailable). Production implementation is
-/// <c>SteamRegistryReader</c> (Windows-only; returns null elsewhere).
+/// real registry is unavailable).
 /// </summary>
 public interface ISteamRegistryReader
 {

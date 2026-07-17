@@ -36,7 +36,7 @@ public static class CuratorComposition
         //    build the logger) AND registered as the live-read IConfigLoader
         //    singleton so every consumer re-reads the current disk state on
         //    each operation (the config file is tiny; a startup cache would
-        //    only create staleness for the upcoming Settings window + mod-
+        //    only create staleness for the Settings window + mod-
         //    repository relocation, which write config at runtime).
         var loader = new ConfigLoader();
 

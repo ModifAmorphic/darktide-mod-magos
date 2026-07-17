@@ -5,27 +5,24 @@ namespace Modificus.Curator.UI.Session;
 
 /// <summary>
 /// The single authority for "which profile is active, can it change, and is the
-/// game running." Both the app shell and the Manage-profiles dialog consume this;
-/// neither decides the can-change gate nor tracks its own running-state. Owns the
-/// active id (observable + persisted), the can-change gate, and the LIVE
-/// running-state. Does NOT own profile CRUD (create/rename/delete stay on
-/// <see cref="IProfileService"/>, driven by the dialog); it only owns active
-/// state, the gate, and running-state.
+/// game running." Owns the active id (observable + persisted), the can-change
+/// gate, and the LIVE running-state. Does NOT own profile CRUD
+/// (create/rename/delete stay on <see cref="IProfileService"/>); it only owns
+/// active state, the gate, and running-state.
 /// </summary>
 /// <remarks>
 /// <para><b>The gate lives here, once:</b> <see cref="RequestActive"/> is the
 /// sole place a voluntary active change is allowed or rejected (applied only
-/// when the game isn't running). Both the dropdown switch and the dialog's
-/// create-sets-active route through it, so the two can never diverge.</para>
+/// when the game isn't running), so every active-change path routes through it
+/// and the two can never diverge.</para>
 /// <para><b>Delete-of-active:</b> the active profile is locked while Darktide runs
 /// (<see cref="CanDeleteProfile"/> gates the delete), so delete-of-active only
 /// happens when the game is stopped. <see cref="ReconcileActive"/> then clears the
 /// active id (null) so the user explicitly picks the next; it never auto-selects a
 /// remaining profile on someone's behalf.</para>
-/// <para><b>Observable:</b> implements <see cref="INotifyPropertyChanged"/> so the
-/// shell reacts to live <see cref="IsRunning"/> changes driven by the session's
-/// polling timer (status strip + launch-availability + dropdown-enable update
-/// within a few seconds of the game starting or stopping).</para>
+/// <para><b>Observable:</b> implements <see cref="INotifyPropertyChanged"/> so
+/// live <see cref="IsRunning"/> changes (driven by the session's polling timer)
+/// react within a few seconds of the game starting or stopping.</para>
 /// </remarks>
 public interface IProfileSession : INotifyPropertyChanged
 {
@@ -34,17 +31,16 @@ public interface IProfileSession : INotifyPropertyChanged
 
     /// <summary>
     /// Whether Darktide is currently running. LIVE, refreshed by a polling timer
-    /// (~3s, cheap process scan). The status strip, launch-availability, and the
-    /// switch-block gate all read this.
+    /// (~3s, cheap process scan).
     /// </summary>
     bool IsRunning { get; }
 
     /// <summary>
     /// The SOLE active-change gate. Requests <paramref name="id"/> as the active
     /// profile: applied + persisted only when the game isn't running; otherwise a
-    /// no-op (the active stays put). Both the dropdown switch and the dialog's
-    /// create-sets-active call this. Rename and delete-of-active do not (rename
-    /// leaves the id stable; delete uses <see cref="ReconcileActive"/>).
+    /// no-op (the active stays put). Rename and delete-of-active do not route
+    /// through this (rename leaves the id stable; delete uses
+    /// <see cref="ReconcileActive"/>).
     /// </summary>
     void RequestActive(Guid id);
 
@@ -52,9 +48,7 @@ public interface IProfileSession : INotifyPropertyChanged
     /// Whether the profile <paramref name="id"/> may be deleted right now. The
     /// single authority for the delete gate: the active profile is locked while
     /// Darktide runs (<c>false</c> when <paramref name="id"/> is the active id and
-    /// the game is running); every other profile is deletable (<c>true</c>). The
-    /// Manage-profiles dialog binds each row's trash button to this so the active
-    /// row's trash disables while the game runs.
+    /// the game is running); every other profile is deletable (<c>true</c>).
     /// </summary>
     bool CanDeleteProfile(Guid id);
 
@@ -72,10 +66,10 @@ public interface IProfileSession : INotifyPropertyChanged
 
     /// <summary>
     /// Re-checks <see cref="IsRunning"/> against the running-state source right
-    /// now, rather than waiting for the next polling-timer tick. Used by callers
-    /// that just caused a state change (e.g. the shell after a successful launch)
-    /// so the indicator + launch-availability react immediately. The polling
-    /// timer would catch up eventually; this is the eager path.
+    /// now, rather than waiting for the next polling-timer tick. For callers that
+    /// just caused a state change (e.g. after a successful launch) so the
+    /// indicator reacts immediately. The polling timer would catch up eventually;
+    /// this is the eager path.
     /// </summary>
     void Refresh();
 }

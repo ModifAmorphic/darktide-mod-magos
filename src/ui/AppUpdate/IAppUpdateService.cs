@@ -31,9 +31,9 @@ public sealed record AppUpdateInfo(string TargetVersion, string? Notes);
 /// running app is itself a Velopack install (a packaged Windows build or a
 /// Linux AppImage). When it is not, <see cref="IsUpdateSupported"/> is
 /// <c>false</c>: the check returns <c>null</c>, <see cref="CurrentVersion"/> is
-/// <c>null</c>, and the download / apply steps are not driven by the UI. A
-/// no-op implementation is registered in that case, so every consumer can talk
-/// to this interface unconditionally and gate its affordances on
+/// <c>null</c>, and the download / apply steps are no-ops. A no-op
+/// implementation covers that case, so every consumer can talk to this interface
+/// unconditionally and gate its affordances on
 /// <see cref="IsUpdateSupported"/>.</para>
 /// <para>
 /// <b>State holding, lock-protected write, lock-free read.</b>
@@ -65,8 +65,8 @@ public interface IAppUpdateService
 {
     /// <summary>
     /// <c>true</c> when self-update is meaningful for this build (the running
-    /// app is a Velopack install and the update manager initialized). The UI
-    /// gates the entire update surface (notice, download button, apply) on this
+    /// app is a Velopack install and the update manager initialized). Callers
+    /// gate the entire update surface (notice, download button, apply) on this
     /// so a non-Velopack build (Linux, a dev run) simply shows nothing.
     /// </summary>
     bool IsUpdateSupported { get; }
@@ -74,8 +74,7 @@ public interface IAppUpdateService
     /// <summary>
     /// The currently installed app version, as a string, or <c>null</c> when
     /// self-update is unsupported or the installed version cannot be resolved.
-    /// The UI shows this alongside <see cref="AppUpdateInfo.TargetVersion"/> so
-    /// the user can compare.
+    /// Shown alongside <see cref="AppUpdateInfo.TargetVersion"/> for comparison.
     /// </summary>
     string? CurrentVersion { get; }
 
@@ -83,8 +82,8 @@ public interface IAppUpdateService
     /// The most recent check result, or <c>null</c> before the first check
     /// completes, when the last check found no update, when self-update is
     /// unsupported, or when a check failed (a failure leaves the prior value
-    /// untouched). The UI reads this to render the update notice without
-    /// awaiting a check.
+    /// untouched). Useful for rendering the update notice without awaiting a
+    /// check.
     /// </summary>
     /// <remarks>
     /// Written under the internal state lock together with the
@@ -99,8 +98,8 @@ public interface IAppUpdateService
     /// <see cref="DownloadUpdatesAsync"/> on success (to the same value as
     /// <see cref="LastCheckResult"/> at that point); cleared by nothing in this
     /// interface (the pending update is consumed by
-    /// <see cref="ApplyUpdatesAndRestart"/>). The UI shows an "update ready,
-    /// restart to apply" affordance when this is non-null.
+    /// <see cref="ApplyUpdatesAndRestart"/>). Non-null signals "update ready,
+    /// restart to apply."
     /// </summary>
     AppUpdateInfo? UpdatePendingRestart { get; }
 
@@ -110,8 +109,7 @@ public interface IAppUpdateService
     /// per successful check (including the "no update available" result that
     /// clears a prior pending result) and once on a successful download, with
     /// the new values already published. Never raised on a swallowed check
-    /// failure (nothing changed). The UI subscribes to refresh its notice
-    /// without awaiting a check.
+    /// failure (nothing changed).
     /// </summary>
     event EventHandler? UpdateStateChanged;
 
@@ -134,8 +132,7 @@ public interface IAppUpdateService
     /// <summary>
     /// Downloads the update resolved by the last successful
     /// <see cref="CheckForUpdatesAsync"/> (staging it for
-    /// <see cref="ApplyUpdatesAndRestart"/>). The download runs under an
-    /// indeterminate modal spinner in the UI; no incremental percentage is
+    /// <see cref="ApplyUpdatesAndRestart"/>). No incremental percentage is
     /// surfaced. On success, publishes the pending update on
     /// <see cref="UpdatePendingRestart"/> + raises
     /// <see cref="UpdateStateChanged"/>.
@@ -145,10 +142,8 @@ public interface IAppUpdateService
     /// <exception cref="InvalidOperationException">Thrown when no check has
     /// resolved an update to download (including when self-update is
     /// unsupported, since the check short-circuits without populating the
-    /// pending update). The UI gates the download on
-    /// <see cref="IsUpdateSupported"/> and a non-null
-    /// <see cref="LastCheckResult"/>, so reaching this state is a wiring
-    /// mistake worth surfacing loudly.</exception>
+    /// pending update). Reaching this state is a wiring mistake worth surfacing
+    /// loudly.</exception>
     /// <remarks>
     /// Unlike <see cref="CheckForUpdatesAsync"/>, this method propagates
     /// non-cancellation failures (a checksum mismatch, an update-lock

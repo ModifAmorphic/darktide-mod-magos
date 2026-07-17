@@ -3,14 +3,12 @@ using Modificus.Curator.Integrations;
 namespace Modificus.Curator.UI.Session;
 
 /// <summary>
-/// The opt-in Premium automatic mod-update installer. Chained directly from
-/// <see cref="UpdateCheckRunner"/> after a check completes, it sequentially
-/// installs flagged updates for the active profile's Nexus Latest mods when the
-/// user has enabled it AND a fresh Premium verification passes. Independent of
-/// <see cref="ViewModels.ModListViewModel"/> (to avoid the existing
-/// ModListViewModel -> UpdateCheckRunner dependency becoming circular) and
-/// shares the global <see cref="UpdateCoordinator"/> with the manual update
-/// action so the two paths never install the same mod concurrently.
+/// The opt-in Premium automatic mod-update installer. Chained directly from the
+/// update-check runner after a check completes, it sequentially installs flagged
+/// updates for the active profile's Nexus Latest mods when the user has enabled
+/// it AND a fresh Premium verification passes. Shares the global
+/// <see cref="UpdateCoordinator"/> with the manual update action so the two
+/// paths never install the same mod concurrently.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -44,20 +42,18 @@ namespace Modificus.Curator.UI.Session;
 /// <b>Feedback.</b> A fully successful batch is silent. A batch with one or more
 /// failures surfaces a single aggregated, localized summary alert after the
 /// batch. <see cref="UpdatesApplied"/> is raised when at least one install
-/// succeeded so <see cref="ViewModels.ModListViewModel"/> can reload the list
-/// (the new versions + cleared flags) without the service taking a dependency on
-/// it. <see cref="ModUpdateProgress"/> is raised per mod (active=true before the
-/// acquisition, active=false from the per-mod finally) so the list VM can show
-/// the spinner on the currently installing row; the spinner moves row by row as
-/// the sequential batch advances.</para>
+/// succeeded so a subscriber can reload the list (the new versions + cleared
+/// flags). <see cref="ModUpdateProgress"/> is raised per mod (active=true before
+/// the acquisition, active=false from the per-mod finally) so a subscriber can
+/// show the spinner on the currently installing row; the spinner moves row by
+/// row as the sequential batch advances.</para>
 /// </remarks>
 public interface IAutomaticUpdateService
 {
     /// <summary>
     /// Raised (on the caller's thread) when at least one install in the last
-    /// batch succeeded. <see cref="ViewModels.ModListViewModel"/> subscribes and
-    /// reloads so the new versions + cleared flags show without the service
-    /// depending on it.
+    /// batch succeeded. A subscriber reloads so the new versions + cleared flags
+    /// show.
     /// </summary>
     event EventHandler? UpdatesApplied;
 
@@ -66,12 +62,11 @@ public interface IAutomaticUpdateService
     /// <see cref="ModUpdateProgressEventArgs.IsActive"/> == <c>true</c>
     /// immediately before the per-mod acquisition attempt, <c>false</c> from the
     /// per-mod finally block (success, failure, or cancellation). Deterministic
-    /// start/stop ordering per sequential item. <see cref="ViewModels.ModListViewModel"/>
-    /// subscribes, marshals to the UI thread, finds the row by
-    /// <see cref="ModUpdateProgressEventArgs.ContainerId"/>, and sets its
-    /// <c>IsUpdating</c> so the row-level spinner (left of the Nexus badge)
-    /// reflects the currently installing mod. An event for a row no longer
-    /// present (after a profile switch / reload) is ignored.
+    /// start/stop ordering per sequential item. A subscriber can marshal to the
+    /// UI thread, find the row by
+    /// <see cref="ModUpdateProgressEventArgs.ContainerId"/>, and set its spinner
+    /// state to reflect the currently installing mod. An event for a row no
+    /// longer present (after a profile switch / reload) is ignored.
     /// </summary>
     event EventHandler<ModUpdateProgressEventArgs>? ModUpdateProgress;
 

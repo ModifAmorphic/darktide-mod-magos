@@ -12,9 +12,9 @@ namespace Modificus.Curator.Integrations;
 /// </summary>
 /// <remarks>
 /// The factory does NOT own the request body or the relative path (those come
-/// from <see cref="NexusClient"/>'s per-call code). It owns the per-request auth
-/// state only: which headers to apply, whether credentials are available, and
-/// how to react when the server rejects the credentials (refresh, or surface).
+/// from the client's per-call code). It owns the per-request auth state only:
+/// which headers to apply, whether credentials are available, and how to react
+/// when the server rejects the credentials (refresh, or surface).
 /// </remarks>
 public interface INexusAuthMessageFactory
 {
@@ -27,8 +27,8 @@ public interface INexusAuthMessageFactory
     /// <see cref="OnUnauthorizedAsync"/>.
     /// </summary>
     /// <remarks>
-    /// The caller (<see cref="NexusClient"/>) owns disposing the returned
-    /// message. A factory MUST NOT cache or reuse the message.
+    /// The caller owns disposing the returned message. A factory MUST NOT cache
+    /// or reuse the message.
     /// </remarks>
     ValueTask<HttpRequestMessage> CreateAsync(HttpMethod method, Uri uri, CancellationToken ct);
 
@@ -58,9 +58,8 @@ public interface INexusAuthMessageFactory
 
 /// <summary>
 /// Read-only access to the persisted OAuth tokens + the ability to refresh them.
-/// The OAuth message factory depends on this (rather than the full
-/// <see cref="INexusAuthService"/>) to break the DI cycle (the auth service
-/// depends on <see cref="INexusClient"/>, which depends on the factory).
+/// A narrower surface than <see cref="INexusAuthService"/>, exposing only what
+/// the OAuth message factory needs.
 /// </summary>
 /// <remarks>
 /// <b>Live-read.</b> <see cref="GetOAuthTokens"/> reads the current state from

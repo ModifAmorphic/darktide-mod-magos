@@ -42,7 +42,7 @@ namespace Modificus.Curator.Mods;
 /// lock, so a background-thread repository mutation (e.g. a reconciliation
 /// write from <c>UpdateCheckService</c>) cannot race an import. The mods root
 /// folder is read live from <see cref="IConfigLoader"/> on each import, so a
-/// runtime folder change via the upcoming Settings window routes the next
+/// runtime folder change via the Settings window routes the next
 /// import to the new path.</para>
 /// </remarks>
 internal sealed class ModImportService : IModImportService

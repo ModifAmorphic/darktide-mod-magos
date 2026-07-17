@@ -40,8 +40,8 @@ namespace Modificus.Curator.Profiles;
 /// Registered as a singleton: the service holds no per-request state (all state
 /// lives on disk). The profiles base folder is read live from
 /// <see cref="IConfigLoader"/>.<see cref="IConfigLoader.Load"/> on each public
-/// operation (one snapshot per op), so a runtime folder change via the upcoming
-/// Settings window takes effect immediately. <see cref="Directory.CreateDirectory"/>
+/// operation (one snapshot per op), so a runtime folder change via the Settings
+/// window takes effect immediately. <see cref="Directory.CreateDirectory"/>
 /// runs per-op (idempotent) on the live path. Concurrent writes to the same
 /// profile are not coordinated (single-UI-thread assumption).</para>
 /// </remarks>

@@ -6,9 +6,9 @@ namespace Modificus.Curator.Integrations;
 /// Acquires a mod from a remote source: resolves the download link, fetches the
 /// mod's metadata, downloads the archive to a temp file, and imports it into the
 /// unified mod repository via <see cref="IModImportService.Import"/>. The caller
-/// (the nxm download handler, or the per-mod update button on the mod list) owns profile
-/// registration: this service returns the <c>(containerId, versionId)</c> pair
-/// and the caller feeds it to <c>IProfileService.AddMod</c>.
+/// owns profile registration: this service returns the
+/// <c>(containerId, versionId)</c> pair and the caller feeds it to
+/// <c>IProfileService.AddMod</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,7 +16,7 @@ namespace Modificus.Curator.Integrations;
 /// metadata, downloads the archive to a temp file, and imports it into the
 /// unified mod repository via <see cref="IModImportService.Import"/>. The
 /// signature carries an <see cref="IProgress{T}"/> so a caller can wire a
-/// per-row progress indicator without retooling the seam.</para>
+/// progress indicator without retooling the seam.</para>
 /// <para>
 /// <b>No degraded metadata fallback.</b> If the metadata fetch (mod name or file
 /// version) fails, the acquisition fails with a clear error. A mod stored under
@@ -51,9 +51,8 @@ public interface IModAcquisitionService
     /// <c>NexusConfig.AuthMethod != None</c> first.</param>
     /// <param name="nxmExpires">The per-file download expiry (epoch seconds) from
     /// the <c>nxm://</c> URL, or <c>null</c> when absent.</param>
-    /// <param name="progress">Optional cumulative-bytes progress receiver (the per-mod
-    /// update button wires this to a per-row indicator). <c>null</c> for the nxm handler (it
-    /// has no progress UI).</param>
+    /// <param name="progress">Optional cumulative-bytes progress receiver, or
+    /// <c>null</c> when the caller has no progress UI.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The <c>(containerId, versionId)</c> of the imported mod. The
     /// import service resolves (or creates) the container keyed by
@@ -83,9 +82,8 @@ public interface IModAcquisitionService
     /// non-archived MAIN file via <see cref="INexusClient.ListModFilesAsync"/>,
     /// then delegates to <see cref="AcquireFromNexusAsync"/> with the resolved
     /// <paramref name="fileId"/> + <c>null</c> nxm key/expires (the premium /
-    /// auth-only download path). Used by the per-mod update button on the mod
-    /// list, which knows the mod id (not the file id) and lets the service pick
-    /// the current release.
+    /// auth-only download path). Use when the mod id is known but the file id is
+    /// not, and the current release should be picked.
     /// </summary>
     /// <param name="gameDomain">The Nexus game domain (e.g.
     /// <c>warhammer40kdarktide</c>).</param>

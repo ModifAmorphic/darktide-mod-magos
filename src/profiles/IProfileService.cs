@@ -16,24 +16,18 @@ namespace Modificus.Curator.Profiles;
 /// <see cref="IModRepository"/>) and links <c>staged/&lt;name&gt;</c> to the
 /// resolved version folder (an NTFS junction on Windows, a symlink on Linux).
 /// <b>Staging links, never copies.</b></para>
-/// <para>
-/// No storage details (paths, version-folder ids) leak through the interface.
-/// Registered as a singleton: the service holds no per-request state, and
-/// <c>CuratorConfig</c> (its only config source) is itself a singleton.</para>
 /// </remarks>
 public interface IProfileService
 {
     /// <summary>
     /// Raised whenever <see cref="CreateProfile"/> successfully persists a new
-    /// profile. Carries the new profile's summary (id + name). Subscribers use
-    /// this to react to "a profile was just created" (the DMF new-profile
-    /// prompt coordinator is the consumer).
+    /// profile. Carries the new profile's summary (id + name).
     /// </summary>
     /// <remarks>
     /// Fires from inside the create call, so a subscriber still in the call
-    /// chain (e.g. a modal dialog) sees it synchronously. The DMF prompt
-    /// coordinator treats it as a pending signal + processes it once the
-    /// owning dialog has closed, to avoid a dialog-on-dialog.
+    /// chain sees it synchronously. A subscriber that must defer work until a
+    /// modal it owns has closed should treat this as a pending signal rather than
+    /// acting inline (to avoid a dialog-on-dialog).
     /// </remarks>
     event EventHandler<ProfileSummary>? ProfileCreated;
 

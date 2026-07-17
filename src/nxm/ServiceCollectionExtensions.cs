@@ -28,10 +28,10 @@ public static class ServiceCollectionExtensions
     /// construction.
     /// </para>
     /// <para>
-    /// <b>The <c>INxmOAuthCallbackHandler</c> seam has been removed.</b> Curator
-    /// OAuth uses a loopback HTTP redirect (RFC 8252), independent of the nxm
-    /// handler; the <c>nxm://oauth/callback</c> URL shape is still parsed so the
-    /// router can recognize it, but it is logged + dropped rather than routed.
+    /// <b>OAuth callback URLs.</b> Curator OAuth uses a loopback HTTP redirect
+    /// (RFC 8252), independent of the nxm handler; the
+    /// <c>nxm://oauth/callback</c> URL shape is still parsed so the router can
+    /// recognize it, but it is logged + dropped rather than routed.
     /// </para>
     /// <para>
     /// <b>Platform registrar.</b> <see cref="WindowsNxmHandlerRegistrar"/> is
