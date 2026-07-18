@@ -174,24 +174,28 @@
         <!--
           App self-update notice: a dismissible pill in the status strip. Shown
           only when an update is available (ShowAppUpdateNotice) and not yet
-          dismissed this session. The accent dot + the link read as "Curator X
-          is available"; clicking the link confirms + downloads + restarts. The
-          close button (a drawn Material "close" Path, not a glyph) hides the
-          notice for this session. Mirrors the ModListView notice-pill styling
-          (Border + Ellipse + content). All icons are drawn geometry per
-          AGENTS.md.
+          dismissed this session. Rendered as a thick accent-bordered pill with
+          a transparent fill; the accent outline carries the emphasis, no
+          separate accent dot. The link is a HyperlinkButton kept at its native
+          accent foreground: the Fluent ControlTheme re-applies accent on
+          :pointerover and :pressed, so a native accent foreground stays
+          readable in every state against the neutral background (an overridden
+          light foreground would turn unreadable on hover), and the underline +
+          hand cursor stay. Clicking the link confirms + downloads + restarts.
+          The close button (a drawn Material "close" Path, not a glyph; default
+          button foreground) hides the notice for this session. All icons are
+          drawn geometry per AGENTS.md.
         -->
         <Border IsVisible="{Binding ShowAppUpdateNotice}"
-                Background="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}"
+                Background="Transparent"
+                BorderBrush="{DynamicResource SystemControlForegroundAccentBrush}"
+                BorderThickness="2"
                 CornerRadius="8"
                 Padding="6,1"
                 Margin="12,0,0,0"
                 VerticalAlignment="Center"
                 ToolTip.Tip="{Binding AppUpdateNoticeTooltip}">
           <StackPanel Orientation="Horizontal" Spacing="4">
-            <Ellipse Width="7" Height="7"
-                     Fill="{DynamicResource SystemControlForegroundAccentBrush}"
-                     VerticalAlignment="Center" />
             <HyperlinkButton Command="{Binding CheckAppUpdateNowCommand}"
                              Padding="2,0" Margin="0" MinWidth="0"
                              VerticalAlignment="Center"

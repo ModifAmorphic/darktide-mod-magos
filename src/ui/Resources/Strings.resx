@@ -136,7 +136,7 @@
   <!-- ============================================================ -->
 
   <data name="AppUpdate_NoticeText" xml:space="preserve">
-    <value>Curator {0} is available</value>
+    <value>{0} update available</value>
     <comment>Text on the dismissible update pill in the shell status strip. {0} is the available version.</comment>
   </data>
   <data name="AppUpdate_NoticeTooltip" xml:space="preserve">
