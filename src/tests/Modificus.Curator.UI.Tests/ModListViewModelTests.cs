@@ -1984,20 +1984,24 @@ public sealed class ModListViewModelTests
     {
         // An available linked row's open-folder click routes the external path
         // to the injectable launcher seam.
+        const string externalPath = "/external/DMF";
         var openedPaths = new List<string>();
         var (vm, _, repo, _, _, _, _) = BuildForLinked(launchExternalPath: path =>
         {
             openedPaths.Add(path);
             return true;
         });
-        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+        await vm.LinkModsCommand.ExecuteAsync(new[] { externalPath });
         var row = Row(vm, "DMF");
 
         await vm.OpenFolderCommand.ExecuteAsync(row);
 
         Assert.Equal(repo.List().Single(c => c.Source is LinkedSource).Id, row.ContainerId);
         var opened = Assert.Single(openedPaths);
-        Assert.EndsWith("DMF", opened);
+        // LinkFolder normalizes via Path.GetFullPath, so the launched path is
+        // the canonical form: assert equality on the same normalization rather
+        // than a suffix match.
+        Assert.Equal(Path.GetFullPath(externalPath), opened);
     }
 
     [Fact]

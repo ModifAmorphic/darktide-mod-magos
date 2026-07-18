@@ -305,7 +305,6 @@
                     <HyperlinkButton Classes="badge"
                                      IsVisible="{Binding IsLinkedAvailable}"
                                      Click="OpenFolder_Click"
-                                     CommandParameter="{Binding}"
                                      ToolTip.Tip="{ReflectionBinding [ModRow_LinkedOpenTooltip], Source={StaticResource Loc}}">
                       <TextBlock Text="{Binding SourceBadgeText}" FontSize="11" />
                     </HyperlinkButton>
