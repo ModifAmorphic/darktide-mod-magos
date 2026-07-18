@@ -31,7 +31,7 @@ dialogs, preferences, and i18n fit together.
 │  ┌─ Content area ──────────────────────────────────────────────────────┐ │
 │  │ ModListView (the active profile's mod list; drag-and-drop target)   │ │
 │  │   header: title · rate-limit notice · refresh ·                  │ │
-│  │           auto-sort · Add split button (archive / folder)           │ │
+│  │           auto-sort · Add split button (archive / folder / link)    │ │
 │  │   rows:   name · progress + source badge · enabled · policy ·        │ │
 │  │           update-action cell (button) · up · down · remove            │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
@@ -220,7 +220,8 @@ The command set:
   UI wires against the abstraction now.
 - **Add** (`AddMods`): the Add split button (archive picker + folder picker) and
   drag-and-drop both reduce to this command, which processes paths
-  sequentially.
+  sequentially. A third flyout item, "Link external folder" (folder picker, no
+  modal), reduces to `LinkMods` instead.
 
 ### The import flow
 
@@ -249,6 +250,29 @@ remaining batch. Mods imported earlier in the batch stay imported.
 The mod name is derived from each path (folder name or archive stem) and
 pre-filled in the modal; the user may rename at import (the edited name
 becomes the container's display name and the untracked dedup key).
+
+### The link flow (`LinkMods`)
+
+The "Link external folder" flyout adds an external mod directory to the
+active profile **without copying it** (the folder is the user's; Curator
+controls only load order and enabled/disabled). No import modal; the folder
+picker hands the path straight to `LinkMods`, which processes each path
+sequentially:
+
+1. Peek the base folder name via `IModImportService.GetBaseName` (the picked
+   folder IS the base and must directly contain `<base>.mod`). An invalid
+   shape surfaces an alert naming the path + aborts the remaining batch.
+2. Hard-block a base-name collision via
+   `IProfileService.GetBaseNameCollision`, excluding a re-link (which
+   resolves to the existing linked container and refreshes it instead of
+   being flagged). On a hit, an alert + abort; nothing is created.
+3. `IModImportService.LinkFolder` (record the metadata-only
+   `LinkedSource` container, no copy), then `IProfileService.AddMod` with
+   `LatestPolicy` (inert for linked, since a linked container has no
+   versions).
+
+A failed peek, a `LinkFolder` failure (e.g. a containment rejection of the
+mods/profiles root), or a collision cancels the remaining batch.
 
 ### Rows carry state only
 
@@ -358,14 +382,24 @@ re-hydrates from the store when the result lands.
 
 - The source badge is a `HyperlinkButton` styled as a pill, with
   `NavigateUri` set to the row's `SourceUrl` (the mod's remote page; null for
-  untracked, which the `HyperlinkButton` treats as a no-op click). Immediately
+  untracked, which the `HyperlinkButton` treats as a no-op click). A linked row
+  replaces this badge with a two-state indicator in the same cell: available
+  shows an "External" pill whose click opens the OS file manager at the
+  external folder (`OpenFolder`, via a testable path-launcher seam with a
+  fallback alert on failure); broken (the external folder is missing) shows a
+  non-clickable "Folder unavailable" text in the caution brush. The broken
+  state is pushed from `IModRepository.IsExternalAvailable` at Reload
+  (`IsExternalBroken`); there is no watcher, so availability is re-read on the
+  next reload. Immediately
   left of the badge, an indeterminate `ProgressBar` (visible only while the
   row's `IsUpdating` is true) shows per-row update activity in the former
   update-status area.
 - The stable update-action cell is a fixed-width `Panel` reserved on every row
   so later controls never shift. For Nexus + Latest rows it holds the
-  update-action button; for Pinned Nexus and Untracked rows the cell stays
-  reserved but empty. The button shows for Nexus + Latest rows regardless
+  update-action button; for Pinned Nexus, Untracked, and linked rows the cell
+  stays reserved but empty (linked mods get no update check). The policy
+  ComboBox is disabled for linked rows (a linked container has no versions to
+  pin). The button shows for Nexus + Latest rows regardless
   of account tier and regardless of whether an update is available, and it
   stays visible while a row is updating (disabled via `UpdateActionEnabled`,
   which includes `!IsUpdating`); the progress affordance lives in the

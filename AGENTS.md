@@ -33,7 +33,8 @@ game-binary constraints now live with the runtime, in
   first-run Welcome onboarding, and in-app self-update for the Windows
   installer plus Linux AppImage (Velopack).
   The app is user-usable:
-  create profiles, import mods (folder/archive, Nexus/Untracked), manage
+  create profiles, import mods (folder/archive, Nexus/Untracked) or link an
+  external mod folder without copying it, manage
   the mod list (enable/disable/reorder/policy/remove), configure Settings
   (discovery paths + mod-repo location), and launch modded Darktide. Every
   Nexus Latest row shows a stable update-action button (disabled + neutral when
@@ -147,7 +148,19 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           regardless of tier (disabled + neutral when no update,
                           enabled + accent-blue arrow when flagged); Pinned/
                           Untracked rows keep the reserved cell but no button. The
-                          rate-limit notice sits in the header. `ModItemViewModel`
+                          rate-limit notice sits in the header. The Add split
+                          button gains a third flyout item, "Link external folder"
+                          (folder picker, no modal); `LinkModsCommand` peeks the
+                          base name, runs the collision check (excluding a re-link),
+                          then `LinkFolder` + `AddMod(LatestPolicy)`. A linked row's
+                          badge cell is a two-state indicator: available shows an
+                          "External" pill (`OpenFolderCommand` opens the OS file
+                          manager at the external folder), broken shows a
+                          non-clickable "Folder unavailable" text in the same cell
+                          (caution brush; `IsExternalBroken` pushed from
+                          `IsExternalAvailable` at Reload). The policy ComboBox is
+                          disabled for linked rows + the update-action cell stays
+                          empty (space preserved). `ModItemViewModel`
                           carries the INPC state + derived `SourceUrl`/`UpdatePageUrl`/
                           `IsNexusLatest`/`CanShowUpdateAction`/
                           `UpdateActionEnabled`/`UpdateActionTooltip`/`NexusModId`;
@@ -299,10 +312,12 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           <versionFolder>/<baseName>/, then writes mods.lst; the
                           base name, not the container's display name, is the link
                           + mods.lst name; the StagingLinkCreator delegate selects
-                          junction vs symlink per OS) + SetModPolicy transitions + the
+                          junction vs symlink per OS; a linked container stages
+                          directly from its external folder, no version resolution) + SetModPolicy transitions + the
                         import-time base-name collision hard-block
                         (GetBaseNameCollision; two same-folder mods can't coexist
-                        in a profile) + per-profile launch settings
+                        in a profile; resolves a linked mod's base name from the
+                        external folder's own name) + per-profile launch settings
                         (EnvVar/LaunchSettings: ordered env-var entries + game
                         args; GetLaunchSettings/SetLaunchSettings validate at the
                         setter via the shared LaunchSettingsValidator
@@ -315,7 +330,8 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         apply at launch) + the auto-sort seam
                         (IModOrderResolver/IdentityModOrderResolver, identity stub now;
                         real dependency-driven resolver later) + ModCleanup (the startup
-                        prune orchestration)
+                        prune orchestration; keeps a referenced linked container by
+                        containerId sentinel, since a linked container has no versions)
   mods/          Modificus.Curator.Mods -- the unified mod repository
                         (IModRepository: UUID containers per (source, identity),
                         opaque-ID version subfolders, per-container container.json
@@ -323,12 +339,15 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         RenameContainer (display-label rename; identity Id +
                         on-disk directory unchanged; keeps the untracked-name
                         index consistent for untracked containers), PruneUnreferenced
-                        GC at startup) + the version-policy model (ModVersionPolicy:
+                        GC at startup, keeping a referenced linked container by
+                        containerId sentinel) + the version-policy model (ModVersionPolicy:
                         PinnedPolicy/LatestPolicy; PinnedPolicy pins by VersionId, a foreign
                         key to ModVersion.Folder, so the repo is the sole source of truth for
                         version details) + the
                         mod-source provenance model (ModSource: UntrackedSource/
-                        NexusSource + ModSourceParser URL parsing) + the
+                        NexusSource/LinkedSource, the last carrying a normalized
+                        ExternalPath for a no-copy external folder, + ModSourceParser
+                        URL parsing) + the
                         local-import service (IModImportService: folder/archive ->
                         container/version; content-based archive detection via
                         SharpCompress (zip/7z/rar/...) not extension, traversal-safe
@@ -340,7 +359,10 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         exposes GetBaseName + FindExistingContainer peeks for the
                         collision block; AddVersion dedup refreshes
                         RemoteUploadedAt from the re-acquired version's
-                        remote-publish timestamp).
+                        remote-publish timestamp; LinkFolder records an external
+                        folder as a metadata-only LinkedSource container with no
+                        copy, + IsExternalAvailable reports a linked container's
+                        transient external-folder availability).
   integrations/         Modificus.Curator.Integrations -- the Nexus Mods v1
                         client + auth
                         (INexusClient over the v1 REST endpoints with per-request
@@ -394,7 +416,9 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         untouched);
                         the batch covers EVERY NexusSource mod (Latest AND Pinned),
                         but Pinned mods are never flagged (the tier flag logic is
-                        Latest-only); the same batch query also returns the current
+                        Latest-only); linked mods are excluded entirely (they have
+                        no Nexus identity + no versions, so they never enter the
+                        check); the same batch query also returns the current
                         Nexus mod `name` for every id sent, so a name-sync pass
                         after the tier logic renames each container whose stored
                         Name has drifted to match its current Nexus name at zero
@@ -477,6 +501,7 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
     Modificus.Curator.Profiles.Tests/        xUnit tests for the profiles library (incl. staging
                                           + the launch-settings round-trip/normalization/validation)
     Modificus.Curator.Mods.Tests/      xUnit tests for the mod repository + import
+                                        (incl. the linked-folder add + linked-container prune)
     Modificus.Curator.Integrations.Tests/    xUnit tests for the Nexus client
                                           (against a fake HttpMessageHandler),
                                           the auth factories (apikey / OAuth / None + selector),
@@ -537,7 +562,12 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             via the UpdateCoordinator + acknowledgement + the
                                             automatic-update setting + the AutomaticUpdateService
                                             gating/sequencing/isolation/concurrency/profile-switch
-                                            + SourceUrl resolution;
+                                            + SourceUrl resolution; + the linked-folder flow
+                                            (LinkModsCommand peek/collision-refusal/re-link +
+                                            LatestPolicy add, the linked badge two-state available/
+                                            broken, OpenFolderCommand launch + failure alert, the
+                                            disabled policy + empty update-action cell for linked
+                                            rows, IsExternalBroken on Reload);
                                             + the DmfPromptService (the two DMF
                                             cases: add existing / download + add or
                                             browser-open, the new-profile trigger, the
@@ -699,7 +729,7 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   `container.json` manifests, in-memory index rebuilt from a scan,
   `PruneUnreferenced` GC; the version-policy model `ModVersionPolicy`; the
   mod-source provenance model `ModSource`
-  (`UntrackedSource`/`NexusSource`) + `ModSourceParser`; the
+  (`UntrackedSource`/`NexusSource`/`LinkedSource`) + `ModSourceParser`; the
   local-import service `IModImportService`). **General** carries cross-cutting
   infra: logging, `ConfigLoader`, and `AppStateStore` (the active-profile id +
   last update-check timestamp + manual-refresh throttle window, persisted to
@@ -708,8 +738,9 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   active profile, the switch-block gate, and the live running-state), global
   Preferences + i18n infrastructure, the mod-list UI (view mods with
   source/version badges, enable/disable, remove-with-confirm, reorder, per-mod
-  Latest/Pinned policy, auto-sort identity stub, and local folder/archive import
-  via file picker + drag-and-drop, joined to containers via `IModRepository` by
+  Latest/Pinned policy, auto-sort identity stub, local folder/archive import
+  via file picker + drag-and-drop, and linking an external mod folder without
+  copying it, joined to containers via `IModRepository` by
   `ContainerId`), and Launch (`LaunchCommand` -> `IRelayLaunchService.Launch`
   -> branch on `LaunchResult.Status` (`Launched` -> an immediate
   `IsGameRunning` refresh (the session's `Refresh`) so the running indicator +
