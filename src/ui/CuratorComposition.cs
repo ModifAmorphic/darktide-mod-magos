@@ -162,7 +162,13 @@ public static class CuratorComposition
                 sp.GetRequiredService<Action<Action>>(),
                 sp.GetRequiredService<ILogger<ModListViewModel>>(),
                 startCountdownTimer,
-                stopCountdownTimer);
+                stopCountdownTimer,
+                // Optional: null on platforms with no registrar (not Windows or
+                // Linux). Resolved via GetService so unsupported platforms do not
+                // throw on activation; the mod-list empty-state Nexus hint stays
+                // hidden there. Passed by name so launchExternal /
+                // launchExternalPath fall back to their production defaults.
+                nxmRegistrar: sp.GetService<INxmHandlerRegistrar>());
         });
         services.AddSingleton(sp => new ShellViewModel(
             sp.GetRequiredService<IProfileService>(),

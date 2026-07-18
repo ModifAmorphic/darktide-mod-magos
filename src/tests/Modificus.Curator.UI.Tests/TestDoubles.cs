@@ -89,6 +89,11 @@ internal static class TestDoubles
     /// open-external-folder seam). When omitted, wires
     /// <see cref="TestLauncher.NoOpPath"/> so a linked-row badge click can never
     /// reach the production file-manager launch.</param>
+    /// <param name="nxmRegistrar">Optional <see cref="INxmHandlerRegistrar"/>
+    /// override. When omitted (the default), the VM's <c>IsNxmRegistered</c>
+    /// stays <c>false</c> (no registrar wired). Pass a
+    /// <see cref="FakeNxmHandlerRegistrar"/> to drive the empty-state Nexus
+    /// hint's visibility.</param>
     public static ModListViewModel BuildModList(
         FakeProfileService? profiles = null,
         FakeProfileSession? session = null,
@@ -110,7 +115,8 @@ internal static class TestDoubles
         Action<Action>? startCountdownTimer = null,
         Action? stopCountdownTimer = null,
         Func<Uri, bool>? launchExternal = null,
-        Func<string, bool>? launchExternalPath = null)
+        Func<string, bool>? launchExternalPath = null,
+        INxmHandlerRegistrar? nxmRegistrar = null)
     {
         profiles ??= Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -184,7 +190,8 @@ internal static class TestDoubles
             startCountdownTimer,
             stopCountdownTimer,
             launchExternal,
-            launchExternalPath);
+            launchExternalPath,
+            nxmRegistrar);
     }
 }
 

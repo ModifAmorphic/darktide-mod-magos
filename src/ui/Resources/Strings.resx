@@ -379,8 +379,8 @@
     <comment>Empty-state message in the mod list when no profile is active.</comment>
   </data>
   <data name="ModList_EmptyNoMods" xml:space="preserve">
-    <value>No mods yet. Add a mod (button or drag-and-drop) to get started.</value>
-    <comment>Empty-state message when the active profile has no mods.</comment>
+    <value>Add a mod (button or drag-and-drop) to get started.</value>
+    <comment>Primary hint in the no-mods empty state. Shown while there is an active profile with zero or one mod (typically DMF-only right after onboarding), so the user is invited to add their own mods alongside the framework.</comment>
   </data>
   <data name="ModList_AddButtonTooltip" xml:space="preserve">
     <value>Add a mod to this profile</value>
@@ -398,9 +398,9 @@
     <value>Link external folder</value>
     <comment>The third flyout item on the Add split button: links an external mod folder into the profile without copying it (the folder stays where it is; Curator stages from it at launch).</comment>
   </data>
-  <data name="ModList_DragDropHint" xml:space="preserve">
-    <value>Drag mod files or folders onto the window to import (Windows only).</value>
-    <comment>Subtle hint in the no-mods empty state + the content-area tooltip, noting drag-and-drop is a Windows-only feature (XDND lands in Avalonia 12.1).</comment>
+  <data name="ModList_NxmDownloadHint" xml:space="preserve">
+    <value>On Nexus, click the 'Vortex' or 'Mod manager download' button.</value>
+    <comment>Secondary hint shown in the no-mods empty state ONLY when Curator is the registered OS handler for nxm:// links, so the user knows those Nexus download buttons route the mod straight into the app.</comment>
   </data>
   <data name="ModList_AutoSort" xml:space="preserve">
     <value>Auto-sort</value>
@@ -569,12 +569,12 @@
     <comment>Validation message when the version field is empty for a remote source.</comment>
   </data>
   <data name="Import_NexusUrlLabel" xml:space="preserve">
-    <value>Mod URL</value>
-    <comment>Label over the URL field when Nexus is chosen.</comment>
+    <value>Mod URL or ID</value>
+    <comment>Label over the URL field when Nexus is chosen. The field accepts either a full Nexus mod URL or a bare numeric mod id.</comment>
   </data>
   <data name="Import_UrlPlaceholderNexus" xml:space="preserve">
-    <value>https://www.nexusmods.com/warhammer40kdarktide/mods/…</value>
-    <comment>Watermark / placeholder for the Nexus URL field.</comment>
+    <value>### or https://www.nexusmods.com/warhammer40kdarktide/mods/###</value>
+    <comment>Watermark / placeholder for the Nexus URL field. Shows BOTH accepted forms (a bare mod id, or the full Nexus URL), separated by 'or'.</comment>
   </data>
   <data name="Import_OkButton" xml:space="preserve">
     <value>OK</value>
@@ -585,8 +585,8 @@
     <comment>The Cancel button in the import modal.</comment>
   </data>
   <data name="Import_UrlRequired" xml:space="preserve">
-    <value>A URL is required for this source.</value>
-    <comment>Validation message when the URL field is empty for a remote source.</comment>
+    <value>A URL or mod ID is required for this source.</value>
+    <comment>Validation message when the URL field is empty for a remote source. Matches the field accepting either a Nexus URL or a bare mod id.</comment>
   </data>
   <data name="Import_UrlInvalid" xml:space="preserve">
     <value>This URL does not look right. Check the format and try again.</value>

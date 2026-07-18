@@ -67,7 +67,7 @@ public sealed class ModListViewModelTests
 
         Assert.True(vm.HasActiveProfile);
         Assert.True(vm.HasMods);
-        Assert.False(vm.IsEmptyNoMods);
+        Assert.False(vm.ShowAddModsHint);
         Assert.Equal(2, vm.Mods.Count);
         // Sorted by Order.
         Assert.Equal("DMF", vm.Mods[0].Name);
@@ -100,8 +100,87 @@ public sealed class ModListViewModelTests
 
         Assert.True(vm.HasActiveProfile);
         Assert.False(vm.HasMods);
-        Assert.True(vm.IsEmptyNoMods);
+        Assert.True(vm.ShowAddModsHint);
         Assert.Empty(vm.Mods);
+    }
+
+    // ---- ShowAddModsHint thresholds (zero / one / two mods) -----------------
+
+    [Fact]
+    public void ShowAddModsHint_is_true_for_an_active_profile_with_a_single_mod()
+    {
+        // A DMF-only profile right after onboarding: one mod, but the hint
+        // still invites the user to add their own mods alongside it.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var dmf = Seed(repo, new UntrackedSource(), "DMF");
+        profiles.WithMods(a.Id, new ModListEntry { ContainerId = dmf.Id, Order = 0 });
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
+
+        Assert.True(vm.HasActiveProfile);
+        Assert.Single(vm.Mods);
+        Assert.True(vm.ShowAddModsHint);
+    }
+
+    [Fact]
+    public void ShowAddModsHint_is_false_for_an_active_profile_with_two_mods()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var dmf = Seed(repo, new UntrackedSource(), "DMF");
+        var other = Seed(repo, new UntrackedSource(), "Other");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = dmf.Id, Order = 0 },
+            new ModListEntry { ContainerId = other.Id, Order = 1 });
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
+
+        Assert.True(vm.HasActiveProfile);
+        Assert.Equal(2, vm.Mods.Count);
+        Assert.False(vm.ShowAddModsHint);
+    }
+
+    [Fact]
+    public void ShowAddModsHint_is_false_without_an_active_profile_regardless_of_mod_count()
+    {
+        // No active profile: the no-profile empty state shows instead, so the
+        // add-mods hint must stay hidden even if Mods somehow had rows.
+        var profiles = TestDoubles.Profiles();
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = null });
+
+        Assert.False(vm.HasActiveProfile);
+        Assert.False(vm.ShowAddModsHint);
+    }
+
+    // ---- nxm registration probe (drives the empty-state Nexus hint) --------
+
+    [Fact]
+    public void IsNxmRegistered_true_when_the_registrar_reports_registered()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var registrar = new FakeNxmHandlerRegistrar { Registered = true };
+
+        var vm = TestDoubles.BuildModList(profiles, session,
+            nxmRegistrar: registrar);
+
+        Assert.True(vm.IsNxmRegistered);
+    }
+
+    [Fact]
+    public void IsNxmRegistered_false_when_no_registrar_is_wired()
+    {
+        // The default Build path: no registrar passed, so the probe is a no-op
+        // and the empty-state Nexus hint stays hidden.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+
+        var vm = TestDoubles.BuildModList(profiles, session);
+
+        Assert.False(vm.IsNxmRegistered);
     }
 
     [Fact]
