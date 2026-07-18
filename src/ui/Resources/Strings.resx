@@ -394,6 +394,10 @@
     <value>Add Mod (folder)</value>
     <comment>The folder-import label: the Add split button's primary label in folder mode + the folder flyout item.</comment>
   </data>
+  <data name="ModList_LinkExternalFolder" xml:space="preserve">
+    <value>Link external folder</value>
+    <comment>The third flyout item on the Add split button: links an external mod folder into the profile without copying it (the folder stays where it is; Curator stages from it at launch).</comment>
+  </data>
   <data name="ModList_DragDropHint" xml:space="preserve">
     <value>Drag mod files or folders onto the window to import (Windows only).</value>
     <comment>Subtle hint in the no-mods empty state + the content-area tooltip, noting drag-and-drop is a Windows-only feature (XDND lands in Avalonia 12.1).</comment>
@@ -447,6 +451,22 @@
     <value>Nexus #{0}</value>
     <comment>Source badge text for a Nexus Mods mod. {0} is the Nexus mod id.</comment>
   </data>
+  <data name="ModRow_SourceLinked" xml:space="preserve">
+    <value>External</value>
+    <comment>Source badge text for a linked mod whose external folder is present. The badge is a clickable pill that opens the folder in the OS file manager.</comment>
+  </data>
+  <data name="ModRow_LinkedFolderBroken" xml:space="preserve">
+    <value>Folder unavailable</value>
+    <comment>Source badge text for a linked mod whose external folder is missing. Replaces the clickable badge with non-clickable warning text in the same cell.</comment>
+  </data>
+  <data name="ModRow_LinkedOpenTooltip" xml:space="preserve">
+    <value>Open folder</value>
+    <comment>Tooltip on the linked-mod badge when the external folder is available (click opens it in the OS file manager).</comment>
+  </data>
+  <data name="ModRow_LinkedBrokenTooltip" xml:space="preserve">
+    <value>Folder is missing: restore it or remove this mod</value>
+    <comment>Tooltip on the linked-mod badge when the external folder is missing. The mod cannot be staged until the folder is restored.</comment>
+  </data>
   <data name="ModRow_NotFound" xml:space="preserve">
     <value>Not found</value>
     <comment>Source badge text when a mod has no mod-store entry (stale profile reference).</comment>
@@ -498,6 +518,14 @@
   <data name="ModList_OpenFilesFailedMessage" xml:space="preserve">
     <value>Could not open the Nexus files page for '{0}'. Visit it manually: {1}</value>
     <comment>Body of the launcher-failure alert. {0} is the mod's display name; {1} is the files-page URL (for manual copy).</comment>
+  </data>
+  <data name="ModList_OpenFolderFailedTitle" xml:space="preserve">
+    <value>Could not open the folder</value>
+    <comment>Title of the alert shown when opening a linked mod's external folder in the OS file manager fails.</comment>
+  </data>
+  <data name="ModList_OpenFolderFailedMessage" xml:space="preserve">
+    <value>Could not open the external folder for '{0}'. Check that the folder still exists. Path: {1}</value>
+    <comment>Body of the open-folder-failure alert. {0} is the mod's display name; {1} is the external folder path (for manual navigation).</comment>
   </data>
   <data name="ModList_AutoUpdateFailedTitle" xml:space="preserve">
     <value>Some automatic updates failed</value>

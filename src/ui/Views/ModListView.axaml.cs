@@ -14,19 +14,22 @@ namespace Modificus.Curator.UI.Views;
 /// The mod-list content area (a <see cref="UserControl"/>). Its
 /// <c>DataContext</c> is a <see cref="ModListViewModel"/> (bound from the shell as
 /// <c>{Binding ModList}</c>). Owns the add entry points (the Add split button's
-/// archive file picker + folder picker + the content-area drag-and-drop target) and
-/// routes every per-row interaction (toggle / move / policy / remove) through
-/// code-behind handlers calling the parent VM's commands with the row as the
-/// parameter (the established <c>ManageProfilesWindow</c> pattern). All state +
-/// service calls stay in the (unit-tested) VM; this is pure view mechanics.
+/// archive file picker + folder picker + the link-external-folder picker + the
+/// content-area drag-and-drop target) and routes every per-row interaction
+/// (toggle / move / policy / remove / open external folder) through code-behind
+/// handlers calling the parent VM's commands with the row as the parameter (the
+/// established <c>ManageProfilesWindow</c> pattern). All state + service calls
+/// stay in the (unit-tested) VM; this is pure view mechanics.
 /// </summary>
 /// <remarks>
 /// <para><b>Add split button:</b> the primary click opens the current mode's
 /// picker (archive file picker by default; folder picker after the folder flyout item
-/// is chosen). The flyout's two items switch the mode (one-click import) and the
+/// is chosen). The flyout's first two items switch the mode (one-click import) and the
 /// VM's <see cref="ModListViewModel.AddMode"/> is mirrored so the split button's
-/// label reflects it. Folders get a picker path because drag-and-drop is a
-/// Windows-only feature in Avalonia 12.0.x.</para>
+/// label reflects it. The third flyout item ("Link external folder") opens its own
+/// folder picker routed to the link command (a separate action, not a mode switch).
+/// Folders get a picker path because drag-and-drop is a Windows-only feature in
+/// Avalonia 12.0.x.</para>
 /// <para><b>Drag-and-drop:</b> the content area has
 /// <c>DragDrop.AllowDrop="True"</c> + <c>Drop</c>/<c>DragOver</c> handlers. The
 /// drop reads the files (folders AND archives, multi) via the sync
@@ -99,6 +102,57 @@ public partial class ModListView : UserControl
     {
         SetAddMode(ModAddMode.Folder);
         await OpenFolderPickerAsync();
+    }
+
+    /// <summary>
+    /// The "Link external folder" flyout item: opens a folder picker and forwards
+    /// the selected folder paths to the VM's link command (records each folder as
+    /// a metadata-only linked container, no copy). Mirrors
+    /// <see cref="AddFolder_Click"/> minus the mode switch: linking is a separate
+    /// action, not a mode of the copy import, so the split button's primary
+    /// label / default picker is unaffected.
+    /// </summary>
+    private async void LinkFolder_Click(object? sender, RoutedEventArgs e)
+    {
+        await OpenLinkFolderPickerAsync();
+    }
+
+    /// <summary>
+    /// Opens a multi-select folder picker and forwards the selected folder paths
+    /// to the VM's link command. The picker call mirrors
+    /// <see cref="OpenFolderPickerAsync"/> exactly (the same
+    /// <c>StorageProvider.OpenFolderPickerAsync</c> path); only the target
+    /// command differs.
+    /// </summary>
+    private async Task OpenLinkFolderPickerAsync()
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is null)
+        {
+            return;
+        }
+
+        var options = new FolderPickerOpenOptions
+        {
+            AllowMultiple = true,
+        };
+
+        var result = await topLevel.StorageProvider.OpenFolderPickerAsync(options);
+        if (result is null || result.Count == 0)
+        {
+            return;
+        }
+
+        var paths = result.Select(f => f.Path.LocalPath).ToArray();
+        if (paths.Length > 0)
+        {
+            await vm.LinkModsCommand.ExecuteAsync(paths);
+        }
     }
 
     /// <summary>
@@ -364,6 +418,22 @@ public partial class ModListView : UserControl
         {
             // AsyncRelayCommand.Execute forwards to ExecuteAsync.
             ViewModel?.UpdateCommand.Execute(row);
+        }
+    }
+
+    /// <summary>
+    /// Routes a linked row's badge click to the parent's
+    /// <c>OpenFolderCommand</c>, which opens the OS file manager at the row's
+    /// external folder. No-op for non-linked or broken rows (the command guards
+    /// on both). The row is passed as the command parameter; the view is pure
+    /// mechanics.
+    /// </summary>
+    private void OpenFolder_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is HyperlinkButton hb && hb.DataContext is ModItemViewModel row)
+        {
+            // AsyncRelayCommand.Execute forwards to ExecuteAsync.
+            ViewModel?.OpenFolderCommand.Execute(row);
         }
     }
 

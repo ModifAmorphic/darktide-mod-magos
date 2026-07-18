@@ -186,6 +186,8 @@
                       Click="AddArchive_Click" />
             <MenuItem Header="{ReflectionBinding [ModList_AddFolder], Source={StaticResource Loc}}"
                       Click="AddFolder_Click" />
+            <MenuItem Header="{ReflectionBinding [ModList_LinkExternalFolder], Source={StaticResource Loc}}"
+                      Click="LinkFolder_Click" />
           </MenuFlyout>
         </SplitButton.Flyout>
       </SplitButton>
@@ -259,12 +261,25 @@
                   <!--
                     Source badge area. The indeterminate progress affordance (shown
                     only while this row's IsUpdating is true) sits immediately LEFT
-                    of the source-badge HyperlinkButton, occupying the former
-                    update-status area, so the row's update activity is visible
-                    without replacing the stable update-action button in column 4.
-                    The badge is a HyperlinkButton styled as the pill; its
-                    NavigateUri is the row's SourceUrl (null for Untracked, which
-                    the HyperlinkButton treats as a no-op click).
+                    of the source-badge element, occupying the former update-status
+                    area, so the row's update activity is visible without replacing
+                    the stable update-action button in column 4.
+
+                    The badge cell holds three mutually-exclusive elements driven by
+                    row-VM flags (only one is visible per row):
+                      - Nexus/Untracked badge (HyperlinkButton, NavigateUri=SourceUrl):
+                        visible when the row is not linked. For Nexus the click opens
+                        the mod page; for Untracked the NavigateUri is null (no-op).
+                      - Linked + available badge (HyperlinkButton, Click=OpenFolder_Click):
+                        visible when the row is linked and its external folder is present.
+                        Click opens the OS file manager at the external folder (the
+                        HyperlinkButton leaves NavigateUri unset and uses the Click
+                        member directly, per the Avalonia 12 supported pattern for
+                        non-URI navigation).
+                      - Linked + broken text (Border + TextBlock, non-clickable):
+                        visible when the row is linked and its external folder is
+                        missing. Warning foreground (the same caution brush the
+                        rate-limit notice uses) so the state is unmistakable.
                   -->
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
                               Margin="8,0,0,0" VerticalAlignment="Center">
@@ -276,11 +291,34 @@
                                  IsIndeterminate="True"
                                  IsVisible="{Binding IsUpdating}"
                                  VerticalAlignment="Center" />
+                    <!-- Nexus / Untracked badge (hidden for linked rows). -->
                     <HyperlinkButton Classes="badge"
                                      NavigateUri="{Binding SourceUrl}"
+                                     IsVisible="{Binding IsBadgeHyperlink}"
                                      ToolTip.Tip="{ReflectionBinding [ModRow_SourceBadgeLinkTooltip], Source={StaticResource Loc}}">
                       <TextBlock Text="{Binding SourceBadgeText}" FontSize="11" />
                     </HyperlinkButton>
+                    <!-- Linked + available: clickable pill opening the external
+                         folder in the OS file manager. NavigateUri is
+                         intentionally unset; the Click handler routes to the
+                         parent's OpenFolderCommand. -->
+                    <HyperlinkButton Classes="badge"
+                                     IsVisible="{Binding IsLinkedAvailable}"
+                                     Click="OpenFolder_Click"
+                                     CommandParameter="{Binding}"
+                                     ToolTip.Tip="{ReflectionBinding [ModRow_LinkedOpenTooltip], Source={StaticResource Loc}}">
+                      <TextBlock Text="{Binding SourceBadgeText}" FontSize="11" />
+                    </HyperlinkButton>
+                    <!-- Linked + broken: non-clickable warning text in a pill,
+                         so the broken state reads as the same shape but clearly
+                         subdued. The caution brush is the established warning
+                         foreground (the rate-limit notice dot uses it too). -->
+                    <Border Classes="badge"
+                            IsVisible="{Binding IsLinkedBroken}"
+                            ToolTip.Tip="{ReflectionBinding [ModRow_LinkedBrokenTooltip], Source={StaticResource Loc}}">
+                      <TextBlock Text="{Binding SourceBadgeText}" FontSize="11"
+                                 Foreground="{DynamicResource SystemControlForegroundCautionBrush}" />
+                    </Border>
                   </StackPanel>
 
                   <!-- Enabled toggle (two-way; Click applies via the parent). -->
@@ -306,6 +344,7 @@
                               Margin="12,0,0,0" VerticalAlignment="Center">
                     <ComboBox SelectedIndex="{Binding PolicyChoice, Mode=TwoWay}"
                               SelectionChanged="Policy_Changed"
+                              IsEnabled="{Binding IsPolicyEditable}"
                               MinWidth="100">
                       <ComboBoxItem Content="{ReflectionBinding [ModRow_PolicyLatest], Source={StaticResource Loc}}" />
                       <ComboBoxItem Content="{ReflectionBinding [ModRow_PolicyPinned], Source={StaticResource Loc}}" />

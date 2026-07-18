@@ -1742,4 +1742,460 @@ public sealed class ModListViewModelTests
 
         Assert.False(Row(vm, "DMF").IsUpdating);
     }
+
+    // ---- link external folder (LinkModsCommand) -----------------------------
+
+    /// <summary>Builds the VM with explicit fakes so the link-flow tests can
+    /// shape each one. The profile is seeded with one profile (Alpha) active;
+    /// the import service + repo share state so the link flow's reload joins the
+    /// freshly created linked container. Returns the VM + the fakes the test
+    /// asserts on (the dialogs is always the one wired into the VM).</summary>
+    private static (ModListViewModel Vm, FakeProfileService Profiles, FakeModRepository Repo, FakeModImportService Import, FakeDialogService Dialogs, FakeProfileSession Session, Guid ProfileId)
+        BuildForLinked(
+            FakeModImportService? import = null,
+            FakeDialogService? dialogs = null,
+            Func<string, bool>? launchExternalPath = null,
+            FakeModRepository? repo = null)
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        repo ??= new FakeModRepository();
+        import ??= new FakeModImportService(repo);
+        dialogs ??= new FakeDialogService();
+        var session = new FakeProfileSession { ActiveProfileId = a.Id };
+        var vm = TestDoubles.BuildModList(profiles, session, repo, import,
+            dialogs: dialogs, localization: Localization, launchExternalPath: launchExternalPath);
+        return (vm, profiles, repo, import, dialogs, session, a.Id);
+    }
+
+    [Fact]
+    public async Task LinkMods_creates_a_linked_container_and_adds_it_with_LatestPolicy()
+    {
+        var (vm, profiles, repo, import, _, _, a) = BuildForLinked();
+
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+
+        // LinkFolder ran once with the picked path; the linked container was
+        // created on the repo.
+        Assert.Single(import.LinkFolderCalls);
+        Assert.Equal("/external/DMF", import.LinkFolderCalls[0]);
+        // AddMod ran once with LatestPolicy.
+        var addCall = Assert.Single(profiles.AddModCalls);
+        Assert.Equal(a, addCall.Id);
+        Assert.IsType<LatestPolicy>(addCall.Policy);
+        // The new linked container is in the repo (reload joined it).
+        Assert.Single(vm.Mods);
+        Assert.True(Row(vm, "DMF").IsLinked);
+    }
+
+    [Fact]
+    public async Task LinkMods_uses_GetBaseName_for_the_collision_peek()
+    {
+        // GetBaseName validates the mod-folder shape + returns the base name; the
+        // link flow peeks it before LinkFolder (same gate as the copy import).
+        var (vm, _, _, import, _, _, _) = BuildForLinked();
+
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+
+        Assert.Single(import.GetBaseNameCalls);
+        Assert.Equal("/external/DMF", import.GetBaseNameCalls[0]);
+    }
+
+    [Fact]
+    public async Task LinkMods_aborts_when_the_source_structure_is_invalid()
+    {
+        // An invalid folder shape (no matching <base>.mod) throws at the
+        // GetBaseName peek: the link flow surfaces an alert naming the path +
+        // aborts the remaining batch. Nothing is created.
+        var dialogs = new FakeDialogService();
+        var (vm, profiles, _, import, _, _, _) = BuildForLinked(dialogs: dialogs);
+        import.GetBaseNameFunc = path => throw new InvalidOperationException(
+            "Invalid mod folder '/external/Bad': no 'Bad.mod' descriptor found.");
+
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/Bad" });
+
+        // No LinkFolder, no AddMod, no row.
+        Assert.Empty(import.LinkFolderCalls);
+        Assert.Empty(profiles.AddModCalls);
+        Assert.Empty(vm.Mods);
+        // The bad-shape alert surfaced, naming the path + the detail.
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Contains("/external/Bad", alert.Message);
+        Assert.Contains("Invalid mod folder", alert.Message);
+    }
+
+    [Fact]
+    public async Task LinkMods_aborts_when_LinkFolder_throws_containment()
+    {
+        // A containment rejection (the folder overlaps a Curator root) throws
+        // inside LinkFolder: the link flow surfaces an alert + aborts. The peek
+        // ran (the shape validated); nothing is added.
+        var dialogs = new FakeDialogService();
+        var (vm, profiles, _, import, _, _, _) = BuildForLinked(dialogs: dialogs);
+        import.LinkFolderExceptionQueue = new Queue<Exception?>(new Exception?[]
+        {
+            new InvalidOperationException("Cannot link '/external/DMF': it overlaps the mods repository root."),
+        });
+
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+
+        // LinkFolder was recorded (then threw); AddMod never ran.
+        Assert.Single(import.LinkFolderCalls);
+        Assert.Empty(profiles.AddModCalls);
+        Assert.Empty(vm.Mods);
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Contains("/external/DMF", alert.Message);
+        Assert.Contains("overlaps the mods repository root", alert.Message);
+    }
+
+    [Fact]
+    public async Task LinkMods_refuses_a_base_name_collision_and_aborts()
+    {
+        // A linked folder whose base name matches an existing profile mod is
+        // REFUSED before anything is created: the link flow peeks the base name,
+        // asks the profile for a collision (passing the would-be container to
+        // exclude a re-link), and on a hit shows an alert + aborts. No LinkFolder,
+        // no AddMod.
+        var dialogs = new FakeDialogService();
+        var (vm, profiles, repo, import, _, _, a) = BuildForLinked(dialogs: dialogs);
+        var conflicting = repo.Seed(new UntrackedSource(), "Existing DMF");
+        profiles.GetBaseNameCollisionResult =
+            new ModListEntry { ContainerId = conflicting.Id, Enabled = true, Order = 0 };
+
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/dmf" });
+
+        // The peek + the collision check both ran; FindExistingContainer fed the
+        // exclusion (null here, a brand-new linked container).
+        Assert.Single(import.GetBaseNameCalls);
+        Assert.Single(import.FindExistingContainerCalls);
+        var collisionCall = Assert.Single(profiles.GetBaseNameCollisionCalls);
+        Assert.Null(collisionCall.ExcludeContainerId);
+        // Refused BEFORE LinkFolder: no container write, no profile entry.
+        Assert.Empty(import.LinkFolderCalls);
+        Assert.Empty(profiles.AddModCalls);
+        Assert.Empty(vm.Mods);
+        // The collision alert names the conflicting mod.
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Contains("Existing DMF", alert.Message);
+    }
+
+    [Fact]
+    public async Task LinkMods_re_link_of_the_same_path_is_not_a_collision()
+    {
+        // Re-linking the same external path resolves to the SAME container
+        // (Linked identity is the normalized path). The link flow peeks that
+        // container (FindExistingContainer) + passes its id as the collision-
+        // check exclusion, so the re-link is NOT flagged: LinkFolder returns the
+        // existing id (a refresh) + AddMod is its idempotent no-op. No collision
+        // alert across either link.
+        var dialogs = new FakeDialogService();
+        var (vm, profiles, repo, import, _, _, _) = BuildForLinked(dialogs: dialogs);
+        // First link creates the container + adds it.
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+        var firstContainer = repo.List().Single(c => c.Source is LinkedSource);
+        var firstPassCollisionCalls = profiles.GetBaseNameCollisionCalls.Count;
+
+        // Re-link the same path (a trailing-slash variant resolves to the same
+        // normalized container id).
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF/" });
+
+        // The re-link's collision check carried the existing container id as the
+        // exclusion (the second collision call this run).
+        Assert.Equal(firstPassCollisionCalls + 1, profiles.GetBaseNameCollisionCalls.Count);
+        var reLinkCollisionCall = profiles.GetBaseNameCollisionCalls[^1];
+        Assert.Equal(firstContainer.Id, reLinkCollisionCall.ExcludeContainerId);
+        // No collision alert across either link.
+        Assert.Empty(dialogs.AlertCalls);
+        // LinkFolder ran twice (the second is a refresh returning the same id);
+        // AddMod ran twice (the second is idempotent for the existing entry).
+        Assert.Equal(2, import.LinkFolderCalls.Count);
+        Assert.Equal(2, profiles.AddModCalls.Count);
+        Assert.Equal(firstContainer.Id, profiles.AddModCalls[1].ContainerId);
+        // Still one row (the re-link deduped).
+        Assert.Single(vm.Mods);
+    }
+
+    [Fact]
+    public async Task LinkMods_processes_multiple_paths_sequentially()
+    {
+        var (vm, profiles, _, import, _, _, _) = BuildForLinked();
+
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF", "/external/SoundPack" });
+
+        // One peek + one LinkFolder + one AddMod per path, in order.
+        Assert.Equal(2, import.GetBaseNameCalls.Count);
+        Assert.Equal(2, import.LinkFolderCalls.Count);
+        Assert.Equal(2, profiles.AddModCalls.Count);
+        Assert.Equal(2, vm.Mods.Count);
+    }
+
+    [Fact]
+    public async Task LinkMods_aborts_the_batch_on_a_failed_peek()
+    {
+        // A failed peek on the second path aborts the batch: the first links
+        // fine, the third is never reached.
+        var dialogs = new FakeDialogService();
+        var (vm, profiles, _, import, _, _, _) = BuildForLinked(dialogs: dialogs);
+        import.GetBaseNameFunc = path => path.EndsWith("Bad")
+            ? throw new InvalidOperationException("Invalid mod folder '/external/Bad'.")
+            : Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+        await vm.LinkModsCommand.ExecuteAsync(
+            new[] { "/external/One", "/external/Bad", "/external/Three" });
+
+        // First linked; second threw; third never reached.
+        Assert.Equal(2, import.GetBaseNameCalls.Count);
+        Assert.Single(import.LinkFolderCalls);
+        Assert.Single(profiles.AddModCalls);
+        Assert.Single(vm.Mods);
+        Assert.Single(dialogs.AlertCalls);
+    }
+
+    [Fact]
+    public async Task LinkMods_with_no_active_profile_logs_and_does_nothing()
+    {
+        var profiles = TestDoubles.Profiles();
+        var repo = new FakeModRepository();
+        var import = new FakeModImportService(repo);
+        var vm = TestDoubles.BuildModList(profiles,
+            new FakeProfileSession { ActiveProfileId = null }, repo, import);
+
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+
+        Assert.Empty(import.LinkFolderCalls);
+        Assert.Empty(profiles.AddModCalls);
+    }
+
+    [Fact]
+    public async Task LinkMods_empty_path_list_is_a_noop()
+    {
+        var (vm, profiles, _, import, _, _, _) = BuildForLinked();
+
+        await vm.LinkModsCommand.ExecuteAsync(Array.Empty<string>());
+
+        Assert.Empty(import.LinkFolderCalls);
+        Assert.Empty(profiles.AddModCalls);
+    }
+
+    // ---- open external folder (OpenFolderCommand) --------------------------
+
+    [Fact]
+    public async Task OpenFolder_launches_the_file_manager_at_the_external_path()
+    {
+        // An available linked row's open-folder click routes the external path
+        // to the injectable launcher seam.
+        var openedPaths = new List<string>();
+        var (vm, _, repo, _, _, _, _) = BuildForLinked(launchExternalPath: path =>
+        {
+            openedPaths.Add(path);
+            return true;
+        });
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+        var row = Row(vm, "DMF");
+
+        await vm.OpenFolderCommand.ExecuteAsync(row);
+
+        Assert.Equal(repo.List().Single(c => c.Source is LinkedSource).Id, row.ContainerId);
+        var opened = Assert.Single(openedPaths);
+        Assert.EndsWith("DMF", opened);
+    }
+
+    [Fact]
+    public async Task OpenFolder_shows_an_alert_when_the_launcher_fails()
+    {
+        var dialogs = new FakeDialogService();
+        var (vm, _, _, _, _, _, _) = BuildForLinked(dialogs: dialogs, launchExternalPath: _ => false);
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+        var row = Row(vm, "DMF");
+
+        await vm.OpenFolderCommand.ExecuteAsync(row);
+
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Contains("DMF", alert.Message);
+    }
+
+    [Fact]
+    public async Task OpenFolder_is_a_noop_for_a_non_linked_row()
+    {
+        var openedPaths = new List<string>();
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var nexus = repo.Seed(new NexusSource { ModId = 8 }, "DMF", "1.0");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = nexus.Id, Enabled = true, Order = 0 });
+        var vm = TestDoubles.BuildModList(profiles,
+            new FakeProfileSession { ActiveProfileId = a.Id }, repo,
+            launchExternalPath: path => { openedPaths.Add(path); return true; });
+        var row = Row(vm, "DMF");
+
+        await vm.OpenFolderCommand.ExecuteAsync(row);
+
+        Assert.Empty(openedPaths);
+    }
+
+    [Fact]
+    public async Task OpenFolder_is_a_noop_for_a_broken_linked_row()
+    {
+        var openedPaths = new List<string>();
+        var dialogs = new FakeDialogService();
+        var (vm, profiles, repo, _, _, _, profileId) = BuildForLinked(
+            dialogs: dialogs,
+            launchExternalPath: path => { openedPaths.Add(path); return true; });
+        await vm.LinkModsCommand.ExecuteAsync(new[] { "/external/DMF" });
+        var container = repo.List().Single(c => c.Source is LinkedSource);
+        // Mark the external folder unavailable + reload so the row reflects it.
+        repo.ExternalUnavailableIds.Add(container.Id);
+        profiles.WithMods(profileId,
+            new ModListEntry { ContainerId = container.Id, Enabled = true, Order = 0, Policy = ModVersionPolicy.Latest });
+        vm.Reload();
+        var row = Row(vm, "DMF");
+
+        Assert.True(row.IsLinkedBroken);
+        await vm.OpenFolderCommand.ExecuteAsync(row);
+
+        Assert.Empty(openedPaths);
+        Assert.Empty(dialogs.AlertCalls);
+    }
+
+    // ---- row building: linked badge two-state + policy gating ---------------
+
+    [Fact]
+    public void Reload_linked_available_row_shows_External_badge_and_disables_policy_edit()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var linked = repo.CreateContainer(new LinkedSource { ExternalPath = "/external/DMF" }, "DMF");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = linked.Id, Enabled = true, Order = 0, Policy = ModVersionPolicy.Latest });
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
+
+        var row = Row(vm, "DMF");
+        Assert.True(row.IsLinked);
+        Assert.True(row.IsLinkedAvailable);
+        Assert.False(row.IsLinkedBroken);
+        Assert.False(row.IsExternalBroken);
+        Assert.False(row.IsBadgeHyperlink); // the Nexus/Untracked badge is suppressed
+        Assert.False(row.IsPolicyEditable); // policy ComboBox disabled
+        Assert.Equal("External", row.SourceBadgeText);
+        // A linked container carries no versions, so the update action never shows.
+        Assert.False(row.CanShowUpdateAction);
+        Assert.Equal("/external/DMF", row.ExternalFolderPath);
+    }
+
+    [Fact]
+    public void Reload_linked_broken_row_shows_FolderUnavailable_and_warning_state()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var linked = repo.CreateContainer(new LinkedSource { ExternalPath = "/external/DMF" }, "DMF");
+        repo.ExternalUnavailableIds.Add(linked.Id); // simulate the folder missing
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = linked.Id, Enabled = true, Order = 0, Policy = ModVersionPolicy.Latest });
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
+
+        var row = Row(vm, "DMF");
+        Assert.True(row.IsLinked);
+        Assert.False(row.IsLinkedAvailable);
+        Assert.True(row.IsLinkedBroken);
+        Assert.True(row.IsExternalBroken);
+        Assert.False(row.IsBadgeHyperlink);
+        Assert.False(row.IsPolicyEditable);
+        Assert.Equal("Folder unavailable", row.SourceBadgeText);
+    }
+
+    [Fact]
+    public void Reload_managed_row_is_unaffected_by_linked_availability_flag()
+    {
+        // A Nexus/Untracked row never reports broken (the repo returns true for
+        // managed containers); its badge + policy editor are unchanged.
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var nexus = repo.Seed(new NexusSource { ModId = 8 }, "DMF", "1.0");
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = nexus.Id, Enabled = true, Order = 0 });
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
+
+        var row = Row(vm, "DMF");
+        Assert.False(row.IsLinked);
+        Assert.False(row.IsLinkedAvailable);
+        Assert.False(row.IsLinkedBroken);
+        Assert.False(row.IsExternalBroken);
+        Assert.True(row.IsBadgeHyperlink);
+        Assert.True(row.IsPolicyEditable);
+        Assert.Equal("Nexus #8", row.SourceBadgeText);
+    }
+
+    // ---- broken linked row interactions still route to the parent -----------
+
+    [Fact]
+    public void Broken_linked_row_enabled_toggle_routes_to_SetModEnabled()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var linked = repo.CreateContainer(new LinkedSource { ExternalPath = "/external/DMF" }, "DMF");
+        repo.ExternalUnavailableIds.Add(linked.Id);
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = linked.Id, Enabled = true, Order = 0, Policy = ModVersionPolicy.Latest });
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
+        var row = Row(vm, "DMF");
+        Assert.True(row.IsLinkedBroken);
+
+        // Flip the checkbox bound state + route through the command.
+        row.Enabled = false;
+        vm.ToggleEnabledCommand.Execute(row);
+
+        var call = Assert.Single(profiles.SetModEnabledCalls);
+        Assert.Equal(a.Id, call.Id);
+        Assert.Equal(linked.Id, call.ContainerId);
+        Assert.False(call.Enabled);
+    }
+
+    [Fact]
+    public void Broken_linked_row_move_up_routes_to_SetModOrder()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var first = repo.Seed(new UntrackedSource(), "First", "1.0");
+        var linked = repo.CreateContainer(new LinkedSource { ExternalPath = "/external/DMF" }, "DMF");
+        repo.ExternalUnavailableIds.Add(linked.Id);
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = first.Id, Enabled = true, Order = 0 },
+            new ModListEntry { ContainerId = linked.Id, Enabled = true, Order = 1, Policy = ModVersionPolicy.Latest });
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo);
+        var brokenRow = Row(vm, "DMF");
+        Assert.True(brokenRow.IsLinkedBroken);
+
+        vm.MoveUpCommand.Execute(brokenRow);
+
+        // SetModOrder ran (reorder not blocked for a broken linked row).
+        Assert.Single(profiles.SetModOrderCalls);
+    }
+
+    [Fact]
+    public async Task Broken_linked_row_remove_routes_to_RemoveMod_after_confirm()
+    {
+        var a = Profile("Alpha");
+        var profiles = TestDoubles.Profiles(a);
+        var repo = new FakeModRepository();
+        var linked = repo.CreateContainer(new LinkedSource { ExternalPath = "/external/DMF" }, "DMF");
+        repo.ExternalUnavailableIds.Add(linked.Id);
+        profiles.WithMods(a.Id,
+            new ModListEntry { ContainerId = linked.Id, Enabled = true, Order = 0, Policy = ModVersionPolicy.Latest });
+        var dialogs = new FakeDialogService { ConfirmResult = true };
+        var vm = Build(profiles, new FakeProfileSession { ActiveProfileId = a.Id }, repo, dialogs: dialogs);
+        var brokenRow = Row(vm, "DMF");
+        Assert.True(brokenRow.IsLinkedBroken);
+
+        await vm.RemoveCommand.ExecuteAsync(brokenRow);
+
+        var call = Assert.Single(profiles.RemoveModCalls);
+        Assert.Equal(a.Id, call.Id);
+        Assert.Equal(linked.Id, call.ContainerId);
+    }
 }

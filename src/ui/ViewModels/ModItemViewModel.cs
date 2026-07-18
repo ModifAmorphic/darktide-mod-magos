@@ -25,10 +25,16 @@ namespace Modificus.Curator.UI.ViewModels;
 /// reload (the resolved version for the row's policy). <see cref="Found"/> flags
 /// a mod whose container is absent (a stale profile reference); the badge then
 /// reads a "not found" marker (staging warns at launch; resolution is out of
-/// scope here).</para>
+/// scope here). A <see cref="LinkedSource"/> row carries no version (the external
+/// folder is the single implicit version); its badge reads "External" or, when
+/// the folder is missing, "Folder unavailable" (driven by
+/// <see cref="IsExternalBroken"/>, pushed down from
+/// <c>IModRepository.IsExternalAvailable</c> at reload).</para>
 /// <para><b>Policy editor:</b> <see cref="PolicyChoice"/> (0 = Latest,
 /// 1 = Pinned) is two-way bound to the row's policy ComboBox; switching it routes
-/// through the view to the parent's <c>SetModPolicy</c> command.
+/// through the view to the parent's <c>SetModPolicy</c> command. The ComboBox is
+/// disabled for linked rows (<see cref="IsPolicyEditable"/>) since a linked mod
+/// carries no versions to switch between.
 /// <see cref="AvailableVersions"/> + <see cref="SelectedVersion"/> drive a
 /// constrained dropdown of the container's versions (the row can only pin to a
 /// version that exists in the container): the dropdown shows the readable
@@ -70,8 +76,9 @@ public partial class ModItemViewModel : ObservableObject
     private string _name;
 
     /// <summary>
-    /// Where this mod came from (Untracked / Nexus), joined from the repository
-    /// by the parent. <see cref="UntrackedSource"/> when the container is absent.
+    /// Where this mod came from (Untracked / Nexus / Linked), joined from the
+    /// repository by the parent. <see cref="UntrackedSource"/> when the container
+    /// is absent.
     /// </summary>
     public ModSource Source { get; }
 
@@ -160,6 +167,21 @@ public partial class ModItemViewModel : ObservableObject
     private bool _anyRowUpdating;
 
     /// <summary>
+    /// Whether a linked row's external folder is missing at the last reload.
+    /// Pushed down by the parent from <c>IModRepository.IsExternalAvailable</c>
+    /// (read once per reload; availability is recomputed on rescan per the linked
+    /// contract). Always <c>false</c> for non-linked rows (managed containers have
+    /// no external content). Drives the badge two-state: available shows a
+    /// clickable "External" pill; broken shows non-clickable "Folder unavailable"
+    /// text in a warning foreground.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsLinkedAvailable))]
+    [NotifyPropertyChangedFor(nameof(IsLinkedBroken))]
+    [NotifyPropertyChangedFor(nameof(SourceBadgeText))]
+    private bool _isExternalBroken;
+
+    /// <summary>
     /// The ComboBox selection for the policy editor (0 = Latest, 1 = Pinned),
     /// two-way bound. Initialized from <see cref="Policy"/> on construction; a user
     /// change routes through the view to the parent's <c>SetModPolicy</c> command.
@@ -242,8 +264,12 @@ public partial class ModItemViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The source badge text (localized): "Local" / "Nexus #{id}", or a
-    /// "not found" marker when <see cref="Found"/> is <c>false</c>.
+    /// The source badge text (localized): "Local" / "Nexus #{id}" / "External"
+    /// / "Folder unavailable", or a "not found" marker when <see cref="Found"/>
+    /// is <c>false</c>. Linked rows resolve to "External" when the external
+    /// folder is available and "Folder unavailable" when it is missing; the
+    /// XAML swaps the clickable pill for non-clickable warning text on the same
+    /// flag (see <see cref="IsLinkedAvailable"/> / <see cref="IsLinkedBroken"/>).
     /// </summary>
     public string SourceBadgeText
     {
@@ -257,6 +283,9 @@ public partial class ModItemViewModel : ObservableObject
             return Source switch
             {
                 NexusSource n => _localization.Format("ModRow_SourceNexus", n.ModId),
+                LinkedSource => IsExternalBroken
+                    ? _localization["ModRow_LinkedFolderBroken"]
+                    : _localization["ModRow_SourceLinked"],
                 _ => _localization["ModRow_SourceUntracked"],
             };
         }
@@ -284,6 +313,50 @@ public partial class ModItemViewModel : ObservableObject
             return _localization["ModRow_PolicyLatest"];
         }
     }
+
+    /// <summary>
+    /// Whether the row's source is a <see cref="LinkedSource"/> (an external
+    /// folder added without copying). Constant for a row's lifetime (the source
+    /// is joined at construction and never changes). Drives the badge two-state
+    /// and the policy-editor gating.
+    /// </summary>
+    public bool IsLinked => Source is LinkedSource;
+
+    /// <summary>
+    /// Whether the row is a linked mod whose external folder is present. The
+    /// clickable "External" badge shows in this state (click opens the folder in
+    /// the OS file manager via the parent's open-folder command).
+    /// </summary>
+    public bool IsLinkedAvailable => IsLinked && !IsExternalBroken;
+
+    /// <summary>
+    /// Whether the row is a linked mod whose external folder is missing. The
+    /// non-clickable "Folder unavailable" warning text replaces the badge in this
+    /// state.
+    /// </summary>
+    public bool IsLinkedBroken => IsLinked && IsExternalBroken;
+
+    /// <summary>
+    /// Whether the standard source-badge hyperlink (the Nexus / Untracked badge
+    /// with <c>NavigateUri</c>) should show. Suppressed for linked rows, which
+    /// use the dedicated linked-available or linked-broken badge element instead.
+    /// </summary>
+    public bool IsBadgeHyperlink => !IsLinked;
+
+    /// <summary>
+    /// Whether the policy ComboBox is editable for this row. Linked rows hold a
+    /// single implicit version (the external folder) with no version management,
+    /// so the policy editor is disabled for them (the Latest label shows, inert).
+    /// All other rows edit freely.
+    /// </summary>
+    public bool IsPolicyEditable => !IsLinked;
+
+    /// <summary>
+    /// The external folder path for a linked row (the <c>LinkedSource.ExternalPath</c>),
+    /// or <c>null</c> for non-linked rows. The parent's open-folder command reads
+    /// this to launch the OS file manager at the folder.
+    /// </summary>
+    public string? ExternalFolderPath => (Source as LinkedSource)?.ExternalPath;
 
     /// <summary>
     /// The Nexus mod id when the row's source is <see cref="NexusSource"/>, else
