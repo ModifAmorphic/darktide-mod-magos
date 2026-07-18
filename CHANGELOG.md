@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.12.0...v0.13.0) (2026-07-18)
+
+
+### Features
+
+* link external mod folders without copying ([#120](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/120)) ([21450d1](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/21450d1b0809d7366c1be3980d8c7263d2373030))
+
 ## [0.12.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.11.1...v0.12.0) (2026-07-17)
 
 
