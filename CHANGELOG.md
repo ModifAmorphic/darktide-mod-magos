@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.13.1...v0.14.0) (2026-07-18)
+
+
+### Features
+
+* **ui:** enable Linux drag-and-drop and improve mod import guidance ([#126](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/126)) ([c3b7e40](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/c3b7e40e071de71b27fee80d8ac6a994fa78d8c0))
+
 ## [0.13.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.13.0...v0.13.1) (2026-07-18)
 
 
