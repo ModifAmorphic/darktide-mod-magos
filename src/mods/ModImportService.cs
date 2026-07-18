@@ -226,12 +226,139 @@ internal sealed class ModImportService : IModImportService
         // Mirrors ResolveContainer minus the create: the dedup lookup only. The
         // add flow uses this to exclude a re-add (same container) from the
         // collision check. The dedup rules live here, not at the call site.
+        // Untracked dedups by name; Nexus + Linked by source identity (the
+        // modName arg is irrelevant for the latter two).
         return source is UntrackedSource
             ? _repo.FindUntrackedByName(modName)
             : _repo.FindBySource(source);
     }
 
+    /// <inheritdoc />
+    public Guid LinkFolder(string externalPath)
+    {
+        ArgumentNullException.ThrowIfNull(externalPath);
+
+        if (!Path.IsPathRooted(externalPath))
+        {
+            throw new ArgumentException(
+                $"External path must be absolute (received '{externalPath}').", nameof(externalPath));
+        }
+
+        if (!Directory.Exists(externalPath))
+        {
+            // Directory.Exists returns false for a file too, so this covers both
+            // "missing" and "not a directory" with one clear message.
+            throw new InvalidOperationException(
+                $"Cannot link '{externalPath}': the folder does not exist or is not a directory.");
+        }
+
+        // Normalize before any comparison so containment + identity checks are
+        // on a canonical form. GetFullPath also rejects illegal path forms.
+        string normalized;
+        try
+        {
+            normalized = Path.GetFullPath(externalPath);
+        }
+        catch (Exception ex) when (ex is ArgumentException or System.Security.SecurityException)
+        {
+            throw new ArgumentException(
+                $"External path '{externalPath}' could not be normalized: {ex.Message}", nameof(externalPath), ex);
+        }
+
+        // Validate the mod-folder shape (the picked folder IS the base; it must
+        // directly contain <base>.mod). Reuses the same validator as the folder
+        // import so the two cannot drift. An unreadable folder surfaces here as
+        // UnauthorizedAccessException from the validator's enumeration; remap it
+        // to a clear InvalidOperationException so all validation failures share
+        // one exception type per the contract.
+        string baseName;
+        try
+        {
+            baseName = ValidateFolderStructure(normalized);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new InvalidOperationException(
+                $"Cannot link '{normalized}': the folder is not readable.", ex);
+        }
+
+        // Containment: reject any overlap with a Curator-managed root in either
+        // direction, so Curator's own operations cannot recurse into the target
+        // and staging cannot create a cycle. The profiles-base check covers
+        // every profile root + every staged/ dir (all under the base).
+        var config = _configLoader.Load();
+        AssertNoCuratorRootOverlap(normalized, config.ModsFolder, config.ProfilesBaseFolder);
+
+        // Refresh: an existing linked container for this exact external path is
+        // returned as-is. The external folder is the user's; a refresh re-
+        // validated the shape above but copies, deletes, and rewrites nothing.
+        var source = new LinkedSource { ExternalPath = normalized };
+        var existing = _repo.FindBySource(source);
+        if (existing is not null)
+        {
+            _logger.LogInformation(
+                "Re-linked external folder '{Path}' (container {Id} already exists; no changes made).",
+                normalized, existing.Id);
+            return existing.Id;
+        }
+
+        var created = _repo.CreateContainer(source, baseName);
+        _logger.LogInformation(
+            "Linked external folder '{Path}' as container {Id} ('{Name}').",
+            normalized, created.Id, baseName);
+        return created.Id;
+    }
+
     // ---- helpers -----------------------------------------------------------
+
+    /// <summary>
+    /// Platform-appropriate string comparison for paths (case-insensitive on
+    /// Windows where drive letters are case-insensitive, ordinal on Linux).
+    /// Mirrors <c>ModRepository.SamePath</c> so the two path comparisons cannot
+    /// drift.
+    /// </summary>
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    /// <summary>
+    /// Whether <paramref name="candidate"/> is the same path as
+    /// <paramref name="root"/> or lives underneath it, after full normalization.
+    /// </summary>
+    private static bool IsSameOrChild(string candidate, string root)
+    {
+        var candidateFull = Path.GetFullPath(candidate);
+        var rootFull = Path.GetFullPath(root);
+        return string.Equals(candidateFull, rootFull, PathComparison)
+            || candidateFull.StartsWith(rootFull + Path.DirectorySeparatorChar, PathComparison);
+    }
+
+    /// <summary>
+    /// Rejects a link target that overlaps the mods root or the profiles root
+    /// in either direction. Linking a Curator-managed root (or a folder that
+    /// contains one) would let Curator's own operations (relocate, prune,
+    /// staging) recurse into the target, and staging would create a cycle
+    /// (<c>staged/&lt;baseName&gt;</c> pointing at an ancestor of
+    /// <c>staged/</c>). The profiles-root check covers every profile root and
+    /// every <c>staged/</c> dir, since all live under the base.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">When <paramref name="target"/>
+    /// overlaps <paramref name="modsRoot"/> or <paramref name="profilesBase"/>
+    /// in either direction.</exception>
+    private static void AssertNoCuratorRootOverlap(string target, string modsRoot, string profilesBase)
+    {
+        if (IsSameOrChild(target, modsRoot) || IsSameOrChild(modsRoot, target))
+        {
+            throw new InvalidOperationException(
+                $"Cannot link '{target}': it overlaps the mods repository root '{modsRoot}'. " +
+                "Link a folder outside Curator's managed directories.");
+        }
+        if (IsSameOrChild(target, profilesBase) || IsSameOrChild(profilesBase, target))
+        {
+            throw new InvalidOperationException(
+                $"Cannot link '{target}': it overlaps the profiles root '{profilesBase}'. " +
+                "Link a folder outside Curator's managed directories.");
+        }
+    }
 
     private ModContainer ResolveContainer(ModSource source, string modName)
     {
@@ -502,12 +629,18 @@ internal sealed class ModImportService : IModImportService
     /// to picking one folder; the <c>.mod</c> check also rejects a pick that is
     /// actually a <em>parent</em> of several mods). Performs no copy.
     /// </summary>
+    /// <remarks>
+    /// Internal so it is the single folder-shape validator shared by the folder
+    /// <see cref="Import"/> path, <see cref="GetBaseName"/>, and
+    /// <see cref="LinkFolder"/> (each passes the picked folder directly). The
+    /// archive path (<see cref="ValidateArchiveStructure"/>) is separate.
+    /// </remarks>
     /// <param name="sourceDir">The picked folder.</param>
     /// <returns>The validated base folder name (the picked folder's name).</returns>
     /// <exception cref="InvalidOperationException">Thrown when the base name
     /// can't be derived, the folder is empty, or no matching
     /// <c>&lt;folderName&gt;.mod</c> descriptor exists.</exception>
-    private static string ValidateFolderStructure(string sourceDir)
+    internal static string ValidateFolderStructure(string sourceDir)
     {
         var baseName = GetFolderBaseName(sourceDir);
         if (string.IsNullOrWhiteSpace(baseName))

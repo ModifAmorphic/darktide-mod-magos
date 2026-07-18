@@ -32,6 +32,14 @@ internal sealed class ProfileServiceFixture : IDisposable
     public IProfileService Service { get; }
     public IModRepository Repo { get; }
 
+    /// <summary>
+    /// The <see cref="IModImportService"/> resolved through the same DI tree
+    /// (AddProfiles calls AddMods). Exposed so linked-folder tests can call
+    /// <see cref="IModImportService.LinkFolder"/> against the same mods root +
+    /// repository the profile service stages from.
+    /// </summary>
+    public IModImportService Imports { get; }
+
     /// <param name="createLink">Optional override for the staging-link seam
     /// (default: the platform-selective link, a junction on Windows or
     /// <see cref="Directory.CreateSymbolicLink"/> on Linux). Pass a throwing
@@ -55,6 +63,7 @@ internal sealed class ProfileServiceFixture : IDisposable
 
         Service = _provider.GetRequiredService<IProfileService>();
         Repo = _provider.GetRequiredService<IModRepository>();
+        Imports = _provider.GetRequiredService<IModImportService>();
     }
 
     // ---- profile-tree path helpers -----------------------------------------
@@ -74,6 +83,27 @@ internal sealed class ProfileServiceFixture : IDisposable
         Path.Combine(ContainerDir(containerId), versionFolder);
 
     // ---- container seeding -------------------------------------------------
+
+    /// <summary>
+    /// Creates an external mod folder <em>outside</em> the mods root (under a
+    /// fresh temp sibling) shaped as <see cref="IModImportService.LinkFolder"/>
+    /// requires: the folder IS the base and directly contains
+    /// <c>&lt;baseName&gt;.mod</c>. A <paramref name="sentinelName"/> marker file
+    /// is written inside it (default <c>sentinel.txt</c>) so safety tests can
+    /// assert the external target is never modified by any Curator operation.
+    /// Returns the absolute path to the external folder.
+    /// </summary>
+    public string MakeExternalModFolder(string baseName, string sentinelName = "sentinel.txt")
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "curator-external-" + Guid.NewGuid(), baseName);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, baseName + ".mod"), baseName);
+        File.WriteAllText(Path.Combine(dir, sentinelName), "untouched");
+        _externalTargets.Add(dir);
+        return dir;
+    }
+
+    private readonly List<string> _externalTargets = new();
 
     /// <summary>
     /// Creates a container + a single version whose version folder contains the
@@ -141,6 +171,19 @@ internal sealed class ProfileServiceFixture : IDisposable
         // them into the repository). Mirrors ProfileService's staged-entry delete.
         DeleteTree(BaseFolder);
         DeleteTree(ModsFolder);
+        // External linked targets are outside the Curator-managed roots; clean
+        // them up too so tests don't leak temp dirs. The linked staging links
+        // under staged/ were already removed above (as links, never followed),
+        // so these deletes never recurse into the profile/mods trees.
+        foreach (var target in _externalTargets)
+        {
+            DeleteTree(target);
+            var parent = Path.GetDirectoryName(target);
+            if (parent is not null && Directory.Exists(parent))
+            {
+                try { Directory.Delete(parent); } catch { /* sibling may hold other test's dirs */ }
+            }
+        }
     }
 
     private static void DeleteTree(string root)

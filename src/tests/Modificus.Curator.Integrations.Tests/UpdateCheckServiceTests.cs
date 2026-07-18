@@ -376,6 +376,51 @@ public sealed class UpdateCheckServiceTests
         Assert.False(result.NamesChanged);
     }
 
+    [Fact]
+    public async Task CheckAsync_excludes_linked_mods_from_the_batch_and_never_flags_them()
+    {
+        // Regression guard: a LinkedSource container in the profile is never
+        // sent to Nexus (the update check is Nexus-only) and is never flagged.
+        // A Nexus + Latest mod in the SAME profile still flags normally,
+        // proving the linked mod is simply filtered out, not a fatal no-mods
+        // short-circuit.
+        var nexus = new FakeNexusClient
+        {
+            GraphQlResponse = new Response<ModUpdateStatus[]>(
+                new[] { Status(UpdatedModId, viewerUpdateAvailable: true) },
+                NexusRateLimits.Unknown),
+        };
+        var linkedContainer = Guid.NewGuid();
+        var repository = new FakeModRepository();
+        repository.Containers[NexusLatestContainer] =
+            NexusContainer(NexusLatestContainer, UpdatedModId, "Mod 100", "1.0");
+        repository.Containers[linkedContainer] = new ModContainer
+        {
+            Id = linkedContainer,
+            Source = new LinkedSource { ExternalPath = "/home/user/ExternalMod" },
+            Name = "ExternalMod",
+            Versions = Array.Empty<ModVersion>(), // linked: zero versions
+        };
+        var profiles = new FakeProfileService
+        {
+            Mods = new[]
+            {
+                Entry(NexusLatestContainer, new LatestPolicy()),
+                Entry(linkedContainer, new LatestPolicy()),
+            },
+        };
+        var service = CreateService(nexus, profiles, repository);
+
+        var result = await service.CheckAsync(ProfileId);
+
+        // Only the Nexus mod is in the batch; the linked mod is excluded.
+        Assert.Equal(new[] { UpdatedModId }, nexus.LastModIds);
+        // Only the Nexus mod flags; the linked mod is never surfaced.
+        var flagged = Assert.Single(result.Updates);
+        Assert.Equal(NexusLatestContainer, flagged.ContainerId);
+        Assert.False(result.NamesChanged);
+    }
+
     // ---- rate-limit handling ----------------------------------------------
 
     [Fact]
@@ -1516,6 +1561,7 @@ public sealed class UpdateCheckServiceTests
             => throw new NotImplementedException();
         public void Rescan() => throw new NotImplementedException();
         public void Relocate(string newBasePath) => throw new NotImplementedException();
+        public bool IsExternalAvailable(Guid containerId) => throw new NotImplementedException();
     }
 
     /// <summary>

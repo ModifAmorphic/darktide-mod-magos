@@ -11,12 +11,20 @@ namespace Modificus.Curator.Profiles;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the spec's startup prune (§5): <c>PruneUnreferenced</c> runs once
+/// This is the spec's startup prune: <c>PruneUnreferenced</c> runs once
 /// after composition. The resolution here mirrors
 /// <c>ProfileService.PrepareModRoot</c> via <see cref="ModContainer.ResolveVersion"/>,
 /// so a version folder survives the prune iff at least one profile would stage
 /// it. Disabled mods still count as referenced (the profile entry is the
 /// reference; enable/disable is a stage-time decision, not a delete signal).</para>
+/// <para>
+/// <see cref="LinkedSource"/> containers have no versions, so they are
+/// referenced by containerId alone: a linked profile entry adds
+/// <c>(containerId, <c>string.Empty</c>)</c> to the referenced set. The empty
+/// version folder is a sentinel that never matches a real opaque version id, so
+/// it cannot affect version dropping; its only role is to mark the containerId
+/// as referenced so the prune keeps the linked container while any profile uses
+/// it. An unreferenced linked container is pruned like any empty container.</para>
 /// <para>
 /// I/O failures (a missing directory, an unreadable profile) propagate as
 /// <see cref="IOException"/> / <see cref="UnauthorizedAccessException"/>: the
@@ -62,6 +70,18 @@ public static class ModCleanup
                 if (container is null)
                 {
                     continue; // dangling reference; nothing to keep.
+                }
+
+                // Linked containers have no versions to resolve; reference them
+                // by containerId so the prune keeps them while a profile uses
+                // them. The empty-string version folder is a sentinel: real
+                // version folders are non-empty opaque ids (Guid "N" format),
+                // so it cannot collide, and the container's Versions is empty so
+                // the prune's version-drop loop never matches it anyway.
+                if (container.Source is LinkedSource)
+                {
+                    referenced.Add((entry.ContainerId, string.Empty));
+                    continue;
                 }
 
                 var version = container.ResolveVersion(entry.Policy);

@@ -773,6 +773,199 @@ public sealed class ModRepositoryTests
         Assert.False(Directory.Exists(fx.Repo.GetVersionFolderPath(container.Id, v2Folder)));
     }
 
+    // ---- LinkedSource: FindBySource + IsExternalAvailable ------------------
+
+    [Fact]
+    public void FindBySource_finds_Linked_by_normalized_external_path()
+    {
+        using var fx = new RepoFixture();
+        var external = Path.Combine(fx.Folder, "ExternalMod");
+        Directory.CreateDirectory(external);
+        var created = fx.Repo.CreateContainer(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) },
+            "ExternalMod");
+
+        // Same normalized path resolves to the same container.
+        var found = fx.Repo.FindBySource(new LinkedSource { ExternalPath = Path.GetFullPath(external) });
+        Assert.NotNull(found);
+        Assert.Equal(created.Id, found!.Id);
+    }
+
+    [Fact]
+    public void FindBySource_Linked_normalizes_both_sides_before_comparing()
+    {
+        using var fx = new RepoFixture();
+        var external = Path.Combine(fx.Folder, "ExternalMod");
+        Directory.CreateDirectory(external);
+        var normalized = Path.GetFullPath(external);
+        fx.Repo.CreateContainer(new LinkedSource { ExternalPath = normalized }, "ExternalMod");
+
+        // A non-normalized input with a trailing separator + a relative segment
+        // still resolves: GetFullPath canonicalizes both sides.
+        var messy = external + Path.DirectorySeparatorChar + "." + Path.DirectorySeparatorChar;
+        var found = fx.Repo.FindBySource(new LinkedSource { ExternalPath = messy });
+        Assert.NotNull(found);
+        Assert.Equal(normalized, Assert.IsType<LinkedSource>(found!.Source).ExternalPath);
+    }
+
+    [Fact]
+    public void FindBySource_Linked_matches_platform_case_sensitivity()
+    {
+        // On Linux the path comparison is ordinal (case-sensitive); on Windows
+        // it is case-insensitive (drive-letter case). The test asserts the
+        // exact-ordinal arm always matches; the case-opposite arm matches iff
+        // the platform comparison is case-insensitive.
+        using var fx = new RepoFixture();
+        var external = Path.Combine(fx.Folder, "MixedCaseMod");
+        Directory.CreateDirectory(external);
+        fx.Repo.CreateContainer(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) },
+            "MixedCaseMod");
+
+        Assert.NotNull(fx.Repo.FindBySource(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) }));
+
+        var caseFlipped = OperatingSystem.IsWindows()
+            ? Path.GetFullPath(external).ToUpperInvariant()
+            : Path.GetFullPath(external).ToLowerInvariant();
+        // Only matches when the platform comparison is case-insensitive.
+        Assert.Equal(
+            OperatingSystem.IsWindows(),
+            fx.Repo.FindBySource(new LinkedSource { ExternalPath = caseFlipped }) is not null);
+    }
+
+    [Fact]
+    public void FindBySource_Linked_returns_null_for_an_unlinked_path()
+    {
+        using var fx = new RepoFixture();
+        var external = Path.Combine(fx.Folder, "Standalone");
+        Directory.CreateDirectory(external);
+
+        Assert.Null(fx.Repo.FindBySource(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) }));
+    }
+
+    [Fact]
+    public void IsExternalAvailable_returns_true_for_managed_and_unknown_ids()
+    {
+        // Default-safe contract: managed containers + unknown ids report
+        // available so the UI never sees a false broken signal.
+        using var fx = new RepoFixture();
+        var managed = fx.Repo.CreateContainer(new UntrackedSource(), "Managed");
+        fx.Repo.AddVersion(managed.Id, "1.0", EmptyPopulate);
+
+        Assert.True(fx.Repo.IsExternalAvailable(managed.Id));
+        Assert.True(fx.Repo.IsExternalAvailable(Guid.NewGuid())); // unknown
+    }
+
+    [Fact]
+    public void IsExternalAvailable_tracks_linked_external_folder_presence()
+    {
+        using var fx = new RepoFixture();
+        var external = Path.Combine(fx.Folder, "LinkedMod");
+        Directory.CreateDirectory(external);
+        var container = fx.Repo.CreateContainer(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) },
+            "LinkedMod");
+
+        // Available while the folder exists.
+        Assert.True(fx.Repo.IsExternalAvailable(container.Id));
+
+        // Missing folder: availability flips to false after a rescan (the cached
+        // signal is recomputed on rebuild; the constructor/Rescan drives it).
+        Directory.Delete(external);
+        fx.Repo.Rescan();
+        Assert.False(fx.Repo.IsExternalAvailable(container.Id));
+
+        // Missing-then-returned: availability flips back on the next rescan.
+        Directory.CreateDirectory(external);
+        fx.Repo.Rescan();
+        Assert.True(fx.Repo.IsExternalAvailable(container.Id));
+    }
+
+    // ---- LinkedSource: PruneUnreferenced keep/drop -------------------------
+
+    [Fact]
+    public void Prune_keeps_a_referenced_linked_container_even_with_zero_versions()
+    {
+        // The critical fix: a linked container in a profile must survive the
+        // startup prune even though it has zero versions, because the caller
+        // marks it referenced by containerId (the empty-string version folder
+        // sentinel).
+        using var fx = new RepoFixture();
+        var external = Path.Combine(fx.Folder, "LinkedMod");
+        Directory.CreateDirectory(external);
+        var linked = fx.Repo.CreateContainer(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) },
+            "LinkedMod");
+
+        fx.Repo.PruneUnreferenced(new HashSet<(Guid, string)> { (linked.Id, string.Empty) });
+
+        Assert.NotNull(fx.Repo.Get(linked.Id));
+        Assert.True(Directory.Exists(Path.Combine(fx.Folder, linked.Id.ToString())));
+        // External folder untouched.
+        Assert.True(Directory.Exists(external));
+    }
+
+    [Fact]
+    public void Prune_drops_an_unreferenced_linked_container_but_never_the_external_target()
+    {
+        using var fx = new RepoFixture();
+        var external = Path.Combine(fx.Folder, "LinkedMod");
+        // A sentinel marker inside the external target proves Curator never
+        // touches the user's folder during the prune.
+        Directory.CreateDirectory(external);
+        var sentinel = Path.Combine(external, "sentinel.txt");
+        File.WriteAllText(sentinel, "untouched");
+
+        var linked = fx.Repo.CreateContainer(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) },
+            "LinkedMod");
+
+        // Unreferenced (empty referenced set): the container is pruned.
+        fx.Repo.PruneUnreferenced(new HashSet<(Guid, string)>());
+
+        Assert.Null(fx.Repo.Get(linked.Id));
+        Assert.False(Directory.Exists(Path.Combine(fx.Folder, linked.Id.ToString())));
+        // External target + its sentinel survive intact.
+        Assert.True(Directory.Exists(external));
+        Assert.Equal("untouched", File.ReadAllText(sentinel));
+    }
+
+    [Fact]
+    public void Prune_still_removes_a_managed_container_with_zero_versions()
+    {
+        // Regression guard: the linked-aware prune must not accidentally keep a
+        // managed zero-version container (those remain garbage).
+        using var fx = new RepoFixture();
+        var managed = fx.Repo.CreateContainer(new UntrackedSource(), "Empty");
+        // No versions, not referenced.
+        fx.Repo.PruneUnreferenced(new HashSet<(Guid, string)>());
+        Assert.Null(fx.Repo.Get(managed.Id));
+    }
+
+    [Fact]
+    public void Index_rebuild_skips_an_unknown_source_kind_gracefully()
+    {
+        // Forward-compat: a manifest whose Source carries a $kind this build
+        // does not know (IgnoreUnrecognizedTypeDiscriminators = false ->
+        // JsonException on the nested Source) is skipped, not fatal to the rest
+        // of the index. The $kind discriminator lives on the Source field (the
+        // polymorphism root), not at the container top level.
+        using var fx = new RepoFixture();
+        var good = fx.Repo.CreateContainer(new UntrackedSource(), "Good");
+        var unknownId = Guid.NewGuid();
+        Directory.CreateDirectory(Path.Combine(fx.Folder, unknownId.ToString()));
+        File.WriteAllText(
+            fx.ManifestPath(unknownId),
+            "{\"Id\":\"" + unknownId + "\",\"Source\":{\"$kind\":\"future_source\"},\"Name\":\"Future\"}");
+
+        var reloaded = fx.Reload();
+
+        var only = Assert.Single(reloaded.List());
+        Assert.Equal(good.Id, only.Id);
+    }
+
     // ---- DI registration ---------------------------------------------------
 
     [Fact]
@@ -1021,6 +1214,90 @@ public sealed class ModRepositoryTests
         finally
         {
             if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_same_volume_moves_a_linked_container_and_leaves_external_target_untouched()
+    {
+        // A linked container's on-disk footprint is just container.json under
+        // its UUID dir; Relocate moves that dir with the rest. The external
+        // target is unrelated to the mods root and is never touched.
+        using var fx = new RepoFixture();
+        var external = Path.Combine(Path.GetTempPath(), "curator-external-" + Guid.NewGuid());
+        Directory.CreateDirectory(external);
+        var sentinel = Path.Combine(external, "sentinel.txt");
+        File.WriteAllText(sentinel, "untouched");
+        try
+        {
+            var linked = fx.Repo.CreateContainer(
+                new LinkedSource { ExternalPath = external },
+                "LinkedMod");
+
+            var newPath = Path.Combine(Path.GetTempPath(), "curator-repo-linked-" + Guid.NewGuid());
+            try
+            {
+                fx.Repo.Relocate(newPath);
+
+                // The container dir (container.json only) moved to the new root.
+                Assert.True(File.Exists(Path.Combine(newPath, linked.Id.ToString(), "container.json")));
+                Assert.False(Directory.Exists(Path.Combine(fx.Folder, linked.Id.ToString())));
+                // The linked container is still resolvable + still available.
+                Assert.NotNull(fx.Repo.FindBySource(
+                    new LinkedSource { ExternalPath = external }));
+                Assert.True(fx.Repo.IsExternalAvailable(linked.Id));
+                // The external target + sentinel are unchanged.
+                Assert.True(Directory.Exists(external));
+                Assert.Equal("untouched", File.ReadAllText(sentinel));
+            }
+            finally
+            {
+                if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(external)) Directory.Delete(external, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Relocate_cross_volume_copies_a_linked_container_json_and_leaves_external_target_untouched()
+    {
+        // Cross-volume relocate uses the copy + delete path (forced via the
+        // injected same-volume detector). A linked container dir is a single
+        // container.json, so the copy is trivial; the external target is never
+        // touched because it lives outside the mods root.
+        using var fx = new RepoFixture(sameVolume: (_, _) => false);
+        var external = Path.Combine(Path.GetTempPath(), "curator-external-xvol-" + Guid.NewGuid());
+        Directory.CreateDirectory(external);
+        var sentinel = Path.Combine(external, "sentinel.txt");
+        File.WriteAllText(sentinel, "untouched");
+        try
+        {
+            var linked = fx.Repo.CreateContainer(
+                new LinkedSource { ExternalPath = external },
+                "LinkedMod");
+
+            var newPath = Path.Combine(Path.GetTempPath(), "curator-repo-linked-xvol-" + Guid.NewGuid());
+            try
+            {
+                fx.Repo.Relocate(newPath);
+
+                Assert.True(File.Exists(Path.Combine(newPath, linked.Id.ToString(), "container.json")));
+                Assert.False(Directory.Exists(Path.Combine(fx.Folder, linked.Id.ToString())));
+                Assert.True(fx.Repo.IsExternalAvailable(linked.Id));
+                Assert.True(Directory.Exists(external));
+                Assert.Equal("untouched", File.ReadAllText(sentinel));
+            }
+            finally
+            {
+                if (Directory.Exists(newPath)) Directory.Delete(newPath, recursive: true);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(external)) Directory.Delete(external, recursive: true);
         }
     }
 

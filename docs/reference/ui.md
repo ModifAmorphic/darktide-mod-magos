@@ -949,7 +949,8 @@ instance violation) propagates out; `App` catches it and calls
   `IAppStateStore`, `LoggingBootstrap`), `profiles` (`IProfileService`,
   `ProfileSummary`, `ModListEntry`, `IModOrderResolver`), `mods`
   (`IModRepository`, `IModImportService`, `ModContainer`, `ModVersion`,
-  `ModVersionPolicy`, `ModSource`, `NexusSource`, `UntrackedSource`),
+  `ModVersionPolicy`, `ModSource`, `NexusSource`, `UntrackedSource`,
+  `LinkedSource`),
   `integrations` (`INexusAuthService`,
   `IModAcquisitionService`, `IUpdateCheckService`, `UpdateCheckResult`,
   `ModUpdateInfo`), `steam` (`ISteamService`), `relay-client`
@@ -1007,7 +1008,12 @@ No backend library references the UI (the dependency direction is one-way).
   change).
 - **`ModListViewModelTests`**: enable / disable, reorder, per-mod policy,
   remove (with confirm), auto-sort (identity stub), the add flow (peek,
-  collision hard-block, import, add-mod), `CheckCompleted` per-row state,
+  collision hard-block, import, add-mod), the linked-folder flow
+  (`LinkMods`: peek, collision-refusal, re-link refresh, `LatestPolicy` add;
+  `OpenFolder`: launches the file manager at the normalized external path,
+  failure alert, no-op for non-linked/broken rows; the linked badge two-state
+  available/broken, disabled policy edit, empty update-action cell,
+  `IsExternalBroken` on Reload), `CheckCompleted` per-row state,
   `UpdateCommand` success / failure / one-at-a-time / premium gating,
   `CheckForUpdatesNow`, `IsRateLimited`, and the `NamesChanged` in-place row
   name refresh (refreshed when the flag is set, untouched when it is not).

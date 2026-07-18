@@ -215,9 +215,10 @@ of each mod + version, organized so they don't collide and can associate to
 profiles.
 
 Container identity by source: **Nexus** by `ModId`, **Untracked** (local) by
-`Name`. Different source-types are separate namespaces, so an untracked
-"WeaponTweaks" and a Nexus "WeaponTweaks" are distinct containers, and a Nexus
-mod and an untracked mod never collide or share.
+`Name`, **Linked** (an external folder added without copying) by its normalized
+`ExternalPath`. Different source-types are separate namespaces, so an untracked
+"WeaponTweaks", a Nexus "WeaponTweaks", and a linked "WeaponTweaks" are distinct
+containers that never collide or share.
 The container directory is **UUID-named (opaque)**, and its path is **derived**
 (`<ModsFolder>/<containerUUID>/`), never stored absolute.
 
@@ -249,10 +250,13 @@ arbitrary strings (not SemVer); there is no version ordering at this layer, and
 "newer" is decided by fetching the latest release tag and checking string
 inequality.
 
-Each container also carries a **source** (Untracked / Nexus) so a pinned version
+Each container also carries a **source** (Untracked / Nexus / Linked) so a pinned version
 is legible ("WeaponTweaks *(Nexus #12345)* pinned to `1.2`"). The UI collects
 URLs; the model stores the canonical identity (Nexus mod id) via a pure parser.
-Local / untracked mods use the `UntrackedSource` source (dedup by name).
+Local / untracked mods use the `UntrackedSource` source (dedup by name). A
+**linked** container (`LinkedSource`) is metadata only: it records a normalized
+`ExternalPath`, holds no version subfolders, and stages directly from the
+external folder at launch.
 
 **Import flow:** adding a mod to the active profile goes through
 `IModImportService` (the UI never touches the filesystem). The import service
@@ -290,6 +294,22 @@ different container) resolves to the same base name. On a hit, the import is
 of a mod already in the profile (same container, `AddMod` idempotent) is not a
 collision.
 
+**Link flow (external folder, no copy):** the add split button's "Link external
+folder" item records an external mod directory as a `LinkedSource` container via
+`IModImportService.LinkFolder` **without copying it**. The container holds
+metadata only (a `container.json`, no version subfolders); staging links into
+the external folder directly at launch. The flow reuses the import gates: it
+peeks the base name (the picked folder IS the base and must contain
+`<base>.mod`), then runs the same base-name collision check (excluding a
+re-link, which refreshes and returns the existing container id). On success the
+caller adds the profile reference with `LatestPolicy` (inert for linked, since
+there are no versions to resolve). The external folder is the user's:
+Curator controls only load order and enabled/disabled, and never copies, writes,
+versions, renames, or deletes anything inside it. A missing folder is shown as
+broken (transient availability flag, no watcher; removed on rescan only if no
+profile references it). Linked mods are excluded from the Nexus update check
+(it is Nexus-only).
+
 **Staging:** at launch (alongside regenerating `mods.lst`), Curator materializes
 the profile's mod root (the `--mod-path` dir) by, for each enabled mod,
 discovering its base folder name (the single subdirectory inside the resolved
@@ -302,12 +322,21 @@ the link must carry the base name for the mod's hardcoded paths to resolve. Like
 `mods.lst`, the mod root is a projection of the profile's mod-list metadata,
 regenerated each launch. Staging is a simple loop: base-name collisions are
 blocked at import time, so staging never sees two mods with the same base folder
-name in normal use. **Staging links, never copies**: the repository holds the
-files; `staged/` is a staging-link projection.
+name in normal use. A linked mod stages directly from its external folder (the
+link target is the external path; no version resolution, since a linked
+container has no versions), and a missing/unreadable external folder is skipped
+(no fallback copy is created). **Staging links, never copies**: the repository
+holds the files; `staged/` is a staging-link projection (and for a linked mod the
+link points straight at the user-owned external folder, which staging never
+modifies).
 
 **Startup cleanup:** `ModCleanup.PruneUnreferenced` runs once after composition,
 dropping version folders no profile references + removing empty containers.
-Keeps the on-disk tree in sync with what the profiles actually use.
+A referenced linked container (which has no versions) is kept by a containerId
+sentinel in the referenced set, so it survives while any profile uses it; an
+unreferenced one is pruned like any empty container, and its external target is
+never touched. Keeps the on-disk tree in sync with what the profiles actually
+use.
 
 **Relocation:** because paths are derived, changing `<ModsFolder>` is a physical
 move of the tree plus a config update. `IModRepository.Relocate` owns the move +
@@ -320,6 +349,11 @@ detection. The Settings window's Storage section is the UI for it.
 - **Nexus Mods** -- the primary source for user mods (most Darktide mods live
   there). Nexus API key or OIDC; version checks; downloads / updates.
 - **Local** -- manually-installed mods (the user supplies the files).
+- **Linked external folder** -- an external mod directory added to a profile
+  without copying it. Curator records a metadata-only container and stages from
+  the external path at launch; it controls only load order and enabled/disabled,
+  and never writes to, versions, renames, or deletes anything in the external
+  folder. No versions, no Nexus update check; a missing folder shows as broken.
 - **DMF specifically** -- the new-profile prompt offers to add it (most mods
   depend on it, so this is the common case; DMF isn't mandatory, so the prompt
   is an offer, not a requirement). DMF is sourced from Nexus Mods (mod 8); the

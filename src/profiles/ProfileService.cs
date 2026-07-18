@@ -388,20 +388,30 @@ internal sealed class ProfileService : IProfileService
 
     /// <summary>
     /// Resolves a profile mod entry to its on-disk staging target: the mod's base
-    /// folder name + the absolute staging-link target (<c>&lt;versionFolder&gt;/&lt;baseName&gt;/</c>).
-    /// Returns a non-null <c>SkipReason</c> (and null base name + target) when the
-    /// entry can't be staged. Pure: no logging, no side effects. Shared by
-    /// <see cref="PrepareModRoot"/> (staging, warns on skip) and
-    /// <see cref="GetBaseNameCollision"/> (silent), so the two paths cannot drift.
+    /// folder name + the absolute staging-link target (<c>&lt;versionFolder&gt;/&lt;baseName&gt;/</c>
+    /// for managed mods, or the external folder itself for a
+    /// <see cref="LinkedSource"/> mod). Returns a non-null <c>SkipReason</c>
+    /// (and null base name + target) when the entry can't be staged. Pure: no
+    /// logging, no side effects. Shared by <see cref="PrepareModRoot"/> (staging,
+    /// warns on skip) and <see cref="GetBaseNameCollision"/> (silent), so the two
+    /// paths cannot drift.
     /// </summary>
     /// <remarks>
-    /// The base name is <b>not stored</b>; it is derived from the validated
-    /// on-disk structure (the single subdirectory inside the version folder,
-    /// which the import validation guarantees). Mods bake their folder name into
-    /// their code, so the staging link MUST carry the base name (not the
-    /// container's display name) for the mod's hardcoded paths to resolve. A
-    /// version folder with zero or multiple subdirs (corrupted / legacy data
-    /// predating the import validation) can't yield a base name and is skipped.
+    /// <para>
+    /// For a managed mod the base name is <b>not stored</b>; it is derived from
+    /// the validated on-disk structure (the single subdirectory inside the
+    /// version folder, which the import validation guarantees). Mods bake their
+    /// folder name into their code, so the staging link MUST carry the base name
+    /// (not the container's display name) for the mod's hardcoded paths to
+    /// resolve. A version folder with zero or multiple subdirs (corrupted /
+    /// legacy data predating the import validation) can't yield a base name and
+    /// is skipped.</para>
+    /// <para>
+    /// For a <see cref="LinkedSource"/> mod the target IS the external folder
+    /// (Curator stages it in place; no version resolution, no copy). The base
+    /// name is the external folder's own name (Curator never renames it). A
+    /// missing/unreadable external folder is skipped with reason "external
+    /// folder unavailable" (no fallback copy is created).</para>
     /// </remarks>
     private (string? BaseName, string? Target, string? SkipReason) ResolveStagingTarget(ModListEntry mod)
     {
@@ -409,6 +419,34 @@ internal sealed class ProfileService : IProfileService
         if (container is null)
         {
             return (null, null, "container not found");
+        }
+
+        // Linked: stage directly from the external folder. Curator does not
+        // version, rename, or copy the target; the staging link writes
+        // staged/<baseName> -> <externalPath>. The base name is the folder's
+        // own name, matching what staging writes. ResolveVersion is never
+        // called for linked (a linked container has no versions). Because
+        // GetBaseNameCollision calls this method, the linked base-name
+        // resolution drives the collision check for free.
+        if (container.Source is LinkedSource linked)
+        {
+            var external = linked.ExternalPath;
+            if (!Directory.Exists(external))
+            {
+                return (null, null, "external folder unavailable");
+            }
+
+            // Trim trailing separators so a path stored with a trailing slash
+            // still yields its folder name (ExternalPath is normalized at link
+            // time, so this is defensive only).
+            var linkedBaseName = Path.GetFileName(
+                external.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrEmpty(linkedBaseName))
+            {
+                return (null, null, "external folder has no base name");
+            }
+
+            return (linkedBaseName, external, null);
         }
 
         var version = container.ResolveVersion(mod.Policy);

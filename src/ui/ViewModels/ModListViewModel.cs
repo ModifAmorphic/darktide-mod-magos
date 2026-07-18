@@ -33,9 +33,10 @@ public enum ModAddMode
 /// shell. Loads the profile's mods (joined with source + version from the mod
 /// repository for the badge), and applies every edit through
 /// <see cref="IProfileService"/>: enable/disable, reorder (up/down), per-mod
-/// policy (Latest / Pinned), remove (confirmed), auto-sort (identity stub), and
-/// the add flow (file picker + drag-and-drop) via <see cref="IModImportService"/>
-/// + the per-mod import modal.
+/// policy (Latest / Pinned), remove (confirmed), auto-sort (identity stub), the
+/// add flow (file picker + drag-and-drop) via <see cref="IModImportService"/>
+/// + the per-mod import modal, and the link-external-folder flow (folder picker
+/// only, no copy, no modal) via <see cref="IModImportService.LinkFolder"/>.
 /// </summary>
 /// <remarks>
 /// <para><b>Active profile is the session's:</b> the list never decides the active
@@ -45,13 +46,16 @@ public enum ModAddMode
 /// <para><b>Rows carry state only:</b> each row is a <see cref="ModItemViewModel"/>
 /// (container id + name + source badge + enabled + order + policy + policy-edit
 /// state). All service calls live here; the view routes row interactions (toggle,
-/// move, policy, remove) through code-behind handlers calling these commands with
-/// the row as the parameter (the established <c>ManageProfilesWindow</c> pattern).</para>
+/// move, policy, remove, open external folder) through code-behind handlers
+/// calling these commands with the row as the parameter (the established
+/// <c>ManageProfilesWindow</c> pattern).</para>
 /// <para><b>The join key is <see cref="ModContainer.Id"/></b> (the profile entry's
 /// identity): on reload, each entry's container is looked up via
 /// <see cref="IModRepository.Get"/> for the display name, source badge, and
 /// resolved version. A missing container yields a <see cref="UntrackedSource"/> +
-/// a "not found" badge (staging warns at launch).</para>
+/// a "not found" badge (staging warns at launch). A linked container's external
+/// availability is pushed down to its row from
+/// <see cref="IModRepository.IsExternalAvailable"/> at reload.</para>
 /// <para><b>Edits are allowed while the game runs:</b> the list is the active
 /// profile's config, not the running game's. The active profile is already locked
 /// against switching by the shell, so the list stays put while the game runs and
@@ -65,6 +69,13 @@ public enum ModAddMode
 /// <c>IModImportService.Import</c> (extract/copy into the repository, returning
 /// the container id) + <c>IProfileService.AddMod</c> (the profile reference). A
 /// cancelled modal cancels the whole remaining batch.</para>
+/// <para><b>Link flow:</b> the Add split button's third flyout item ("Link
+/// external folder") reduces to <see cref="LinkModsCommand"/>, which peeks the
+/// base name (validates the mod-folder shape), checks the base-name collision
+/// (excluding a re-link of the same path), then records the metadata-only
+/// container via <see cref="IModImportService.LinkFolder"/> + adds the profile
+/// reference with <see cref="ModVersionPolicy.Latest"/> (inert for linked). No
+/// modal; the folder is linked, not copied.</para>
 /// </remarks>
 public partial class ModListViewModel : ObservableObject
 {
@@ -94,6 +105,7 @@ public partial class ModListViewModel : ObservableObject
     private readonly Action<Action>? _startCountdownTimer;
     private readonly Action? _stopCountdownTimer;
     private readonly Func<Uri, bool> _launchExternal;
+    private readonly Func<string, bool> _launchExternalPath;
 
     /// <summary>
     /// Creates the list VM, subscribes to the session (reload on active-profile
@@ -123,7 +135,8 @@ public partial class ModListViewModel : ObservableObject
         ILogger<ModListViewModel> logger,
         Action<Action>? startCountdownTimer = null,
         Action? stopCountdownTimer = null,
-        Func<Uri, bool>? launchExternal = null)
+        Func<Uri, bool>? launchExternal = null,
+        Func<string, bool>? launchExternalPath = null)
     {
         _profiles = profiles;
         _session = session;
@@ -144,6 +157,7 @@ public partial class ModListViewModel : ObservableObject
         _startCountdownTimer = startCountdownTimer;
         _stopCountdownTimer = stopCountdownTimer;
         _launchExternal = launchExternal ?? LaunchExternalDefault;
+        _launchExternalPath = launchExternalPath ?? LaunchExternalPathDefault;
 
         _session.PropertyChanged += OnSessionPropertyChanged;
         _localization.PropertyChanged += OnCultureChanged;
@@ -594,7 +608,7 @@ public partial class ModListViewModel : ObservableObject
             // surfacing the opaque id; the dropdown exposes the container's
             // versions for re-pinning.
             var version = ResolveDisplayVersion(entry, container);
-            Mods.Add(new ModItemViewModel(
+            var row = new ModItemViewModel(
                 _localization,
                 entry.ContainerId,
                 container?.Name ?? string.Empty,
@@ -604,7 +618,16 @@ public partial class ModListViewModel : ObservableObject
                 entry.Order,
                 entry.Policy,
                 container?.Versions ?? Array.Empty<ModVersion>(),
-                found));
+                found);
+            // Linked availability is a transient signal the repo recomputes on
+            // rescan; read it once per Reload (no live watcher). Always false for
+            // non-linked rows (the repo returns true for managed containers), so
+            // only linked rows pay the query.
+            if (source is LinkedSource)
+            {
+                row.IsExternalBroken = !_repo.IsExternalAvailable(entry.ContainerId);
+            }
+            Mods.Add(row);
         }
 
         HasMods = Mods.Count > 0;
@@ -1129,6 +1152,36 @@ public partial class ModListViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// The default path-launcher: opens the OS file manager at
+    /// <paramref name="path"/> via <c>Process.Start(UseShellExecute=true)</c>.
+    /// Used by the open-external-folder action on a linked row. Same narrow
+    /// exception filter + return contract as <see cref="LaunchExternalDefault"/>;
+    /// tests inject a controllable seam.
+    /// </summary>
+    private static bool LaunchExternalPathDefault(string path)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true,
+            };
+            using (Process.Start(psi))
+            {
+            }
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is System.ComponentModel.Win32Exception
+                or PlatformNotSupportedException
+                or FileNotFoundException)
+        {
+            return false;
+        }
+    }
+
     // ---- auto-sort (identity stub) -----------------------------------------
 
     /// <summary>
@@ -1310,5 +1363,157 @@ public partial class ModListViewModel : ObservableObject
         var name = Path.GetFileNameWithoutExtension(trimmed);
 
         return string.IsNullOrWhiteSpace(name) ? path : name;
+    }
+
+    // ---- link external folder (picker only, no modal, no copy) --------------
+
+    /// <summary>
+    /// Processes a list of external folder paths from the link flow (the "Link
+    /// external folder" picker), sequentially. Per path the flow mirrors
+    /// <see cref="AddMods"/> minus the import modal (the folder is linked, not
+    /// copied): <b>(1)</b> peek the base folder name via
+    /// <see cref="IModImportService.GetBaseName"/> (validates the mod-folder
+    /// shape, throws on an invalid source); <b>(2)</b> hard-block a base-name
+    /// collision against the active profile (refuse, create nothing, alert),
+    /// excluding the container a re-link would dedup to (a re-link resolves to
+    /// the same container, and <see cref="IProfileService.AddMod"/> is idempotent
+    /// on it); <b>(3)</b> <see cref="IModImportService.LinkFolder"/> (record the
+    /// metadata-only container, no copy) + <see cref="IProfileService.AddMod"/>
+    /// with <see cref="ModVersionPolicy.Latest"/> (inert for linked; the external
+    /// folder is the single implicit version). A failed peek, a containment /
+    /// shape failure from <see cref="IModImportService.LinkFolder"/>, OR a
+    /// collision cancels the whole remaining batch (folders linked earlier in the
+    /// batch stay linked).
+    /// </summary>
+    /// <remarks>
+    /// No <c>ConfigureAwait(false)</c> anywhere: dialog + observable mutations
+    /// stay on the captured UI context (UI-layer convention).
+    /// </remarks>
+    [RelayCommand]
+    private async Task LinkMods(IReadOnlyList<string>? paths)
+    {
+        if (paths is null || paths.Count == 0)
+        {
+            return;
+        }
+
+        if (_session.ActiveProfileId is not Guid id)
+        {
+            _logger.LogWarning("Link flow ignored: no active profile");
+            return;
+        }
+
+        foreach (var path in paths)
+        {
+            // (1) Peek the base folder name. The picked folder IS the base; this
+            // validates the mod-folder shape (a matching <base>.mod descriptor)
+            // BEFORE any container is created. An invalid source throws here;
+            // catch it per path, surface an alert naming the failing source, and
+            // abort the remaining batch (the cancel-aborts-batch posture).
+            string baseName;
+            try
+            {
+                baseName = _importService.GetBaseName(path);
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException
+                    or IOException or UnauthorizedAccessException
+                    or System.IO.InvalidDataException)
+            {
+                await AlertImportFailed(path, ex);
+                break;
+            }
+
+            // (2) Base-name collision hard-block (same rule as AddMods). The
+            // container a re-link would dedup to is excluded: a re-link resolves
+            // to the same linked container (Linked identity is the normalized
+            // external path), and AddMod is idempotent on it, so it must NOT be
+            // treated as a collision.
+            var linkedSource = new LinkedSource { ExternalPath = path };
+            var existing = _importService.FindExistingContainer(linkedSource, string.Empty);
+            var collision = _profiles.GetBaseNameCollision(id, baseName, existing?.Id);
+            if (collision is not null)
+            {
+                var conflictingName = _repo.Get(collision.ContainerId)?.Name ?? baseName;
+                _logger.LogWarning(
+                    "Link blocked at {Path}: base folder '{Base}' collides with existing mod '{Conflicting}' (container {Container}) on profile {Id}",
+                    path, baseName, conflictingName, collision.ContainerId, id);
+                await _dialogs.ShowAlertAsync(
+                    _localization["Import_CollisionTitle"],
+                    _localization.Format("Import_CollisionMessage", path, baseName, conflictingName));
+                break;
+            }
+
+            // (3) Record the linked container (metadata only, no copy) then add
+            // the profile reference with LatestPolicy (inert for linked).
+            Guid containerId;
+            try
+            {
+                containerId = _importService.LinkFolder(path);
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException)
+            {
+                await AlertImportFailed(path, ex);
+                break;
+            }
+
+            _profiles.AddMod(id, containerId, ModVersionPolicy.Latest);
+            _logger.LogInformation(
+                "Linked {Mod} from {Path} (policy=Latest) onto container {Container}",
+                baseName, path, containerId);
+        }
+
+        Reload();
+    }
+
+    // ---- open external folder (linked row badge click) ----------------------
+
+    /// <summary>
+    /// Opens the OS file manager at a linked row's external folder via the
+    /// injectable path-launcher seam, surfacing a fallback alert on launch
+    /// failure. No-op for a non-linked row, a broken row (the folder is missing),
+    /// or a row whose source carries no path. The row carries state only; this
+    /// command owns the launch + alert, mirroring the regular/unknown
+    /// files-page open path.
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenFolder(ModItemViewModel? row)
+    {
+        if (row is null || row.Source is not LinkedSource || row.IsExternalBroken)
+        {
+            return;
+        }
+
+        var path = row.ExternalFolderPath;
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_launchExternalPath(path))
+            {
+                _logger.LogWarning("Opening the external folder for {Container} failed.", row.ContainerId);
+                await ShowOpenFolderFailedAlertAsync(row.Name, path);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Launching the external folder for {Container} threw.", row.ContainerId);
+            await ShowOpenFolderFailedAlertAsync(row.Name, path);
+        }
+    }
+
+    /// <summary>
+    /// Shows the localized open-folder-failure alert (the launcher seam returned
+    /// false or threw). Includes the path so the user can open it manually.
+    /// </summary>
+    private async Task ShowOpenFolderFailedAlertAsync(string modName, string path)
+    {
+        await _dialogs.ShowAlertAsync(
+            _localization["ModList_OpenFolderFailedTitle"],
+            _localization.Format("ModList_OpenFolderFailedMessage", modName, path));
     }
 }

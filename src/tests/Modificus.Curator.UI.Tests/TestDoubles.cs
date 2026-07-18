@@ -85,6 +85,10 @@ internal static class TestDoubles
     /// or any other external-open path in a test can never reach the production
     /// <c>Process.Start</c> fallback. Pass a custom recorder/spy to assert on the
     /// opened URL.</param>
+    /// <param name="launchExternalPath">Optional path-launcher override (the
+    /// open-external-folder seam). When omitted, wires
+    /// <see cref="TestLauncher.NoOpPath"/> so a linked-row badge click can never
+    /// reach the production file-manager launch.</param>
     public static ModListViewModel BuildModList(
         FakeProfileService? profiles = null,
         FakeProfileSession? session = null,
@@ -105,7 +109,8 @@ internal static class TestDoubles
         Func<DateTimeOffset>? getNow = null,
         Action<Action>? startCountdownTimer = null,
         Action? stopCountdownTimer = null,
-        Func<Uri, bool>? launchExternal = null)
+        Func<Uri, bool>? launchExternal = null,
+        Func<string, bool>? launchExternalPath = null)
     {
         profiles ??= Profiles();
         session ??= new FakeProfileSession(() => profiles.ListProfiles());
@@ -128,6 +133,9 @@ internal static class TestDoubles
         // test-safety guarantee that no UI test can shell-open the operator's
         // browser, even when a path that triggers an external open is exercised.
         launchExternal ??= TestLauncher.NoOp;
+        // SAFETY: the path-launcher seam (open-external-folder) defaults to the
+        // harmless path recorder for the same reason.
+        launchExternalPath ??= TestLauncher.NoOpPath;
         // Wire the state store + a record-profile-id tracker into the fake
         // update-check service so RaiseCheckCompleted / CheckAsync record the
         // result through the store (mirroring the real service's publish-time
@@ -175,7 +183,8 @@ internal static class TestDoubles
             NullLogger<ModListViewModel>.Instance,
             startCountdownTimer,
             stopCountdownTimer,
-            launchExternal);
+            launchExternal,
+            launchExternalPath);
     }
 }
 
@@ -196,10 +205,13 @@ internal static class TestDoubles
 /// <c>ModListViewModelTests.BuildForRowAction</c> + the DmfPrompt case-2 tests
 /// do this). The default recorder is process-free: opening a URI records it in
 /// memory and nothing touches the OS shell.
+/// The <see cref="NoOpPath"/> variant records a filesystem path (the
+/// open-external-folder seam) into <see cref="PathOpens"/>; same safety contract.
 /// </remarks>
 internal static class TestLauncher
 {
     private static readonly ConcurrentQueue<Uri> _opens = new();
+    private static readonly ConcurrentQueue<string> _pathOpens = new();
 
     /// <summary>
     /// A snapshot of the URIs the no-op launcher was asked to open since the
@@ -211,10 +223,22 @@ internal static class TestLauncher
     public static IReadOnlyList<Uri> Opens => _opens.ToArray();
 
     /// <summary>
-    /// Clears the recorded opens. Call at the start of a focused assertion so
-    /// earlier tests' recorder activity does not bleed in.
+    /// A snapshot of the filesystem paths the no-op path-launcher was asked to
+    /// open since the last <see cref="Reset"/>. Tests assert on this to prove
+    /// the open-external-folder seam ran (the production file-manager launch
+    /// would NOT record here).
     /// </summary>
-    public static void Reset() => _opens.Clear();
+    public static IReadOnlyList<string> PathOpens => _pathOpens.ToArray();
+
+    /// <summary>
+    /// Clears both the URI + path recorded opens. Call at the start of a focused
+    /// assertion so earlier tests' recorder activity does not bleed in.
+    /// </summary>
+    public static void Reset()
+    {
+        _opens.Clear();
+        _pathOpens.Clear();
+    }
 
     /// <summary>
     /// The harmless default launcher: records the URI + returns <c>true</c>
@@ -224,6 +248,18 @@ internal static class TestLauncher
     public static readonly Func<Uri, bool> NoOp = uri =>
     {
         _opens.Enqueue(uri);
+        return true;
+    };
+
+    /// <summary>
+    /// The harmless default path-launcher: records the filesystem path + returns
+    /// <c>true</c> (success), never shell-opening. The open-external-folder seam
+    /// defaults to this so a linked-row badge click in a test can never reach the
+    /// production file-manager launch.
+    /// </summary>
+    public static readonly Func<string, bool> NoOpPath = path =>
+    {
+        _pathOpens.Enqueue(path);
         return true;
     };
 }
@@ -1012,8 +1048,23 @@ internal class FakeModRepository : IModRepository
         {
             NexusSource n => _byId.Values.FirstOrDefault(c =>
                 c.Source is NexusSource ns && ns.ModId == n.ModId),
+            // Mirror production: linked identity is the normalized ExternalPath.
+            LinkedSource l => _byId.Values.FirstOrDefault(c =>
+                c.Source is LinkedSource ls && SamePath(ls.ExternalPath, l.ExternalPath)),
             _ => null,
         };
+    }
+
+    private static bool SamePath(string a, string b)
+    {
+        // Mirrors production (ModRepository.SamePath): full-path normalization
+        // with trailing directory separators trimmed on both sides, so a path
+        // stored with a trailing slash dedups against its slash-less form.
+        var na = Path.TrimEndingDirectorySeparator(Path.GetFullPath(a));
+        var nb = Path.TrimEndingDirectorySeparator(Path.GetFullPath(b));
+        return string.Equals(
+            na, nb,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     public ModContainer? FindUntrackedByName(string name) =>
@@ -1113,13 +1164,15 @@ internal class FakeModRepository : IModRepository
     public void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced)
     {
         // Minimal fake: drop unreferenced versions + empty containers, mirroring
-        // the real repository's behavior.
+        // the real repository's behavior (including the linked-container keep:
+        // a container id in the referenced set survives even with zero versions).
+        var referencedContainerIds = referenced.Select(p => p.ContainerId).ToHashSet();
         foreach (var container in _byId.Values.ToArray())
         {
             var keep = container.Versions
                 .Where(v => referenced.Contains((container.Id, v.Folder)))
                 .ToArray();
-            if (keep.Length == 0)
+            if (keep.Length == 0 && !referencedContainerIds.Contains(container.Id))
             {
                 _byId.Remove(container.Id);
             }
@@ -1129,6 +1182,15 @@ internal class FakeModRepository : IModRepository
             }
         }
     }
+
+    // Default-safe: managed + unknown report available (matches production).
+    // Linked availability is driven by ExternalUnavailableIds so a VM test can
+    // simulate a broken linked container (the repo recomputes this on rescan in
+    // production; the VM reads it once per reload here).
+    public HashSet<Guid> ExternalUnavailableIds { get; } = new();
+
+    public bool IsExternalAvailable(Guid containerId) =>
+        !ExternalUnavailableIds.Contains(containerId);
 
     // Rescan + Relocate are repository-lifecycle operations exercised by the
     // Mods-layer tests; the VM tests never drive them. Recorded as no-ops so a
@@ -1262,6 +1324,54 @@ internal sealed class FakeModImportService : IModImportService
         return source is UntrackedSource
             ? _repo.FindUntrackedByName(modName)
             : _repo.FindBySource(source);
+    }
+
+    /// <summary>The source paths passed to <see cref="LinkFolder"/>, in order.</summary>
+    public IReadOnlyList<string> LinkFolderCalls { get; } = new List<string>();
+
+    /// <summary>
+    /// Optional per-call queue: each <see cref="LinkFolder"/> call dequeues one
+    /// exception and throws it (after recording the call), simulating an invalid
+    /// source (bad shape, containment rejection, unreadable folder). A
+    /// <c>null</c> slot means "succeed for this call". When empty / unset,
+    /// <see cref="LinkFolder"/> proceeds normally. Mirrors
+    /// <see cref="ImportExceptionQueue"/>.
+    /// </summary>
+    public Queue<Exception?>? LinkFolderExceptionQueue { get; set; }
+
+    /// <summary>
+    /// Mirrors <see cref="IModImportService.LinkFolder"/>: records the external
+    /// path, optionally throws from <see cref="LinkFolderExceptionQueue"/>, then
+    /// resolves-or-creates the linked container on the wired repo (if any). When
+    /// no repo is wired, returns a synthetic container id so the link flow has
+    /// something to feed AddMod.
+    /// </summary>
+    public Guid LinkFolder(string externalPath)
+    {
+        ((List<string>)LinkFolderCalls).Add(externalPath);
+
+        if (LinkFolderExceptionQueue is { Count: > 0 })
+        {
+            var ex = LinkFolderExceptionQueue.Dequeue();
+            if (ex is not null)
+            {
+                throw ex;
+            }
+        }
+
+        var normalized = Path.GetFullPath(externalPath);
+        var source = new LinkedSource { ExternalPath = normalized };
+        if (_repo is not null)
+        {
+            var existing = _repo.FindBySource(source);
+            if (existing is not null)
+            {
+                return existing.Id;
+            }
+            var baseName = Path.GetFileName(normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return _repo.CreateContainer(source, baseName).Id;
+        }
+        return Guid.NewGuid();
     }
 }
 

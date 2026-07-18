@@ -5,6 +5,8 @@
 > Plus the version-policy model, the mod-source provenance model, and the
 > local-import service. Archive import is format-agnostic (zip, 7z, rar, and
 > the other formats SharpCompress supports, detected by content not extension).
+> Linked-folder add records an external mod folder in the repository without
+> copying it (metadata only, staged from the external path at launch).
 > Status: implemented (the unified mod repository replaced the earlier
 > shared-store + per-profile allocation model in #30; multi-format archive
 > import + traversal-safe extraction landed in the archive-import fix).
@@ -12,7 +14,9 @@
 A mod is stored exactly once, in the repository, keyed by a UUID container per
 `(source-type, identity)`. Profiles reference a mod by `(containerId, policy)`
 and never store mod files of their own. At stage time the profile resolves the
-policy to a version folder and symlinks into the repository.
+policy to a version folder and links into the repository. The one exception is a
+**linked** mod: the external folder is the mod and its single implicit version,
+and Curator stages it in place (no repository copy, no version subfolders).
 
 ## Public surface
 
@@ -27,7 +31,7 @@ public interface IModRepository
 {
     IReadOnlyList<ModContainer> List();
     ModContainer? Get(Guid containerId);
-    ModContainer? FindBySource(ModSource source);     // Nexus by ModId; null for Untracked
+    ModContainer? FindBySource(ModSource source);     // Nexus by ModId; Linked by normalized ExternalPath; null for Untracked
     ModContainer? FindUntrackedByName(string name);   // Untracked identity is the container Name
     ModContainer CreateContainer(ModSource source, string name);
     ModContainer AddVersion(Guid containerId, string versionString, Action<string> populateFolder, DateTimeOffset? remoteUploadedAt = null);
@@ -35,6 +39,7 @@ public interface IModRepository
     void RemoveVersion(Guid containerId, string versionFolder);
     void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
     string GetVersionFolderPath(Guid containerId, string versionFolder);  // derived, never stored
+    bool IsExternalAvailable(Guid containerId);        // linked external-folder availability (true for managed/unknown)
     void Rescan();                 // rebuild the index from the live ModsFolder
     void Relocate(string newBasePath);   // atomic: move + save config + rescan (rollback on save failure)
 }
@@ -42,8 +47,9 @@ public interface IModRepository
 
 - `List()`: every container, in scan order.
 - `Get(containerId)`: lookup by id. Null if absent.
-- `FindBySource(source)`: Nexus by `ModId`. Returns `null` for
-  `UntrackedSource` (untracked identity is the container `Name`; use
+- `FindBySource(source)`: Nexus by `ModId`; Linked by normalized
+  `ExternalPath` (case-insensitive on Windows, case-sensitive on Linux). Returns
+  `null` for `UntrackedSource` (untracked identity is the container `Name`; use
   `FindUntrackedByName`).
 - `FindUntrackedByName(name)`: lookup an untracked container by its `Name`
   (ordinal). The untracked dedup path: a re-import of the same name resolves to
@@ -80,11 +86,23 @@ public interface IModRepository
 - `RemoveVersion(containerId, versionFolder)`: idempotent. Promotes the newest
   remaining version to `IsLatest` if the removed one carried it.
 - `PruneUnreferenced(referenced)`: GC. Drops every `(containerId, versionFolder)`
-  not in the referenced set + removes containers left with zero versions.
+  not in the referenced set + removes containers left with zero versions,
+  **unless** a caller marked the container id itself as referenced. The
+  linked-mod path uses that escape: a `LinkedSource` container has no versions,
+  so the startup prune (`ModCleanup.PruneUnreferenced`) keeps it by adding
+  `(containerId, "")` to the referenced set (the empty version folder is a
+  sentinel that never matches a real opaque version id, so it cannot affect
+  version dropping; its only role is to mark the containerId as referenced).
   Intended for startup (`ModCleanup.PruneUnreferenced`).
 - `GetVersionFolderPath(containerId, versionFolder)`: the absolute path
   `<ModsFolder>/<containerUUID>/<versionFolder>`. Derived (the repository
   owns `<ModsFolder>`); never stored. Used for staging symlink targets.
+- `IsExternalAvailable(containerId)`: reports whether a linked container's
+  external folder is currently on disk. Returns `true` for managed containers
+  and unknown ids (default-safe; callers should only query linked rows). The
+  value is a transient, in-memory snapshot recomputed on each `Rescan`; staging
+  re-checks `Directory.Exists` independently and does not rely on this cached
+  flag.
 - `Rescan()`: rebuild the in-memory index from the **live** `ModsFolder` (the
   path `IConfigLoader.Load().ModsFolder` currently returns), clearing first.
   Container ids are stable across a relocation (the move never changes ids,
@@ -127,14 +145,16 @@ public interface IModImportService
 {
     (Guid ContainerId, string VersionId) Import(string sourcePath, string modName, ModSource source, string version, DateTimeOffset? remoteUploadedAt = null);
 
+    Guid LinkFolder(string externalPath);   // record an external folder as a linked container (no copy)
+
     // Read-only peeks used by the add flow's base-name collision hard-block:
     string GetBaseName(string sourcePath);                       // validates structure, returns the base folder name (no container/version created)
-    ModContainer? FindExistingContainer(ModSource source, string modName);  // the container an import would dedup to (no create)
+    ModContainer? FindExistingContainer(ModSource source, string modName);  // the container an import/link would dedup to (no create)
 }
 ```
 
 - Container resolution: `FindUntrackedByName` for untracked (dedup by `modName`),
-  `FindBySource` for Nexus (dedup by source identity); `CreateContainer` if
+  `FindBySource` for Nexus + Linked (dedup by source identity); `CreateContainer` if
   absent.
 - Version resolution: dedup by `versionString` (`AddVersion` reuses the existing
   folder + refreshes its files); a new `versionString` creates a new version +
@@ -172,6 +192,22 @@ public interface IModImportService
 - The `modName` path-traversal confinement (rejects path separators, `..`,
   absolute paths) is retained from Track B as defense-in-depth, even though the
   import target is now an opaque UUID folder (not `modName`-derived).
+
+**Linked-folder add (`LinkFolder`):** records an external mod folder as a
+`LinkedSource` container in the repository **without copying** it. The container
+holds metadata only (a `container.json`, no version subfolders); staging links
+`<profile>/staged/<baseName>` directly to the external folder at launch. The
+external folder is the user's: Curator never copies, writes, versions, renames,
+or deletes anything inside it. Validation: `externalPath` must be absolute, an
+existing readable directory, of the same mod-folder shape the folder import
+requires (the folder IS the base and directly contains `<base>.mod`), and it
+must not overlap the mods root or the profiles root in either direction (so
+Curator's own operations cannot recurse into the target and staging cannot
+create a cycle). A re-link of the same normalized path returns the existing
+container id (a refresh; copies/deletes nothing). This method does not add the
+profile reference (the caller does via `IProfileService.AddMod` with
+`LatestPolicy`, which is inert for linked) and does not touch the base-name
+collision check (the caller does, same as `Import`).
 
 **Source structure (both kinds):** a mod source (archive or folder) must
 contain exactly one base directory with a `<basefoldername>.mod` descriptor
@@ -215,9 +251,9 @@ A single mod in the repository (immutable record):
 | Field | Meaning |
 | --- | --- |
 | `Id` | Stable identity (Guid); the on-disk container directory name. |
-| `Source` | Where this mod came from: Untracked / Nexus (`ModSource`, default `UntrackedSource`). |
-| `Name` | The display name + the untracked dedup key. Set at import. |
-| `Versions` | The container's imported versions (`IReadOnlyList<ModVersion>`). One may carry `IsLatest`. |
+| `Source` | Where this mod came from: Untracked / Nexus / Linked (`ModSource`, default `UntrackedSource`). |
+| `Name` | The display name + the untracked dedup key. Set at import; for Linked it is the external folder's name (fixed; Curator never renames it). |
+| `Versions` | The container's imported versions (`IReadOnlyList<ModVersion>`). One may carry `IsLatest`. Empty for Linked (no versions). |
 
 The container's on-disk path is **derived**:
 `<ModsFolder>/<Id>/`. It is never stored absolute, so relocating the
@@ -250,19 +286,26 @@ A mod's source provenance. Three cases:
   dedup key is the container `Name`.
 - `NexusSource(int ModId)`: Nexus Mods (the game is fixed: Darktide; the
   canonical identity is just the numeric mod id).
+- `LinkedSource(string ExternalPath)`: an external mod folder added without
+  copying. The canonical identity is the normalized absolute `ExternalPath`. The
+  folder is externally owned; Curator never copies, writes, versions, renames,
+  or deletes anything inside it. A linked container has no versions (the
+  external folder is the mod and its single implicit version).
 
 Persisted polymorphically to `container.json` via a `$kind` discriminator with
-**stable identifiers** (`untracked` / `nexus`):
+**stable identifiers** (`untracked` / `nexus` / `linked`):
 
 ```csharp
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$kind")]
 [JsonDerivedType(typeof(UntrackedSource), "untracked")]
 [JsonDerivedType(typeof(NexusSource),  "nexus")]
+[JsonDerivedType(typeof(LinkedSource), "linked")]
 public abstract record ModSource;
 ```
 
-Different source-types are separate namespaces: an untracked "WeaponTweaks" and a
-Nexus "WeaponTweaks" are distinct containers (never collide, never share).
+Different source-types are separate namespaces: an untracked "WeaponTweaks", a
+Nexus "WeaponTweaks", and a linked "WeaponTweaks" are distinct containers (never
+collide, never share).
 
 #### `ModVersionPolicy` (abstract record)
 
@@ -380,7 +423,7 @@ UUIDs), never stored absolute.
   (drops/Adds index entries to match the live disk state).
 - `DirectoryCopy`: faithful recursive copy (files + nested subdirs reproduced,
   target created as it goes).
-- `ModSource` JSON `$kind` round-trip (untracked/nexus) + defaults + record
+- `ModSource` JSON `$kind` round-trip (untracked/nexus/linked) + defaults + record
   equality.
 - `ModSourceParser` URL/id parsing (valid variants, trailing slash, query, plain
   id; malformed rejections: wrong host, wrong game slug, too few segments,
@@ -397,7 +440,17 @@ UUIDs), never stored absolute.
   absolute-path entries is refused; nothing is written outside the extraction
   root) + the two import-time peeks (`GetBaseName` validates + returns the base
   name without creating anything; `FindExistingContainer` resolves the would-be
-  dedup container without creating it).
+  dedup container without creating it) + the **linked-folder add**
+  (`LinkFolder`: no copy, shape validation reused, containment rejection of
+  mods-root / profiles-root overlap in either direction, refresh returns the
+  same container id, sentinel-survival across the add).
+- `ModRepository` linked behavior: `FindBySource(LinkedSource)` matches by
+  normalized external path with platform case-sensitivity; `IsExternalAvailable`
+  (true for managed/unknown, tracks `Directory.Exists` for linked on rescan);
+  `PruneUnreferenced` keeps a referenced linked container (zero versions,
+  kept by containerId sentinel) + drops an unreferenced one without touching the
+  external target; an unknown `$kind` in a manifest's `Source` is skipped
+  gracefully during scan.
 
 The internal `ModRepository` + `ModImportService` are visible to tests via
 `InternalsVisibleTo` (tests resolve them through the interface via DI).

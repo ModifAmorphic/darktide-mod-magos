@@ -267,6 +267,14 @@ via `ModContainer.ResolveVersion`), then calls
 building the service provider; a failure is logged + swallowed so cleanup never
 blocks startup.
 
+A `LinkedSource` container has no versions, so it is referenced by containerId
+alone: a linked profile entry adds `(containerId, "")` to the referenced set.
+The empty version folder is a sentinel that never matches a real opaque version
+id, so it cannot affect version dropping; its only role is to mark the
+containerId as referenced so the prune keeps the linked container while any
+profile uses it. An unreferenced linked container is pruned like any empty
+container; the external target is never touched.
+
 ```csharp
 public static class ModCleanup
 {
@@ -328,6 +336,11 @@ display only.
 - **PinnedPolicy(vId)** → link `staged/<baseName>` → `<versionFolder>/<baseName>/`
   where the version's `Folder == vId` (resolution by opaque version id, not by
   tag).
+- **LinkedSource** → link `staged/<baseName>` → the external folder itself (no
+  version resolution; a linked container has no versions). The base name is the
+  external folder's own name (Curator never renames it). A missing/unreadable
+  external folder is skipped with reason "external folder unavailable" (no
+  fallback copy is created).
 - **No match / corrupted** (container missing, no versions, no `IsLatest`, the
   pinned version id is absent, the version folder is missing on disk, or it has
   zero/multiple subdirs so no base name can be derived) → skipped with a warning
@@ -335,9 +348,14 @@ display only.
 
 Staging is a **simple loop**: base-name collisions are blocked at import time
 (`GetBaseNameCollision`), so staging never sees two mods with the same base
-folder name in normal use. No dedupe, no last-wins, no disambiguation.
+folder name in normal use. The collision check resolves a linked mod's base name
+(the external folder's name) via the same path, so a linked container whose
+folder name matches an existing managed mod's base name in the same profile is
+reported as a collision. No dedupe, no last-wins, no disambiguation.
 **Staging links, never copies** -- the repository holds the files; `staged/` is a
-staging-link projection (an NTFS junction on Windows, a symlink on Linux).
+staging-link projection (an NTFS junction on Windows, a symlink on Linux). For a
+linked mod the link points directly at the external folder; the external folder
+is the user's and is never modified.
 `mods.lst` lists exactly what got staged, in `Order`: no
 DMF-first enforcement, no auto-sort (those are higher-layer concerns).
 
@@ -383,7 +401,13 @@ per-kind verdicts, and a parameterized agreement test that feeds the same
 inputs through both `SetLaunchSettings`'s verdict and the validator's verdict
 across valid + every invalid case), `PrepareModRoot` + staging-link
 staging (junction on Windows, symlink on Linux) + the data-safe `ClearStagedDir`
-(`PrepareModRootTests`, `StagingTests`), and the `AddProfiles` DI wiring
+(`PrepareModRootTests`, `StagingTests`), the **linked-mod staging + safety**
+(`LinkedModStagingTests`: links the external folder directly, missing-external
+skip with no fallback copy, enable/disable + reorder, cross-source base-name
+collision, sentinel survival; `LinkedFolderSafetyTests`: availability
+missing-then-returned on rescan, sentinel survival across relocate + a full
+link-stage-remove-rescan-delete sequence; `ModCleanupTests`: referenced linked
+container survives prune, unreferenced is pruned, external target untouched), and the `AddProfiles` DI wiring
 (including the `TryAdd` `StagingLinkCreator` override).
 
 ```sh

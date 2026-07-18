@@ -433,13 +433,15 @@ the `Thorough` flag on the result).
    `None` -> return an empty result (no API call; the user hasn't configured
    Nexus).
 2. **Profile mods.** `IProfileService.GetModList(profileId)` -> the entries.
-3. **Enumerate the Nexus subset.** For each entry, resolve the container via
-   `IModRepository.Get`. Keep every `NexusSource` entry (Latest AND Pinned).
-   Skip `UntrackedSource`. Derive a `checkable` subset filtered to
-   `LatestPolicy` (the flag logic is scoped to it; Pinned mods are frozen
-   version-wise and never flagged). If no Nexus mods at all -> empty result (API
-   not called). A profile with only Pinned Nexus mods still runs the batch (for
-   the name sync).
+ 3. **Enumerate the Nexus subset.** For each entry, resolve the container via
+    `IModRepository.Get`. Keep every `NexusSource` entry (Latest AND Pinned).
+    Skip `UntrackedSource` and `LinkedSource` (linked mods have no Nexus
+    identity and no versions, so they never enter the check). Derive a
+    `checkable` subset filtered to
+    `LatestPolicy` (the flag logic is scoped to it; Pinned mods are frozen
+    version-wise and never flagged). If no Nexus mods at all -> empty result (API
+    not called). A profile with only Pinned Nexus mods still runs the batch (for
+    the name sync).
 4. **Query Nexus v2 GraphQL (1 call for ALL Nexus mods).**
    `INexusClient.CheckUpdatesGraphQlAsync(GameId, modIds, ct)` where `GameId`
    is the Darktide constant `4943` + `modIds` is EVERY Nexus mod's id (Latest +
@@ -632,8 +634,8 @@ view. No construction-time cycle.
   `AcquireLatestNexusAsync`.
 - **`UpdateCheckService`** against a fake `INexusClient` + a fake
   `IProfileService` + a fake `IModRepository` + the `FakeConfigLoader`: correct
-  flagging (`viewerUpdateAvailable == true` flags, `false` + `null` do not),
-  `PinnedPolicy` (flag-wise) / `UntrackedSource` skipping,
+   flagging (`viewerUpdateAvailable == true` flags, `false` + `null` do not),
+   `PinnedPolicy` (flag-wise) / `UntrackedSource` / `LinkedSource` skipping,
   no-auth short-circuit (no API call), no-Nexus-mods short-circuit,
   rate-limit guard (the `> 0` guard prevents a false positive on `NexusRateLimits.Unknown`,
   symmetric daily + hourly paths, + `NexusRateLimitException` surfacing),

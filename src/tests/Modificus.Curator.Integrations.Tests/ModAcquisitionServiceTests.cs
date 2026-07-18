@@ -753,6 +753,7 @@ public sealed class ModAcquisitionServiceTests
 
         public string GetBaseName(string sourcePath) => throw new NotImplementedException();
         public ModContainer? FindExistingContainer(ModSource source, string modName) => null;
+        public Guid LinkFolder(string externalPath) => throw new NotImplementedException();
     }
 
     /// <summary>An <see cref="IHttpClientFactory"/> that always returns the same client.</summary>
