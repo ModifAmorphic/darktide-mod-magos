@@ -957,9 +957,9 @@ instance violation) propagates out; `App` catches it and calls
   (`IRelayLaunchService`, `LaunchResult`, `LaunchStatus`), `nxm`
   (`INxmModDownloadHandler`, `NxmSingleInstanceException`, `NxmIpcServer`,
   `INxmHandlerRegistrar`), `launcher` (the stub).
-- **NuGet:** `Avalonia` 12.0.5 + `Avalonia.Desktop` 12.0.5 +
-  `Avalonia.Themes.Fluent` 12.0.5 (the UI framework), plus an explicit
-  `Avalonia.X11` 12.0.5 compile-time reference so `Program.cs` can construct
+- **NuGet:** `Avalonia` 12.1.0 + `Avalonia.Desktop` 12.1.0 +
+  `Avalonia.Themes.Fluent` 12.1.0 (the UI framework), plus an explicit
+  `Avalonia.X11` 12.1.0 compile-time reference so `Program.cs` can construct
   `X11PlatformOptions` (the WmClass binding) directly; `Avalonia.Desktop`
   already supplies the X11 runtime backend transitively, but excludes
   `Avalonia.X11` from compile-time refs, so the options type is not otherwise
