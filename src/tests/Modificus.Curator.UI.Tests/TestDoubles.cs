@@ -1012,8 +1012,20 @@ internal class FakeModRepository : IModRepository
         {
             NexusSource n => _byId.Values.FirstOrDefault(c =>
                 c.Source is NexusSource ns && ns.ModId == n.ModId),
+            // Mirror production: linked identity is the normalized ExternalPath.
+            LinkedSource l => _byId.Values.FirstOrDefault(c =>
+                c.Source is LinkedSource ls && SamePath(ls.ExternalPath, l.ExternalPath)),
             _ => null,
         };
+    }
+
+    private static bool SamePath(string a, string b)
+    {
+        var na = Path.GetFullPath(a);
+        var nb = Path.GetFullPath(b);
+        return string.Equals(
+            na, nb,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     public ModContainer? FindUntrackedByName(string name) =>
@@ -1113,13 +1125,15 @@ internal class FakeModRepository : IModRepository
     public void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced)
     {
         // Minimal fake: drop unreferenced versions + empty containers, mirroring
-        // the real repository's behavior.
+        // the real repository's behavior (including the linked-container keep:
+        // a container id in the referenced set survives even with zero versions).
+        var referencedContainerIds = referenced.Select(p => p.ContainerId).ToHashSet();
         foreach (var container in _byId.Values.ToArray())
         {
             var keep = container.Versions
                 .Where(v => referenced.Contains((container.Id, v.Folder)))
                 .ToArray();
-            if (keep.Length == 0)
+            if (keep.Length == 0 && !referencedContainerIds.Contains(container.Id))
             {
                 _byId.Remove(container.Id);
             }
@@ -1129,6 +1143,11 @@ internal class FakeModRepository : IModRepository
             }
         }
     }
+
+    // Default-safe: managed + unknown report available (matches production).
+    // Linked availability is not tracked by this fake; VM tests that need it
+    // will extend this fake in the UI wave.
+    public bool IsExternalAvailable(Guid containerId) => true;
 
     // Rescan + Relocate are repository-lifecycle operations exercised by the
     // Mods-layer tests; the VM tests never drive them. Recorded as no-ops so a
@@ -1262,6 +1281,29 @@ internal sealed class FakeModImportService : IModImportService
         return source is UntrackedSource
             ? _repo.FindUntrackedByName(modName)
             : _repo.FindBySource(source);
+    }
+
+    /// <summary>
+    /// Stubs <see cref="IModImportService.LinkFolder"/>. The UI wave will record
+    /// + route this; for now it creates the linked container on the wired repo
+    /// (if any) so a VM test that wires a repo does not crash, and is not
+    /// otherwise exercised.
+    /// </summary>
+    public Guid LinkFolder(string externalPath)
+    {
+        var normalized = Path.GetFullPath(externalPath);
+        var source = new LinkedSource { ExternalPath = normalized };
+        if (_repo is not null)
+        {
+            var existing = _repo.FindBySource(source);
+            if (existing is not null)
+            {
+                return existing.Id;
+            }
+            var baseName = Path.GetFileName(normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return _repo.CreateContainer(source, baseName).Id;
+        }
+        return Guid.NewGuid();
     }
 }
 

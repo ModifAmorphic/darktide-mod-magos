@@ -26,7 +26,9 @@ public interface IModRepository
 
     /// <summary>
     /// Looks up a container by its source identity: Nexus by
-    /// <see cref="NexusSource.ModId"/>. Returns <c>null</c> for
+    /// <see cref="NexusSource.ModId"/>; Linked by normalized
+    /// <see cref="LinkedSource.ExternalPath"/> (case-insensitive on Windows,
+    /// case-sensitive on Linux). Returns <c>null</c> for
     /// <see cref="UntrackedSource"/> (untracked identity is the container
     /// <see cref="ModContainer.Name"/>; use <see cref="FindUntrackedByName"/>).
     /// </summary>
@@ -151,13 +153,32 @@ public interface IModRepository
     /// Garbage-collects unreferenced versions + empty containers. Every
     /// <c>(containerId, versionFolder)</c> not in <paramref name="referenced"/>
     /// is dropped (manifest entry + on-disk folder); containers left with zero
-    /// versions are removed entirely (manifest + directory). Idempotent;
-    /// intended to run at startup so a clean state is enforced.
+    /// versions are removed entirely (manifest + directory), <em>unless</em> a
+    /// caller marked the container id itself as referenced (the linked-mod path:
+    /// a <see cref="LinkedSource"/> container has no versions, so it is kept
+    /// solely by containerId reference). Idempotent; intended to run at startup
+    /// so a clean state is enforced.
     /// </summary>
     /// <param name="referenced">The set of <c>(containerId, versionFolder)</c>
     /// pairs still referenced by some profile (the caller collects these by
-    /// resolving each profile entry's policy against its container).</param>
+    /// resolving each profile entry's policy against its container). A linked
+    /// container is referenced by adding its <c>(containerId, <c>string.Empty</c>)</c>
+    /// pair (the empty version folder is a sentinel that never matches a real
+    /// version folder, so it cannot affect version dropping; its only role is
+    /// to mark the containerId as referenced).</param>
     void PruneUnreferenced(IReadOnlySet<(Guid ContainerId, string VersionFolder)> referenced);
+
+    /// <summary>
+    /// Reports whether a linked container's external folder is currently
+    /// available on disk. Returns <c>true</c> for any container that is not a
+    /// <see cref="LinkedSource"/> (managed containers have no external content;
+    /// their availability is checked separately at stage time) and for unknown
+    /// ids (defensive; callers should only query linked rows they hold). The
+    /// value is a transient, in-memory snapshot recomputed on each
+    /// <see cref="Rescan"/>; staging re-checks <c>Directory.Exists</c>
+    /// independently and does not rely on this cached flag.
+    /// </summary>
+    bool IsExternalAvailable(Guid containerId);
 
     /// <summary>
     /// Rebuilds the in-memory index from the <b>live</b> mods root (the path

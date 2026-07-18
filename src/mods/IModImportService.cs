@@ -2,7 +2,8 @@ namespace Modificus.Curator.Mods;
 
 /// <summary>
 /// Imports a local mod source (a folder OR an archive) into the global mod
-/// repository.
+/// repository, and links an external mod folder into the repository without
+/// copying it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -42,6 +43,14 @@ namespace Modificus.Curator.Mods;
 /// same base folder name can't coexist in one profile (the loader can't tell
 /// them apart). <see cref="Import"/> itself is unconditional so direct
 /// programmatic imports remain usable.</para>
+/// <para>
+/// <b><see cref="LinkFolder"/></b> is the no-copy add: it records an external
+/// folder as a repository container (metadata only) and is staged directly from
+/// the external path at launch. It reuses the folder-shape validator (the picked
+/// folder must BE the base and contain <c>&lt;base&gt;.mod</c>), rejects any
+/// target that overlaps a Curator-managed root, and returns the existing
+/// container id on a re-link of the same path (a refresh; copies/deletes
+/// nothing).</para>
 /// </remarks>
 public interface IModImportService
 {
@@ -141,18 +150,63 @@ public interface IModImportService
     /// create a new container.
     /// </summary>
     /// <param name="source">The mod's source provenance. Untracked dedups by
-    /// <paramref name="modName"/>; Nexus dedups by source identity.</param>
+    /// <paramref name="modName"/>; Nexus by source identity; Linked by
+    /// normalized <see cref="LinkedSource.ExternalPath"/>.</param>
     /// <param name="modName">The container display name + the untracked dedup
-    /// key.</param>
-    /// <returns>The existing container the import would reuse, or <c>null</c> if
-    /// it would create a new one.</returns>
+    /// key. Ignored for Nexus + Linked (their identity is on the source
+    /// record).</param>
+    /// <returns>The existing container the import/link would reuse, or
+    /// <c>null</c> if it would create a new one.</returns>
     /// <remarks>
     /// Used by the add flow to exclude a re-add of a mod already in the profile
     /// from the base-name collision check: a re-add resolves to the same
     /// container, and <c>IProfileService.AddMod</c> is idempotent on its
     /// containerId, so it must NOT be flagged as a collision. Mirrors
     /// <see cref="Import"/>'s container resolution minus the create, so the dedup
-    /// rules live in exactly one place (this service).
+    /// rules live in exactly one place (this service). For Linked the lookup
+    /// matches <see cref="LinkFolder"/>'s refresh path: a linked container for
+    /// the same <see cref="LinkedSource.ExternalPath"/> is returned.
     /// </remarks>
     ModContainer? FindExistingContainer(ModSource source, string modName);
+
+    /// <summary>
+    /// Links an external mod folder into the repository <b>without copying</b>:
+    /// records the folder as a <see cref="LinkedSource"/> container (metadata
+    /// only) and stages it directly from the external path at launch. The
+    /// external folder is the user's; Curator never copies, writes, versions,
+    /// renames, or deletes anything inside it.
+    /// </summary>
+    /// <param name="externalPath">Absolute path to the mod folder to link. The
+    /// folder's own name becomes the base name and the container display name;
+    /// it must directly contain a <c>&lt;folderName&gt;.mod</c> descriptor (the
+    /// same shape a folder import requires, since the loader resolves the
+    /// descriptor by the base name).</param>
+    /// <returns>The container id (a new one, or the existing one if this exact
+    /// external path is already linked, which is a refresh).</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="externalPath"/>
+    /// is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="externalPath"/> is
+    /// not absolute, or cannot be normalized.</exception>
+    /// <exception cref="InvalidOperationException">The folder does not exist,
+    /// is not readable, has an invalid mod-folder shape (no matching
+    /// <c>&lt;base&gt;.mod</c> descriptor), or overlaps a Curator-managed root
+    /// (the mods root, the profiles root, or anything they contain) in either
+    /// direction. Nothing is created.</exception>
+    /// <remarks>
+    /// <para>
+    /// <b>Containment:</b> a target that overlaps the mods root or the profiles
+    /// root (in either direction) is rejected so Curator's own operations never
+    /// recurse into the target and staging never creates a cycle. The profiles
+    /// root check covers every profile root and every <c>staged/</c> dir.</para>
+    /// <para>
+    /// <b>Refresh:</b> linking the same normalized external path twice returns
+    /// the existing container id. A refresh re-validates the folder shape but
+    /// copies, deletes, and rewrites nothing in the target or the manifest.</para>
+    /// <para>
+    /// This method does NOT add the profile reference (the caller does, via
+    /// <c>IProfileService.AddMod</c> with <see cref="ModVersionPolicy.Latest"/>,
+    /// which is inert for linked). It does NOT touch the base-name collision
+    /// check (that is the caller's job, same as <see cref="Import"/>).</para>
+    /// </remarks>
+    Guid LinkFolder(string externalPath);
 }

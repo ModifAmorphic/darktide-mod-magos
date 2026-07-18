@@ -850,6 +850,165 @@ public sealed class ModImportServiceTests
         Assert.Equal(createdId, found!.Id);
     }
 
+    [Fact]
+    public void FindExistingContainer_resolves_linked_by_external_path()
+    {
+        using var fx = new ImportFixture();
+        var external = fx.MakeExternalModFolder("External", ("file.txt", "x"));
+        var createdId = fx.Service.LinkFolder(external);
+
+        // modName is ignored for linked; identity is the external path.
+        var found = fx.Service.FindExistingContainer(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) },
+            "ignored");
+
+        Assert.NotNull(found);
+        Assert.Equal(createdId, found!.Id);
+    }
+
+    [Fact]
+    public void FindExistingContainer_returns_null_for_an_unlinked_external_path()
+    {
+        using var fx = new ImportFixture();
+        var external = fx.MakeExternalModFolder("Standalone", ("file.txt", "x"));
+
+        Assert.Null(fx.Service.FindExistingContainer(
+            new LinkedSource { ExternalPath = Path.GetFullPath(external) },
+            "ignored"));
+    }
+
+    // ---- LinkFolder (linked-folder add) ------------------------------------
+    //
+    // LinkFolder records an external folder as a repository container without
+    // copying. It reuses the folder-shape validator, rejects any target that
+    // overlaps a Curator-managed root, and returns the existing container id on
+    // a re-link of the same path.
+
+    [Fact]
+    public void LinkFolder_creates_a_linked_container_without_copying_the_target()
+    {
+        using var fx = new ImportFixture();
+        var external = fx.MakeExternalModFolder("ExternalMod", ("script.lua", "return 1"));
+        var sentinelPath = Path.Combine(external, "ExternalMod.mod");
+        var sentinelContent = File.ReadAllText(sentinelPath);
+
+        var id = fx.Service.LinkFolder(external);
+
+        var container = fx.Repo.Get(id);
+        Assert.NotNull(container);
+        Assert.IsType<LinkedSource>(container!.Source);
+        Assert.Equal("ExternalMod", container.Name);
+        Assert.Empty(container.Versions); // no versions, no version folders
+
+        // No copy under the mods root: only the new container's manifest dir.
+        var containerDir = Path.Combine(fx.ModsFolder, id.ToString());
+        Assert.True(File.Exists(Path.Combine(containerDir, "container.json")));
+        var entries = Directory.GetFileSystemEntries(containerDir);
+        Assert.Single(entries); // container.json only, no version subfolder
+
+        // The external target is untouched.
+        Assert.True(File.Exists(sentinelPath));
+        Assert.Equal(sentinelContent, File.ReadAllText(sentinelPath));
+    }
+
+    [Fact]
+    public void LinkFolder_re_linking_the_same_path_returns_the_same_container_id_and_touches_nothing()
+    {
+        using var fx = new ImportFixture();
+        var external = fx.MakeExternalModFolder("ExternalMod");
+        var firstId = fx.Service.LinkFolder(external);
+
+        // Mutate the external target between links; a refresh must NOT copy or
+        // delete anything, so the mutation survives.
+        File.WriteAllText(Path.Combine(external, "added.txt"), "fresh");
+
+        var secondId = fx.Service.LinkFolder(external);
+
+        Assert.Equal(firstId, secondId);
+        // Still exactly one linked container.
+        var single = Assert.Single(fx.Repo.List());
+        Assert.Equal(firstId, single.Id);
+        // The mutation survives (no refresh-time delete/copy).
+        Assert.True(File.Exists(Path.Combine(external, "added.txt")));
+    }
+
+    [Fact]
+    public void LinkFolder_rejects_a_non_absolute_path()
+    {
+        using var fx = new ImportFixture();
+        Assert.Throws<ArgumentException>(() => fx.Service.LinkFolder("relative/path/ExternalMod"));
+        Assert.Empty(fx.Repo.List()); // nothing created
+    }
+
+    [Fact]
+    public void LinkFolder_rejects_a_missing_folder()
+    {
+        using var fx = new ImportFixture();
+        var missing = Path.Combine(fx.TempRoot, "DoesNotExist");
+
+        Assert.Throws<InvalidOperationException>(() => fx.Service.LinkFolder(missing));
+        Assert.Empty(fx.Repo.List());
+    }
+
+    [Fact]
+    public void LinkFolder_rejects_a_file_rather_than_a_directory()
+    {
+        using var fx = new ImportFixture();
+        var file = Path.Combine(fx.TempRoot, "notafolder.txt");
+        File.WriteAllText(file, "x");
+
+        Assert.Throws<InvalidOperationException>(() => fx.Service.LinkFolder(file));
+        Assert.Empty(fx.Repo.List());
+    }
+
+    [Fact]
+    public void LinkFolder_rejects_a_bad_folder_shape_with_no_matching_descriptor()
+    {
+        using var fx = new ImportFixture();
+        // A folder with files but no <base>.mod descriptor.
+        var bad = Path.Combine(fx.TempRoot, "BadMod");
+        Directory.CreateDirectory(bad);
+        File.WriteAllText(Path.Combine(bad, "script.lua"), "x");
+
+        Assert.Throws<InvalidOperationException>(() => fx.Service.LinkFolder(bad));
+        Assert.Empty(fx.Repo.List());
+    }
+
+    [Fact]
+    public void LinkFolder_rejects_a_target_inside_the_mods_root()
+    {
+        using var fx = new ImportFixture();
+        var inside = Path.Combine(fx.ModsFolder, "Inside");
+        Directory.CreateDirectory(inside);
+        File.WriteAllText(Path.Combine(inside, "Inside.mod"), "x");
+
+        Assert.Throws<InvalidOperationException>(() => fx.Service.LinkFolder(inside));
+        Assert.Empty(fx.Repo.List());
+    }
+
+    [Fact]
+    public void LinkFolder_rejects_a_target_inside_the_profiles_root()
+    {
+        using var fx = new ImportFixture();
+        var profilesBase = fx.ProfilesBaseFolder;
+        var inside = Path.Combine(profilesBase, "Inside");
+        Directory.CreateDirectory(inside);
+        File.WriteAllText(Path.Combine(inside, "Inside.mod"), "x");
+
+        Assert.Throws<InvalidOperationException>(() => fx.Service.LinkFolder(inside));
+        Assert.Empty(fx.Repo.List());
+    }
+
+    [Fact]
+    public void LinkFolder_rejects_a_target_that_contains_the_mods_root()
+    {
+        // The mods root lives under TempRoot; linking TempRoot itself would
+        // make Curator's operations recurse into the target.
+        using var fx = new ImportFixture();
+        Assert.Throws<InvalidOperationException>(() => fx.Service.LinkFolder(fx.TempRoot));
+        Assert.Empty(fx.Repo.List());
+    }
+
     // ---- fixture + helpers -------------------------------------------------
 
     /// <summary>Per-test fixture: temp <c>ModsFolder</c> + a DI-resolved
@@ -859,16 +1018,21 @@ public sealed class ModImportServiceTests
         private readonly ServiceProvider _provider;
         public string TempRoot { get; } = Path.Combine(Path.GetTempPath(), "curator-import-" + Guid.NewGuid());
         public string ModsFolder { get; }
+        public string ProfilesBaseFolder { get; }
         public IModImportService Service { get; }
         public IModRepository Repo { get; }
 
         public ImportFixture()
         {
             ModsFolder = Path.Combine(TempRoot, "mods");
+            ProfilesBaseFolder = Path.Combine(TempRoot, "profiles");
             Directory.CreateDirectory(TempRoot);
 
             var config = CuratorConfig.CreateDefault();
             config.ModsFolder = ModsFolder;
+            // Isolate the profiles base under TempRoot so LinkFolder's containment
+            // check compares against a throwaway dir, never the real app-data.
+            config.ProfilesBaseFolder = ProfilesBaseFolder;
             _provider = new ServiceCollection()
                 .AddSingleton<IConfigLoader>(new FakeConfigLoader { Config = config })
                 .AddLogging(b => b.SetMinimumLevel(LogLevel.Warning))
@@ -906,6 +1070,14 @@ public sealed class ModImportServiceTests
             }
             return dir;
         }
+
+        /// <summary>Creates a valid external mod folder <em>outside</em> the mods
+        /// root (a sibling of <c>mods/</c> under <c>TempRoot</c>) shaped exactly
+        /// as <see cref="LinkFolder"/> requires: the folder IS the base and
+        /// directly contains <c>&lt;baseName&gt;.mod</c>. Returns its full path.
+        /// Used by the linked-folder tests so the containment check passes.</summary>
+        public string MakeExternalModFolder(string baseName, params (string Path, string Content)[] files) =>
+            MakeSourceModFolder(baseName, files);
 
         /// <summary>Creates <c>&lt;TempRoot&gt;/&lt;dirName&gt;</c> with the given
         /// (relativePath, content) files (NO <c>.mod</c> descriptor), returning its

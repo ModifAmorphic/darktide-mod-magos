@@ -82,6 +82,13 @@ internal sealed class ModRepository : IModRepository
     // Nexus lookups scan _byId (identity is fully on the source record).
     private readonly Dictionary<string, Guid> _untrackedByName = new(StringComparer.Ordinal);
 
+    // Linked containerId -> whether its ExternalPath was available on disk at
+    // the last index build. Recomputed on every RebuildIndex/Rescan (transient,
+    // not persisted): linked availability is a live filesystem question, and
+    // staging re-checks Directory.Exists independently at stage time. Absent
+    // entries mean "not a linked container" (IsExternalAvailable returns true).
+    private readonly Dictionary<Guid, bool> _externalAvailable = new();
+
     /// <summary>
     /// DI constructor. Wires the real same-volume detector (path-root
     /// comparison, see <see cref="SameVolumeByRoot"/>).
@@ -162,6 +169,15 @@ internal sealed class ModRepository : IModRepository
             {
                 NexusSource n => _byId.Values.FirstOrDefault(c =>
                     c.Source is NexusSource ns && ns.ModId == n.ModId),
+                // Linked identity is the normalized ExternalPath. SamePath
+                // normalizes both sides via GetFullPath and compares with the
+                // platform-appropriate comparison (case-insensitive on Windows,
+                // case-sensitive on Linux), matching the path-root comparison
+                // used by Relocate. Callers pass an already-normalized path
+                // (LinkFolder normalizes), but normalizing again here keeps the
+                // lookup correct for any caller.
+                LinkedSource l => _byId.Values.FirstOrDefault(c =>
+                    c.Source is LinkedSource ls && SamePath(ls.ExternalPath, l.ExternalPath)),
                 _ => null,
             };
         }
@@ -174,6 +190,18 @@ internal sealed class ModRepository : IModRepository
         {
             ArgumentNullException.ThrowIfNull(name);
             return _untrackedByName.TryGetValue(name, out var id) ? Get(id) : null;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool IsExternalAvailable(Guid containerId)
+    {
+        lock (_sync)
+        {
+            // Absent (non-linked / unknown) defaults to available so a caller
+            // that queries a managed or stale id never sees a false "broken"
+            // signal. The UI only queries this for linked rows it holds.
+            return !_externalAvailable.TryGetValue(containerId, out var available) || available;
         }
     }
 
@@ -526,6 +554,18 @@ internal sealed class ModRepository : IModRepository
             ArgumentNullException.ThrowIfNull(referenced);
             var baseFolder = EnsureBaseFolder();
 
+            // The set of container ids a caller marked as referenced, regardless
+            // of version folder. A LinkedSource container has no versions, so it
+            // is kept solely by containerId reference: the caller (ModCleanup)
+            // adds (containerId, string.Empty) for each linked profile entry.
+            // The empty version folder is a sentinel that never matches a real
+            // opaque version id, so it does not affect the version-drop loop
+            // below; its only role here is to keep a referenced linked
+            // container's id in this set. Managed containers with zero versions
+            // are never in this set (ResolveVersion returns null for them), so
+            // they remain pruned as before.
+            var referencedContainerIds = referenced.Select(p => p.ContainerId).ToHashSet();
+
             // Drop unreferenced versions per container. Snapshot the containers
             // first (RemoveVersion mutates the index); each RemoveVersion call
             // operates on the live index, not the snapshot, so consecutive calls on
@@ -542,11 +582,18 @@ internal sealed class ModRepository : IModRepository
                 }
             }
 
-            // Remove containers left with zero versions (manifest + dir). Snapshot
-            // again; the index shrank above.
-            foreach (var empty in _byId.Values.Where(c => c.Versions.Count == 0).ToArray())
+            // Remove containers left with zero versions (manifest + dir), UNLESS
+            // a caller marked the container id itself as referenced (linked
+            // containers: zero versions by design, kept by containerId). The
+            // external target of a linked container is NEVER touched here: only
+            // the container dir (which holds only container.json for linked) is
+            // removed. Snapshot again; the index shrank above.
+            foreach (var empty in _byId.Values
+                .Where(c => c.Versions.Count == 0 && !referencedContainerIds.Contains(c.Id))
+                .ToArray())
             {
                 _byId.Remove(empty.Id);
+                _externalAvailable.Remove(empty.Id);
                 if (empty.Source is UntrackedSource)
                 {
                     _untrackedByName.Remove(empty.Name);
@@ -580,6 +627,7 @@ internal sealed class ModRepository : IModRepository
             var baseFolder = EnsureBaseFolder();
             _byId.Clear();
             _untrackedByName.Clear();
+            _externalAvailable.Clear();
             RebuildIndex(baseFolder);
             _logger.LogInformation("Rescanned mods repository at {Path} ({Count} containers).", baseFolder, _byId.Count);
         }
@@ -837,12 +885,17 @@ internal sealed class ModRepository : IModRepository
 
     /// <summary>
     /// Ordinal, case-insensitive path equality after full-path normalization.
-    /// Used to short-circuit a relocate-to-same-path as a no-op.
+    /// Used to short-circuit a relocate-to-same-path as a no-op and to compare
+    /// linked external-path identities. Trailing directory separators are
+    /// trimmed (<see cref="Path.TrimEndingDirectorySeparator(string)"/>) so
+    /// <c>/a/b</c>, <c>/a/b/</c>, and <c>/a/b/./</c> all compare equal (a plain
+    /// <see cref="Path.GetFullPath"/> leaves a trailing separator in some
+    /// input forms, which would otherwise break identity).
     /// </summary>
     private static bool SamePath(string a, string b)
     {
-        var na = Path.GetFullPath(a);
-        var nb = Path.GetFullPath(b);
+        var na = Path.TrimEndingDirectorySeparator(Path.GetFullPath(a));
+        var nb = Path.TrimEndingDirectorySeparator(Path.GetFullPath(b));
         return string.Equals(na, nb, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
@@ -850,6 +903,12 @@ internal sealed class ModRepository : IModRepository
 
     private void RebuildIndex(string baseFolder)
     {
+        // Clear the availability index at the start of a rebuild: it is fully
+        // recomputed below from the linked containers the scan loads. (Rescan
+        // also clears it before calling this; clearing here too keeps
+        // RebuildIndex self-contained for any caller.)
+        _externalAvailable.Clear();
+
         foreach (var dir in Directory.EnumerateDirectories(baseFolder))
         {
             var name = Path.GetFileName(dir);
@@ -882,6 +941,9 @@ internal sealed class ModRepository : IModRepository
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
                 // A corrupt manifest must not break the rest of the index.
+                // IgnoreUnrecognizedTypeDiscriminators = false means an unknown
+                // $kind (e.g. a newer source type this build does not know)
+                // throws JsonException here and is gracefully skipped.
                 _logger.LogError(ex, "Container manifest at {Path} is unreadable; skipping.", manifest);
                 continue;
             }
@@ -899,7 +961,27 @@ internal sealed class ModRepository : IModRepository
 
             _byId[id] = container;
             IndexUntrackedName(container);
+            IndexExternalAvailability(container);
         }
+    }
+
+    /// <summary>
+    /// Records a linked container's external-folder availability into
+    /// <see cref="_externalAvailable"/>. A non-linked container is a no-op
+    /// (availability is only tracked for linked containers; managed containers
+    /// report <c>true</c> from <see cref="IsExternalAvailable"/> by absence).
+    /// </summary>
+    private void IndexExternalAvailability(ModContainer container)
+    {
+        if (container.Source is not LinkedSource linked)
+        {
+            return;
+        }
+
+        // Directory.Exists is cheap + sufficient for the cached signal. A
+        // missing/unreadable folder records false; staging re-checks
+        // independently so a transient flip between scan + stage is handled.
+        _externalAvailable[container.Id] = Directory.Exists(linked.ExternalPath);
     }
 
     private void IndexUntrackedName(ModContainer container)
