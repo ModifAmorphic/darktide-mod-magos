@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.13.0...v0.13.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **ui:** make update pill readable and obviously clickable ([#123](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/123)) ([748227a](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/748227a02f2736a99362613a7921d4e20b0472ff))
+
 ## [0.13.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.12.0...v0.13.0) (2026-07-18)
 
 
