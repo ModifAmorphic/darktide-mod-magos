@@ -28,8 +28,8 @@ namespace Modificus.Curator.UI.Views;
 /// VM's <see cref="ModListViewModel.AddMode"/> is mirrored so the split button's
 /// label reflects it. The third flyout item ("Link external folder") opens its own
 /// folder picker routed to the link command (a separate action, not a mode switch).
-/// Folders get a picker path because drag-and-drop is a Windows-only feature in
-/// Avalonia 12.0.x.</para>
+/// Folders get a picker path because a native picker cannot mix files +
+/// folders.</para>
 /// <para><b>Drag-and-drop:</b> the content area has
 /// <c>DragDrop.AllowDrop="True"</c> + <c>Drop</c>/<c>DragOver</c> handlers. The
 /// drop reads the files (folders AND archives, multi) via the sync
@@ -37,8 +37,7 @@ namespace Modificus.Curator.UI.Views;
 /// <c>IDataTransfer</c> in Avalonia 12.x, so the async variant is unavailable
 /// here), maps each to its local path, and forwards the list to the VM's add
 /// command. <c>DragOver</c> advertises the Copy effect only when files are
-/// present. Drag-and-drop is Windows-only in 12.0.x; the folder picker covers
-/// the cross-platform folder case.</para>
+/// present.</para>
 /// <para><b>Policy ComboBox guard:</b> <see cref="Policy_Changed"/> skips when the
 /// selection already agrees with the row's effective policy, so the binding-init
 /// (and post-Reload) <c>SelectionChanged</c> fires do not re-apply + loop. Only a
@@ -96,7 +95,7 @@ public partial class ModListView : UserControl
     /// The "Add Mod (folder)" flyout item: switches the mode to folder (so
     /// subsequent primary clicks open the folder picker) and opens the folder
     /// picker immediately (one-click import). Folders get a picker path because
-    /// drag-and-drop is a Windows-only feature in Avalonia 12.0.x.
+    /// a native picker cannot mix files + folders.
     /// </summary>
     private async void AddFolder_Click(object? sender, RoutedEventArgs e)
     {
@@ -215,9 +214,8 @@ public partial class ModListView : UserControl
 
     /// <summary>
     /// Opens a multi-select folder picker and forwards the selected folder paths
-    /// to the VM's add command. Folders are covered by drag-and-drop only on
-    /// Windows in Avalonia 12.0.x, so this picker is the cross-platform path for
-    /// folder import.
+    /// to the VM's add command. The cross-platform path for folder import via
+    /// picker (a native picker cannot mix files + folders).
     /// </summary>
     private async Task OpenFolderPickerAsync()
     {
@@ -259,10 +257,9 @@ public partial class ModListView : UserControl
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         // Gate on the actual file retrieval (the same call OnDrop uses), not on
-        // Contains(DataFormat.File): that format-name check is unreliable for
-        // external file-manager drags on X11/Wayland and silently rejects drops on
-        // Linux. TryGetFiles is consistent with OnDrop + grants Copy only when files
-        // are genuinely present.
+        // Contains(DataFormat.File): that format-name check can be unreliable for
+        // external file-manager drags. TryGetFiles is consistent with OnDrop and
+        // grants Copy only when files are genuinely present.
         e.DragEffects = e.DataTransfer.TryGetFiles() is { Length: > 0 }
             ? DragDropEffects.Copy
             : DragDropEffects.None;

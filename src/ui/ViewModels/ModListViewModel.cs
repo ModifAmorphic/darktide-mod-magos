@@ -4,6 +4,7 @@ using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Modificus.Curator.Integrations;
+using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.Mods;
 using Modificus.Curator.UI.Dialogs;
@@ -106,6 +107,7 @@ public partial class ModListViewModel : ObservableObject
     private readonly Action? _stopCountdownTimer;
     private readonly Func<Uri, bool> _launchExternal;
     private readonly Func<string, bool> _launchExternalPath;
+    private readonly INxmHandlerRegistrar? _nxmRegistrar;
 
     /// <summary>
     /// Creates the list VM, subscribes to the session (reload on active-profile
@@ -136,7 +138,8 @@ public partial class ModListViewModel : ObservableObject
         Action<Action>? startCountdownTimer = null,
         Action? stopCountdownTimer = null,
         Func<Uri, bool>? launchExternal = null,
-        Func<string, bool>? launchExternalPath = null)
+        Func<string, bool>? launchExternalPath = null,
+        INxmHandlerRegistrar? nxmRegistrar = null)
     {
         _profiles = profiles;
         _session = session;
@@ -158,6 +161,7 @@ public partial class ModListViewModel : ObservableObject
         _stopCountdownTimer = stopCountdownTimer;
         _launchExternal = launchExternal ?? LaunchExternalDefault;
         _launchExternalPath = launchExternalPath ?? LaunchExternalPathDefault;
+        _nxmRegistrar = nxmRegistrar;
 
         _session.PropertyChanged += OnSessionPropertyChanged;
         _localization.PropertyChanged += OnCultureChanged;
@@ -182,6 +186,13 @@ public partial class ModListViewModel : ObservableObject
         _ = LoadPremiumStateAsync();
 
         Reload();
+
+        // Probe the nxm:// handler registration so the empty-state Nexus hint
+        // shows the correct state on first paint (Reload already calls this at
+        // its end; the explicit call here makes the construction-time intent
+        // unmissable even if Reload's ordering changes). Cheap: a registry read
+        // on Windows, an xdg-mime query on Linux.
+        RefreshNxmRegistered();
     }
 
     /// <summary>
@@ -231,24 +242,34 @@ public partial class ModListViewModel : ObservableObject
 
     /// <summary>
     /// Whether a profile is active. Drives the header + the "no profile" empty
-    /// state (owned here, not the shell).
+    /// state (owned here, not the shell). Also feeds <see cref="ShowAddModsHint"/>.
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsEmptyNoMods))]
+    [NotifyPropertyChangedFor(nameof(ShowAddModsHint))]
     private bool _hasActiveProfile;
 
-    /// <summary>Whether the active profile has at least one mod (drives the
-    /// "no mods yet" empty state).</summary>
+    /// <summary>Whether the active profile has at least one mod. Drives the
+    /// row-list Border's IsVisible (the rows render only when non-empty).</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsEmptyNoMods))]
     private bool _hasMods;
 
     /// <summary>
-    /// Whether the "no mods yet" empty state should show: an active profile with
-    /// zero mods. A dedicated derived property because the view cannot express the
+    /// The number of mods in the active profile. Drives
+    /// <see cref="ShowAddModsHint"/> (the hint shows for zero or one mod, so a
+    /// DMF-only profile after onboarding still invites adding more).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowAddModsHint))]
+    private int _modCount;
+
+    /// <summary>
+    /// Whether the no-mods / DMF-only "add a mod" hint should show: an active
+    /// profile with zero or one mod (so a freshly-onboarded DMF-only profile
+    /// still invites the user to add their own mods alongside the framework).
+    /// A dedicated derived property because the view cannot express the
     /// conjunction in a single Avalonia compiled binding.
     /// </summary>
-    public bool IsEmptyNoMods => HasActiveProfile && !HasMods;
+    public bool ShowAddModsHint => HasActiveProfile && ModCount <= 1;
 
     /// <summary>
     /// The auto-sort toggle state. Turning it on applies the
@@ -365,8 +386,30 @@ public partial class ModListViewModel : ObservableObject
     /// <summary>The localized empty-state message for the no-profile case.</summary>
     public string EmptyNoProfileText => _localization["ModList_EmptyNoProfile"];
 
-    /// <summary>The localized empty-state message for the no-mods case.</summary>
-    public string EmptyNoModsText => _localization["ModList_EmptyNoMods"];
+    /// <summary>
+    /// The localized primary hint shown in the no-mods / DMF-only empty state.
+    /// Re-fires on a culture change.
+    /// </summary>
+    public string AddModsHintText => _localization["ModList_EmptyNoMods"];
+
+    /// <summary>
+    /// The localized secondary hint shown in the empty state ONLY when Curator
+    /// is the registered nxm:// handler (so the user knows the Nexus 'Vortex' /
+    /// 'Mod manager download' buttons route mods straight into the app).
+    /// Re-fires on a culture change.
+    /// </summary>
+    public string NxmDownloadHintText => _localization["ModList_NxmDownloadHint"];
+
+    /// <summary>
+    /// Whether Curator is the registered OS handler for nxm:// links. Probed at
+    /// construction + on each Reload. Read once per probe (no live watcher); a
+    /// mid-session Integrations toggle is picked up at the next Reload point.
+    /// False on platforms with no registrar (not Windows or Linux) and on a
+    /// probe failure (defensive; the platform registrars catch their own
+    /// exceptions).
+    /// </summary>
+    [ObservableProperty]
+    private bool _isNxmRegistered;
 
     /// <summary>
     /// The localized rate-limit notice text shown in the header when
@@ -402,7 +445,8 @@ public partial class ModListViewModel : ObservableObject
 
         OnPropertyChanged(nameof(HeaderCountText));
         OnPropertyChanged(nameof(EmptyNoProfileText));
-        OnPropertyChanged(nameof(EmptyNoModsText));
+        OnPropertyChanged(nameof(AddModsHintText));
+        OnPropertyChanged(nameof(NxmDownloadHintText));
         OnPropertyChanged(nameof(AddModeLabel));
         OnPropertyChanged(nameof(RateLimitedNoticeText));
         // When not throttled, the refresh tooltip re-resolves to the normal
@@ -570,6 +614,32 @@ public partial class ModListViewModel : ObservableObject
     partial void OnAnyRowUpdatingChanged(bool value) => PushGlobalStateToRows();
 
     /// <summary>
+    /// Re-reads the OS <c>nxm://</c> handler registration into
+    /// <see cref="IsNxmRegistered"/>. No-op when the platform has no registrar
+    /// (not Windows or Linux); the empty-state Nexus hint stays hidden there.
+    /// A probe throw is treated as "not registered" (defensive; the platform
+    /// registrars catch their own common probe exceptions). Mirrors the
+    /// <c>RefreshNxmHandlerStatus</c> pattern in <c>ShellViewModel</c>.
+    /// </summary>
+    private void RefreshNxmRegistered()
+    {
+        if (_nxmRegistrar is null)
+        {
+            return;
+        }
+
+        try
+        {
+            IsNxmRegistered = _nxmRegistrar.IsRegistered();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "IsRegistered probe threw; treating as not registered.");
+            IsNxmRegistered = false;
+        }
+    }
+
+    /// <summary>
     /// Rebuilds <see cref="Mods"/> from the active profile. Each row's source +
     /// version are joined from the repository (by container id); a missing
     /// container yields a <see cref="UntrackedSource"/> + a "not found" badge
@@ -591,6 +661,10 @@ public partial class ModListViewModel : ObservableObject
         {
             HasActiveProfile = false;
             HasMods = false;
+            ModCount = 0;
+            // Still refresh the nxm registration so a profile-less state shows
+            // the correct hint if/when a profile becomes active next.
+            RefreshNxmRegistered();
             return;
         }
 
@@ -631,6 +705,7 @@ public partial class ModListViewModel : ObservableObject
         }
 
         HasMods = Mods.Count > 0;
+        ModCount = Mods.Count;
 
         // The freshly built rows default UpdateAvailable=false + carry no
         // premium / global-busy state. Push the current global state down, then
@@ -639,6 +714,12 @@ public partial class ModListViewModel : ObservableObject
         // flags without waiting for the next check.
         PushGlobalStateToRows();
         ApplyKnownUpdateState();
+
+        // Re-probe the nxm handler registration so a mid-session Integrations
+        // toggle is reflected at the next reload point (profile switch, culture
+        // change, post-batch install). Cheap: a registry read on Windows, an
+        // xdg-mime query on Linux.
+        RefreshNxmRegistered();
     }
 
     /// <summary>
