@@ -228,6 +228,34 @@ public sealed class LinkedModStagingTests
     }
 
     [Fact]
+    public void Linked_base_name_colliding_with_a_disabled_managed_mod_in_the_profile_is_reported()
+    {
+        // GetBaseNameCollision considers ALL mods (enabled + disabled): a
+        // disabled colliding mod could be enabled later. This pins that behavior
+        // for the linked cross-source path specifically.
+        using var fx = new ProfileServiceFixture();
+        // Managed mod with base name "Shared" (the fixture sanitizes the name).
+        var managed = fx.AddContainerWithVersion("Shared");
+        var profile = fx.Service.CreateProfile("P");
+        fx.Service.AddMod(profile.Id, managed.Id, ModVersionPolicy.Latest);
+
+        // A linked external folder with the SAME base name "Shared".
+        var external = fx.MakeExternalModFolder("Shared");
+        var linkedId = fx.Imports.LinkFolder(external);
+
+        // Disable the managed entry: still a collision (a disabled colliding mod
+        // could be enabled later).
+        fx.Service.SetModEnabled(profile.Id, managed.Id, enabled: false);
+
+        var collision = fx.Service.GetBaseNameCollision(profile.Id, "Shared", excludeContainerId: null);
+
+        Assert.NotNull(collision);
+        // The collision is one of the two containers (the managed one is already
+        // in the profile, disabled; the linked one is not yet added).
+        Assert.True(collision!.ContainerId == managed.Id || collision.ContainerId == linkedId);
+    }
+
+    [Fact]
     public void Linked_re_add_of_a_container_already_in_the_profile_is_not_a_collision()
     {
         // Mirrors the managed-mod behavior: excludeContainerId skips a re-add

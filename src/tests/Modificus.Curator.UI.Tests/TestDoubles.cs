@@ -1021,8 +1021,11 @@ internal class FakeModRepository : IModRepository
 
     private static bool SamePath(string a, string b)
     {
-        var na = Path.GetFullPath(a);
-        var nb = Path.GetFullPath(b);
+        // Mirrors production (ModRepository.SamePath): full-path normalization
+        // with trailing directory separators trimmed on both sides, so a path
+        // stored with a trailing slash dedups against its slash-less form.
+        var na = Path.TrimEndingDirectorySeparator(Path.GetFullPath(a));
+        var nb = Path.TrimEndingDirectorySeparator(Path.GetFullPath(b));
         return string.Equals(
             na, nb,
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);

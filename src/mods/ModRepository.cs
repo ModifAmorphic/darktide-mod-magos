@@ -230,6 +230,11 @@ internal sealed class ModRepository : IModRepository
 
             _byId[container.Id] = container;
             IndexUntrackedName(container);
+            // Keep the availability cache authoritative immediately for a freshly
+            // created linked container (absent ids already default to true, and a
+            // just-linked folder exists, but the cache should mirror the rescan
+            // path for symmetry). No-op for non-linked containers.
+            IndexExternalAvailability(container);
             _logger.LogInformation("Created container {Id} ('{Name}', source={Source})", container.Id, name, source);
             return container;
         }

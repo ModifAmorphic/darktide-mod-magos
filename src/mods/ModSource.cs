@@ -54,7 +54,7 @@ public sealed record NexusSource : ModSource
 /// Linked source: an external mod folder added to the repository without
 /// copying. The canonical identity is the normalized
 /// <see cref="ExternalPath"/>. The folder is externally owned: Curator never
-/// copies, writes, version, or deletes anything inside it. A linked container
+/// copies, writes, versions, or deletes anything inside it. A linked container
 /// has no versions; staging links <c>&lt;profile&gt;/staged/&lt;baseName&gt;</c>
 /// directly to <see cref="ExternalPath"/> at launch.
 /// </summary>
