@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.15.0...v0.15.1) (2026-07-21)
+
+
+### Miscellaneous Chores
+
+* **release:** ship Relay v0.9.0 ([#135](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/135)) ([75d9347](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/75d9347adfaca0baf0999e84a365dd65c5668571))
+
 ## [0.15.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.14.0...v0.15.0) (2026-07-21)
 
 
