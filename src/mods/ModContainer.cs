@@ -20,7 +20,7 @@ namespace Modificus.Curator.Mods;
 /// <para>
 /// <b>The container's on-disk path is derived</b>:
 /// <c>&lt;ModsFolder&gt;/&lt;Id&gt;/</c>. It is never stored absolute, so
-/// relocating the repository is a physical move of the tree plus a config
+/// moving the repository is a physical move of the tree plus a config
 /// update (no manifest rewriting, no drift detection).</para>
 /// <para>
 /// Immutable record: mutations go through <see cref="IModRepository"/>

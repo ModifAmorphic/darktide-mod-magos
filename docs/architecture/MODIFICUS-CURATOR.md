@@ -87,8 +87,8 @@ through a registered library interface. The UI registers only its own surface
    `IConfigLoader` singleton (one shared instance). The startup snapshot is a
    one-off `Load()` to build the logger; every consumer thereafter re-reads the
    current disk state per op via `IConfigLoader.Load()` (config is tiny; a
-   startup cache would only create staleness for the Settings window + mod-repo
-   relocation, which write config at runtime; #31).
+   startup cache would only create staleness for the Settings window, which
+   writes config at runtime; #31).
 2. **Build the logger**: `LoggingBootstrap.CreateLoggerFactory(config)`
    (Serilog console + file, level-honored, truncated on startup). Both config
    and the logger are constructed **outside** DI because DI itself needs them.
@@ -338,11 +338,11 @@ unreferenced one is pruned like any empty container, and its external target is
 never touched. Keeps the on-disk tree in sync with what the profiles actually
 use.
 
-**Relocation:** because paths are derived, changing `<ModsFolder>` is a physical
-move of the tree plus a config update. `IModRepository.Relocate` owns the move +
-config save + rescan as one atomic operation (rolling the move back on save
-failure so files + config can never disagree); no manifest rewriting, no drift
-detection. The Settings window's Storage section is the UI for it.
+**Storage location:** because paths are derived, changing `<ModsFolder>` is a
+physical move of the tree plus a config update; no manifest rewriting, no drift
+detection. Curator does not offer the move from the UI (the operator edits the
+config + moves the folder by hand); `Rescan` rebuilds the in-memory index from
+the new location.
 
 ## Mod sources / integrations
 
@@ -611,11 +611,10 @@ sections, both persisting through `IConfigLoader` (read live, so the next
   the healed fields; valid fields are preserved). On Windows the compatdata +
   Proton rows are hidden (Linux-only). When every field is valid the discoverer
   is skipped entirely (fast path).
-- **Storage:** the mod-repository location (`ModsFolder`). Changing it runs the
-  **atomic relocate** on `IModRepository.Relocate`, which owns the move + config
-  save + rescan as one operation (rolling the move back on save failure so files
-  + config can never disagree). After the Settings dialog closes, the shell
-  reloads the mod list so the rescanned index is reflected in the rows.
+- **Storage:** two buttons that launch the OS file manager at the Curator
+  data root and the profiles root. The data-root path is the static
+  `AppPaths.AppDataDir`; the profiles path is read live from config. Nothing
+  in this section is editable.
 
 The **escape-hatch dialog** is the focused form shown on `DiscoveryIncomplete`.
 It shows inputs **only for the missing fields**, pre-filled with the current

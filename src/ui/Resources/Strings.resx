@@ -658,15 +658,27 @@
   </data>
   <data name="Settings_StorageSection" xml:space="preserve">
     <value>Storage</value>
-    <comment>Header over the storage section (mod-repository location) of the Settings dialog.</comment>
+    <comment>Header over the storage section (buttons that open the OS file manager at the Curator data root + profiles root) of the Settings dialog.</comment>
   </data>
   <data name="Settings_DoneButton" xml:space="preserve">
     <value>Done</value>
     <comment>The Done button at the bottom of the Settings dialog.</comment>
   </data>
-  <data name="Settings_ModRepoLabel" xml:space="preserve">
-    <value>Mod repository</value>
-    <comment>Label next to the mod-repository location TextBox in the Settings dialog.</comment>
+  <data name="Settings_OpenDataFolderButton" xml:space="preserve">
+    <value>Open Data Folder</value>
+    <comment>Button in the Settings storage section that opens the OS file manager at the Curator data root (AppPaths.AppDataDir, which contains mods/, profiles/, logs/, config.json, etc.).</comment>
+  </data>
+  <data name="Settings_OpenProfilesFolderButton" xml:space="preserve">
+    <value>Open Profiles Folder</value>
+    <comment>Button in the Settings storage section that opens the OS file manager at the profiles root.</comment>
+  </data>
+  <data name="Settings_OpenFolderFailedTitle" xml:space="preserve">
+    <value>Could not open the folder</value>
+    <comment>Title of the alert shown when opening a Curator storage folder (mods or profiles) in the OS file manager fails.</comment>
+  </data>
+  <data name="Settings_OpenFolderFailedMessage" xml:space="preserve">
+    <value>Could not open the folder. Check that the folder still exists. Path: {0}</value>
+    <comment>Body of the open-folder-failure alert. {0} is the folder path (for manual navigation).</comment>
   </data>
   <data name="Settings_UpdatesSection" xml:space="preserve">
     <value>Updates</value>

@@ -41,7 +41,7 @@ public static class LoggingBootstrap
 Loads `CuratorConfig` from JSON with full defaults, and writes it back through
 `Save`. Consumers inject `IConfigLoader` and re-read on each
 operation (config is read live from disk, not cached at startup; #31), so runtime
-writes via the Settings window or mod-repo relocation are visible immediately.
+writes via the Settings window are visible immediately.
 A missing or partial file yields a fully-usable config on load: every field has
 a platform-appropriate default (see [config](config.md)).
 

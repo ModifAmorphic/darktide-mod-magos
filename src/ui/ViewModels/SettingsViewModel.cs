@@ -1,10 +1,11 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Modificus.Curator.Config;
 using Modificus.Curator.General;
-using Modificus.Curator.Mods;
 using Modificus.Curator.UI.AppUpdate;
 using Modificus.Curator.UI.Dialogs;
 using Modificus.Curator.UI.Localization;
@@ -15,7 +16,7 @@ namespace Modificus.Curator.UI.ViewModels;
 
 /// <summary>
 /// The view model behind the Settings modal (<see cref="Views.SettingsWindow"/>).
-/// Two sections:
+/// Three sections:
 /// <list type="bullet">
 /// <item><description><b>Discovery:</b> the user-override paths
 /// (<c>UserSteamInstallPath</c>, <c>UserDarktideGameBinaryPath</c>,
@@ -29,13 +30,11 @@ namespace Modificus.Curator.UI.ViewModels;
 /// Preferences pattern: apply + persist per change). An empty TextBox
 /// clears the override (writes <c>null</c>, so the field falls back to
 /// auto-discovery).</description></item>
-/// <item><description><b>Storage:</b> the mod-repository location
-/// (<c>ModsFolder</c>). Read-only on open (pre-filled from config); Browse opens
-/// a folder picker, and a change runs the relocate flow as a single atomic call:
-/// <c>repo.Relocate(new)</c> owns the move + config save + rescan (rolling back
-/// the move on save failure). Failures (invalid path, conflicting UUID, IO
-/// error, save failure) surface as a <see cref="StatusMessage"/> under the
-/// field.</description></item>
+    /// <item><description><b>Storage:</b> two buttons, each opening the OS file
+    /// manager at a Curator-owned path. <see cref="OpenDataFolderCommand"/>
+    /// opens the Curator data root (<c>AppPaths.AppDataDir</c>, a static path)
+    /// + <see cref="OpenProfilesFolderCommand"/> reads <c>ProfilesBaseFolder</c>
+    /// live from config. Nothing in this section is editable.</description></item>
 /// </list>
 /// </summary>
 /// <remarks>
@@ -45,18 +44,19 @@ namespace Modificus.Curator.UI.ViewModels;
 /// are never clobbered. The config file is tiny; the round-trip is cheap.</para>
 /// <para><b>The browse buttons:</b> opening a storage-provider picker is a view
 /// concern (it needs the live TopLevel), so the view code-behind opens the
-/// picker and either sets the row's <c>Value</c> (discovery) or calls
-/// <see cref="ApplyModsFolderCommand"/> (storage). No file paths cross the VM
-/// boundary except the picked path itself.</para>
+/// picker and sets the row's <c>Value</c> (discovery), which triggers the VM's
+/// write-through. The picker honors the row's current value as its
+/// <c>SuggestedStartLocation</c> so it opens where the user already is. No file
+/// paths cross the VM boundary.</para>
 /// </remarks>
 public partial class SettingsViewModel : ObservableObject
 {
     private readonly IConfigLoader _configLoader;
-    private readonly IModRepository _repo;
     private readonly LocalizationService _localization;
     private readonly IAppUpdateService _appUpdate;
     private readonly IDialogService _dialogs;
     private readonly Action<Action> _invokeOnUi;
+    private readonly Func<string, bool> _launchExternalPath;
     private readonly ILogger<SettingsViewModel> _logger;
 
     /// <summary>
@@ -86,41 +86,43 @@ public partial class SettingsViewModel : ObservableObject
 
     /// <summary>
     /// Creates the Settings VM, pre-fills the discovery rows (platform-gated:
-    /// Steam install + Darktide binary on Windows; all four on Linux) + the
-    /// ModsFolder TextBox from the live config, and wires each discovery row's
-    /// change callback to the write-through path.
+    /// Steam install + Darktide binary on Windows; all four on Linux), and
+    /// wires each discovery row's change callback to the write-through path.
     /// </summary>
     /// <param name="configLoader">The live config reader/writer. Each field change
     /// does a read-modify-save through this.</param>
-    /// <param name="repo">The mod repository, used for the relocate flow on a
-    /// ModsFolder change.</param>
     /// <param name="localization">The localization service; handed to each
     /// discovery row so its label resolves + refreshes on a culture change.</param>
     /// <param name="appUpdate">The app self-update service; backs the Updates
     /// section (current version, manual check, download + restart).</param>
     /// <param name="dialogs">The dialog service; the download + restart flow runs
-    /// the download under its modal spinner and surfaces failures as an alert.</param>
+    /// the download under its modal spinner and surfaces failures as an alert.
+    /// Also used by the open-folder actions' failure alert.</param>
     /// <param name="invokeOnUi">Marshals the off-thread
     /// <see cref="IAppUpdateService.UpdateStateChanged"/> handler's refresh onto
     /// the UI thread. Production wires <c>Dispatcher.UIThread.Post</c>; tests
     /// inject a synchronous <c>action =&gt; action()</c>.</param>
-    /// <param name="logger">Logger for the relocate flow.</param>
+    /// <param name="logger">Logger for the open-folder flow.</param>
+    /// <param name="launchExternalPath">The OS file-manager launcher seam used by
+    /// the open-folder actions. Production passes null (falls back to the
+    /// static default that shells out via <c>Process.Start</c>); tests inject a
+    /// controllable delegate.</param>
     public SettingsViewModel(
         IConfigLoader configLoader,
-        IModRepository repo,
         LocalizationService localization,
         IAppUpdateService appUpdate,
         IDialogService dialogs,
         Action<Action> invokeOnUi,
-        ILogger<SettingsViewModel> logger)
+        ILogger<SettingsViewModel> logger,
+        Func<string, bool>? launchExternalPath = null)
     {
         _configLoader = configLoader;
-        _repo = repo;
         _localization = localization;
         _appUpdate = appUpdate;
         _dialogs = dialogs;
         _invokeOnUi = invokeOnUi ?? throw new ArgumentNullException(nameof(invokeOnUi));
         _logger = logger;
+        _launchExternalPath = launchExternalPath ?? LaunchExternalPathDefault;
 
         _suppressApply = true;
         try
@@ -158,9 +160,8 @@ public partial class SettingsViewModel : ObservableObject
             _suppressApply = false;
         }
 
-        // Subscribe for the localized section headers + the status message
-        // (which embeds a resx key when set); the row VMs each subscribe on
-        // their own.
+        // Subscribe for the localized section headers + labels; the row VMs
+        // each subscribe on their own.
         _localization.PropertyChanged += OnCultureChanged;
 
         // Subscribe to the app self-update state so a check that lands while
@@ -169,8 +170,6 @@ public partial class SettingsViewModel : ObservableObject
         // state immediately on open.
         _appUpdate.UpdateStateChanged += OnAppUpdateStateChanged;
         RefreshAppUpdateStatus();
-
-        ModsFolder = _configLoader.Load().ModsFolder;
     }
 
     /// <summary>
@@ -183,15 +182,6 @@ public partial class SettingsViewModel : ObservableObject
     public ObservableCollection<DiscoveryFieldRowViewModel> DiscoveryRows { get; }
 
     /// <summary>
-    /// The mod-repository location (<c>ModsFolder</c>). Pre-filled from config;
-    /// editable only through the Browse button (the TextBox is read-only in the
-    /// view to prevent free-text entry of an invalid path). A change is applied
-    /// via <see cref="ApplyModsFolderCommand"/>, which runs the relocate flow.
-    /// </summary>
-    [ObservableProperty]
-    private string _modsFolder = string.Empty;
-
-    /// <summary>
     /// The localized header for the discovery section. Re-resolves on a culture
     /// change.
     /// </summary>
@@ -202,22 +192,6 @@ public partial class SettingsViewModel : ObservableObject
     /// change.
     /// </summary>
     public string StorageSectionHeader => _localization["Settings_StorageSection"];
-
-    /// <summary>
-    /// The localized label for the ModsFolder row. Re-resolves on a culture
-    /// change.
-    /// </summary>
-    public string ModsFolderLabel => _localization["Settings_ModRepoLabel"];
-
-    /// <summary>
-    /// A non-blocking status message surfaced under the ModsFolder row (red,
-    /// visible only when non-empty). Set when the relocate flow fails; cleared
-    /// on a successful relocate or when the user clears the field. The text is
-    /// the raw exception message (no localization): it is operator-facing
-    /// diagnostic detail, not user copy.
-    /// </summary>
-    [ObservableProperty]
-    private string? _statusMessage;
 
     // ---- Updates section ---------------------------------------------------
 
@@ -317,9 +291,9 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Re-fires the localized derived strings (section headers + the ModsFolder
-    /// label) on a culture change. The per-row labels refresh themselves (each
-    /// row subscribes on its own).
+    /// Re-fires the localized derived strings (section headers) on a culture
+    /// change. The per-row labels refresh themselves (each row subscribes on
+    /// its own).
     /// </summary>
     private void OnCultureChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -330,60 +304,102 @@ public partial class SettingsViewModel : ObservableObject
 
         OnPropertyChanged(nameof(DiscoverySectionHeader));
         OnPropertyChanged(nameof(StorageSectionHeader));
-        OnPropertyChanged(nameof(ModsFolderLabel));
         OnPropertyChanged(nameof(UpdatesSectionHeader));
         OnPropertyChanged(nameof(CurrentVersionLabel));
         OnPropertyChanged(nameof(CurrentVersionDisplay));
     }
 
     /// <summary>
-    /// The relocate flow as a single atomic call: <c>repo.Relocate(newPath)</c>
-    /// owns the move (every container directory from the current mods root to
-    /// the new one), the config save (<c>ModsFolder = newPath</c>), and the
-    /// rescan. On any failure (invalid path, conflicting UUID, IO error, or a
-    /// save failure that the repository rolls back), the exception message is
-    /// surfaced via <see cref="StatusMessage"/> and the ModsFolder TextBox is
-    /// left as-is so the user can see the prior value. A successful relocate
-    /// clears <see cref="StatusMessage"/> + updates the TextBox.
+    /// Opens the OS file manager (Windows Explorer, xdg-open on Linux, etc.) at
+    /// the Curator data root (<c>AppPaths.AppDataDir</c>, which contains
+    /// <c>mods/</c>, <c>profiles/</c>, <c>logs/</c>, <c>config.json</c>, etc.)
+    /// via the injectable path-launcher seam. Delegates to
+    /// <see cref="OpenFolderAsync"/> for the no-op + alert handling.
     /// </summary>
-    /// <param name="newPath">The absolute path the user picked. Caller (the
-    /// view) guarantees non-null/non-empty; the repo also validates.</param>
     [RelayCommand]
-    private void ApplyModsFolder(string newPath)
-    {
-        if (string.IsNullOrWhiteSpace(newPath))
-        {
-            return;
-        }
+    private async Task OpenDataFolder() =>
+        await OpenFolderAsync(AppPaths.AppDataDir);
 
-        // Same-path is a no-op (the repo also short-circuits). Skipping early
-        // avoids a confusing save + rescan when the user re-picks the current
-        // location.
-        if (string.Equals(ModsFolder, newPath, StringComparison.Ordinal))
+    /// <summary>
+    /// Opens the OS file manager at the current profiles root
+    /// (<c>ProfilesBaseFolder</c>, read live from config) via the injectable
+    /// path-launcher seam. Delegates to <see cref="OpenFolderAsync"/> for the
+    /// no-op + alert handling.
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenProfilesFolder() =>
+        await OpenFolderAsync(_configLoader.Load().ProfilesBaseFolder);
+
+    /// <summary>
+    /// Shared body of the two open-folder commands: no-op when
+    /// <paramref name="path"/> is empty/whitespace or the directory does not
+    /// exist on disk; on a launch failure (the seam returns false or throws),
+    /// surfaces a localized alert that includes the path so the user can open
+    /// it manually; the exception is logged and never propagates.
+    /// </summary>
+    private async Task OpenFolderAsync(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
         {
-            StatusMessage = null;
             return;
         }
 
         try
         {
-            // Atomic: the repo owns move + save + rescan (rolling the move back
-            // on save failure). See IModRepository.Relocate.
-            _repo.Relocate(newPath);
-
-            ModsFolder = newPath;
-            StatusMessage = null;
-
-            _logger.LogInformation("Relocated mod repository to {Path}.", newPath);
+            if (!_launchExternalPath(path))
+            {
+                _logger.LogWarning("Opening the folder failed: {Path}", path);
+                await ShowOpenFolderFailedAlertAsync(path);
+            }
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
-            or IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
-            // Relocate failed (invalid path / conflict / IO / rolled-back save
-            // failure). Surface the message; the ModsFolder TextBox keeps its
-            // prior value, so the user sees what is currently in effect.
-            StatusMessage = ex.Message;
-            _logger.LogWarning(ex, "Mod repository relocate to {Path} failed.", newPath);
+            _logger.LogError(ex, "Launching the folder threw: {Path}", path);
+            await ShowOpenFolderFailedAlertAsync(path);
+        }
+    }
+
+    /// <summary>
+    /// Shows the localized open-folder-failure alert (the launcher seam
+    /// returned false or threw). Includes the path so the user can open it
+    /// manually.
+    /// </summary>
+    private async Task ShowOpenFolderFailedAlertAsync(string path)
+    {
+        await _dialogs.ShowAlertAsync(
+            _localization["Settings_OpenFolderFailedTitle"],
+            _localization.Format("Settings_OpenFolderFailedMessage", path));
+    }
+
+    /// <summary>
+    /// The default path-launcher: opens the OS file manager at
+    /// <paramref name="path"/> via <c>Process.Start(UseShellExecute=true)</c>.
+    /// Same narrow exception filter + return contract as
+    /// <c>ModListViewModel.LaunchExternalPathDefault</c> (duplicated here so
+    /// this VM stays self-contained without reaching into the mod-list VM; the
+    /// extraction is a flag-and-review item if a third caller appears). Tests
+    /// inject a controllable seam.
+    /// </summary>
+    private static bool LaunchExternalPathDefault(string path)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true,
+            };
+            using (Process.Start(psi))
+            {
+            }
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is Win32Exception
+                or PlatformNotSupportedException
+                or FileNotFoundException)
+        {
+            return false;
         }
     }
 

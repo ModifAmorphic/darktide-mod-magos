@@ -1199,15 +1199,11 @@ internal class FakeModRepository : IModRepository
     public bool IsExternalAvailable(Guid containerId) =>
         !ExternalUnavailableIds.Contains(containerId);
 
-    // Rescan + Relocate are repository-lifecycle operations exercised by the
-    // Mods-layer tests; the VM tests never drive them. Recorded as no-ops so a
-    // future VM test that wires them can assert on the call.
+    // Rescan is a repository-lifecycle operation exercised by the Mods-layer
+    // tests; the VM tests never drive it. Recorded as a no-op so a future VM
+    // test that wires it can assert on the call.
     public int RescanCalls { get; private set; }
     public virtual void Rescan() => RescanCalls++;
-
-    public IReadOnlyList<string> RelocateArgs { get; } = new List<string>();
-    public virtual void Relocate(string newBasePath) =>
-        ((List<string>)RelocateArgs).Add(newBasePath);
 
     /// <summary>Test helper: seed a container with a single latest version.</summary>
     public ModContainer Seed(ModSource source, string name, string versionString = "1.0")

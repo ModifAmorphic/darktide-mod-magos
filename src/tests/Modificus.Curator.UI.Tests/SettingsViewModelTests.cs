@@ -1,5 +1,5 @@
+using System.IO;
 using Modificus.Curator.Config;
-using Modificus.Curator.Mods;
 using Modificus.Curator.UI.Localization;
 using Modificus.Curator.UI.Settings;
 using Modificus.Curator.UI.ViewModels;
@@ -10,9 +10,10 @@ namespace Modificus.Curator.UI.Tests;
 
 /// <summary>
 /// Tests for <see cref="SettingsViewModel"/>: discovery fields are pre-filled
-/// from config + written back via read-modify-save, and a ModsFolder change
-/// triggers the atomic <see cref="IModRepository.Relocate"/> (a single call
-/// that owns the move + config save + rescan).
+/// from config + written back via read-modify-save, and the two Storage
+/// section commands open the OS file manager at the Curator data root +
+/// profiles root (or surface a failure alert) via the injectable launcher
+/// seam.
 /// </summary>
 public sealed class SettingsViewModelTests
 {
@@ -20,25 +21,26 @@ public sealed class SettingsViewModelTests
     private static readonly LocalizationService Localization = new();
 
     /// <summary>Builds a VM wired to the supplied (or default) fakes.</summary>
-    private static (SettingsViewModel vm, FakeConfigLoader loader, FakeModRepository repo) Build(
+    private static (SettingsViewModel vm, FakeConfigLoader loader, FakeDialogService dialogs) Build(
         DiscoveryConfig? discovery = null,
-        string? modsFolder = null,
-        FakeModRepository? repo = null,
+        string? profilesBaseFolder = null,
         FakeAppUpdateService? appUpdate = null,
-        FakeDialogService? dialogs = null)
+        FakeDialogService? dialogs = null,
+        Func<string, bool>? launchExternalPath = null)
     {
         var config = CuratorConfig.CreateDefault();
         if (discovery is not null) config.Discovery = discovery;
-        if (modsFolder is not null) config.ModsFolder = modsFolder;
+        if (profilesBaseFolder is not null) config.ProfilesBaseFolder = profilesBaseFolder;
         var loader = new FakeConfigLoader { Config = config };
-        repo ??= new FakeModRepository();
+        dialogs ??= new FakeDialogService();
         var vm = new SettingsViewModel(
-            loader, repo, Localization,
+            loader, Localization,
             appUpdate ?? new FakeAppUpdateService(),
-            dialogs ?? new FakeDialogService(),
+            dialogs,
             invokeOnUi: static action => action(),
-            Logger);
-        return (vm, loader, repo);
+            Logger,
+            launchExternalPath);
+        return (vm, loader, dialogs);
     }
 
     private static DiscoveryFieldRowViewModel Row(SettingsViewModel vm, string fieldName) =>
@@ -111,7 +113,7 @@ public sealed class SettingsViewModelTests
         persisted.Discovery = healed;
         loader.Save(persisted);
 
-        var vm = new SettingsViewModel(loader, new FakeModRepository(), Localization,
+        var vm = new SettingsViewModel(loader, Localization,
             new FakeAppUpdateService(), new FakeDialogService(),
             invokeOnUi: static action => action(), Logger);
 
@@ -147,14 +149,6 @@ public sealed class SettingsViewModelTests
             Assert.Equal("SteamInstallPath", vm.DiscoveryRows[0].Field.FieldName);
             Assert.Equal("DarktideGameBinaryPath", vm.DiscoveryRows[1].Field.FieldName);
         }
-    }
-
-    [Fact]
-    public void ModsFolder_is_pre_filled_from_config()
-    {
-        var (vm, _, _) = Build(modsFolder: "/my/mods");
-
-        Assert.Equal("/my/mods", vm.ModsFolder);
     }
 
     // ---- write-through (discovery fields) --------------------------------
@@ -208,70 +202,131 @@ public sealed class SettingsViewModelTests
         Assert.Equal("/new/steam", loader.LastSaved.Discovery.UserSteamInstallPath);
     }
 
-    // ---- ModsFolder relocate flow ----------------------------------------
+    // ---- Storage: Open Data Folder ---------------------------------------
+    //
+    // OpenDataFolder targets a static path (AppPaths.AppDataDir, the Curator
+    // data root containing mods/, profiles/, logs/, config.json), so the
+    // empty-path and missing-dir no-op cases that applied to the old
+    // config-driven command don't carry over: the path is never empty, and on
+    // a real Curator install the data root exists. The remaining cases: the
+    // seam is invoked with the exact AppDataDir, and the two failure alerts
+    // (false return + throw). The data root is ensured to exist for
+    // deterministic test ordering (Curator's own fixtures create subdirs under
+    // it, but a clean host might not have it yet).
 
     [Fact]
-    public void ModsFolder_change_runs_the_atomic_relocate_in_a_single_call()
+    public async Task OpenDataFolder_calls_the_seam_with_AppPaths_AppDataDir()
     {
-        // Atomic contract: the Settings VM makes a single Relocate call; the
-        // repo owns the move + config save + rescan. The VM does NOT save the
-        // config or rescan separately (those are the repo's responsibility now).
-        var (vm, loader, repo) = Build(modsFolder: "/old/mods");
+        Directory.CreateDirectory(AppPaths.AppDataDir);
+        string? received = null;
+        var (vm, _, dialogs) = Build(
+            launchExternalPath: p => { received = p; return true; });
 
-        vm.ApplyModsFolderCommand.Execute("/new/mods");
+        await vm.OpenDataFolderCommand.ExecuteAsync(null);
 
-        // Relocate happened exactly once with the new path.
-        Assert.Equal(new[] { "/new/mods" }, repo.RelocateArgs);
-        // The VM did not save the config or rescan itself (Relocate owns both).
-        Assert.Equal(0, loader.SaveCalls);
-        Assert.Equal(0, repo.RescanCalls);
-        // The TextBox was updated to the new path.
-        Assert.Equal("/new/mods", vm.ModsFolder);
-        // No status message on success.
-        Assert.Null(vm.StatusMessage);
+        Assert.Equal(AppPaths.AppDataDir, received);
+        Assert.Empty(dialogs.AlertCalls);
     }
 
     [Fact]
-    public void ModsFolder_change_to_the_same_path_is_a_no_op()
+    public async Task OpenDataFolder_alerts_when_the_launcher_returns_false()
     {
-        var (vm, loader, repo) = Build(modsFolder: "/same/mods");
+        Directory.CreateDirectory(AppPaths.AppDataDir);
+        var (vm, _, dialogs) = Build(launchExternalPath: _ => false);
 
-        vm.ApplyModsFolderCommand.Execute("/same/mods");
+        await vm.OpenDataFolderCommand.ExecuteAsync(null);
 
-        Assert.Empty(repo.RelocateArgs);
-        Assert.Equal(0, loader.SaveCalls);
-        Assert.Equal(0, repo.RescanCalls);
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Equal(Localization["Settings_OpenFolderFailedTitle"], alert.Title);
+        Assert.Contains(AppPaths.AppDataDir, alert.Message);
     }
 
     [Fact]
-    public void ModsFolder_relocate_failure_surfaces_status_message_and_keeps_old_path()
+    public async Task OpenDataFolder_alerts_and_does_not_propagate_when_the_launcher_throws()
     {
-        // Configure the repo to throw on Relocate (invalid path / conflict).
-        var repo = new ThrowingRelocateRepo();
-        var loader = new FakeConfigLoader
-        {
-            Config = new CuratorConfig { ModsFolder = "/old/mods" },
-        };
-        var vm = new SettingsViewModel(loader, repo, Localization,
-            new FakeAppUpdateService(), new FakeDialogService(),
-            invokeOnUi: static action => action(), Logger);
+        // The launcher seam's default only catches a narrow exception set; a VM
+        // that calls it must not let an unexpected throw escape to the UI. The
+        // command catches, logs, and surfaces the failure alert instead.
+        Directory.CreateDirectory(AppPaths.AppDataDir);
+        var (vm, _, dialogs) = Build(
+            launchExternalPath: _ => throw new InvalidOperationException("boom"));
 
-        vm.ApplyModsFolderCommand.Execute("/bad/path");
+        await vm.OpenDataFolderCommand.ExecuteAsync(null);
 
-        Assert.NotNull(vm.StatusMessage);
-        Assert.NotEmpty(vm.StatusMessage);
-        Assert.Equal("/old/mods", vm.ModsFolder); // unchanged
-        Assert.Equal(0, repo.RescanCalls);       // Rescan did not run
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Equal(Localization["Settings_OpenFolderFailedTitle"], alert.Title);
+        Assert.Contains(AppPaths.AppDataDir, alert.Message);
     }
 
-    /// <summary>
-    /// A fake repo whose <see cref="Relocate"/> throws (simulating an invalid
-    /// path or conflicting UUID, which the real repo surfaces as
-    /// <see cref="ArgumentException"/> / <see cref="InvalidOperationException"/>).
-    /// </summary>
-    private sealed class ThrowingRelocateRepo : FakeModRepository
+    // ---- Storage: Open Profiles Folder -----------------------------------
+
+    [Fact]
+    public async Task OpenProfilesFolder_is_a_no_op_when_ProfilesBaseFolder_is_empty()
     {
-        public override void Relocate(string newBasePath) =>
-            throw new InvalidOperationException("simulated conflict");
+        var called = false;
+        var (vm, _, dialogs) = Build(
+            profilesBaseFolder: "",
+            launchExternalPath: _ => called = true);
+
+        await vm.OpenProfilesFolderCommand.ExecuteAsync(null);
+
+        Assert.False(called);
+        Assert.Empty(dialogs.AlertCalls);
+    }
+
+    [Fact]
+    public async Task OpenProfilesFolder_is_a_no_op_when_the_directory_does_not_exist()
+    {
+        var called = false;
+        var (vm, _, dialogs) = Build(
+            profilesBaseFolder: Path.Combine(Path.GetTempPath(), "curator-does-not-exist-" + Guid.NewGuid()),
+            launchExternalPath: _ => called = true);
+
+        await vm.OpenProfilesFolderCommand.ExecuteAsync(null);
+
+        Assert.False(called);
+        Assert.Empty(dialogs.AlertCalls);
+    }
+
+    [Fact]
+    public async Task OpenProfilesFolder_launches_the_seam_with_the_current_path()
+    {
+        string? received = null;
+        var (vm, _, dialogs) = Build(
+            profilesBaseFolder: Path.GetTempPath(),
+            launchExternalPath: p => { received = p; return true; });
+
+        await vm.OpenProfilesFolderCommand.ExecuteAsync(null);
+
+        Assert.Equal(Path.GetTempPath(), received);
+        Assert.Empty(dialogs.AlertCalls);
+    }
+
+    [Fact]
+    public async Task OpenProfilesFolder_alerts_when_the_launcher_returns_false()
+    {
+        var (vm, _, dialogs) = Build(
+            profilesBaseFolder: Path.GetTempPath(),
+            launchExternalPath: _ => false);
+
+        await vm.OpenProfilesFolderCommand.ExecuteAsync(null);
+
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Equal(Localization["Settings_OpenFolderFailedTitle"], alert.Title);
+        Assert.Contains(Path.GetTempPath(), alert.Message);
+    }
+
+    [Fact]
+    public async Task OpenProfilesFolder_alerts_and_does_not_propagate_when_the_launcher_throws()
+    {
+        var (vm, _, dialogs) = Build(
+            profilesBaseFolder: Path.GetTempPath(),
+            launchExternalPath: _ => throw new InvalidOperationException("boom"));
+
+        await vm.OpenProfilesFolderCommand.ExecuteAsync(null);
+
+        var alert = Assert.Single(dialogs.AlertCalls);
+        Assert.Equal(Localization["Settings_OpenFolderFailedTitle"], alert.Title);
+        Assert.Contains(Path.GetTempPath(), alert.Message);
     }
 }

@@ -75,8 +75,11 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           `IDialogService`; editing unlocked while Darktide runs);
                           Launch wiring + Settings window +
                           discovery escape-hatch over the shared `Settings/DiscoveryField`
-                          descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist +
-                          `IModRepository.Relocate/Rescan`;
+                          descriptor + `DiscoveryConfig`/`SteamService.Discover()` validate+heal+persist
+                          (the Settings Browse buttons seed the picker at the row's current
+                          value via `SuggestedStartLocation`; the Storage section has two
+                          buttons that open the OS file manager at the Curator data root +
+                          profiles root paths);
                           `AddNxm()` + `StartNxmServer` (single-instance via
                           `SingleInstanceGuard` process enumeration, separate from the `Modificus.Curator.Nxm`
                           pipe bind which degrades gracefully on IOException; a second Curator exits
@@ -748,8 +751,10 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   escape-hatch modal over the shared `DiscoveryField` descriptor; `StagingFailed`
   -> a localized modal alert whose body appends the raised staging exception's
   message (a runtime/OS error) to the localized framing; `Error` -> modal alert) + a Settings window editing `CuratorConfig.Discovery` user
-  overrides (per-field read-modify-save) + `ModsFolder` live-relocate via the
-  atomic `IModRepository.Relocate` over the `DiscoveryConfig` +
+  overrides (per-field read-modify-save; the Browse buttons seed the picker at
+                          the row's current value via `SuggestedStartLocation`) with a Storage section
+                          of two buttons that open the OS file manager at the Curator data root +
+                          profiles root, over the `DiscoveryConfig` +
   `SteamService.Discover()` validate+heal+persist pipeline). The DMF (Darktide
   Mod Framework) install-prompt coordinator `DmfPromptService` (ui/Session/)
   offers to add/download DMF every new profile that becomes active without DMF

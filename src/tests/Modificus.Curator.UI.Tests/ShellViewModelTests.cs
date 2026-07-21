@@ -485,9 +485,8 @@ public sealed class ShellViewModelTests
     [Fact]
     public async Task OpenSettings_reloads_the_mod_list_after_close()
     {
-        // A Settings relocate rescans the repository's index out-of-band; the
-        // shell reloads the mod list after the dialog closes so the rows reflect
-        // the rescanned state rather than a stale snapshot.
+        // The shell reloads the mod list after the Settings dialog closes so the
+        // rows reflect any out-of-band change rather than a stale snapshot.
         var a = new ProfileSummary(Guid.NewGuid(), "Alpha");
         var profiles = TestDoubles.Profiles(a);
         var session = new FakeProfileSession { ActiveProfileId = a.Id };
@@ -511,7 +510,7 @@ public sealed class ShellViewModelTests
         Assert.Empty(modList.Mods);
 
         // During settings, a mod lands in the profile out-of-band (simulating
-        // the effect of a relocate rescan changing what the join would produce).
+        // the effect of an external change to what the join would produce).
         dialogs.OnSettings = () =>
         {
             var container = repo.CreateContainer(new UntrackedSource(), "NewMod");

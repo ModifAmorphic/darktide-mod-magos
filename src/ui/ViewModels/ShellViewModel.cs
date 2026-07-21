@@ -41,9 +41,9 @@ namespace Modificus.Curator.UI.ViewModels;
 /// <see cref="IsGameRunning"/> refresh; DiscoveryIncomplete -> the focused
 /// escape-hatch dialog over the missing fields; Error -> a modal alert), and
 /// <see cref="OpenSettingsCommand"/> opens the Settings window (discovery
-/// overrides + mod-repository relocation). After Settings closes, the bound
-/// <see cref="ModList"/> reloads so a relocate's rescan is reflected in the
-/// mod rows.</para>
+/// overrides + the open-folder Storage buttons). After Settings closes, the
+/// bound <see cref="ModList"/> reloads so any index change is reflected in
+/// the mod rows.</para>
 /// <para><b>DMF prompt fires after the ManageProfiles dialog closes:</b>
 /// <see cref="DmfPromptService"/> subscribes to
 /// <see cref="IProfileService.ProfileCreated"/>, which fires FROM inside the
@@ -534,17 +534,17 @@ public partial class ShellViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Opens the Settings dialog (discovery paths + mod-repository location +
-    /// the startup self-update toggle), then reloads the mod list + refreshes the
-    /// status-strip update notice. Each setting applies + persists immediately
-    /// through the dialog; on close the shell: (1) reloads the mod list, because
-    /// a Settings relocate rescans the repository's index out-of-band and the
-    /// <see cref="ModListViewModel.Mods"/> snapshot would otherwise be stale; and
-    /// (2) re-reads the startup-check toggle so a notice shown before the toggle
-    /// was turned off is dismissed immediately, and a notice previously hidden by
-    /// an off toggle re-enables the moment it is turned back on. (Discovery
-    /// overrides are read live by the next <c>Discover()</c> / launch; no
-    /// shell-side action needed for those.)
+    /// Opens the Settings dialog (discovery paths + Storage open-folder buttons
+    /// + the startup self-update toggle), then reloads the mod list + refreshes
+    /// the status-strip update notice. Each setting applies + persists
+    /// immediately through the dialog; on close the shell: (1) reloads the mod
+    /// list, so any out-of-band change to the repository is reflected in the
+    /// <see cref="ModListViewModel.Mods"/> snapshot; and (2) re-reads the
+    /// startup-check toggle so a notice shown before the toggle was turned off
+    /// is dismissed immediately, and a notice previously hidden by an off
+    /// toggle re-enables the moment it is turned back on. (Discovery overrides
+    /// are read live by the next <c>Discover()</c> / launch; no shell-side
+    /// action needed for those.)
     /// </summary>
     [RelayCommand]
     private async Task OpenSettings()

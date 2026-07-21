@@ -148,10 +148,10 @@ public interface IDialogService
   confirms, or null when they cancel / dismiss. The mod-list add flow calls
   this once per imported path (sequentially); a null cancels the remaining
   batch.
-- `ShowSettingsAsync()`: the Settings modal (discovery paths + mod-repo
-  location). Each setting applies and persists immediately. On completion
-  the caller reloads the mod list so a Settings relocate's rescan is
-  reflected in the rows.
+- `ShowSettingsAsync()`: the Settings modal (discovery paths + storage
+  shortcuts). Each discovery setting applies and persists immediately; the
+  Storage section has two buttons that launch the OS file manager at the
+  Curator data root (AppPaths.AppDataDir) and the profiles root.
 - `ShowIntegrationsAsync()`: the Integrations modal (Nexus auth: OAuth
   login, API-key validate, sign-out). Nexus-only. Each auth action applies and
   persists immediately through `NexusAuthService`.
@@ -1024,8 +1024,8 @@ No backend library references the UI (the dependency direction is one-way).
   (unknown name -> invariant), the `Item[]` event that refreshes every
   indexer binding.
 - **`SettingsViewModelTests`** + **`SettingsViewModelAppUpdateTests`**: the
-  Settings dialog (discovery overrides + mod-repo relocation), plus the
-  Updates section (current version, manual check + inline status, the
+  Settings dialog (discovery overrides + the open-folder Storage buttons),
+  plus the Updates section (current version, manual check + inline status, the
   `UpdateStateChanged` marshal, Download and Restart, the unsupported-build
   disabled controls, and the startup-check toggle persist + pre-fill).
 - **`ImportModViewModelTests`**: the per-mod import modal (URL parsing,
