@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.14.0...v0.15.0) (2026-07-21)
+
+
+### Features
+
+* **ui:** replace mod-repo relocate with open-folder buttons ([#130](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/130)) ([0a8432a](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/0a8432a140a410524b7a7815c0d68443c8353552))
+
 ## [0.14.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.13.1...v0.14.0) (2026-07-18)
 
 
