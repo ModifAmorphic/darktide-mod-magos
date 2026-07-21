@@ -30,11 +30,11 @@ namespace Modificus.Curator.UI.ViewModels;
 /// Preferences pattern: apply + persist per change). An empty TextBox
 /// clears the override (writes <c>null</c>, so the field falls back to
 /// auto-discovery).</description></item>
-    /// <item><description><b>Storage:</b> two buttons, each opening the OS file
-    /// manager at a Curator-owned path. <see cref="OpenDataFolderCommand"/>
-    /// opens the Curator data root (<c>AppPaths.AppDataDir</c>, a static path)
-    /// + <see cref="OpenProfilesFolderCommand"/> reads <c>ProfilesBaseFolder</c>
-    /// live from config. Nothing in this section is editable.</description></item>
+/// <item><description><b>Storage:</b> two buttons, each opening the OS file
+/// manager at a Curator-owned path. <see cref="OpenDataFolderCommand"/>
+/// opens the Curator data root (<c>AppPaths.AppDataDir</c>, a static path)
+/// + <see cref="OpenProfilesFolderCommand"/> reads <c>ProfilesBaseFolder</c>
+/// live from config. Nothing in this section is editable.</description></item>
 /// </list>
 /// </summary>
 /// <remarks>
