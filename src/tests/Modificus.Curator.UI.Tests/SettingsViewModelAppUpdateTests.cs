@@ -33,7 +33,6 @@ public sealed class SettingsViewModelAppUpdateTests
         configLoader ??= new FakeConfigLoader();
         return new SettingsViewModel(
             configLoader,
-            new FakeModRepository(),
             Localization,
             appUpdate,
             dialogs,

@@ -298,8 +298,7 @@ public sealed class ConfigLoaderTests
         // Proves the live-read contract for path-valued fields: a consumer that
         // resolves ProfilesBaseFolder / ModsFolder / RelayDir per-op
         // from the loader sees a runtime change without restarting. This is the
-        // property the upcoming Settings window + mod-repository relocation
-        // rely on.
+        // property the Settings window relies on.
         var dir = Path.Combine(Path.GetTempPath(), "curator-cfg-" + Guid.NewGuid());
         Directory.CreateDirectory(dir);
         var configPath = Path.Combine(dir, "config.json");
@@ -312,13 +311,13 @@ public sealed class ConfigLoaderTests
             loader.Save(first);
             Assert.Equal("/first/mods", loader.Load().ModsFolder);
 
-            // A runtime relocation writes the new folder through the loader.
+            // A runtime config write flips the folder.
             var second = loader.Load();
-            second.ModsFolder = "/relocated/mods";
+            second.ModsFolder = "/new/mods";
             loader.Save(second);
 
-            // The next per-op read sees the relocated folder.
-            Assert.Equal("/relocated/mods", loader.Load().ModsFolder);
+            // The next per-op read sees the new folder.
+            Assert.Equal("/new/mods", loader.Load().ModsFolder);
         }
         finally
         {

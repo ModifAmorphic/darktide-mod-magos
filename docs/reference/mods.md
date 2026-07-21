@@ -41,7 +41,6 @@ public interface IModRepository
     string GetVersionFolderPath(Guid containerId, string versionFolder);  // derived, never stored
     bool IsExternalAvailable(Guid containerId);        // linked external-folder availability (true for managed/unknown)
     void Rescan();                 // rebuild the index from the live ModsFolder
-    void Relocate(string newBasePath);   // atomic: move + save config + rescan (rollback on save failure)
 }
 ```
 
@@ -105,28 +104,9 @@ public interface IModRepository
   flag.
 - `Rescan()`: rebuild the in-memory index from the **live** `ModsFolder` (the
   path `IConfigLoader.Load().ModsFolder` currently returns), clearing first.
-  Container ids are stable across a relocation (the move never changes ids,
-  whether a same-volume rename or a cross-volume copy + delete), so `Relocate`
-  leaves the index valid by construction; `Rescan` is the defensive guarantee
-  the index reflects whatever is actually on disk. Also useful after an
-  out-of-band change (hand-edit, external tool, backup restore).
-- `Relocate(newBasePath)`: the **atomic** repository relocation, owned by the
-  repository so a save failure can never strand files at the new path with config
-  still pointing at the old one. Steps: (1) read `oldPath = Load().ModsFolder`;
-  (2) validate `newBasePath` (absolute, parent creatable; reject a conflicting
-  tracked-UUID dir); (3) move every indexed container dir `oldPath → newPath`
-  via the volume-appropriate strategy (same-volume = a fast, atomic
-  `Directory.Move` rename; cross-volume = copy the tree + delete the source,
-  because `Directory.Move` throws `IOException` across volumes, e.g. Windows
-  `C:\` → `D:\`, rather than falling back to a copy), best-effort per container,
-  tracking which moved; (4) save `ModsFolder =
-  newPath` via `IConfigLoader`, and on save failure (a thrown exception, OR a
-  silent failure since the production `ConfigLoader.Save` swallows write errors)
-  roll the moved container dirs back to `oldPath` so files + config agree there
-  again, then throw; (5) `Rescan` at `newPath`. The caller (the Settings VM)
-  makes a single call; it does not save config or rescan separately. Throws
-  `ArgumentException` (bad path), `InvalidOperationException` (UUID conflict), or
-  `IOException` (rolled-back save failure).
+  The defensive guarantee the index reflects whatever is actually on disk.
+  Useful after an out-of-band change (hand-edit, external tool, backup
+  restore).
 
 The repository builds an in-memory index at construction by scanning every
 `<ModsFolder>/*/container.json` (dozens of containers, cheap). There is no
@@ -256,9 +236,9 @@ A single mod in the repository (immutable record):
 | `Versions` | The container's imported versions (`IReadOnlyList<ModVersion>`). One may carry `IsLatest`. Empty for Linked (no versions). |
 
 The container's on-disk path is **derived**:
-`<ModsFolder>/<Id>/`. It is never stored absolute, so relocating the
-repository is a physical move of the tree plus a config update (no manifest
-rewriting, no drift detection).
+`<ModsFolder>/<Id>/`. It is never stored absolute, so moving the repository is
+a physical move of the tree plus a config update (no manifest rewriting, no
+drift detection).
 
 `ResolveVersion(policy)` is a pure helper on the container that resolves a
 profile's policy to the version it should stage: `LatestPolicy` → the
@@ -415,12 +395,8 @@ UUIDs), never stored absolute.
   `FindUntrackedByName`, manifest round-trip + in-memory index rebuild from a
   scan (skips non-container dirs + corrupt manifests), `PruneUnreferenced`
   (drops unreferenced version folders + empty containers, keeps referenced),
-  opaque version-folder naming, derived paths, and the relocation surface:
-  `Relocate` (atomic move + config save + rescan; rolls the move back when the
-  save fails, whether the loader throws or silently fails; the cross-volume path
-  is covered by forcing the volume detector, proving a copy + delete relocate
-  succeeds where `Directory.Move` would throw) + `Rescan`
-  (drops/Adds index entries to match the live disk state).
+  opaque version-folder naming, derived paths, and `Rescan`
+  (drops/adds index entries to match the live disk state).
 - `DirectoryCopy`: faithful recursive copy (files + nested subdirs reproduced,
   target created as it goes).
 - `ModSource` JSON `$kind` round-trip (untracked/nexus/linked) + defaults + record

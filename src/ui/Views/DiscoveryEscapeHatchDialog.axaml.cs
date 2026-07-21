@@ -1,3 +1,4 @@
+using System.IO;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
@@ -17,9 +18,10 @@ namespace Modificus.Curator.UI.Views;
 /// </summary>
 /// <remarks>
 /// All persistence logic lives in the (unit-tested) VM; this is pure view
-/// mechanics. The browse button opens the row's matching picker (folder / file)
-/// and sets the row's <c>Value</c> directly. Submit + Cancel forward to the
-/// VM's matching commands and close.
+/// mechanics. The browse button opens the row's matching picker (folder / file),
+/// seeded with the row's current value as the start location, and sets the
+/// row's <c>Value</c> directly. Submit + Cancel forward to the VM's matching
+/// commands and close.
 /// </remarks>
 public partial class DiscoveryEscapeHatchDialog : Window
 {
@@ -66,6 +68,12 @@ public partial class DiscoveryEscapeHatchDialog : Window
     /// opens the matching picker, takes the first selection, and sets the row's
     /// <c>Value</c>.
     /// </summary>
+    /// <remarks>
+    /// The picker's <c>SuggestedStartLocation</c> is derived from the row's
+    /// current <c>Value</c> so the picker opens where the user already is (for a
+    /// file-kind row, the file's parent directory). A null/invalid path falls
+    /// back to the system default location, so no error handling is needed.
+    /// </remarks>
     private async void Browse_Click(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button b
@@ -87,14 +95,18 @@ public partial class DiscoveryEscapeHatchDialog : Window
         string? picked;
         if (kind == DiscoveryBrowseKind.File)
         {
-            var files = await topLevel.StorageProvider.OpenFilePickerAsync(
-                new FilePickerOpenOptions { AllowMultiple = false });
+            var options = new FilePickerOpenOptions { AllowMultiple = false };
+            options.SuggestedStartLocation = await ResolveStartLocation(
+                topLevel.StorageProvider, row.Value, inputIsFile: true);
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(options);
             picked = files is { Count: > 0 } ? files[0].Path.LocalPath : null;
         }
         else
         {
-            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(
-                new FolderPickerOpenOptions { AllowMultiple = false });
+            var options = new FolderPickerOpenOptions { AllowMultiple = false };
+            options.SuggestedStartLocation = await ResolveStartLocation(
+                topLevel.StorageProvider, row.Value, inputIsFile: false);
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(options);
             picked = folders is { Count: > 0 } ? folders[0].Path.LocalPath : null;
         }
 
@@ -102,5 +114,29 @@ public partial class DiscoveryEscapeHatchDialog : Window
         {
             row.Value = picked;
         }
+    }
+
+    /// <summary>
+    /// Resolves a storage folder for a picker's <c>SuggestedStartLocation</c>
+    /// from the row's current input value. For a file-kind row the input is a
+    /// file path, so its parent directory is used. Returns null (picker falls
+    /// back to the system default) for an empty, whitespace, or non-existent
+    /// path; <see cref="StorageProviderExtensions.TryGetFolderFromPathAsync"/>
+    /// is null-safe by construction.
+    /// </summary>
+    private static async Task<IStorageFolder?> ResolveStartLocation(
+        IStorageProvider provider,
+        string? input,
+        bool inputIsFile)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return null;
+        }
+
+        var startPath = inputIsFile
+            ? (Path.GetDirectoryName(input) ?? input)
+            : input;
+        return await provider.TryGetFolderFromPathAsync(startPath);
     }
 }

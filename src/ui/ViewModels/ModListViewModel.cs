@@ -647,10 +647,10 @@ public partial class ModListViewModel : ObservableObject
     /// No active profile clears the list + sets the empty state.
     /// </summary>
     /// <remarks>
-    /// Called on construction + on an active-profile change (session-driven), and
-    /// also by the shell after the Settings dialog closes: a Settings relocate
-    /// rescans the repository's index out-of-band, so the <see cref="Mods"/>
-    /// snapshot is stale until this reloads it.
+    /// Called on construction + on an active-profile change (session-driven),
+    /// and also by the shell after the Settings dialog closes, so any
+    /// out-of-band change to the repository is reflected in the
+    /// <see cref="Mods"/> snapshot.
     /// </remarks>
     public void Reload()
     {

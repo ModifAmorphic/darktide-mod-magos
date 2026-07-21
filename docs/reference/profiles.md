@@ -405,7 +405,7 @@ staging (junction on Windows, symlink on Linux) + the data-safe `ClearStagedDir`
 (`LinkedModStagingTests`: links the external folder directly, missing-external
 skip with no fallback copy, enable/disable + reorder, cross-source base-name
 collision, sentinel survival; `LinkedFolderSafetyTests`: availability
-missing-then-returned on rescan, sentinel survival across relocate + a full
+missing-then-returned on rescan, sentinel survival across a full
 link-stage-remove-rescan-delete sequence; `ModCleanupTests`: referenced linked
 container survives prune, unreferenced is pruned, external target untouched), and the `AddProfiles` DI wiring
 (including the `TryAdd` `StagingLinkCreator` override).

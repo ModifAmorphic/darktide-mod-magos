@@ -2,19 +2,11 @@ namespace Modificus.Curator.Mods;
 
 /// <summary>
 /// Recursively copies a directory tree, creating the target as it goes. The
-/// shared implementation behind two callers that both need a faithful,
-/// recursive source-to-target copy:
-/// <list type="bullet">
-/// <item><description><see cref="ModRepository.Relocate"/>'s cross-volume path,
-/// where <see cref="Directory.Move"/> throws <see cref="IOException"/> (it does
-/// not fall back to a copy) so a real cross-volume move is a copy + source
-/// delete.</description></item>
-/// <item><description><see cref="ModImportService"/>'s folder-import path, which
-/// copies the picked folder itself (not its contents) into the version
-/// directory. The archive-import path uses SharpCompress's per-entry
+/// shared implementation backs <see cref="ModImportService"/>'s folder-import
+/// path, which copies the picked folder itself (not its contents) into the
+/// version directory. The archive-import path uses SharpCompress's per-entry
 /// <c>WriteEntryToDirectory</c> instead, but the folder path (a picked or
-/// pre-extracted directory) still needs this faithful recursive copy.</description></item>
-/// </list>
+/// pre-extracted directory) still needs this faithful recursive copy.
 /// </summary>
 internal static class DirectoryCopy
 {

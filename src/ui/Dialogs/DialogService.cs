@@ -1,7 +1,6 @@
 using Avalonia.Controls;
 using Modificus.Curator.General;
 using Modificus.Curator.Integrations;
-using Modificus.Curator.Mods;
 using Modificus.Curator.Nxm;
 using Modificus.Curator.Profiles;
 using Modificus.Curator.UI.AppUpdate;
@@ -46,7 +45,6 @@ public sealed class DialogService : IDialogService
     private readonly IPreferencesService _preferences;
     private readonly LocalizationService _localization;
     private readonly IConfigLoader _configLoader;
-    private readonly IModRepository _mods;
     private readonly INexusAuthService _nexusAuth;
     private readonly IAppUpdateService _appUpdate;
     private readonly Action<Action> _invokeOnUi;
@@ -67,8 +65,6 @@ public sealed class DialogService : IDialogService
     /// <param name="configLoader">The live config reader/writer; handed to the
     /// Preferences VM (initial picker state), the Settings VM (read-modify-save per
     /// field change), and the escape-hatch VM (one read-modify-save on submit).</param>
-    /// <param name="mods">The mod repository; handed to the Settings VM for the
-    /// atomic relocate flow (move + save + rescan) on a ModsFolder change.</param>
     /// <param name="nexusAuth">The Nexus auth service; handed to the Integrations VM
     /// for OAuth login + API-key validate + sign-out + current-state reads.</param>
     /// <param name="appUpdate">The app self-update service; handed to the Settings
@@ -90,7 +86,6 @@ public sealed class DialogService : IDialogService
         IPreferencesService preferences,
         LocalizationService localization,
         IConfigLoader configLoader,
-        IModRepository mods,
         INexusAuthService nexusAuth,
         IAppUpdateService appUpdate,
         Action<Action> invokeOnUi,
@@ -103,7 +98,6 @@ public sealed class DialogService : IDialogService
         _preferences = preferences;
         _localization = localization;
         _configLoader = configLoader;
-        _mods = mods;
         _nexusAuth = nexusAuth;
         _appUpdate = appUpdate;
         _invokeOnUi = invokeOnUi;
@@ -271,13 +265,12 @@ public sealed class DialogService : IDialogService
     {
         // The VM reads its initial state from a live snapshot (no cached
         // singleton); subsequent changes do a read-modify-save per field via
-        // the same loader. The ModsFolder change routes through the atomic
-        // Relocate (move + save + rescan) on the wired repository. A typed
-        // logger is created here so the relocate success/failure lines reach
-        // the configured sinks (not a NullLogger that drops them).
+        // the same loader. The Storage section's two buttons open the OS file
+        // manager at the Curator data root + profiles roots. A typed logger is
+        // created here so the open-folder success/failure lines reach the
+        // configured sinks (not a NullLogger that drops them).
         var viewModel = new SettingsViewModel(
             _configLoader,
-            _mods,
             _localization,
             _appUpdate,
             this,

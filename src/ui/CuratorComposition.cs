@@ -36,8 +36,8 @@ public static class CuratorComposition
         //    build the logger) AND registered as the live-read IConfigLoader
         //    singleton so every consumer re-reads the current disk state on
         //    each operation (the config file is tiny; a startup cache would
-        //    only create staleness for the Settings window + mod-
-        //    repository relocation, which write config at runtime).
+        //    only create staleness for the Settings window, which writes
+        //    config at runtime).
         var loader = new ConfigLoader();
 
         // The startup snapshot feeds the logger (logging config is a one-off;
@@ -194,7 +194,6 @@ public static class CuratorComposition
                 sp.GetRequiredService<IPreferencesService>(),
                 sp.GetRequiredService<LocalizationService>(),
                 sp.GetRequiredService<IConfigLoader>(),
-                sp.GetRequiredService<IModRepository>(),
                 sp.GetRequiredService<INexusAuthService>(),
                 sp.GetRequiredService<IAppUpdateService>(),
                 sp.GetRequiredService<Action<Action>>(),
