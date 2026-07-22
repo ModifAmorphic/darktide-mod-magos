@@ -221,7 +221,7 @@ internal static class Program
 //
 // Prereqs:
 //   - Darktide installed via Steam (Steam closed for a clean launch).
-//   - Modificus Relay deployed: <RelayDir>/modificus_relay.exe
+//   - Mod Relay deployed: <RelayDir>/mod_relay.exe
 //     + relay_shell.dll + mod_loader/. (RelayDir defaults to
 //     <local-app-data>/Modificus Curator/relay; override in config.json.)
 //   - At least one Curator profile (create it via the Curator UI, or drop a profile

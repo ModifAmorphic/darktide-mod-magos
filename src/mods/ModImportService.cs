@@ -337,7 +337,7 @@ internal sealed class ModImportService : IModImportService
     /// in either direction. Linking a Curator-managed root (or a folder that
     /// contains one) would let Curator's own operations (prune, staging)
     /// recurse into the target, and staging would create a cycle
-    /// (<c>staged/&lt;baseName&gt;</c> pointing at an ancestor of
+    /// (<c>staged/mods/&lt;baseName&gt;</c> pointing at an ancestor of
     /// <c>staged/</c>). The profiles-root check covers every profile root and
     /// every <c>staged/</c> dir, since all live under the base.
     /// </summary>

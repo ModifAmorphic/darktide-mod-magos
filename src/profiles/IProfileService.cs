@@ -6,14 +6,14 @@ namespace Modificus.Curator.Profiles;
 /// Profile + per-profile mod-list management. Owns the profile data model,
 /// its on-disk persistence, and the projection of the mod list into a staged
 /// mod root (staging links to the repository's resolved version folders) +
-/// <c>mods.lst</c> for Modificus Relay.
+/// <c>mods.lst</c> for Mod Relay.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A profile references mods by <see cref="ModListEntry.ContainerId"/>; it never
 /// stores mod files of its own. Staging resolves each enabled mod's
 /// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/> (via
-/// <see cref="IModRepository"/>) and links <c>staged/&lt;name&gt;</c> to the
+/// <see cref="IModRepository"/>) and links <c>staged/mods/&lt;name&gt;</c> to the
 /// resolved version folder (an NTFS junction on Windows, a symlink on Linux).
 /// <b>Staging links, never copies.</b></para>
 /// </remarks>

@@ -100,7 +100,7 @@ make_standalone_payload() {
     mkdir -p "$T_ROOT/app" "$T_ROOT/relay"
     printf 'standalone ui\n' > "$standalone_ui"
     printf 'standalone handler\n' > "$standalone_handler"
-    printf 'relay\n' > "$T_ROOT/relay/modificus_relay.exe"
+    printf 'relay\n' > "$T_ROOT/relay/mod_relay.exe"
 }
 make_appimage() {
     mkdir -p "$appimage_dir"
@@ -218,7 +218,7 @@ expect_ok run_uninstall --help
 # Every seeded artifact must survive verbatim.
 assert_file_exists "$standalone_ui"
 assert_file_exists "$standalone_handler"
-assert_file_exists "$T_ROOT/relay/modificus_relay.exe"
+assert_file_exists "$T_ROOT/relay/mod_relay.exe"
 assert_file_exists "$appimage_path"
 assert_file_exists "$desktop_path"
 assert_file_exists "$icon_path"
@@ -553,7 +553,7 @@ mkdir -p "$spaced_root/app" "$spaced_root/appimage" "$spaced_root/relay" "$space
 printf 'appimage\n' > "$spaced_appimage"
 printf 'ui\n' > "$spaced_ui"
 printf 'handler\n' > "$spaced_handler"
-printf 'relay\n' > "$spaced_root/relay/modificus_relay.exe"
+printf 'relay\n' > "$spaced_root/relay/mod_relay.exe"
 printf 'profile\n' > "$spaced_root/profiles/p1.json"
 ln -s "$spaced_ui" "$spaced_bin"
 printf '[Desktop Entry]\nExec="%s" %%u\n' "$spaced_handler" > "$spaced_nxm"

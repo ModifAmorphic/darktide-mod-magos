@@ -107,8 +107,8 @@ if [ "$1" = "--appimage-extract" ]; then
         { printf '#!/bin/sh\n' > "$root/usr/bin/Modificus.Curator"; chmod +x "$root/usr/bin/Modificus.Curator"; }
     [ "$OMIT" = "usr/bin/Modificus.Curator.NxmHandler" ] || \
         { printf '#!/bin/sh\n' > "$root/usr/bin/Modificus.Curator.NxmHandler"; chmod +x "$root/usr/bin/Modificus.Curator.NxmHandler"; }
-    [ "$OMIT" = "usr/bin/relay/modificus_relay.exe" ] || \
-        printf 'relay binary\n' > "$root/usr/bin/relay/modificus_relay.exe"
+    [ "$OMIT" = "usr/bin/relay/mod_relay.exe" ] || \
+        printf 'relay binary\n' > "$root/usr/bin/relay/mod_relay.exe"
     [ "$OMIT" = "usr/bin/UpdateNix" ] || \
         { printf 'update nix\n' > "$root/usr/bin/UpdateNix"; chmod +x "$root/usr/bin/UpdateNix"; }
     [ "$OMIT" = "usr/bin/sq.version" ] || \
@@ -274,7 +274,7 @@ mkdir -p "$T_ROOT/profiles" "$T_ROOT/mods" "$T_ROOT/logs" "$T_ROOT/app" "$T_ROOT
 : > "$T_ROOT/config.json"
 : > "$T_ROOT/app-state.json"
 : > "$T_ROOT/app/Modificus.Curator"
-: > "$T_ROOT/relay/modificus_relay.exe"
+: > "$T_ROOT/relay/mod_relay.exe"
 expect_ok env HOME="$T_HOME" XDG_DATA_HOME="$T_XDG" INSTALL_ROOT="$T_ROOT" \
     BIN_LINK="$T_BIN" CURATOR_APPIMAGE="$work_root/v2.AppImage" sh "$installer"
 assert_same_file "$T_APPIMAGE" "$work_root/v2.AppImage"
@@ -341,7 +341,7 @@ make_fixture "$work_root/ai.AppImage" "v1"
 mkdir -p "$T_ROOT/app" "$T_ROOT/relay" "$T_ROOT/profiles"
 : > "$T_ROOT/app/Modificus.Curator"
 : > "$T_ROOT/app/Modificus.Curator.NxmHandler"
-: > "$T_ROOT/relay/modificus_relay.exe"
+: > "$T_ROOT/relay/mod_relay.exe"
 : > "$T_ROOT/profiles/p1.json"
 : > "$T_ROOT/config.json"
 # Standalone installer had pointed the symlink at its own executable.
@@ -351,7 +351,7 @@ expect_ok env HOME="$T_HOME" XDG_DATA_HOME="$T_XDG" INSTALL_ROOT="$T_ROOT" \
 # Standalone files intact.
 assert_file_exists "$T_ROOT/app/Modificus.Curator"
 assert_file_exists "$T_ROOT/app/Modificus.Curator.NxmHandler"
-assert_file_exists "$T_ROOT/relay/modificus_relay.exe"
+assert_file_exists "$T_ROOT/relay/mod_relay.exe"
 # Shared user data intact.
 assert_file_exists "$T_ROOT/profiles/p1.json"
 assert_file_exists "$T_ROOT/config.json"

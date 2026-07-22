@@ -117,8 +117,8 @@ mkdir -p "$extract_dir"
 tar -xzf "$archive" -C "$extract_dir" || die "Extraction failed."
 [ -f "$extract_dir/app/Modificus.Curator" ] \
     || die "Archive is missing app/Modificus.Curator. Got an unexpected layout."
-[ -f "$extract_dir/relay/modificus_relay.exe" ] \
-    || die "Archive is missing relay/modificus_relay.exe. Got an unexpected layout."
+[ -f "$extract_dir/relay/mod_relay.exe" ] \
+    || die "Archive is missing relay/mod_relay.exe. Got an unexpected layout."
 
 # Install: replace only app/ and relay/ under the root. Never delete the root
 # itself; it also holds profiles/, mods/, logs/, and config.json.

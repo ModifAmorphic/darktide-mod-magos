@@ -8,7 +8,7 @@
 **Modificus Curator** is the mod manager for Warhammer 40,000:
 Darktide (.NET 10 + Avalonia 12). The app is user-usable. It launches the game
 modded via
-[Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay) (DLL
+[Mod Relay](https://github.com/ModifAmorphic/darktide-mod-relay) (DLL
 injection: no game-directory footprint, no bundle-database patching; the runtime
 is a separate repo) and stays out of the way for vanilla play (launch from Steam
 = unmodified game). See `docs/architecture/` for the architecture.
@@ -21,7 +21,7 @@ testability, review, and production-readiness as first-class goals. The POC
 carries forward proof of feasibility only; it does not carry forward code.
 Requirements, architecture, and technology choices are made fresh. (Runtime +
 game-binary constraints now live with the runtime, in
-[darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay).)
+[darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay).)
 
 ## Repository state
 
@@ -47,8 +47,8 @@ game-binary constraints now live with the runtime, in
   offers to add/download it. The Launcher is a
   stub. Backend libraries: Profiles,
   Mods (the unified mod repository), Steam, Integrations, Relay-client,
-  General. Modificus Relay is a separate repo
-  ([darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay));
+  General. Mod Relay is a separate repo
+  ([darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay));
   this repo holds Modificus Curator only.
 - **`poc`** -- historical proof-of-concept, reference only. Not built upon.
 - Development is branch + PR; no unreviewed merges to `main` (reviewed +
@@ -311,7 +311,7 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                           container-based staging (ProfileService.PrepareModRoot
                           discovers each enabled mod's base folder name inside the
                           resolved version folder + staging links (an NTFS junction
-                          on Windows, a symlink on Linux) staged/<baseName> ->
+                          on Windows, a symlink on Linux) staged/mods/<baseName> ->
                           <versionFolder>/<baseName>/, then writes mods.lst; the
                           base name, not the container's display name, is the link
                           + mods.lst name; the StagingLinkCreator delegate selects
@@ -714,7 +714,7 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   lifecycle; container-based staging, where `PrepareModRoot` discovers each
   enabled mod's base folder name inside the resolved version folder via
   `IModRepository` + staging links (an NTFS junction on Windows, a symlink on
-  Linux) `staged/<baseName>` -> `<versionFolder>/<baseName>/`,
+  Linux) `staged/mods/<baseName>` -> `<versionFolder>/<baseName>/`,
   then writes `mods.lst`; the base name, not the container's display name, is the
   link + mods.lst name; no per-profile mod files) + the import-time base-name
   collision hard-block (`GetBaseNameCollision`; two same-folder mods can't
@@ -773,8 +773,8 @@ dotnet run   --project src/ui --configuration Release   # app shell window
   the Relay contract Curator consumes, profiles, launch).
 - `docs/reference/` -- per-library API reference for the Modificus
   Curator backend libraries.
-- [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay) --
-  Modificus Relay (architecture, build, game-binary reference, mod
+- [darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay) --
+  Mod Relay (architecture, build, game-binary reference, mod
   loader).
 
 ## Conventions
@@ -842,9 +842,9 @@ Mechanicus flavor for the UI; docs and code read as plain engineering
 documentation.
 
 - **Folders/filenames:** lowercase.
-- **Prose/docs:** "Modificus Curator" is the app's public name; "Modificus
-  Relay" / "Relay" refers to the separate runtime repo
-  ([darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay)).
+- **Prose/docs:** "Modificus Curator" is the app's public name; "Mod Relay"
+  / "Relay" refers to the separate runtime repo
+  ([darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay)).
 - Don't obscure: names should be descriptive and accessible, not cryptic.
 
 ## README pattern

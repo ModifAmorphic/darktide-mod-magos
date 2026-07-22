@@ -22,7 +22,7 @@ Per-library API reference for the Modificus Curator backend libraries + the UI
 - [integrations](integrations.md): the Nexus Mods v1 client + OAuth/API-key
   auth, the download + extract + place acquisition service, and the Nexus-only
   update-check service.
-- [relay-client](relay-client.md): the v1 launch facade over Modificus Relay,
+- [relay-client](relay-client.md): the v1 launch facade over Mod Relay,
   resolving the profile + Steam discovery, assembling the launcher args, and
   invoking the relay.
 - [nxm](nxm.md): the `nxm://` scheme-handler plumbing, URL parsing, IPC framing,
@@ -45,6 +45,6 @@ Per-library API reference for the Modificus Curator backend libraries + the UI
   produced, attested, scanned, and installed (release-please workflow,
   post-release AV/VT scan, PR gate, Linux installer, sandbox rehearsal).
 
-[darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay) --
+[darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay) --
 game-binary reference (LuaJIT, `lua_State` offsets, discovery methodology)
 and the existing modding-ecosystem audit, now live with the runtime.

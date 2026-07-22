@@ -6,7 +6,7 @@ namespace Modificus.Curator.Profiles.Tests;
 /// <summary>
 /// <see cref="IProfileService.PrepareModRoot"/> + <c>mods.lst</c> generation
 /// contract under the container-based staging model: enabled mods that resolve to
-/// a present version folder are symlinked into <c>staged/</c> and written to
+/// a present version folder are symlinked into <c>staged/mods/</c> and written to
 /// <c>mods.lst</c> in <see cref="ModListEntry.Order"/>; disabled mods and mods
 /// with no resolved version are omitted; UTF-8 no BOM; trailing newline;
 /// idempotent (clears + rebuilds <c>staged/</c>); returns the <c>--mod-path</c>

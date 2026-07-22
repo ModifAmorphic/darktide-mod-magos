@@ -1,9 +1,9 @@
 namespace Modificus.Curator.RelayClient;
 
 /// <summary>
-/// The launch façade over Modificus Relay. Resolves the profile + Steam
+/// The launch façade over Mod Relay. Resolves the profile + Steam
 /// discovery, assembles the launcher args, and invokes
-/// <c>modificus_relay.exe</c> -- directly on Windows, under <c>proton run</c> on
+/// <c>mod_relay.exe</c> -- directly on Windows, under <c>proton run</c> on
 /// Linux. Fire-and-forget: <see cref="Launch"/> starts the launcher and returns;
 /// it does not track the game process.
 /// </summary>

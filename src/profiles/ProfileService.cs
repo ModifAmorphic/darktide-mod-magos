@@ -18,15 +18,16 @@ namespace Modificus.Curator.Profiles;
 ///     profile.json                   (metadata + mod list - the source of truth)
 ///     staged/                        (the staged mod root = the --mod-path;
 ///                                     REGENERATED each launch - a projection)
-///       &lt;baseName&gt;                 (staging link -> &lt;versionFolder&gt;/&lt;baseName&gt;/)
-///       mods.lst                     (successfully-staged enabled mods, in order)
+///       mods/                        (the mod host folder Relay consumes)
+///         &lt;baseName&gt;               (staging link -> &lt;versionFolder&gt;/&lt;baseName&gt;/)
+///         mods.lst                   (successfully-staged enabled mods, in order)
 /// </code>
 /// <para>
 /// A profile references mods by <see cref="ModListEntry.ContainerId"/>; it stores
 /// no mod files. Staging resolves each enabled mod's
 /// <see cref="ModVersionPolicy"/> against its <see cref="ModContainer"/> (via
 /// <see cref="IModRepository"/>), discovers the mod's base folder inside the
-/// resolved version folder, and links <c>staged/&lt;baseName&gt;</c> to
+/// resolved version folder, and links <c>staged/mods/&lt;baseName&gt;</c> to
 /// <c>&lt;versionFolder&gt;/&lt;baseName&gt;/</c>. <b>The base name (not the
 /// container's display name) is the link + mods.lst name</b>: mods bake their
 /// folder name into their code, so the link must carry the base name for the
@@ -341,7 +342,8 @@ internal sealed class ProfileService : IProfileService
         // the current resolution. ClearStagedDir is symlink-aware (never follows
         // a symlink into the repository - see the method).
         ClearStagedDir(staged);
-        Directory.CreateDirectory(staged);
+        var mods = ModsDir(staged);
+        Directory.CreateDirectory(mods);
 
         // Resolve each enabled mod in Order; create the staging link for those
         // that resolve to a present version folder. mods.lst reflects what
@@ -371,7 +373,7 @@ internal sealed class ProfileService : IProfileService
                 continue;
             }
 
-            var linkPath = Path.Combine(staged, baseName);
+            var linkPath = Path.Combine(mods, baseName);
             _createLink(linkPath, target);
             stagedNames.Add(baseName);
             _logger.LogDebug(
@@ -379,7 +381,7 @@ internal sealed class ProfileService : IProfileService
                 mod.ContainerId, id, baseName, target);
         }
 
-        WriteModList(stagedNames, staged);
+        WriteModList(stagedNames, mods);
         _logger.LogInformation("Staged {Count} mod(s) for profile {Id} at {Path}", stagedNames.Count, id, staged);
         return staged;
     }
@@ -423,7 +425,7 @@ internal sealed class ProfileService : IProfileService
 
         // Linked: stage directly from the external folder. Curator does not
         // version, rename, or copy the target; the staging link writes
-        // staged/<baseName> -> <externalPath>. The base name is the folder's
+        // staged/mods/<baseName> -> <externalPath>. The base name is the folder's
         // own name, matching what staging writes. ResolveVersion is never
         // called for linked (a linked container has no versions). Because
         // GetBaseNameCollision calls this method, the linked base-name
@@ -631,10 +633,11 @@ internal sealed class ProfileService : IProfileService
     /// <summary>
     /// Deletes a single staged entry, <b>symlink-aware</b>: a reparse point
     /// (file or directory symlink) is removed as a link only, never followed
-    /// into the repository. A real directory is recursed; a real file is deleted.
-    /// This is data-safety-critical: the staged root holds symlinks into the
-    /// repository, so a naive recursive delete would follow them and destroy the
-    /// mod files.
+    /// into the repository. A real directory is recursed (symlink-aware at
+    /// every level, so a nested reparse point is also removed as a link); a
+    /// real file is deleted. This is data-safety-critical: the staged tree
+    /// holds symlinks into the repository, so a naive recursive delete would
+    /// follow them and destroy the mod files.
     /// </summary>
     /// <remarks>
     /// The delete API must match the link's kind, or Windows throws:
@@ -649,6 +652,12 @@ internal sealed class ProfileService : IProfileService
     /// </description></item>
     /// <item><description>File symlink (ReparsePoint, not Directory):
     /// <see cref="File.Delete(string)"/>.</description></item>
+    /// <item><description>Real directory: recurse via
+    /// <see cref="DeleteStagedEntry"/> per child (NOT
+    /// <see cref="Directory.Delete(string, bool)"/> with recursive: true, which
+    /// throws <see cref="UnauthorizedAccessException"/> on a child directory
+    /// junction on Windows), then remove the now-empty directory.</description>
+    /// </item>
     /// </list>
     /// </remarks>
     private static void DeleteStagedEntry(string entry)
@@ -680,7 +689,16 @@ internal sealed class ProfileService : IProfileService
         }
         else if ((attrs & FileAttributes.Directory) != 0)
         {
-            Directory.Delete(entry, recursive: true); // real directory -> recurse
+            // Real directory -> recurse, staying symlink-aware so a reparse
+            // point nested inside (e.g. the staging links under staged/mods/)
+            // is removed as a link, never followed. Directory.Delete(recursive:
+            // true) throws UnauthorizedAccessException on a child directory
+            // junction on Windows, so the recursion is explicit.
+            foreach (var child in Directory.EnumerateFileSystemEntries(entry))
+            {
+                DeleteStagedEntry(child);
+            }
+            Directory.Delete(entry);
         }
         else
         {
@@ -789,6 +807,7 @@ internal sealed class ProfileService : IProfileService
     private static string ProfileDir(string baseFolder, Guid id) => Path.Combine(baseFolder, id.ToString());
     private static string ProfileFilePath(string profileDir) => Path.Combine(profileDir, "profile.json");
     private static string StagedDir(string baseFolder, Guid id) => Path.Combine(ProfileDir(baseFolder, id), "staged");
+    private static string ModsDir(string stagedRoot) => Path.Combine(stagedRoot, "mods");
     private static string ModListPath(string stagedRoot) => Path.Combine(stagedRoot, "mods.lst");
 
     private static KeyNotFoundException UnknownProfile(Guid id) =>

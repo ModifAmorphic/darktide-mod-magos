@@ -8,7 +8,7 @@ namespace Modificus.Curator.RelayClient.Tests;
 
 /// <summary>
 /// Per-test fixture: scaffolds a temp Relay dir with a stub
-/// <c>modificus_relay.exe</c> (so the runtime-dir check passes), and supplies
+/// <c>mod_relay.exe</c> (so the runtime-dir check passes), and supplies
 /// fakes for <see cref="IProfileService"/> + <see cref="ISteamService"/> +
 /// <see cref="IProcessLauncher"/>. Builds the internal
 /// <see cref="RelayLaunchService"/> with a concrete

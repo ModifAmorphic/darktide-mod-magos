@@ -1,7 +1,7 @@
 # Relay-client (`Modificus.Curator.RelayClient`) -- reference
 
-> The v1 launch façade over Modificus Relay. Resolves the profile + Steam
-> discovery, assembles the launcher args, and invokes `modificus_relay.exe` --
+> The v1 launch façade over Mod Relay. Resolves the profile + Steam
+> discovery, assembles the launcher args, and invokes `mod_relay.exe` --
 > directly on Windows, under `proton run` on Linux. Fire-and-forget in v1: it
 > starts the launcher and returns; it does not track the game process.
 
@@ -39,7 +39,7 @@ expected conditions:
   contract; a deliberately-old external `RelayDir` is an accepted failure).
 - Resolves the launcher path (see [Launcher path resolution](#launcher-path-resolution)).
   If it cannot be found in any applicable location, returns `Error` reporting the
-  configured `<RelayDir>/modificus_relay.exe` path.
+  configured `<RelayDir>/mod_relay.exe` path.
 - Spawns the launcher via the active `IPlatformLaunchStrategy` (directly on
   Windows; under `proton run` on Linux) -- the service itself contains no
   per-launch OS branch.
@@ -120,20 +120,20 @@ its required discovery fields, and its own log label.
 
 ### Launcher path resolution
 
-`RelayLaunchService.ResolveLauncherPath` resolves `modificus_relay.exe` with a
+`RelayLaunchService.ResolveLauncherPath` resolves `mod_relay.exe` with a
 fixed precedence, then the service spawns whatever it resolved via the active
 strategy:
 
-1. **Configured `CuratorConfig.RelayDir`** -- `<RelayDir>/modificus_relay.exe`.
+1. **Configured `CuratorConfig.RelayDir`** -- `<RelayDir>/mod_relay.exe`.
    Honors an explicit user override and the data-root default once Relay is
    deployed there (the Linux layout, and the Windows dev/data layout).
 2. **App-local fallback (Windows and Linux)** --
-   `<AppContext.BaseDirectory>/relay/modificus_relay.exe`. Velopack packages
+   `<AppContext.BaseDirectory>/relay/mod_relay.exe`. Velopack packages
    Relay app-local inside the payload. On Windows this is under the installed
    `current\` directory; on Linux it is under the mounted AppImage's `usr/bin/`
    payload. Velopack replaces the owning package on update.
 3. **Sibling-folder fallback (Windows only)** -- `<AppContext.BaseDirectory>/../relay/
-   modificus_relay.exe` (normalized to no `..` segment). The portable Windows
+   mod_relay.exe` (normalized to no `..` segment). The portable Windows
    archive ships Curator under `<root>/app/` and Relay under `<root>/relay/` (a
    sibling of the app folder, mirroring the Linux layout), so Relay resolves
    without a config override.
@@ -148,7 +148,7 @@ so the precedence is unit-testable on any CI OS.
 
 ### Windows -- direct invocation
 
-`Process.Start(modificus_relay.exe, args)`. No Proton, no path translation --
+`Process.Start(mod_relay.exe, args)`. No Proton, no path translation --
 native Windows paths. Args: `--game-binary`, `--mod-path`, `--log-file`
 (verbatim, untranslated), then (when the profile has game arguments) one bare
 `--` + each game arg as its own argv entry. The profile's environment variables
@@ -159,7 +159,7 @@ env yields no overrides (the child inherits Curator's environment verbatim).
 
 ### Linux -- native Curator + Proton-at-launch
 
-Curator runs natively (not Proton-wrapped); `modificus_relay.exe` is a Windows
+Curator runs natively (not Proton-wrapped); `mod_relay.exe` is a Windows
 binary, so Curator invokes it under **Proton**, using **Darktide's own compatdata**
 as the prefix (required -- the launcher `CreateProcess`es Darktide, so the two
 must share the prefix). Proton reads `STEAM_COMPAT_DATA_PATH` from the

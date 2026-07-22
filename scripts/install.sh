@@ -164,7 +164,7 @@ for req in \
     "$PACK_DIRICON" \
     "usr/bin/Modificus.Curator" \
     "usr/bin/Modificus.Curator.NxmHandler" \
-    "usr/bin/relay/modificus_relay.exe" \
+    "usr/bin/relay/mod_relay.exe" \
     "usr/bin/UpdateNix" \
     "usr/bin/sq.version"; do
     [ -e "$root/$req" ] || missing="$missing $req"
