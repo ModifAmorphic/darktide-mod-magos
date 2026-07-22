@@ -40,7 +40,7 @@ public sealed class CuratorConfig
 | `Logging` | see `LoggingConfig` | Log level + file (consumed by `LoggingBootstrap`). |
 | `ProfilesBaseFolder` | `<app-data>/profiles` | Where profiles and per-profile settings are stored (mods live in `ModsFolder`; see [mods](mods.md)). |
 | `ModsFolder` | `<app-data>/mods` | The global mod store (see [mods](mods.md)). |
-| `RelayDir` | `<app-data>/relay` | Where `modificus_relay.exe`, `relay_shell.dll`, and `mod_loader/` live (consumed by [relay-client](relay-client.md)). |
+| `RelayDir` | `<app-data>/relay` | Where `mod_relay.exe`, `relay_shell.dll`, and `mod_loader/` live (consumed by [relay-client](relay-client.md)). |
 | `Discovery` | see `DiscoveryConfig` | User-supplied discovery overrides (Steam / Darktide / compatdata / Proton paths). Validated on disk + healed from the discoverer + persisted by `SteamService.Discover()`. |
 | `Integrations` | see `IntegrationsConfig` | External-service (mod-source) integration settings. |
 | `Preferences` | see `PreferencesConfig` | User-facing global preferences (theme, font scale, language). |

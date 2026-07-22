@@ -6,7 +6,7 @@
 
 **Modificus Curator** is a mod manager for **Warhammer 40,000: Darktide**. It launches the
 game modded via
-[Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay) (DLL
+[Mod Relay](https://github.com/ModifAmorphic/darktide-mod-relay) (DLL
 injection: no files in the game directory, no bundle-database patching) and
 stays out of the way for vanilla play (launch the game from Steam and it runs
 unmodified).
@@ -26,8 +26,8 @@ unmodified).
   set up the Nexus integration. The Launcher is a stub. See
   [`src/README.md`](src/README.md) for developer/build
   details.
-- **Modificus Relay** (separate repo):
-  [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay): the
+- **Mod Relay** (separate repo):
+  [darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay): the
   injected modding runtime + its launcher (including the mod loader that loads
   DMF + user mods). Curator consumes its launcher.
 
@@ -38,7 +38,7 @@ Initial releases are published on the
 are marked as prereleases while the release pipeline settles. To build from
 source instead, see [`src/README.md`](src/README.md). The bundled runtime
 artifacts (launcher, shell DLL, mod loader) come from the latest non-draft
-[Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay)
+[Mod Relay](https://github.com/ModifAmorphic/darktide-mod-relay)
 prerelease available when the Curator release is built.
 
 ## Installation
@@ -58,7 +58,7 @@ and installs it for you.
 Extract it anywhere. The archive contains two top-level folders:
 
 - `app/` - the Curator UI and the `nxm://` handler.
-- `relay/` - the bundled Modificus Relay runtime.
+- `relay/` - the bundled Mod Relay runtime.
 
 Run `app/Modificus.Curator.exe`. The .NET 10 Runtime is required and must be
 installed separately from <https://dotnet.microsoft.com/download/dotnet/10.0>.
@@ -146,7 +146,7 @@ replaces only `app/` and `relay/` under
 The Linux release archive contains two top-level folders:
 
 - `app/` - the Curator UI, the `nxm://` handler, and the launcher stub.
-- `relay/` - the bundled Modificus Relay runtime.
+- `relay/` - the bundled Mod Relay runtime.
 
 Extracting it into Curator's default data folder seeds both the app and the
 default Relay location, so no extra configuration is needed.

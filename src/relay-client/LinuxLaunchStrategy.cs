@@ -7,7 +7,7 @@ namespace Modificus.Curator.RelayClient;
 
 /// <summary>
 /// Linux <see cref="IPlatformLaunchStrategy"/>. Curator runs natively (not
-/// Proton-wrapped); <c>modificus_relay.exe</c> is a Windows binary, so this
+/// Proton-wrapped); <c>mod_relay.exe</c> is a Windows binary, so this
 /// invokes it under <c>&lt;proton&gt; run</c> using Darktide's own compatdata as
 /// the Wine prefix, sets both <c>STEAM_COMPAT_*</c> env vars, and
 /// <c>Z:\</c>-translates the launcher's path-valued flags. Selected at DI

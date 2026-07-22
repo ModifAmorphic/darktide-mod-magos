@@ -50,7 +50,7 @@ internal sealed class FakeProfileService : IProfileService
     }
 
     /// <summary>The path returned by <see cref="PrepareModRoot"/> (the --mod-path).</summary>
-    public string PrepareModRootResult { get; set; } = "/home/u/.local/share/Modificus Curator/profiles/<id>/mods";
+    public string PrepareModRootResult { get; set; } = "/home/u/.local/share/Modificus Curator/profiles/<id>/staged";
 
     /// <summary>When set, <see cref="PrepareModRoot"/> throws KeyNotFoundException (unknown profile).</summary>
     public bool UnknownProfile { get; set; }

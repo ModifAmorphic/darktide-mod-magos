@@ -1,7 +1,7 @@
 # Modificus Curator
 
 The mod-manager application -- the user-facing layer on
-top of Modificus Relay. It owns profiles, mod staging, load order,
+top of Mod Relay. It owns profiles, mod staging, load order,
 dependency resolution, mod-source integrations (Nexus Mods,
 Steam), and the "Launch Darktide" button that invokes the Relay launcher.
 Target architecture:
@@ -103,7 +103,7 @@ component prefix). When release-please creates a release, the release workflow
 publishes each target as unsigned assets (Windows: a Velopack installer
 and a portable ZIP; Linux: a framework-dependent tar.gz bundle plus a
 self-contained Velopack AppImage and update feed), fetches
-the latest non-draft Modificus Relay prerelease, and uploads a GitHub Artifact
+the latest non-draft Mod Relay prerelease, and uploads a GitHub Artifact
 Attestation against each asset. Verify an asset's provenance with:
 
 ```
@@ -213,8 +213,9 @@ copying would duplicate repository files). On-disk layout:
 <ProfilesBaseFolder>/<guid>/
   profile.json                       # metadata + mod list + launch settings (entries carry ContainerId + Policy; launch settings carry ordered env vars + game args)
   staged/                            # the staged mod root = the --mod-path (REGENERATED each launch)
-    <baseName>                       #   staging link → <versionFolder>/<baseName>/ (junction on Windows, symlink on Linux; Latest → isLatest; Pinned(versionId) → matching Folder); the base name, not the container display name
-    mods.lst                         #   successfully-staged enabled mods, in order
+    mods/                            #   the mod host folder Relay consumes
+      <baseName>                     #   staging link → <versionFolder>/<baseName>/ (junction on Windows, symlink on Linux; Latest → isLatest; Pinned(versionId) → matching Folder); the base name, not the container display name
+      mods.lst                       #   successfully-staged enabled mods, in order
 ```
 
 `Profiles` owns the staging seam (`ProfileService.PrepareModRoot` clears +

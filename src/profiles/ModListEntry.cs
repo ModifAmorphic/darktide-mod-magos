@@ -5,8 +5,9 @@ namespace Modificus.Curator.Profiles;
 /// <summary>
 /// A single mod entry within a profile's mod list: the source of truth that
 /// <see cref="IProfileService.PrepareModRoot"/> projects into the staged mod
-/// root (staging links) + <c>mods.lst</c>. References a mod by its
-/// <see cref="ContainerId"/> (a profile never stores mod files of its own).
+/// root's <c>mods/</c> host folder (staging links + <c>mods.lst</c>). References a
+/// mod by its <see cref="ContainerId"/> (a profile never stores mod files of its
+/// own).
 /// </summary>
 /// <remarks>
 /// <para>Immutable: all properties are init-only. Mutations go through the

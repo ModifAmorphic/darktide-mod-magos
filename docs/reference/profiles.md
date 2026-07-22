@@ -3,7 +3,7 @@
 > Profile + per-profile mod-list management: the profile data model, its on-disk
 > persistence, and the projection of the mod list into a staged mod root
 > (staging links to the repository's resolved version folders) + `mods.lst` for
-> Modificus Relay. Status: implemented (the unified mod repository replaced
+> Mod Relay. Status: implemented (the unified mod repository replaced
 > the earlier shared-store + per-profile allocation model in #30; staging links
 > into the repository rather than copying; an NTFS junction on Windows, a symlink
 > on Linux).
@@ -314,8 +314,9 @@ only config source) is itself a singleton.
     profile.json                   (metadata + mod list + launch settings - the source of truth)
     staged/                        (the staged mod root = the --mod-path;
                                      REGENERATED each launch - a projection)
-      <baseName>                   (staging link -> <versionFolder>/<baseName>/)
-      mods.lst                     (successfully-staged enabled mods, in order)
+      mods/                        (the mod host folder Relay consumes)
+        <baseName>                 (staging link -> <versionFolder>/<baseName>/)
+        mods.lst                   (successfully-staged enabled mods, in order)
 ```
 
 `profile.json` and `mods.lst` are UTF-8 without BOM. There is no per-profile
@@ -331,12 +332,12 @@ name: mods bake their folder name into their code, so the link must carry the
 base name for the mod's hardcoded paths to resolve. The container `Name` is UI
 display only.
 
-- **LatestPolicy** → link `staged/<baseName>` → `<versionFolder>/<baseName>/`
+- **LatestPolicy** → link `staged/mods/<baseName>` → `<versionFolder>/<baseName>/`
   where the version is the container's `IsLatest`.
-- **PinnedPolicy(vId)** → link `staged/<baseName>` → `<versionFolder>/<baseName>/`
+- **PinnedPolicy(vId)** → link `staged/mods/<baseName>` → `<versionFolder>/<baseName>/`
   where the version's `Folder == vId` (resolution by opaque version id, not by
   tag).
-- **LinkedSource** → link `staged/<baseName>` → the external folder itself (no
+- **LinkedSource** → link `staged/mods/<baseName>` → the external folder itself (no
   version resolution; a linked container has no versions). The base name is the
   external folder's own name (Curator never renames it). A missing/unreadable
   external folder is skipped with reason "external folder unavailable" (no

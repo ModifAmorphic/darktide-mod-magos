@@ -7,7 +7,7 @@ namespace Modificus.Curator.Profiles.Tests;
 /// Linked-mod staging + collision behavior (the
 /// <see cref="IModImportService.LinkFolder"/> flow staged through
 /// <see cref="IProfileService.PrepareModRoot"/>). Covers: linking creates no
-/// copy; staging links <c>staged/&lt;baseName&gt;</c> directly to the external
+/// copy; staging links <c>staged/mods/&lt;baseName&gt;</c> directly to the external
 /// folder; a missing external folder at stage time is skipped (no fallback copy);
 /// the external target's sentinel survives staging, enable/disable, reorder,
 /// remove, and profile deletion; and the cross-source base-name collision hard-
@@ -207,7 +207,7 @@ public sealed class LinkedModStagingTests
     {
         // A linked container whose folder name equals an existing managed mod's
         // base name in the same profile is a collision (the loader cannot tell
-        // two staged/<baseName> links apart). GetBaseNameCollision resolves the
+        // two staged/mods/<baseName> links apart). GetBaseNameCollision resolves the
         // linked base name via the shared ResolveStagingTarget path.
         using var fx = new ProfileServiceFixture();
         // Managed mod with base name "Shared" (the fixture sanitizes the name).

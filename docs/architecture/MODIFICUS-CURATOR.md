@@ -1,8 +1,8 @@
 # Modificus Curator -- architecture
 
 **Modificus Curator** is the user-facing mod manager app --
-the second of the project's two components, sitting on top of Modificus
-Relay. It owns everything user-facing: profile management, mod staging, load
+the second of the project's two components, sitting on top of Mod Relay.
+It owns everything user-facing: profile management, mod staging, load
 order, dependency resolution, mod-source integrations (Nexus
 Mods, Steam), and the "Launch Darktide" button that invokes the Relay
 launcher. Relay does the injection + mod loading; Modificus Curator owns the
@@ -18,11 +18,11 @@ management experience around it.
 
 ## Out of scope (handled elsewhere)
 
-- The Modificus Relay internals: see the
-  [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay) repo.
-- The mod loader ↔ DMF integration: darktide-modificus-relay.
+- The Mod Relay internals: see the
+  [darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay) repo.
+- The mod loader ↔ DMF integration: darktide-mod-relay.
 - The load-order file contract (`mods.lst`): Curator authors `mods.lst` and
-  Relay consumes it; the contract is specified in darktide-modificus-relay.
+  Relay consumes it; the contract is specified in darktide-mod-relay.
 
 ## Technology
 
@@ -67,7 +67,7 @@ UI models.
 
 | Library | Owns |
 | --- | --- |
-| **Relay** | All interaction with Modificus Relay. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control -- status / hot-reload / live enable-disable -- is a future Relay contract expansion; out of v1.) |
+| **Relay** | All interaction with Mod Relay. v1 façade only: assemble launcher args, invoke, track process exit. (Live-control -- status / hot-reload / live enable-disable -- is a future Relay contract expansion; out of v1.) |
 | **Profiles + Settings** | Profile data, files, directories; global/system settings (logging, profile base folder, mod repository); resolves each profile mod's version policy to a repository version folder; materializes the profile mod root + writes `mods.lst` at launch. |
 | **Integrations** | External-service calls: Nexus Mods (primary user-mod source), local install. Nexus API key / OIDC, version checks, downloads / updates. |
 | **Steam** | Steam operations outside Relay: locate Steam (`libraryfolders.vdf`), Darktide install + compatdata, Proton version; detect whether the game is running. Owns the Linux discovery + escape hatch (see [Launch](#launch)). |
@@ -144,7 +144,7 @@ are documented under [Reference -- Modificus Curator](../reference/).
 
 Stable surface (Relay is built; this is the boundary Curator builds against):
 
-- **Invocation:** subprocess `modificus_relay.exe`, precedence **flag > env > default**.
+- **Invocation:** subprocess `mod_relay.exe`, precedence **flag > env > default**.
 - **Flags:** `--game-binary <path>` (required) · `--mod-path <path>` (the mod
   root) · `--log-file <path>` · `--log-level <level>` · `--steam-app-id <id>`
   (default `1361210`).
@@ -165,7 +165,7 @@ Stable surface (Relay is built; this is the boundary Curator builds against):
   Relay contract expansion (GitHub issue), not v1.
 
 See the
-[Modificus Relay docs](https://github.com/ModifAmorphic/darktide-modificus-relay)
+[Mod Relay docs](https://github.com/ModifAmorphic/darktide-mod-relay)
 for the full contract (env-var table, logging, the hook-ready handshake).
 
 ## Profiles
@@ -313,7 +313,7 @@ profile references it). Linked mods are excluded from the Nexus update check
 **Staging:** at launch (alongside regenerating `mods.lst`), Curator materializes
 the profile's mod root (the `--mod-path` dir) by, for each enabled mod,
 discovering its base folder name (the single subdirectory inside the resolved
-version folder) and linking `staged/<baseName>` to
+version folder) and linking `staged/mods/<baseName>` to
 `<versionFolder>/<baseName>/` via the platform-selective `StagingLinkCreator`
 seam (an NTFS junction on Windows, where it is privilege-free: no Developer Mode,
 no admin; a symlink on Linux). The base name, not the container's display name,
@@ -513,19 +513,19 @@ while Darktide runs (a `profile.json` write); changes apply next launch.
 
 ### Windows (trivial)
 
-Curator is a native .NET process; `modificus_relay.exe` is a native Windows
+Curator is a native .NET process; `mod_relay.exe` is a native Windows
 binary. The Relay library assembles the args and `Process.Start`s the
 launcher directly. No Proton, no prefix, no path translation.
 
 ### Linux (native Curator + Proton-at-launch)
 
-Curator runs **natively** on Linux (not Proton-wrapped). `modificus_relay.exe` is
+Curator runs **natively** on Linux (not Proton-wrapped). `mod_relay.exe` is
 a Windows binary, so to run it Curator invokes it under **Proton**, using
 **Darktide's own compatdata** as the prefix -- required, because the launcher
 `CreateProcess`es Darktide, so the two must share the prefix.
 
 **The constraint that shapes the design:** Proton reads
-`STEAM_COMPAT_DATA_PATH` from the environment *before* `modificus_relay.exe`
+`STEAM_COMPAT_DATA_PATH` from the environment *before* `mod_relay.exe`
 runs, to decide which prefix to use. By the time the launcher executes it's
 already inside that prefix; it cannot relocate itself, and Darktide inherits
 the prefix regardless. So the compatdata must be set by whoever invokes Proton
@@ -569,7 +569,7 @@ Responsibilities:
   - Assemble the launcher args.
   - `Process.Start` with `STEAM_COMPAT_DATA_PATH = <compatdata>` and
     `STEAM_COMPAT_CLIENT_INSTALL_PATH = <steam-install>` in env,
-    command = `<proton> run <runtime-dir>/modificus_relay.exe <args>`.
+    command = `<proton> run <runtime-dir>/mod_relay.exe <args>`.
 
 **Relay is unchanged on Linux** -- no Linux helper, no Steam/Proton
 discovery, no new flag. It remains the Windows launcher + shell + mod_loader,
@@ -638,7 +638,7 @@ TOML):
 - Profiles base folder (where profiles, mods, and settings are stored).
 - Mods folder (the global mod store; see
   [Mod repository](#mod-repository)).
-- Relay dir (where `modificus_relay.exe` + `relay_shell.dll` +
+- Relay dir (where `mod_relay.exe` + `relay_shell.dll` +
   `mod_loader/` live).
 
 Per-profile settings live with the profile, not in the global config.
@@ -670,7 +670,7 @@ Per-profile settings live with the profile, not in the global config.
 
 ## References
 
-- [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay): the
+- [darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay): the
   runtime Curator builds on (launcher/shell contract, mod loader, `mods.lst`
   contract, two-roots model).
 - `docs/architecture/README.md`: the Modificus Curator architecture + component

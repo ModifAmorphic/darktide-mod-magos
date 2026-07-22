@@ -154,7 +154,7 @@ jobs:
       - name: Stage relay fixture
         run: |
           mkdir -p stage/appimage/relay
-          printf 'AppImage smoke test relay fixture\n' > stage/appimage/relay/modificus_relay.exe
+          printf 'AppImage smoke test relay fixture\n' > stage/appimage/relay/mod_relay.exe
 
       - name: Install vpk 1.2.0 (job-local)
         run: |
@@ -199,7 +199,7 @@ jobs:
           [ -f "$root/.DirIcon" ] || { echo "FAIL: missing .DirIcon"; exit 1; }
           [ -f "$root/usr/bin/Modificus.Curator" ] || { echo "FAIL: missing main exe"; exit 1; }
           [ -f "$root/usr/bin/Modificus.Curator.NxmHandler" ] || { echo "FAIL: missing NXM handler"; exit 1; }
-          [ -f "$root/usr/bin/relay/modificus_relay.exe" ] || { echo "FAIL: missing relay"; exit 1; }
+          [ -f "$root/usr/bin/relay/mod_relay.exe" ] || { echo "FAIL: missing relay"; exit 1; }
           [ -f "$root/usr/bin/UpdateNix" ] || { echo "FAIL: missing UpdateNix"; exit 1; }
           [ -f "$root/usr/bin/sq.version" ] || { echo "FAIL: missing sq.version"; exit 1; }
           [ -f "$root/AppRun" ] || { echo "FAIL: missing AppRun wrapper"; exit 1; }

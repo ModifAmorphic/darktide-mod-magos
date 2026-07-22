@@ -173,7 +173,7 @@ make_standalone_payload() {
     mkdir -p "$T_ROOT/app" "$T_ROOT/relay"
     printf 'standalone ui\n' > "$T_ROOT/app/Modificus.Curator"
     printf 'standalone handler\n' > "$T_ROOT/app/Modificus.Curator.NxmHandler"
-    printf 'relay\n' > "$T_ROOT/relay/modificus_relay.exe"
+    printf 'relay\n' > "$T_ROOT/relay/mod_relay.exe"
 }
 # Velopack retained-package state (cached/pending update bytes).
 make_velopack_state() {
@@ -328,7 +328,7 @@ assert_file_exists "$T_ROOT/app-state.json"
 assert_file_exists "$T_ROOT/logs/curator.log"
 assert_file_exists "$T_ROOT/app/Modificus.Curator"
 assert_file_exists "$T_ROOT/app/Modificus.Curator.NxmHandler"
-assert_file_exists "$T_ROOT/relay/modificus_relay.exe"
+assert_file_exists "$T_ROOT/relay/mod_relay.exe"
 assert_dir_exists "$T_ROOT"
 
 # ===========================================================================

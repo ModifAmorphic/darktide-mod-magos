@@ -19,7 +19,7 @@ public sealed class RelayLaunchServiceTests
     {
         using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteWindows;
-        fx.Profiles.PrepareModRootResult = @"C:\curator\profiles\abc\mods";
+        fx.Profiles.PrepareModRootResult = @"C:\curator\profiles\abc\staged";
         var profileId = Guid.NewGuid();
         var svc = fx.BuildWindowsService();
 
@@ -35,7 +35,7 @@ public sealed class RelayLaunchServiceTests
 
         Assert.Equal(
             new[] { "--game-binary", FakeDiscovery.WindowsGameBinary,
-                    "--mod-path",    @"C:\curator\profiles\abc\mods",
+                    "--mod-path",    @"C:\curator\profiles\abc\staged",
                     "--log-file",    fx.Config.Logging.LogFile },
             fx.Launcher.Arguments);
 
@@ -88,7 +88,7 @@ public sealed class RelayLaunchServiceTests
     {
         using var fx = new RelayFixture();
         fx.Steam.Result = FakeDiscovery.CompleteLinux;
-        fx.Profiles.PrepareModRootResult = "/home/u/.local/share/Modificus Curator/profiles/abc/mods";
+        fx.Profiles.PrepareModRootResult = "/home/u/.local/share/Modificus Curator/profiles/abc/staged";
         var svc = fx.BuildLinuxService();
 
         svc.Launch(Guid.NewGuid());
@@ -100,7 +100,7 @@ public sealed class RelayLaunchServiceTests
         var game = launcherFlags[IndexOf(launcherFlags, "--game-binary") + 1];
         var mod = launcherFlags[IndexOf(launcherFlags, "--mod-path") + 1];
 
-        Assert.Equal(@"Z:\home\u\.local\share\Modificus Curator\profiles\abc\mods", mod);
+        Assert.Equal(@"Z:\home\u\.local\share\Modificus Curator\profiles\abc\staged", mod);
         Assert.Equal(
             @"Z:\home\u\.steam\steam\steamapps\common\Warhammer 40,000 DARKTIDE\binaries\Darktide.exe",
             game);
@@ -517,7 +517,7 @@ public sealed class RelayLaunchServiceTests
         var result = svc.Launch(Guid.NewGuid());
 
         Assert.Equal(LaunchStatus.Error, result.Status);
-        Assert.Contains("modificus_relay.exe", result.Message);
+        Assert.Contains("mod_relay.exe", result.Message);
         Assert.Contains("not found", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, fx.Launcher.Calls);
     }

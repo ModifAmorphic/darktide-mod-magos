@@ -6,7 +6,7 @@ namespace Modificus.Curator.RelayClient;
 
 /// <summary>
 /// Windows <see cref="IPlatformLaunchStrategy"/>. Invokes
-/// <c>modificus_relay.exe</c> directly -- no Proton, no path translation (native
+/// <c>mod_relay.exe</c> directly -- no Proton, no path translation (native
 /// Windows paths). Selected at DI registration when the host is Windows.
 /// </summary>
 internal sealed class WindowsLaunchStrategy : IPlatformLaunchStrategy
@@ -67,7 +67,7 @@ internal sealed class WindowsLaunchStrategy : IPlatformLaunchStrategy
 
     /// <summary>
     /// Builds the launcher's own argument list (the flags AFTER
-    /// <c>modificus_relay.exe</c>). Paths pass through verbatim -- Windows needs no
+    /// <c>mod_relay.exe</c>). Paths pass through verbatim -- Windows needs no
     /// <c>Z:\</c> translation. When <paramref name="gameArguments"/> is non-empty,
     /// appends a single bare <c>--</c> separator then each game arg as its own
     /// argv entry (Relay's <c>--</c> contract); empty game args emit no <c>--</c>.

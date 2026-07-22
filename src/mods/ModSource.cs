@@ -55,7 +55,7 @@ public sealed record NexusSource : ModSource
 /// copying. The canonical identity is the normalized
 /// <see cref="ExternalPath"/>. The folder is externally owned: Curator never
 /// copies, writes, versions, or deletes anything inside it. A linked container
-/// has no versions; staging links <c>&lt;profile&gt;/staged/&lt;baseName&gt;</c>
+/// has no versions; staging links <c>&lt;profile&gt;/staged/mods/&lt;baseName&gt;</c>
 /// directly to <see cref="ExternalPath"/> at launch.
 /// </summary>
 public sealed record LinkedSource : ModSource

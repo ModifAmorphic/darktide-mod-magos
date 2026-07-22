@@ -73,8 +73,8 @@ internal sealed class ProfileServiceFixture : IDisposable
 
     // staged/ is the --mod-path (regenerated each PrepareModRoot).
     public string StagedDir(Guid id) => Path.Combine(ProfileDir(id), "staged");
-    public string ModsLst(Guid id) => Path.Combine(StagedDir(id), "mods.lst");
-    public string StagedModLink(Guid id, string linkName) => Path.Combine(StagedDir(id), linkName);
+    public string ModsLst(Guid id) => Path.Combine(StagedDir(id), "mods", "mods.lst");
+    public string StagedModLink(Guid id, string linkName) => Path.Combine(StagedDir(id), "mods", linkName);
 
     // ---- repository path helpers -------------------------------------------
 

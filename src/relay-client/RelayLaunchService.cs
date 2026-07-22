@@ -31,7 +31,7 @@ internal sealed class RelayLaunchService : IRelayLaunchService
 {
     /// <summary>The launcher executable filename (a Windows binary, run under
     /// Proton on Linux). Lives in <see cref="CuratorConfig.RelayDir"/>.</summary>
-    internal const string LauncherExecutableName = "modificus_relay.exe";
+    internal const string LauncherExecutableName = "mod_relay.exe";
 
     /// <summary>
     /// The app-local Relay folder name. A Velopack-packaged build ships Relay

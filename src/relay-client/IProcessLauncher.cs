@@ -2,7 +2,7 @@ namespace Modificus.Curator.RelayClient;
 
 /// <summary>
 /// Process-launch abstraction used by <see cref="IRelayLaunchService"/> to
-/// spawn <c>modificus_relay.exe</c> -- directly on Windows, under <c>proton run</c>
+/// spawn <c>mod_relay.exe</c> -- directly on Windows, under <c>proton run</c>
 /// on Linux. Abstracted so the side-effect (spawning a process) is injectable,
 /// leaving the launch service as pure argument assembly + decision logic.
 /// </summary>

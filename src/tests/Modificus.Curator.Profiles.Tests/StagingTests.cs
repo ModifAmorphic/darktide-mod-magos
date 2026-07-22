@@ -12,15 +12,15 @@ namespace Modificus.Curator.Profiles.Tests;
 /// (<see cref="LatestPolicy"/> -> the container's isLatest version folder;
 /// <see cref="PinnedPolicy"/> -> the version whose <see cref="ModVersion.Folder"/>
 /// matches the pin's <see cref="PinnedPolicy.VersionId"/>) and is linked into
-/// <c>staged/&lt;baseName&gt;</c>, where the base name is discovered on the fly as
+/// <c>staged/mods/&lt;baseName&gt;</c>, where the base name is discovered on the fly as
 /// the single subdirectory inside the version folder (the mod's base folder);
 /// missing containers/versions and corrupted version folders (zero/multiple
 /// subdirs) are skipped + warned; same-base-name collisions are blocked at import
 /// time (<see cref="IProfileService.GetBaseNameCollision"/>), so staging is a
-/// simple loop with no dedupe; the staged root holds only staging links (an NTFS
-/// junction on Windows, a symlink on Linux) + <c>mods.lst</c> (no copied files);
-/// a staging-link-creation failure throws <see cref="IOException"/> (never
-/// silently copies).
+/// simple loop with no dedupe; the staged <c>mods/</c> dir holds only staging
+/// links (an NTFS junction on Windows, a symlink on Linux) + <c>mods.lst</c>
+/// (no copied files); a staging-link-creation failure throws
+/// <see cref="IOException"/> (never silently copies).
 /// </summary>
 public sealed class StagingTests
 {
@@ -99,7 +99,7 @@ public sealed class StagingTests
     // ---- staging shape: symlinks only + mods.lst --------------------------
 
     [Fact]
-    public void Staged_root_contains_only_symlinks_and_mods_lst_no_copied_files()
+    public void Staged_mods_dir_contains_only_symlinks_and_mods_lst_no_copied_files()
     {
         using var fx = new ProfileServiceFixture();
         var profile = fx.Service.CreateProfile("P");
@@ -108,8 +108,14 @@ public sealed class StagingTests
 
         fx.Service.PrepareModRoot(profile.Id);
 
-        // staged/ contains exactly the symlink + mods.lst.
-        var stagedEntries = Directory.GetFileSystemEntries(fx.StagedDir(profile.Id));
+        // staged/ contains exactly the intermediate mods/ dir Relay now expects.
+        var rootEntries = Directory.GetFileSystemEntries(fx.StagedDir(profile.Id));
+        var rootEntry = Assert.Single(rootEntries);
+        Assert.Equal("mods", Path.GetFileName(rootEntry));
+
+        // staged/mods/ contains exactly the symlink + mods.lst.
+        var modsDir = Path.Combine(fx.StagedDir(profile.Id), "mods");
+        var stagedEntries = Directory.GetFileSystemEntries(modsDir);
         Assert.Equal(2, stagedEntries.Length);
 
         foreach (var entry in stagedEntries)
@@ -206,7 +212,7 @@ public sealed class StagingTests
     [Fact]
     public void Regeneration_never_follows_stale_symlinks_into_the_repository()
     {
-        // Data-safety: a prior staged/DMF symlink pointing into the repository
+        // Data-safety: a prior staged/mods/DMF symlink pointing into the repository
         // must be removed as a LINK (not followed), so the files survive a
         // regenerate. Guards ClearStagedDir's symlink-awareness.
         using var fx = new ProfileServiceFixture();

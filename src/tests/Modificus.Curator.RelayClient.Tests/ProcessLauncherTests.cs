@@ -33,11 +33,11 @@ public sealed class ProcessLauncherTests
     [Fact]
     public void BuildStartInfo_sets_FileName_from_request()
     {
-        var request = new ProcessLaunchRequest("/opt/curator/modificus_relay.exe");
+        var request = new ProcessLaunchRequest("/opt/curator/mod_relay.exe");
 
         var startInfo = ProcessLauncher.BuildStartInfo(request);
 
-        Assert.Equal("/opt/curator/modificus_relay.exe", startInfo.FileName);
+        Assert.Equal("/opt/curator/mod_relay.exe", startInfo.FileName);
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public sealed class ProcessLauncherTests
         var args = new[]
         {
             "run",
-            "/opt/relay/modificus_relay.exe",
+            "/opt/relay/mod_relay.exe",
             "--game-binary",
             @"C:\Program Files\Darktide\binaries\Darktide.exe",
             "--mod-path",

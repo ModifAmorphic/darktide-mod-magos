@@ -69,7 +69,7 @@ Jobs:
     **build-windows** then produces both a Velopack installer and a portable
     ZIP:
     - Extracts the latest non-draft Relay prerelease from
-      `ModifAmorphic/darktide-modificus-relay` into `stage/relay/` (for the
+      `ModifAmorphic/darktide-mod-relay` into `stage/relay/` (for the
       portable ZIP) and `stage/app/relay/` (for the Velopack pack) so Relay
       ships in both artifacts. (Fetched via
       `gh release list --exclude-drafts --order desc` with explicit
@@ -413,7 +413,7 @@ curl https://raw.githubusercontent.com/ModifAmorphic/darktide-modificus-curator/
 ```
 
 After downloading, the script extracts to a temp dir, validates
-`app/Modificus.Curator` + `relay/modificus_relay.exe` before touching the
+`app/Modificus.Curator` + `relay/mod_relay.exe` before touching the
 install root, then:
 
 - Installs into `${XDG_DATA_HOME:-$HOME/.local/share}/Modificus Curator/`

@@ -176,7 +176,7 @@ public interface IModImportService
 **Linked-folder add (`LinkFolder`):** records an external mod folder as a
 `LinkedSource` container in the repository **without copying** it. The container
 holds metadata only (a `container.json`, no version subfolders); staging links
-`<profile>/staged/<baseName>` directly to the external folder at launch. The
+`<profile>/staged/mods/<baseName>` directly to the external folder at launch. The
 external folder is the user's: Curator never copies, writes, versions, renames,
 or deletes anything inside it. Validation: `externalPath` must be absolute, an
 existing readable directory, of the same mod-folder shape the folder import

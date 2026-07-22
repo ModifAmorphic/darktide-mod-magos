@@ -25,7 +25,7 @@ public sealed class CuratorConfig
     public string ModsFolder { get; set; } = AppPaths.DefaultModsFolder;
 
     /// <summary>
-    /// The Modificus Relay directory: where <c>modificus_relay.exe</c>,
+    /// The Mod Relay directory: where <c>mod_relay.exe</c>,
     /// <c>relay_shell.dll</c>, and <c>mod_loader/</c> live.
     /// </summary>
     public string RelayDir { get; set; } = AppPaths.DefaultRelayDir;

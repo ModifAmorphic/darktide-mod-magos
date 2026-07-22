@@ -30,14 +30,14 @@ internal interface IPlatformLaunchStrategy
     IReadOnlyList<string> RequiredDiscoveryFields(DiscoveryResult discovery);
 
     /// <summary>
-    /// Spawns <c>modificus_relay.exe</c> for this platform. Windows: a direct
+    /// Spawns <c>mod_relay.exe</c> for this platform. Windows: a direct
     /// invocation of <paramref name="launcherPath"/> with native (untranslated)
     /// args. Linux: <c>&lt;proton&gt; run &lt;launcherPath&gt; &lt;args&gt;</c>
     /// with both <c>STEAM_COMPAT_*</c> env vars and the path-valued flags
     /// <c>Z:\</c>-translated (the launcher runs under Wine). Fire-and-forget:
     /// returns <c>true</c> if the process started.
     /// </summary>
-    /// <param name="launcherPath">Native path to <c>modificus_relay.exe</c>.</param>
+    /// <param name="launcherPath">Native path to <c>mod_relay.exe</c>.</param>
     /// <param name="discovery">The resolved discovery (Linux reads the Proton +
     /// compat paths + Steam install from it; Windows ignores it: it already has
     /// <paramref name="gameBinary"/>).</param>

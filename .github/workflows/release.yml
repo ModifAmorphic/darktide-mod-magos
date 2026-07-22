@@ -80,7 +80,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-modificus-relay \
+          RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-mod-relay \
             --limit 100 --exclude-drafts --order desc --json tagName,isPrerelease,publishedAt \
             --jq '[.[] | select(.isPrerelease == true)] | .[0].tagName // empty')
           if [ -z "$RELAY_TAG" ]; then
@@ -89,7 +89,7 @@ jobs:
           fi
           echo "RELAY_TAG=$RELAY_TAG" >> "$GITHUB_ENV"
           echo "Relay tag: $RELAY_TAG"
-          gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \
+          gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-mod-relay \
             --pattern "*-windows-x64.zip" --dir stage
       - name: Extract Relay for portable (top-level relay/)
         shell: bash
@@ -227,7 +227,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-modificus-relay \
+          RELAY_TAG=$(gh release list --repo ModifAmorphic/darktide-mod-relay \
             --limit 100 --exclude-drafts --order desc --json tagName,isPrerelease,publishedAt \
             --jq '[.[] | select(.isPrerelease == true)] | .[0].tagName // empty')
           if [ -z "$RELAY_TAG" ]; then
@@ -236,7 +236,7 @@ jobs:
           fi
           echo "RELAY_TAG=$RELAY_TAG" >> "$GITHUB_ENV"
           echo "Relay tag: $RELAY_TAG"
-          gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-modificus-relay \
+          gh release download "$RELAY_TAG" --repo ModifAmorphic/darktide-mod-relay \
             --pattern "*-windows-x64.zip" --dir stage
       - name: Extract Relay to relay/ directory (standalone)
         run: |

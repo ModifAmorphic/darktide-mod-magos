@@ -2,7 +2,7 @@
 
 **Modificus Curator** is the user-facing mod manager app for Darktide. It launches
 the game modded via
-[Modificus Relay](https://github.com/ModifAmorphic/darktide-modificus-relay) (DLL
+[Mod Relay](https://github.com/ModifAmorphic/darktide-mod-relay) (DLL
 injection: no game-directory footprint, no bundle-database patching) and stays
 out of the way for vanilla play (launch from Steam and the game runs
 unmodified).
@@ -14,9 +14,9 @@ unmodified).
   mod-source integrations, the Launch flow. The backend libraries and the UI
   are implemented (the app is user-usable); the Launcher is a stub. See
   [`MODIFICUS-CURATOR.md`](MODIFICUS-CURATOR.md) for the architecture.
-- **Modificus Relay** (external): the injected modding runtime + its launcher.
+- **Mod Relay** (external): the injected modding runtime + its launcher.
   Lives in a separate repo,
-  [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay).
+  [darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay).
   Curator consumes its launcher via the `relay-client` library (the launch
   façade) and treats the rest as a black box.
 
@@ -32,7 +32,7 @@ unmodified).
   (Velopack Windows installer and Linux AppImage): the engine-neutral
   `IAppUpdateService`, the
   startup-only check, and the shell notice + Settings "Updates" section.
-- [darktide-modificus-relay](https://github.com/ModifAmorphic/darktide-modificus-relay): the
+- [darktide-mod-relay](https://github.com/ModifAmorphic/darktide-mod-relay): the
   runtime architecture (the Rust↔C Hybrid, the seam, the launcher flow,
   discovery, the mod loader).
 - `docs/reference/`: per-library API reference for the Modificus
