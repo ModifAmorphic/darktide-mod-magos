@@ -88,7 +88,7 @@ internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
         // launcher.exe path are native Linux (Proton resolves the .exe from a
         // native path). Game args append a bare -- then one argv entry each
         // (Relay's -- contract; empty game args emit no --).
-        var launcherArgs = BuildLauncherArgs(gameBinary, modPath, logFile, launchSettings.GameArguments);
+        var launcherArgs = BuildLauncherArgs(gameBinary, modPath, logFile, launchSettings.EnableLuaLogs, launchSettings.GameArguments);
 
         var arguments = new List<string>(capacity: launcherArgs.Count + 2)
         {
@@ -133,6 +133,10 @@ internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
     /// Builds the launcher's own argument list (the flags AFTER
     /// <c>... proton run launcher.exe</c>). The path-valued flags are converted
     /// to Wine <c>Z:\</c> form so the launcher-under-Wine can resolve them. When
+    /// <paramref name="enableLuaLogs"/> is true, appends a bare
+    /// <c>--lua-logs</c> flag after <c>--log-file</c> (a Relay-owned logging
+    /// flag with no value, NOT path-valued, so it is not <c>Z:\</c>-translated),
+    /// teeing Lua <c>print</c> output into the log file. When
     /// <paramref name="gameArguments"/> is non-empty, appends a single bare
     /// <c>--</c> separator then each game arg as its own argv entry (Relay's
     /// <c>--</c> contract); empty game args emit no <c>--</c> (legacy launch).
@@ -145,13 +149,20 @@ internal sealed class LinuxLaunchStrategy : IPlatformLaunchStrategy
     /// are NOT <c>Z:\</c>-translated: they are Darktide's own args, opaque to
     /// Curator, forwarded verbatim; any path-like arg is the game's concern.
     /// </remarks>
-    internal static List<string> BuildLauncherArgs(string gameBinary, string modPath, string logFile, IReadOnlyList<string> gameArguments) =>
-        AppendGameArguments(new List<string>
+    internal static List<string> BuildLauncherArgs(string gameBinary, string modPath, string logFile, bool enableLuaLogs, IReadOnlyList<string> gameArguments)
+    {
+        var args = new List<string>
         {
             "--game-binary", WinePath.ToWine(gameBinary),
             "--mod-path", WinePath.ToWine(modPath),
             "--log-file", WinePath.ToWine(logFile),
-        }, gameArguments);
+        };
+        if (enableLuaLogs)
+        {
+            args.Add("--lua-logs");
+        }
+        return AppendGameArguments(args, gameArguments);
+    }
 
     /// <summary>
     /// Appends the profile's game arguments to <paramref name="args"/> per

@@ -44,7 +44,7 @@ internal sealed class WindowsLaunchStrategy : IPlatformLaunchStrategy
         // `discovery` is unused on Windows: the caller already extracted gameBinary
         // from it, and Windows needs no Proton/compat context. Game args append a
         // bare -- then one argv entry each (Relay's -- contract; empty emits no --).
-        var args = BuildLauncherArgs(gameBinary, modPath, logFile, launchSettings.GameArguments);
+        var args = BuildLauncherArgs(gameBinary, modPath, logFile, launchSettings.EnableLuaLogs, launchSettings.GameArguments);
 
         // Profile env as overrides on the Relay process. No Steam-compat vars, no
         // AppImage removals (Windows never runs from an AppImage mount). Relay
@@ -68,9 +68,13 @@ internal sealed class WindowsLaunchStrategy : IPlatformLaunchStrategy
     /// <summary>
     /// Builds the launcher's own argument list (the flags AFTER
     /// <c>mod_relay.exe</c>). Paths pass through verbatim -- Windows needs no
-    /// <c>Z:\</c> translation. When <paramref name="gameArguments"/> is non-empty,
-    /// appends a single bare <c>--</c> separator then each game arg as its own
-    /// argv entry (Relay's <c>--</c> contract); empty game args emit no <c>--</c>.
+    /// <c>Z:\</c> translation. When <paramref name="enableLuaLogs"/> is true,
+    /// appends a bare <c>--lua-logs</c> flag (a Relay-owned logging flag with no
+    /// value, not path-translated) after <c>--log-file</c>, teeing Lua
+    /// <c>print</c> output into the log file. When
+    /// <paramref name="gameArguments"/> is non-empty, appends a single bare
+    /// <c>--</c> separator then each game arg as its own argv entry (Relay's
+    /// <c>--</c> contract); empty game args emit no <c>--</c>.
     /// </summary>
     /// <remarks>
     /// <c>--log-level</c> is intentionally NOT emitted: <c>CuratorConfig.Logging.Level</c>
@@ -78,13 +82,20 @@ internal sealed class WindowsLaunchStrategy : IPlatformLaunchStrategy
     /// vocabulary differs -- forwarding the Serilog name silently mis-resolved levels.
     /// The two logs are decoupled; the launcher's <c>info</c> default is used.
     /// </remarks>
-    internal static List<string> BuildLauncherArgs(string gameBinary, string modPath, string logFile, IReadOnlyList<string> gameArguments) =>
-        LinuxLaunchStrategy.AppendGameArguments(new List<string>
+    internal static List<string> BuildLauncherArgs(string gameBinary, string modPath, string logFile, bool enableLuaLogs, IReadOnlyList<string> gameArguments)
+    {
+        var args = new List<string>
         {
             "--game-binary", gameBinary,
             "--mod-path", modPath,
             "--log-file", logFile,
-        }, gameArguments);
+        };
+        if (enableLuaLogs)
+        {
+            args.Add("--lua-logs");
+        }
+        return LinuxLaunchStrategy.AppendGameArguments(args, gameArguments);
+    }
 
     private static string FormatArgs(IReadOnlyList<string> args) => string.Join(' ', args);
 }

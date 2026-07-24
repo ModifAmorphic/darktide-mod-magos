@@ -331,6 +331,57 @@ public sealed class RelayLaunchServiceTests
     }
 
     [Fact]
+    public void Windows_profile_with_enable_lua_logs_emits_flag()
+    {
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteWindows;
+        fx.Profiles.LaunchSettingsResult = new LaunchSettings { EnableLuaLogs = true };
+        var svc = fx.BuildWindowsService();
+
+        svc.Launch(Guid.NewGuid());
+
+        var args = fx.Launcher.Arguments!;
+        Assert.Contains("--lua-logs", args);
+        // --lua-logs sits immediately after the --log-file value.
+        var logIndex = IndexOf(args, "--log-file");
+        Assert.Equal("--lua-logs", args[logIndex + 2]);
+    }
+
+    [Fact]
+    public void Linux_profile_with_enable_lua_logs_emits_flag()
+    {
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteLinux;
+        fx.Profiles.LaunchSettingsResult = new LaunchSettings { EnableLuaLogs = true };
+        var svc = fx.BuildLinuxService();
+
+        svc.Launch(Guid.NewGuid());
+
+        var args = fx.Launcher.Arguments!;
+        // Exactly once; the bare flag is not Z:\-translated (only path-valued
+        // flags are).
+        var lua = Assert.Single(args, a => a == "--lua-logs");
+        Assert.Equal("--lua-logs", lua);
+        Assert.DoesNotContain("Z:", lua);
+        // Sits immediately after the --log-file value (which IS Z:\-translated).
+        var logIndex = IndexOf(args, "--log-file");
+        Assert.Equal("--lua-logs", args[logIndex + 2]);
+    }
+
+    [Fact]
+    public void Profile_without_enable_lua_logs_omits_flag()
+    {
+        // Default LaunchSettings: EnableLuaLogs is false, so no --lua-logs.
+        using var fx = new RelayFixture();
+        fx.Steam.Result = FakeDiscovery.CompleteWindows;
+        var svc = fx.BuildWindowsService();
+
+        svc.Launch(Guid.NewGuid());
+
+        Assert.DoesNotContain("--lua-logs", fx.Launcher.Arguments!);
+    }
+
+    [Fact]
     public void Linux_request_contains_profile_env_before_proton_startup()
     {
         // Profile env values must reach Proton's environment. They land in the

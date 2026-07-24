@@ -150,12 +150,15 @@ so the precedence is unit-testable on any CI OS.
 
 `Process.Start(mod_relay.exe, args)`. No Proton, no path translation --
 native Windows paths. Args: `--game-binary`, `--mod-path`, `--log-file`
-(verbatim, untranslated), then (when the profile has game arguments) one bare
-`--` + each game arg as its own argv entry. The profile's environment variables
-are applied as overrides on the Relay process; Relay creates Darktide with an
-inherited environment, so the values reach the game. No removals (Windows never
-runs from an AppImage mount, so there is nothing to sanitize); an empty profile
-env yields no overrides (the child inherits Curator's environment verbatim).
+(verbatim, untranslated); then, when the profile's `EnableLuaLogs` toggle is on,
+a bare `--lua-logs` flag (tees Lua `print` output into the log file; no value,
+appended right after `--log-file`); then (when the profile has game arguments)
+one bare `--` + each game arg as its own argv entry. The profile's environment
+variables are applied as overrides on the Relay process; Relay creates Darktide
+with an inherited environment, so the values reach the game. No removals (Windows
+never runs from an AppImage mount, so there is nothing to sanitize); an empty
+profile env yields no overrides (the child inherits Curator's environment
+verbatim).
 
 ### Linux -- native Curator + Proton-at-launch
 
@@ -173,7 +176,10 @@ Command: `<proton> run <launcher.exe> <args>`, where:
 - The launcher's *own* path-valued flags (`--game-binary`, `--mod-path`,
   `--log-file`) are **`Z:\`-translated** (the launcher runs under Wine and needs
   Windows paths) -- including `--log-file`, otherwise the Relay shell log
-  couldn't be written where Curator expects.
+  couldn't be written where Curator expects. When the profile's `EnableLuaLogs`
+  toggle is on, a bare `--lua-logs` flag is appended right after `--log-file`
+  (a Relay-owned logging flag with no value, so it is NOT path-valued and is not
+  `Z:\`-translated).
 - Environment: `STEAM_COMPAT_DATA_PATH = <compatdata>` (the Wine prefix) +
   `STEAM_COMPAT_CLIENT_INSTALL_PATH = <steam-install>` -- both required for Proton
   to use the right prefix and find the Steam client. Discovery guaranteed both
@@ -205,6 +211,14 @@ order). When empty, no `--` is emitted (legacy launch). Curator uses
 `ProcessStartInfo.ArgumentList` throughout; it never prequotes or joins the
 values -- Relay owns the final Windows `CreateProcess` quoting. No Relay version
 preflight is performed.
+
+**Lua logging:** when the profile's `EnableLuaLogs` toggle is on, Curator appends
+the bare `--lua-logs` flag right after `--log-file` (before any `--` + game
+args). It tees Lua `print` output (the mod loader, DMF, and mods) into the
+`--log-file` Curator always emits; it is a tee, not a redirect. The flag carries
+no value, so on Linux it is NOT `Z:\`-translated (only `--game-binary`,
+`--mod-path`, `--log-file` are path-valued). Its Relay env form
+`RELAY_LUA_LOGS` is reserved so the toggle is the single source of truth.
 
 #### AppImage desktop-identity sanitization
 

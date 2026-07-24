@@ -100,6 +100,14 @@ public partial class LaunchSettingsViewModel : ObservableObject
     public ObservableCollection<GameArgRow> GameArguments { get; } = new();
 
     /// <summary>
+    /// Whether Relay's <c>--lua-logs</c> flag is emitted at launch (tees Lua
+    /// print output into the log file). Loaded from the profile's launch
+    /// settings; persisted on Save. No validation (a boolean toggle).
+    /// </summary>
+    [ObservableProperty]
+    private bool _enableLuaLogs;
+
+    /// <summary>
     /// A top-level error from the authoritative <see cref="Save"/> call (empty
     /// when there is nothing to show). Cleared on any edit so a stale error does
     /// not linger after the user fixes the input.
@@ -148,6 +156,8 @@ public partial class LaunchSettingsViewModel : ObservableObject
         {
             GameArguments.Add(new GameArgRow(arg));
         }
+
+        EnableLuaLogs = settings.EnableLuaLogs;
 
         RecomputeValidation();
     }
@@ -222,6 +232,7 @@ public partial class LaunchSettingsViewModel : ObservableObject
             GameArguments = GameArguments
                 .Select(r => r.Value)
                 .ToArray(),
+            EnableLuaLogs = EnableLuaLogs,
         };
 
         try

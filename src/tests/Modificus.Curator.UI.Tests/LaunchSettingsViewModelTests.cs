@@ -225,6 +225,50 @@ public sealed class LaunchSettingsViewModelTests
         Assert.Equal("an arg with spaces", Assert.Single(saved.GameArguments));
     }
 
+    // ---- enable-lua-logs toggle: load + persist ----------------------------
+
+    [Fact]
+    public void Construction_loads_enable_lua_logs_from_the_profile()
+    {
+        var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "P"));
+        var id = profiles.ListProfiles().First().Id;
+        profiles.LaunchSettingsByProfile[id] = new LaunchSettings { EnableLuaLogs = true };
+
+        var vm = Build(profiles, id);
+
+        Assert.True(vm.EnableLuaLogs);
+    }
+
+    [Fact]
+    public void Flipping_enable_lua_logs_is_persisted_on_save()
+    {
+        var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "P"));
+        var id = profiles.ListProfiles().First().Id;
+        var vm = Build(profiles, id);
+        vm.EnableLuaLogs = true;
+
+        vm.SaveCommand.Execute(null);
+
+        Assert.True(vm.SaveResult);
+        var (_, saved) = Assert.Single(profiles.SetLaunchSettingsCalls);
+        Assert.True(saved.EnableLuaLogs);
+    }
+
+    [Fact]
+    public void Enable_lua_logs_defaults_to_false_and_persists_false()
+    {
+        var profiles = TestDoubles.Profiles(new ProfileSummary(Guid.NewGuid(), "P"));
+        var id = profiles.ListProfiles().First().Id;
+        var vm = Build(profiles, id);
+
+        Assert.False(vm.EnableLuaLogs);
+
+        vm.SaveCommand.Execute(null);
+
+        var (_, saved) = Assert.Single(profiles.SetLaunchSettingsCalls);
+        Assert.False(saved.EnableLuaLogs);
+    }
+
     // ---- validation: inline localized errors keep the modal open ------------
 
     [Fact]

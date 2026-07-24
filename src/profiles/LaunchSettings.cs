@@ -37,12 +37,16 @@ public sealed record LaunchSettings
     /// <c>STEAM_COMPAT_DATA_PATH</c>, <c>STEAM_COMPAT_CLIENT_INSTALL_PATH</c>,
     /// <c>APPDIR</c>, <c>APPIMAGE</c>, <c>ARGV0</c>, <c>OWD</c>,
     /// <c>BAMF_DESKTOP_FILE_HINT</c>.</description></item>
-    /// <item><term>Relay config env (5).</term>
-    /// <description>Curator supplies these as flags (Relay's config model is
-    /// flag &gt; env &gt; default), so the env fallback is inert; blocked to
-    /// avoid a silently-ignored value: <c>MODIFICUS_GAME_BINARY</c>,
-    /// <c>MODIFICUS_MOD_PATH</c>, <c>RELAY_LOG_FILE</c>,
-    /// <c>RELAY_LOG_LEVEL</c>, <c>MODIFICUS_STEAM_APP_ID</c>.</description></item>
+    /// <item><term>Relay config env (6).</term>
+    /// <description>Curator owns these knobs and supplies them as flags (Relay's
+    /// config model is flag &gt; env &gt; default):
+    /// <c>MODIFICUS_GAME_BINARY</c>, <c>MODIFICUS_MOD_PATH</c>,
+    /// <c>RELAY_LOG_FILE</c>, <c>RELAY_LOG_LEVEL</c>,
+    /// <c>MODIFICUS_STEAM_APP_ID</c> (the env fallback is inert; blocked to
+    /// avoid a silently-ignored value), and <c>RELAY_LUA_LOGS</c> (owned by the
+    /// per-profile <see cref="EnableLuaLogs"/> toggle; the env form is reserved
+    /// so a profile value can't double-control or silently bypass that
+    /// toggle).</description></item>
     /// </list>
     /// Exposed publicly so the launch-settings UI can pre-validate and show a
     /// localized inline error before the authoritative check at
@@ -58,12 +62,13 @@ public sealed record LaunchSettings
         "ARGV0",
         "OWD",
         "BAMF_DESKTOP_FILE_HINT",
-        // Relay config env (Curator supplies these as flags).
+        // Relay config env (Curator owns these knobs and supplies them as flags).
         "MODIFICUS_GAME_BINARY",
         "MODIFICUS_MOD_PATH",
         "RELAY_LOG_FILE",
         "RELAY_LOG_LEVEL",
         "MODIFICUS_STEAM_APP_ID",
+        "RELAY_LUA_LOGS",
     };
 
     /// <summary>
@@ -83,4 +88,16 @@ public sealed record LaunchSettings
     /// (legacy launch). Defaults to an empty array.
     /// </summary>
     public IReadOnlyList<string> GameArguments { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Whether to emit Relay's <c>--lua-logs</c> flag at launch, teeing Lua
+    /// <c>print</c> output (the mod loader, DMF, and mods) into the same log file
+    /// Relay writes (the <c>--log-file</c> Curator always emits). It is a tee,
+    /// not a redirect: Darktide's console log stays complete and authoritative.
+    /// Off by default. The Relay env form <c>RELAY_LUA_LOGS</c> is reserved (see
+    /// <see cref="ReservedEnvironmentNames"/>) so this toggle is the single
+    /// source of truth. Applies at launch; editing is unlocked while Darktide
+    /// runs.
+    /// </summary>
+    public bool EnableLuaLogs { get; init; }
 }

@@ -78,6 +78,27 @@ public sealed class LaunchSettingsTests
         Assert.Empty(settings.GameArguments);
     }
 
+    [Fact]
+    public void Old_json_without_enable_lua_logs_loads_as_false()
+    {
+        // A pre-EnableLuaLogs profile.json (LaunchSettings present but without
+        // the EnableLuaLogs property) deserializes EnableLuaLogs to its bool
+        // default (false), matching the backward-compat behavior of the rest of
+        // the record.
+        using var fx = new ProfileServiceFixture();
+        var profile = fx.Service.CreateProfile("P");
+        var id = profile.Id.ToString();
+        File.WriteAllText(fx.ProfileJson(profile.Id),
+            $$$"""{"Id":"{{{id}}}","Name":"P","CreatedAt":"{{{profile.CreatedAt:O}}}","Mods":[],"LaunchSettings":{"EnvironmentVariables":[{"Name":"PROTON_LOG","Value":"1"}],"GameArguments":[]}}""",
+            new System.Text.UTF8Encoding(false));
+
+        var settings = fx.Service.GetLaunchSettings(profile.Id);
+
+        Assert.False(settings.EnableLuaLogs);
+        // The rest of the settings still round-trip.
+        Assert.Single(settings.EnvironmentVariables);
+    }
+
     // ---- round-trip + order/duplicates -------------------------------------
 
     [Fact]
@@ -93,6 +114,7 @@ public sealed class LaunchSettingsTests
                 new EnvVar("GAMEMODERUN_OUTPUT", ""),
             },
             GameArguments = new[] { "-windowed", "-borderless" },
+            EnableLuaLogs = true,
         };
 
         fx.Service.SetLaunchSettings(profile.Id, settings);
@@ -111,6 +133,7 @@ public sealed class LaunchSettingsTests
         Assert.Equal("GAMEMODERUN_OUTPUT", loaded.EnvironmentVariables[1].Name);
         Assert.Equal(string.Empty, loaded.EnvironmentVariables[1].Value);
         Assert.Equal(new[] { "-windowed", "-borderless" }, loaded.GameArguments);
+        Assert.True(loaded.EnableLuaLogs);
     }
 
     [Fact]
@@ -352,7 +375,7 @@ public sealed class LaunchSettingsTests
     [Fact]
     public void ReservedEnvironmentNames_is_exactly_the_documented_set()
     {
-        // 12 names: 7 Curator-owned OS/launch env + 5 Relay config env.
+        // 13 names: 7 Curator-owned OS/launch env + 6 Relay config env.
         var expected = new[]
         {
             "STEAM_COMPAT_DATA_PATH",
@@ -367,9 +390,10 @@ public sealed class LaunchSettingsTests
             "RELAY_LOG_FILE",
             "RELAY_LOG_LEVEL",
             "MODIFICUS_STEAM_APP_ID",
+            "RELAY_LUA_LOGS",
         };
 
-        Assert.Equal(12, LaunchSettings.ReservedEnvironmentNames.Count);
+        Assert.Equal(13, LaunchSettings.ReservedEnvironmentNames.Count);
         foreach (var name in expected)
         {
             Assert.Contains(name, LaunchSettings.ReservedEnvironmentNames);
@@ -396,6 +420,7 @@ public sealed class LaunchSettingsTests
     [InlineData("RELAY_LOG_FILE")]
     [InlineData("RELAY_LOG_LEVEL")]
     [InlineData("MODIFICUS_STEAM_APP_ID")]
+    [InlineData("RELAY_LUA_LOGS")]
     public void SetLaunchSettings_rejects_each_reserved_name(string reserved)
     {
         using var fx = new ProfileServiceFixture();

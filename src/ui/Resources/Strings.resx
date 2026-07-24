@@ -238,6 +238,18 @@
     <value>Game arguments</value>
     <comment>Header over the game-argument rows in the launch-settings modal.</comment>
   </data>
+  <data name="LaunchSettings_LoggingHeader" xml:space="preserve">
+    <value>Logging</value>
+    <comment>Header over the logging options section in the launch-settings modal.</comment>
+  </data>
+  <data name="LaunchSettings_EnableLuaLogs" xml:space="preserve">
+    <value>Write Lua mod logs to the log file</value>
+    <comment>Checkbox label in the launch-settings modal. When on, Relay's --lua-logs flag is emitted at launch so Lua print output (the mod loader, DMF, and mods) is copied into the same log file Relay writes.</comment>
+  </data>
+  <data name="LaunchSettings_EnableLuaLogsTooltip" xml:space="preserve">
+    <value>Copies Lua print output (the mod loader, DMF, and mods) into the same log file Relay writes. It is a tee, not a redirect; Darktide's console log stays complete. Adds Relay's --lua-logs flag at launch.</value>
+    <comment>Tooltip on the Lua-logs checkbox in the launch-settings modal.</comment>
+  </data>
   <data name="LaunchSettings_AddEnvVar" xml:space="preserve">
     <value>Add variable</value>
     <comment>The add-row button under the environment-variable section.</comment>
