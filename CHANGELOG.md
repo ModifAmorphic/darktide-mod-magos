@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.16.0...v0.17.0) (2026-07-24)
+
+
+### Features
+
+* **launch:** add per-profile --lua-logs toggle ([#141](https://github.com/ModifAmorphic/darktide-modificus-curator/issues/141)) ([4ee579b](https://github.com/ModifAmorphic/darktide-modificus-curator/commit/4ee579b6ccc8d7c4f3bf1968c62b697cefe33bc3))
+
 ## [0.16.0](https://github.com/ModifAmorphic/darktide-modificus-curator/compare/v0.15.1...v0.16.0) (2026-07-22)
 
 
