@@ -123,6 +123,16 @@
               </Border>
             </StackPanel>
 
+            <!-- Logging section -->
+            <StackPanel Spacing="6">
+              <TextBlock Text="{ReflectionBinding [LaunchSettings_LoggingHeader], Source={StaticResource Loc}}"
+                         FontWeight="SemiBold" />
+              <CheckBox IsChecked="{Binding EnableLuaLogs, Mode=TwoWay}"
+                        Content="{ReflectionBinding [LaunchSettings_EnableLuaLogs], Source={StaticResource Loc}}"
+                        ToolTip.Tip="{ReflectionBinding [LaunchSettings_EnableLuaLogsTooltip], Source={StaticResource Loc}}"
+                        Margin="0,4" />
+            </StackPanel>
+
             <!-- Static next-launch hint. -->
             <TextBlock Text="{ReflectionBinding [LaunchSettings_NextLaunchHint], Source={StaticResource Loc}}"
                        Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"

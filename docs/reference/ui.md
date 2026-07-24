@@ -1003,9 +1003,9 @@ No backend library references the UI (the dependency direction is one-way).
 - **`LaunchSettingsViewModelTests`**: the launch-settings modal VM (existing
   settings load, add/remove rows, inline localized validation -- empty / `=` /
   NUL name, NUL value, case-insensitive duplicate, reserved name, all delegated
-  to the shared `LaunchSettingsValidator` from the Profiles library -- Save
-  persists once via `SetLaunchSettings` and closes only on success, Cancel no
-  change).
+  to the shared `LaunchSettingsValidator` from the Profiles library -- the
+  `EnableLuaLogs` Logging toggle (load + persist), Save persists once via
+  `SetLaunchSettings` and closes only on success, Cancel no change).
 - **`ModListViewModelTests`**: enable / disable, reorder, per-mod policy,
   remove (with confirm), auto-sort (identity stub), the add flow (peek,
   collision hard-block, import, add-mod), the linked-folder flow

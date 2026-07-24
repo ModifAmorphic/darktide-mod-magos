@@ -322,13 +322,16 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         in a profile; resolves a linked mod's base name from the
                         external folder's own name) + per-profile launch settings
                         (EnvVar/LaunchSettings: ordered env-var entries + game
-                        args; GetLaunchSettings/SetLaunchSettings validate at the
+                        args + the EnableLuaLogs toggle (emits Relay's bare
+                        --lua-logs flag, teeing Lua print output into the log
+                        file); GetLaunchSettings/SetLaunchSettings validate at the
                         setter via the shared LaunchSettingsValidator
                         (LaunchSettingsValidationError: index + field + kind;
                         single source of truth consumed by both the service and
                         the UI) -- names non-empty/no =/no NUL, no NUL in values,
                         case-insensitive duplicate rejection, reserved-name block
-                        of 12 Curator-owned OS/launch + Relay config env; backward-
+                        of 13 Curator-owned OS/launch + Relay config env (adds
+                        RELAY_LUA_LOGS); backward-
                         compat null/missing normalization to empty, mirroring Mods;
                         apply at launch) + the auto-sort seam
                         (IModOrderResolver/IdentityModOrderResolver, identity stub now;
@@ -458,7 +461,10 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                         AppImage/desktop-identity variables APPDIR, APPIMAGE,
                         ARGV0, OWD, BAMF_DESKTOP_FILE_HINT from the inherited
                         environment so Darktide does not inherit Curator's
-                        AppImage identity; game args append one bare -- then
+                        AppImage identity; a profile's EnableLuaLogs emits Relay's
+                        bare --lua-logs flag appended after --log-file (a tee of
+                        Lua print output into the log file, no value, not
+                        Z:\-translated on Linux); game args append one bare -- then
                         each arg as its own ArgumentList entry (Relay's --
                         contract; no version preflight); the spawn seam IProcessLauncher takes
                         one immutable ProcessLaunchRequest with FilePath,
@@ -552,7 +558,9 @@ src/        Modificus Curator -- the mod manager app (.NET 10 + Avalonia 12)
                                             + the LaunchSettingsViewModel (existing-settings
                                             load, add/remove rows, inline localized validation --
                                             empty/`=`/NUL name, NUL value, case-insensitive
-                                            duplicate, reserved name -- Save persists once via
+                                            duplicate, reserved name -- + a Logging toggle
+                                            (EnableLuaLogs emits Relay's bare --lua-logs flag);
+                                            Save persists once via
                                             SetLaunchSettings + closes only on success, Cancel no
                                             change) + the
                                             NxmModDownloadHandler auth/profile gates + error
